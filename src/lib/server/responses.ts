@@ -151,7 +151,7 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
   return {
-    content: [{ type: 'text', text: summary ?? `Found ${data.products.length} products` }],
+    content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
     structuredContent: toStructuredContent(data),
   };
 }
@@ -462,7 +462,10 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
 export function getSignalsResponse(data: GetSignalsResponse, summary?: string): McpToolResponse {
   return {
     content: [
-      { type: 'text', text: summary ?? `Found ${data.signals.length} signal${data.signals.length === 1 ? '' : 's'}` },
+      {
+        type: 'text',
+        text: summary ?? `Found ${(data.signals ?? []).length} signal${(data.signals ?? []).length === 1 ? '' : 's'}`,
+      },
     ],
     structuredContent: toStructuredContent(data),
   };

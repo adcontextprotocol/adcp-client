@@ -244,6 +244,77 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // not in response to client behavior.
   AGENT_SUSPENDED: { action: 'escalate', escalateReason: 'terminal' },
   AGENT_BLOCKED: { action: 'escalate', escalateReason: 'terminal' },
+
+  // Resource-not-found — proposal variant joins the not-found family.
+  PROPOSAL_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+
+  // Configuration / ops — halt, not retry. Seller misconfiguration; operator
+  // must intervene before another call has any chance of succeeding.
+  CONFIGURATION_ERROR: { action: 'escalate', escalateReason: 'idempotency_check_required' },
+
+  // Idempotency — IN_FLIGHT means the seller is still processing a prior
+  // submission with this key; safe to retry with same key after backoff.
+  IDEMPOTENCY_IN_FLIGHT: { action: 'retry', attemptCap: 3, baseDelayMs: 500 },
+
+  // Capability mismatch — drop the unsupported field/granularity and retry.
+  UNSUPPORTED_GRANULARITY: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  UNSUPPORTED_PROVISIONING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  MULTI_FINALIZE_UNSUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+
+  // Creative value rejection — commercial signal; don't auto-tweak.
+  CREATIVE_VALUE_NOT_ALLOWED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Brand required — validation; patch and retry.
+  BRAND_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+
+  // Scope / permission — operator must adjust API key scopes.
+  SCOPE_INSUFFICIENT: { action: 'escalate', escalateReason: 'auth' },
+  READ_ONLY_SCOPE: { action: 'escalate', escalateReason: 'auth' },
+  FIELD_NOT_PERMITTED: { action: 'escalate', escalateReason: 'auth' },
+  ACTION_NOT_ALLOWED: { action: 'escalate', escalateReason: 'auth' },
+
+  // Provenance — most are correctable by attaching the missing metadata;
+  // verifier-not-accepted / claim-contradicted are commercial rejections.
+  PROVENANCE_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING: {
+    action: 'mutate-and-retry',
+    attemptCap: 2,
+    reason: 'validation',
+    baseDelayMs: 250,
+  },
+  PROVENANCE_DISCLOSURE_MISSING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_EMBEDDED_MISSING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_VERIFIER_NOT_ACCEPTED: { action: 'escalate', escalateReason: 'commercial' },
+  PROVENANCE_CLAIM_CONTRADICTED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Billing / payment terms — commercial-relationship signals; human in loop.
+  BILLING_NOT_SUPPORTED: { action: 'escalate', escalateReason: 'commercial' },
+  BILLING_NOT_PERMITTED_FOR_AGENT: { action: 'escalate', escalateReason: 'commercial' },
+  BILLING_OUT_OF_BAND: { action: 'escalate', escalateReason: 'commercial' },
+  PAYMENT_TERMS_NOT_SUPPORTED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Format-projection — capability mismatch between buyer's declared format
+  // and what the seller can render. Buyer typically needs a different
+  // creative-template specialism, not a payload tweak. Surface to operator
+  // (no dedicated 'capability' escalate reason yet — uses 'commercial' for
+  // "human needs to pick a different implementation").
+  FORMAT_PROJECTION_FAILED: { action: 'escalate', escalateReason: 'commercial' },
+  FORMAT_DECLARATION_DIVERGENT: { action: 'escalate', escalateReason: 'commercial' },
+  FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'commercial' },
+  FORMAT_CAPABILITY_UNRESOLVED: { action: 'escalate', escalateReason: 'commercial' },
+  FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Pixel-tracker — buyer's tracker shape doesn't fit the seller's surface.
+  PIXEL_TRACKER_LOSSY_DOWNGRADE: { action: 'escalate', escalateReason: 'commercial' },
+  PIXEL_TRACKER_UPGRADE_INFERRED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Security violation — credentials in args; terminate immediately. Retrying
+  // would re-leak. Operator must rotate the leaked credential and refactor
+  // the call site before any further calls.
+  CREDENTIAL_IN_ARGS: { action: 'escalate', escalateReason: 'terminal' },
+
+  // Retention expired — data is gone; no replay can recover it.
+  RETENTION_EXPIRED: { action: 'escalate', escalateReason: 'terminal' },
 };
 
 // ---------------------------------------------------------------------------

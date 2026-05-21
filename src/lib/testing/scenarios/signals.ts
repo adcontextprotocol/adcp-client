@@ -87,15 +87,16 @@ export async function testSignalsFlow(
   // restricted_attributes/policy_categories are defined on SignalDefinition
   // (the adagents.json signal_catalog), but may pass through on get_signals
   // response items via additionalProperties. We accept either surface here.
-  if (governanceRawSignals.length > 0) {
-    type GovSignal = GetSignalsResponse['signals'][number] & {
+  const govSignals = governanceRawSignals ?? [];
+  if (govSignals.length > 0) {
+    type GovSignal = NonNullable<GetSignalsResponse['signals']>[number] & {
       restricted_attributes?: string[];
       policy_categories?: string[];
     };
-    const withRestrictedAttrs = governanceRawSignals.filter(
+    const withRestrictedAttrs = govSignals.filter(
       (s): s is GovSignal => ((s as GovSignal).restricted_attributes?.length ?? 0) > 0
     );
-    const withPolicyCategories = governanceRawSignals.filter(
+    const withPolicyCategories = govSignals.filter(
       (s): s is GovSignal => ((s as GovSignal).policy_categories?.length ?? 0) > 0
     );
 
@@ -105,7 +106,7 @@ export async function testSignalsFlow(
         task: 'get_signals',
         passed: true,
         duration_ms: 0,
-        details: `None of ${governanceRawSignals.length} signal(s) declare restricted_attributes or policy_categories. Governance agents will fall back to semantic inference for these signals.`,
+        details: `None of ${govSignals.length} signal(s) declare restricted_attributes or policy_categories. Governance agents will fall back to semantic inference for these signals.`,
         warnings: [
           'Signals without declared governance metadata require LLM-based inference for compliance checking. Per AdCP 3.0, declare restricted_attributes and policy_categories on signal_catalog entries in adagents.json (they may also pass through on get_signals response items).',
         ],
@@ -116,7 +117,7 @@ export async function testSignalsFlow(
         task: 'get_signals',
         passed: true,
         duration_ms: 0,
-        details: `${withRestrictedAttrs.length}/${governanceRawSignals.length} signal(s) declare restricted_attributes, ${withPolicyCategories.length}/${governanceRawSignals.length} declare policy_categories`,
+        details: `${withRestrictedAttrs.length}/${govSignals.length} signal(s) declare restricted_attributes, ${withPolicyCategories.length}/${govSignals.length} declare policy_categories`,
       });
     }
   }

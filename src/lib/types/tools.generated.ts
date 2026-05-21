@@ -22,6 +22,47 @@ import type {
  */
 export type BrandID = string;
 /**
+ * IPTC-aligned classification of AI involvement in producing this content
+ */
+export type DigitalSourceType =
+  | 'digital_capture'
+  | 'digital_creation'
+  | 'trained_algorithmic_media'
+  | 'composite_with_trained_algorithmic_media'
+  | 'algorithmic_media'
+  | 'composite_capture'
+  | 'composite_synthetic'
+  | 'human_edits'
+  | 'data_driven_media';
+/**
+ * How provenance data is carried within the content
+ */
+export type EmbeddedProvenanceMethod = 'manifest_wrapper' | 'provenance_markers';
+/**
+ * Media category of the watermarked content
+ */
+export type WatermarkMediaType = 'audio' | 'image' | 'video' | 'text';
+/**
+ * C2PA action classification for this watermark
+ */
+export type C2PAWatermarkAction = 'c2pa.watermarked.bound' | 'c2pa.watermarked.unbound';
+/**
+ * How long the disclosure must persist during content playback or display
+ */
+export type DisclosurePersistence = 'continuous' | 'initial' | 'flexible';
+/**
+ * Where a required disclosure should appear within a creative. Used by creative briefs to specify disclosure placement and by formats to declare which positions they can render.
+ */
+export type DisclosurePosition =
+  | 'prominent'
+  | 'footer'
+  | 'audio'
+  | 'subtitle'
+  | 'overlay'
+  | 'end_card'
+  | 'pre_roll'
+  | 'companion';
+/**
  * Catalog type. Structural types: 'offering' (AdCP Offering objects), 'product' (ecommerce entries), 'inventory' (stock per location), 'store' (physical locations), 'promotion' (deals and pricing). Vertical types: 'hotel', 'flight', 'job', 'vehicle', 'real_estate', 'education', 'destination', 'app' — each with an industry-specific item schema.
  */
 export type CatalogType =
@@ -260,6 +301,46 @@ export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate
  */
 export type ViewabilityStandard = 'mrc' | 'groupm';
 /**
+ * Standard delivery and performance metrics available for reporting
+ */
+export type AvailableMetric =
+  | 'impressions'
+  | 'spend'
+  | 'clicks'
+  | 'ctr'
+  | 'views'
+  | 'completed_views'
+  | 'completion_rate'
+  | 'conversions'
+  | 'conversion_value'
+  | 'roas'
+  | 'cost_per_acquisition'
+  | 'new_to_brand_rate'
+  | 'leads'
+  | 'reach'
+  | 'frequency'
+  | 'grps'
+  | 'engagements'
+  | 'engagement_rate'
+  | 'follows'
+  | 'saves'
+  | 'profile_visits'
+  | 'viewability'
+  | 'quartile_data'
+  | 'dooh_metrics'
+  | 'cost_per_click'
+  | 'cost_per_completed_view'
+  | 'cpm'
+  | 'downloads'
+  | 'units_sold'
+  | 'new_to_brand_units'
+  | 'plays'
+  | 'incremental_sales_lift'
+  | 'brand_lift'
+  | 'foot_traffic'
+  | 'conversion_lift'
+  | 'brand_search_lift';
+/**
  * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
  */
 export type MatchType = 'broad' | 'phrase' | 'exact';
@@ -269,13 +350,15 @@ export type MatchType = 'broad' | 'phrase' | 'exact';
  */
 export interface GetProductsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
-   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'.
+   * Declares buyer intent for this request. 'brief': publisher curates product recommendations from the provided brief. 'wholesale': buyer requests raw inventory to apply their own audiences — brief must not be provided, and proposals are omitted. 'refine': iterate on products and proposals from a previous get_products response using the refine array of change requests. v3 clients MUST include buying_mode. Sellers receiving requests from pre-v3 clients without buying_mode SHOULD default to 'brief'. Timing semantics: 'wholesale' is a catalog read — sellers SHOULD return a synchronous response and MUST NOT route a 'wholesale' request through the async/Submitted arm; partial completion is signalled via the response's incomplete[] field (with optional estimated_wait), not via a task-handoff envelope. 'brief' and 'refine' MAY complete synchronously, or MAY return a Submitted envelope (see get-products-async-response-submitted.json) when curation requires upstream-system queries or HITL review the seller cannot complete inside time_budget. Buyers needing predictable fast catalog access MUST use 'wholesale'; buyers open to slower curation use 'brief' or 'refine'.
    */
   buying_mode: 'brief' | 'wholesale' | 'refine';
   /**
@@ -284,6 +367,10 @@ export interface GetProductsRequest {
   brief?: string;
   /**
    * Array of change requests for iterating on products and proposals from a previous get_products response. Each entry declares a scope (request, product, or proposal) and what the buyer is asking for. Only valid when buying_mode is 'refine'. The seller responds to each entry via refinement_applied in the response, matched by position.
+   *
+   * Finalize-exclusivity rule: if any entry has `action: 'finalize'`, ALL entries in the array MUST be proposal-scoped with `action: 'finalize'` — mixing finalize entries with `include`/`omit` entries or with request- / product-scoped entries MUST be rejected by the seller with `INVALID_REQUEST`. Finalize is a commit, not a refinement; the buyer expressing intent to commit means refinements have already converged. Buyers needing to refine AND commit in close succession sequence the calls: first a refine call (no finalize), then a finalize call against the resulting `proposal_id`(s).
+   *
+   * Multi-finalize semantics: multiple finalize entries against different `proposal_id` values in a single call are allowed and MUST be **atomic at the observation point** — sellers MUST NOT return a success response unless every named proposal has both completed and been persisted as committed. Pre-commit validation runs before any side-effects (inventory pull, terms lock, governance attestation); if any proposal fails validation, the seller MUST reject the entire call without committing any of the named proposals. There is no rollback operation in the spec — an `unfinalize` would itself be a new mutation surface; the atomicity guarantee runs entirely on the seller's pre-commit validation gate, not on post-commit reversal. Sellers that cannot guarantee atomic pre-commit validation MUST reject multi-finalize arrays with `MULTI_FINALIZE_UNSUPPORTED` (preferred — distinguishes seller-side capability gap from a malformed request) or `INVALID_REQUEST` (acceptable fallback for sellers on a pre-3.1 error catalog). If a mid-commit failure occurs *after* validation passed but before all proposals persist (e.g., a downstream ad server fails between commits one and two), the seller MUST return `INTERNAL_ERROR` with `refinement_applied[]` carrying per-position outcomes — the spec does NOT define a recovery path for this case, and buyers SHOULD treat the resulting state as undefined and re-read via `get_media_buys` / equivalent before retrying. Buyers MUST NOT assume multi-finalize support without a successful first attempt — there is no capability flag for this; the failure response is the discovery surface. Buyers whose intent specifically requires atomic commit (e.g., budget-shared proposals where one finalizing without the other is incoherent) MUST be prepared to abandon the intent if the seller returns `MULTI_FINALIZE_UNSUPPORTED` — there is no recovery for that loss of buyer intent beyond sequencing single-finalize calls and accepting the looser commit guarantee.
    */
   refine?: (
     | {
@@ -329,6 +416,8 @@ export interface GetProductsRequest {
         proposal_id: string;
         /**
          * 'include' (default): return this proposal with updated allocations and pricing. 'omit': exclude this proposal from the response. 'finalize': request firm pricing and inventory hold — transitions a draft proposal to committed with an expires_at hold window. May trigger seller-side approval (HITL). The buyer should not set a time_budget for finalize requests — they represent a commitment to wait for the result. Optional — when omitted, the seller treats the entry as action: 'include'.
+         *
+         * Finalize is exclusive within the parent `refine[]` array: see the array-level description for the finalize-exclusivity rule (mixing finalize with non-finalize entries is rejected) and multi-finalize atomicity contract.
          */
         action?: 'include' | 'omit' | 'finalize';
         /**
@@ -387,6 +476,14 @@ export interface GetProductsRequest {
    */
   time_budget?: Duration;
   pagination?: PaginationRequest;
+  /**
+   * Opaque catalog_version token returned by a prior get_products response from this agent. When provided, the seller compares against its current catalog version for the buyer's cache_scope and MAY return an unchanged: true response (with products omitted) if nothing has changed. The token is scope-keyed: buyers cache `(cache_scope, catalog_version)` pairs. Scoping dimensions: (agent, buying_mode, filters, property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. Backward-compatible: pre-v3.1 agents that ignore this field simply return the full payload, same as the unchanged-server path. See specs/catalog-change-feed.md for the full sync pattern.
+   */
+  if_catalog_version?: string;
+  /**
+   * Opaque pricing_version token from a prior get_products response. MUST only be sent together with if_catalog_version — pricing version has no structural baseline to compare against on its own. Evaluation order: (1) if_catalog_version mismatch → seller returns the full payload (pricing is implicitly stale); (2) if_catalog_version matches but if_pricing_version mismatches → seller returns the full payload so the buyer sees updated pricing_options; (3) both match → seller MAY return unchanged: true. Agents that don't track pricing separately ignore if_pricing_version and fall back to if_catalog_version semantics. Useful for storefronts that re-price compositions far more often than they re-render catalogs.
+   */
+  if_pricing_version?: string;
   context?: ContextObject;
   /**
    * Registry policy IDs that the buyer requires to be enforced for products in this response. Sellers filter products to only those that comply with or already enforce the requested policies.
@@ -414,7 +511,273 @@ export interface BrandReference {
   data_subject_contestation?: {
     [k: string]: unknown | undefined;
   };
+  /**
+   * Inline override for brand-kit fields normally resolved from `/.well-known/brand.json` on `domain` (logo, colors, voice, tagline). Use when brand.json is missing, stale, or inappropriate for this specific call — e.g., a campaign-scoped tagline, a co-branded creative, a freshly-rebranded color palette the brand.json hasn't shipped yet. Same inline-override pattern as `industries` and `data_subject_contestation` above: brand.json is canonical, the override is per-call. Adopters needing to override fields outside this subset (`voice_attributes`, `prohibited_terms`, etc.) MUST publish a different brand.json and reference it via a different `domain` — the inline override is intentionally narrow to a small high-traffic subset.
+   *
+   * **Merge semantics (normative).** The merge is **field-level**, not whole-object replacement. Each field within `brand_kit_override` (`logo`, `colors`, `voice`, `tagline`) is evaluated independently — when a field is present on the override the override value applies; when a field is absent the brand.json value applies (or is absent if brand.json doesn't carry one either). For composite fields (`colors.primary`, `colors.secondary`, `colors.accent`), the merge is one level deeper: each color slot is evaluated independently — a producer can override `colors.primary` while still inheriting `colors.secondary` from brand.json. SDKs MUST NOT treat a present `brand_kit_override.colors` as wiping the brand.json `colors` block entirely; only the per-slot fields present in the override take precedence. Without this rule, a partial-override semantics would diverge across SDKs and produce inconsistent rendering for the same payload.
+   */
+  brand_kit_override?: {
+    logo?: ImageAsset;
+    /**
+     * Override brand colors (hex strings).
+     */
+    colors?: {
+      /**
+       * @pattern ^#[0-9a-fA-F]{6}$
+       */
+      primary?: string;
+      /**
+       * @pattern ^#[0-9a-fA-F]{6}$
+       */
+      secondary?: string;
+      /**
+       * @pattern ^#[0-9a-fA-F]{6}$
+       */
+      accent?: string;
+    };
+    /**
+     * Override brand-voice description for surface-composed text/audio output.
+     */
+    voice?: string;
+    /**
+     * Override tagline.
+     */
+    tagline?: string;
+  };
 }
+/**
+ * Override logo asset.
+ */
+export interface ImageAsset {
+  /**
+   * Discriminator identifying this as an image asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'image';
+  /**
+   * URL to the image asset
+   */
+  url: string;
+  /**
+   * Width in pixels
+   * @minimum 1
+   */
+  width: number;
+  /**
+   * Height in pixels
+   * @minimum 1
+   */
+  height: number;
+  /**
+   * Image file format (jpg, png, gif, webp, etc.)
+   */
+  format?: string;
+  /**
+   * Alternative text for accessibility
+   */
+  alt_text?: string;
+  provenance?: Provenance;
+}
+/**
+ * Provenance metadata for this asset, overrides manifest-level provenance
+ */
+export interface Provenance {
+  digital_source_type?: DigitalSourceType;
+  /**
+   * AI system used to generate or modify this content. Aligns with IPTC 2025.1 AI metadata fields and C2PA claim_generator.
+   */
+  ai_tool?: {
+    /**
+     * Name of the AI tool or model (e.g., 'DALL-E 3', 'Stable Diffusion XL', 'Gemini')
+     */
+    name: string;
+    /**
+     * Version identifier for the AI tool or model (e.g., '25.1', '0125', '2.1'). For generative models, use the model version rather than the API version.
+     */
+    version?: string;
+    /**
+     * Organization that provides the AI tool (e.g., 'OpenAI', 'Stability AI', 'Google')
+     */
+    provider?: string;
+  };
+  /**
+   * Level of human involvement in the AI-assisted creation process. Independent of `disclosure.required` — the protocol does not derive disclosure obligations from oversight level. Some regulations include carve-outs for human-edited or human-directed AI output, but those carve-outs have factual prerequisites the schema cannot evaluate. Asserting `edited` or `directed` does not by itself justify `disclosure.required: false`.
+   */
+  human_oversight?: 'none' | 'prompt_only' | 'selected' | 'edited' | 'directed';
+  /**
+   * Party declaring this provenance. Identifies who attached the provenance claim, enabling receiving parties to assess trust.
+   */
+  declared_by?: {
+    /**
+     * URL of the agent or service that declared this provenance
+     */
+    agent_url?: string;
+    /**
+     * Role of the declaring party in the supply chain
+     */
+    role: 'creator' | 'advertiser' | 'agency' | 'platform' | 'tool';
+  };
+  /**
+   * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
+   * @format date-time
+   */
+  declared_at?: string;
+  /**
+   * When this content was created or generated (ISO 8601)
+   * @format date-time
+   */
+  created_time?: string;
+  /**
+   * C2PA sidecar manifest reference. Links to a detached cryptographic provenance manifest for this content. Note: file-level C2PA bindings break when ad servers transcode, resize, or re-encode assets. For pipelines with intermediaries, consider embedded_provenance as the primary provenance mechanism.
+   */
+  c2pa?: {
+    /**
+     * URL to the C2PA manifest store for this content
+     */
+    manifest_url: string;
+  };
+  /**
+   * Provenance metadata embedded within the content stream. Each entry declares one embedding layer: structured provenance data carried inside the content itself, as distinct from sidecar references (c2pa.manifest_url). Embedded provenance survives operations that break sidecar and file-level bindings: ad-server transcoding, CMS ingestion, copy-paste, reformatting, and CDN re-encoding. For ad-tech pipelines where content passes through multiple intermediaries, embedded provenance is the reliable path for provenance that persists from declaration through delivery. This is a declaration by the embedding party. The receiving party (the seller) is the verifier-of-record: it confirms the claim by calling a governance agent it trusts (typically one published in `creative_policy.accepted_verifiers`).
+   */
+  embedded_provenance?: {
+    method: EmbeddedProvenanceMethod;
+    /**
+     * Standard the embedding conforms to, if any (e.g., 'c2pa' for C2PA Section A.7 text manifest embedding)
+     */
+    standard?: string;
+    /**
+     * Organization that performed the embedding (e.g., 'Encypher', 'Digimarc'). Display label and audit context — not a wire identifier.
+     */
+    provider: string;
+    /**
+     * Buyer's representation that this embedding can be verified by a governance agent on the seller's `creative_policy.accepted_verifiers` list. The `agent_url` MUST match (canonicalized) one of the seller's published `accepted_verifiers[].agent_url` entries; sellers reject `sync_creatives` submissions whose `verify_agent.agent_url` is off-list with `PROVENANCE_VERIFIER_NOT_ACCEPTED`. This is buyer-supplied evidence, not buyer-driven routing — the seller is the verifier-of-record and the seller controls which agent it actually calls (the seller MAY use a different on-list agent if it determines this is more appropriate; the seller does not call buyer-asserted endpoints outside its allowlist). MAY be omitted for self-verifiable embeddings (e.g., a C2PA text manifest with a public key the seller already trusts).
+     */
+    verify_agent?: {
+      /**
+       * URL of the governance agent the buyer represents was used to embed/verify this layer. MUST use the `https://` scheme and MUST appear in the seller's `creative_policy.accepted_verifiers[].agent_url` list (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments). Sellers MUST NOT call this URL until the canonicalized match is confirmed.
+       * @pattern ^https:\/\/
+       */
+      agent_url: string;
+      /**
+       * Optional `feature_id` the buyer represents the seller should request via `get_creative_features` (e.g., `encypher.markers_present_v2`). SHOULD match the `feature_id` declared on the matching `accepted_verifiers[]` entry, or be omitted to defer the selector to the seller. When the seller's entry pins a `feature_id`, that value wins; when neither side pins, the seller selects from the agent's `governance.creative_features` catalog.
+       */
+      feature_id?: string;
+    };
+    /**
+     * When the provenance data was embedded (ISO 8601)
+     * @format date-time
+     */
+    embedded_at?: string;
+  }[];
+  /**
+   * Content watermarks applied to this asset. Each entry declares one watermarking layer: a content modification that encodes an identifier or fingerprint within the asset. Watermarks differ from embedded provenance: a watermark encodes an identifier (who generated it, who owns it), while embedded provenance carries or references a structured provenance record (the full chain of custody). A single asset may carry both. Aligns with C2PA action taxonomy: c2pa.watermarked.bound (watermark linked to a C2PA manifest) and c2pa.watermarked.unbound (watermark independent of any manifest). This is a declaration by the watermarking party. The receiving party (the seller) is the verifier-of-record: it confirms the claim by calling a governance agent it trusts (typically one published in `creative_policy.accepted_verifiers`).
+   */
+  watermarks?: {
+    media_type: WatermarkMediaType;
+    /**
+     * Organization that applied the watermark (e.g., 'Imatag', 'Steg.AI', 'Encypher'). Display label and audit context — not a wire identifier.
+     */
+    provider: string;
+    /**
+     * Buyer's representation that this watermark can be detected by a governance agent on the seller's `creative_policy.accepted_verifiers` list. The `agent_url` MUST match (canonicalized) one of the seller's published `accepted_verifiers[].agent_url` entries; sellers reject `sync_creatives` submissions whose `verify_agent.agent_url` is off-list with `PROVENANCE_VERIFIER_NOT_ACCEPTED`. This is buyer-supplied evidence, not buyer-driven routing — the seller is the verifier-of-record and the seller controls which agent it actually calls (the seller MAY use a different on-list agent if it determines this is more appropriate; the seller does not call buyer-asserted endpoints outside its allowlist).
+     */
+    verify_agent?: {
+      /**
+       * URL of the governance agent the buyer represents was used to apply/detect this watermark. MUST use the `https://` scheme and MUST appear in the seller's `creative_policy.accepted_verifiers[].agent_url` list (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments). Sellers MUST NOT call this URL until the canonicalized match is confirmed.
+       * @pattern ^https:\/\/
+       */
+      agent_url: string;
+      /**
+       * Optional `feature_id` the buyer represents the seller should request via `get_creative_features` (e.g., `imatag.watermark_detected`). SHOULD match the `feature_id` declared on the matching `accepted_verifiers[]` entry, or be omitted to defer the selector to the seller. When the seller's entry pins a `feature_id`, that value wins; when neither side pins, the seller selects from the agent's `governance.creative_features` catalog.
+       */
+      feature_id?: string;
+    };
+    c2pa_action?: C2PAWatermarkAction;
+    /**
+     * When the watermark was applied (ISO 8601)
+     * @format date-time
+     */
+    embedded_at?: string;
+  }[];
+  /**
+   * Regulatory disclosure requirements for this content. Indicates whether AI disclosure is required and under which jurisdictions.
+   */
+  disclosure?: {
+    /**
+     * The declaring party's claim that AI disclosure is required for this content under applicable regulations. This is a declared signal carried through the supply chain — useful as a routing and audit input — not a regulatory determination made by the protocol. Receiving parties remain responsible for their own jurisdictional analysis and should not treat `required: false` as compliance cover.
+     */
+    required: boolean;
+    /**
+     * Jurisdictions where disclosure obligations apply
+     */
+    jurisdictions?: {
+      /**
+       * ISO 3166-1 alpha-2 country code (e.g., 'US', 'DE', 'CN')
+       */
+      country: string;
+      /**
+       * Sub-national region code (e.g., 'CA' for California, 'BY' for Bavaria)
+       */
+      region?: string;
+      /**
+       * Regulation identifier (e.g., 'eu_ai_act_article_50', 'ca_sb_942', 'cn_deep_synthesis')
+       */
+      regulation: string;
+      /**
+       * Required disclosure label text for this jurisdiction, in the local language
+       */
+      label_text?: string;
+      /**
+       * How the disclosure should be rendered for this jurisdiction. Expresses the declaring party's intent for persistence and position based on regulatory requirements. Publishers control actual rendering but governance agents can audit whether guidance was followed.
+       */
+      render_guidance?: {
+        persistence?: DisclosurePersistence;
+        /**
+         * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
+         * @minimum 1
+         */
+        min_duration_ms?: number;
+        /**
+         * Preferred disclosure positions in priority order. The first position a format supports should be used.
+         */
+        positions?: DisclosurePosition[];
+        ext?: ExtensionObject;
+      };
+    }[];
+  };
+  /**
+   * Third-party verification or detection results for this content. Multiple services may independently evaluate the same content. Provenance is a claim — verification results attached by the declaring party are supplementary. The enforcing party (e.g., seller/publisher) should run its own verification via get_creative_features or calibrate_content.
+   */
+  verification?: {
+    /**
+     * Name of the verification service (e.g., 'DoubleVerify', 'Hive Moderation', 'Reality Defender')
+     */
+    verified_by: string;
+    /**
+     * When the verification was performed (ISO 8601)
+     * @format date-time
+     */
+    verified_time?: string;
+    /**
+     * Verification outcome
+     */
+    result: 'authentic' | 'ai_generated' | 'ai_modified' | 'inconclusive';
+    /**
+     * Confidence score of the verification result (0.0 to 1.0)
+     * @minimum 0
+     * @maximum 1
+     */
+    confidence?: number;
+    /**
+     * URL to the full verification report
+     */
+    details_url?: string;
+  }[];
+  ext?: ExtensionObject;
+}
+/**
+ * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
+ */
+export interface ExtensionObject {}
 /**
  * Catalog of items the buyer wants to promote. The seller matches catalog items against its inventory and returns products where matches exist. Supports all catalog types: a job catalog finds job ad products, a product catalog finds sponsored product slots. Reference a synced catalog by catalog_id, or provide inline items.
  */
@@ -514,10 +877,6 @@ export interface CatalogFieldMapping {
   default?: unknown;
   ext?: ExtensionObject;
 }
-/**
- * Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.
- */
-export interface ExtensionObject {}
 /**
  * Structured filters for product discovery
  */
@@ -646,6 +1005,16 @@ export interface ProductFilters {
    */
   required_performance_standards?: PerformanceStandard[];
   /**
+   * Filter to products whose `reporting_capabilities.available_metrics` is a superset of these metrics — i.e., products that commit to reporting all listed metrics in delivery responses. Use this for capability-level discovery (e.g., 'I need products that report `completed_views` for a CTV CPCV buy'); guarantee-level requirements with thresholds belong in `required_performance_standards` and `measurement_terms`. Sellers MUST silently exclude products that cannot meet this list (filter-not-fail; do not return an error). The product's declared `available_metrics` becomes the binding reporting contract carried into the resulting media buy — the same metric vocabulary is used to compute `missing_metrics` on `get_media_buy_delivery`.
+   */
+  required_metrics?: AvailableMetric[];
+  /**
+   * Filter to products whose `reporting_capabilities.vendor_metrics` matches these criteria. Each entry pins a `vendor` (matches any metric from that vendor), a `metric_id` (matches the metric across any vendor that uses that identifier), or both (specific vendor's specific metric). A product matches if its declared `vendor_metrics` covers ALL listed entries (AND across entries; pins within an entry are conjunctive). Cross-vendor discovery (e.g., 'I need attention measurement from any vendor that does it') is the buyer agent's responsibility — the agent resolves which vendors offer a category via the vendors' `brand.json` records, then enumerates them as filter entries. AdCP does not carry vendor-side metric metadata (category, methodology, standard alignment) in the filter surface; that lives at the vendor and is queried out-of-band. Sellers MUST silently exclude non-matching products (filter-not-fail; do not return an error) — same convention as the other `required_*` filters.
+   */
+  required_vendor_metrics?: {
+    [k: string]: unknown | undefined;
+  }[];
+  /**
    * Filter by keyword relevance for search and retail media platforms. Returns products that support keyword targeting for these terms. Allows the sell-side agent to assess keyword availability and recommend appropriate products. Use match_type to indicate the desired precision.
    */
   keywords?: {
@@ -702,6 +1071,10 @@ export interface MediaBuyFeatures {
    * Supports sync_catalogs task for catalog feed management with platform review and approval
    */
   catalog_management?: boolean;
+  /**
+   * Seller has per-package snapshot infrastructure for the reporting contract. When true, the seller MUST populate `package.committed_metrics` on every `create_media_buy` response and MUST honor append-only mid-flight metric additions via `update_media_buy`. The unified `committed_metrics` array (per the metric-accountability design) covers both standard and vendor-defined metric entries, so a single flag is load-bearing. Buyers filtering on this flag are detecting 'this seller can stamp the reporting contract,' which closes the audit gap from PR #3510 where absence of `committed_metrics` was indistinguishable between 'didn't snapshot' and 'snapshot infrastructure not implemented.'
+   */
+  committed_metrics_supported?: boolean;
   [k: string]: boolean | undefined;
 }
 /**
@@ -773,23 +1146,363 @@ export interface ContextObject {}
 
 // get_products response
 /**
- * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags.
+ * Represents available advertising inventory
+ */
+export type Product = (V1ProductNamedFormatReference | V2ProductInlineFormatDeclarations) & {
+  /**
+   * Unique identifier for the product
+   */
+  product_id: string;
+  /**
+   * Human-readable product name
+   */
+  name: string;
+  /**
+   * Detailed description of the product and its inventory
+   */
+  description: string;
+  /**
+   * SDK implementers MUST enforce singular-only at runtime: each entry uses the singular `publisher_domain` form; the compact `publisher_domains[]` form is rejected on products. Codegen toolchains (json-schema-to-typescript, quicktype, datamodel-code-generator, openapi-typescript-codegen) often flatten the `allOf + $ref + not.required` restriction below poorly and may drop the rejection constraint silently, emitting an unrestricted type — runtime enforcement is the safety net. Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency. The compact `publisher_domains[]` form is reserved for adagents.json `authorized_agents[].publisher_properties[]` so that buy-side traffic-and-pricing flatteners can always treat each entry as exactly one publisher.
+   */
+  publisher_properties: PublisherPropertySelector[];
+  /**
+   * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
+   */
+  channels?: MediaChannel[];
+  /**
+   * v1 path: array of supported creative format IDs (structured format_id objects with agent_url and id). Products MUST carry `format_ids`, `format_options`, or BOTH; at least one is required. v1 named formats remain supported through the v1-deprecation calendar (2027-Q4 floor / 2029-Q1 ceiling).
+   *
+   * **Dual emission**: A product MAY carry both `format_ids` and `format_options` simultaneously during the migration window. This is the recommended seller pattern — author once, SDK projects to both wire shapes via the [v1↔v2 canonical mapping registry](/schemas/registries/v1-canonical-mapping.json), every buyer reads what it knows. When both are present, the two MUST refer to the SAME underlying format declaration (the `format_options[i]` narrows the canonical that the named format in `format_ids[i]` resolves to via the registry / explicit `canonical` field). SDKs that derive both shapes from one source guarantee this invariant; SDKs that don't MUST treat divergence as a build error and refuse to emit. **Buyer rule**: when both are present, prefer `format_options`; treat `format_ids` as fallback for v1-only buyers. **Non-projectable formats**: when a v1 named format has no clean v2 projection (no registry entry, no explicit `canonical` declaration on the v1 format, no structural match), SDKs MUST NOT emit `format_options` for that product — only `format_ids` ships, and the product remains v1-only until the seller adds an explicit `canonical` field or files a registry entry.
+   */
+  format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * v2 path: one or more inline format declarations the product accepts. Each element narrows a canonical format with parameters, slots, and platform_extensions. The 90% case is a single-element array (one canonical narrowed for the product). Multi-element use cases: a product that accepts EITHER a third-party-hosted creative (e.g., Flashtalking-served `html5`) OR an internal `display_tag`; a video product that accepts a hosted `video_hosted` upload OR a `video_vast` tag. Buyers pick which option they're shipping at `sync_creatives` time by aligning their manifest to the matching declaration's `format_kind` and slots.
+   *
+   * Products MUST carry `format_ids`, `format_options`, or BOTH; at least one is required. See `format_ids` description for the dual-emission contract (same underlying declaration when both are present; SDK derives one from the other; buyers prefer `format_options` when both are present).
+   */
+  format_options?: ProductFormatDeclaration[];
+  /**
+   * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
+   */
+  placements?: Placement[];
+  delivery_type: DeliveryType;
+  exclusivity?: Exclusivity;
+  /**
+   * Available pricing models for this product
+   */
+  pricing_options: PricingOption[];
+  forecast?: DeliveryForecast;
+  outcome_measurement?: OutcomeMeasurementDeprecated;
+  /**
+   * Measurement vendors and methodology for delivery metrics. The buyer accepts the declared vendors as the source of truth for the buy. When absent, buyers should apply their own measurement defaults. Senders SHOULD populate `vendors` (structured BrandRef array) for new implementations; the legacy `provider` string field is deprecated and retained for one-minor backwards compatibility.
+   */
+  delivery_measurement?: {
+    /**
+     * Measurement vendors used for this product, as structured `BrandRef` identities. Multiple entries when multiple vendors play different roles (e.g., the ad server plus a separate viewability vendor like IAS or DV; or a retail-media seller plus a third-party retail measurement vendor like Circana or NielsenIQ). Each vendor's `brand.json` `agents[type='measurement']` is the discovery anchor; metric definitions live on the agent's `get_adcp_capabilities.measurement.metrics[]` block. Distinct from `performance_standards[].vendor` which carries vendor identity for *committed* metrics with thresholds — this field carries vendor identity for the overall measurement story, including non-committed-but-reported metrics.
+     */
+    vendors?: BrandReference[];
+    /**
+     * **Deprecated as of this minor.** Free-form measurement provider description (e.g., 'Google Ad Manager with IAS viewability', 'Nielsen DAR', 'Geopath for DOOH impressions'). New implementations SHOULD use the structured `vendors` field instead. Retained for one-minor backwards compatibility; removed at the next major. When both `vendors` and `provider` are present, consumers MUST use `vendors` for vendor identity and treat `provider` as informational text.
+     */
+    provider?: string;
+    /**
+     * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly'). Free-form prose for context that doesn't fit the structured `vendors` field.
+     */
+    notes?: string;
+  };
+  measurement_terms?: MeasurementTerms;
+  /**
+   * Seller's default performance standards for this product: viewability, IVT, completion rate, brand safety, attention score. Buyers may propose different standards at media buy creation. When absent, no structured performance standards apply.
+   */
+  performance_standards?: PerformanceStandard[];
+  cancellation_policy?: CancellationPolicy;
+  /**
+   * Actions buyers may perform on buys created against this product, scoped to statuses and modes. Advisory template — the authoritative per-buy capability is `available_actions[]` on the buy response, which resolves modes against current buy state, account tier, and negotiated terms. Buyers SHOULD use this for pre-flight product selection ("which products let me self-serve cancel within 72hr?") and read `available_actions[]` for runtime decisions. The array is uniquely keyed by `action` — sellers MUST NOT emit two entries with the same `action` value. Absence means the seller has not declared a structured action surface for this product — buyers fall back to `valid_actions[]` on buy responses for the flat string vocabulary.
+   */
+  allowed_actions?: ProductAllowedAction[];
+  reporting_capabilities: ReportingCapabilities;
+  creative_policy?: CreativePolicy;
+  /**
+   * Whether this is a custom product
+   */
+  is_custom?: boolean;
+  /**
+   * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
+   */
+  property_targeting_allowed?: boolean;
+  /**
+   * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
+   */
+  data_provider_signals?: DataProviderSignalSelector[];
+  /**
+   * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
+   */
+  signal_targeting_allowed?: boolean;
+  /**
+   * Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares ["product"], a job board declares ["job", "offering"]. Buyers match synced catalogs to products via this field.
+   */
+  catalog_types?: CatalogType[];
+  /**
+   * Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.
+   */
+  metric_optimization?: {
+    /**
+     * Metric kinds this product can optimize for. Buyers should only request metric goals for kinds listed here. **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — declare vendor-attested attention/quality metrics via `vendor_metric_optimization.supported_metrics[]` with an explicit vendor binding instead. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
+     */
+    supported_metrics: (
+      | 'clicks'
+      | 'views'
+      | 'completed_views'
+      | 'viewed_seconds'
+      | 'attention_seconds'
+      | 'attention_score'
+      | 'engagements'
+      | 'follows'
+      | 'saves'
+      | 'profile_visits'
+      | 'reach'
+    )[];
+    /**
+     * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
+     */
+    supported_reach_units?: ReachUnit[];
+    /**
+     * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
+     */
+    supported_view_durations?: number[];
+    /**
+     * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
+     */
+    supported_targets?: ('cost_per' | 'threshold_rate')[];
+  };
+  vendor_metric_optimization?: VendorMetricOptimization;
+  /**
+   * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
+   * @minimum 1
+   */
+  max_optimization_goals?: number;
+  measurement_readiness?: MeasurementReadiness;
+  /**
+   * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   */
+  conversion_tracking?: {
+    /**
+     * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
+     */
+    action_sources?: ActionSource[];
+    /**
+     * Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.
+     */
+    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
+    /**
+     * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
+     */
+    platform_managed?: boolean;
+  };
+  /**
+   * When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).
+   */
+  catalog_match?: {
+    /**
+     * GTINs from the buyer's catalog that are eligible on this product's inventory. Standard GTIN formats (GTIN-8 through GTIN-14). Only present for product-type catalogs with GTIN matching.
+     */
+    matched_gtins?: string[];
+    /**
+     * Item IDs from the buyer's catalog that matched this product's inventory. The ID type depends on the catalog type and content_id_type (e.g., SKUs for product catalogs, job_ids for job catalogs, offering_ids for offering catalogs).
+     */
+    matched_ids?: string[];
+    /**
+     * Number of catalog items that matched this product's inventory.
+     * @minimum 0
+     */
+    matched_count?: number;
+    /**
+     * Total catalog items evaluated from the buyer's catalog.
+     * @minimum 0
+     */
+    submitted_count: number;
+  };
+  /**
+   * Explanation of why this product matches the brief (only included when brief is provided)
+   */
+  brief_relevance?: string;
+  /**
+   * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
+   * @format date-time
+   */
+  expires_at?: string;
+  /**
+   * Optional standard visual card for displaying this product in user interfaces (catalog browsers, dashboards, agent UIs). Distinct from `format` — product_card describes the UI rendering of the product itself, not the ad creative the product accepts. Typed inline; no format_id indirection. Receivers render the card directly from these fields.
+   */
+  product_card?: {
+    image?: ImageAsset;
+    /**
+     * Card title (typically the product name).
+     * @maxLength 60
+     */
+    title?: string;
+    /**
+     * Short descriptive blurb shown below the title.
+     * @maxLength 200
+     */
+    description?: string;
+    /**
+     * Formatted price or pricing summary (e.g., 'From $5 CPM', 'Auction floor $0.50 CPC'). Free-text — receivers render verbatim.
+     * @maxLength 30
+     */
+    price_label?: string;
+    /**
+     * Call-to-action button label (e.g., 'View details', 'Get proposal').
+     * @maxLength 25
+     */
+    cta_label?: string;
+  };
+  /**
+   * Optional detailed card with hero + carousel + structured specifications, for rich product presentation (media-kit-style pages, full product detail views). Distinct from `format` — describes the UI rendering of the product itself, not the ad creative the product accepts. Typed inline; no format_id indirection.
+   */
+  product_card_detailed?: {
+    hero_image?: ImageAsset;
+    /**
+     * Additional images for a swipeable carousel below the hero.
+     */
+    carousel_images?: ImageAsset[];
+    /**
+     * Page title (typically the product name).
+     */
+    title?: string;
+    /**
+     * Full descriptive copy. Markdown allowed in client renderers that support it; otherwise treat as plain text.
+     */
+    description?: string;
+    /**
+     * Structured key/value specifications (e.g., 'Aspect ratio: 9:16', 'Duration: 30s'). Each item is a labeled fact about the product.
+     */
+    specifications?: {
+      /**
+       * @maxLength 60
+       */
+      label: string;
+      /**
+       * @maxLength 200
+       */
+      value: string;
+    }[];
+    /**
+     * Formatted price or pricing summary.
+     */
+    price_label?: string;
+    /**
+     * Call-to-action button label.
+     */
+    cta_label?: string;
+  };
+  /**
+   * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
+   */
+  collections?: CollectionSelector[];
+  /**
+   * Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy.
+   */
+  collection_targeting_allowed?: boolean;
+  /**
+   * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
+   */
+  installments?: Installment[];
+  /**
+   * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
+   */
+  enforced_policies?: string[];
+  /**
+   * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
+   */
+  trusted_match?: {
+    /**
+     * Whether this product supports Context Match requests. When true, the publisher's TMP router will send context match requests to registered providers for this product's inventory.
+     */
+    context_match: boolean;
+    /**
+     * Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.
+     */
+    identity_match?: boolean;
+    /**
+     * What the publisher can accept back from context match.
+     */
+    response_types?: TMPResponseType[];
+    /**
+     * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
+     */
+    dynamic_brands?: boolean;
+    /**
+     * TMP providers integrated with this product's inventory. Each entry identifies a provider by agent_url (from the registry) and declares what match types it supports for this product. The product-level context_match and identity_match booleans declare what the product supports overall; the per-provider booleans declare which provider handles each match type. Enables buyer discovery: 'find products where a specific provider does context matching.'
+     */
+    providers?: {
+      /**
+       * Provider's agent URL from the registry. Canonical identifier for this TMP provider.
+       */
+      agent_url: string;
+      /**
+       * Whether this provider handles context match for this product.
+       */
+      context_match?: boolean;
+      /**
+       * Whether this provider handles identity match for this product.
+       */
+      identity_match?: boolean;
+      /**
+       * ISO 3166-1 alpha-2 country codes this provider serves for identity match. The router uses this to select the correct regional provider based on the request's country field. Required when identity_match is true.
+       */
+      countries?: string[];
+      /**
+       * Identity types this regional provider can resolve. The router filters providers whose uid_types includes the request's uid_type. Required when identity_match is true.
+       */
+      uid_types?: UIDType[];
+    }[];
+  };
+  /**
+   * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
+   */
+  material_submission?: {
+    /**
+     * HTTPS URL for uploading or submitting physical creative materials
+     * @pattern ^https:\/\/
+     */
+    url?: string;
+    /**
+     * Email address for creative material submission
+     * @format email
+     */
+    email?: string;
+    /**
+     * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
+     * @maxLength 2000
+     */
+    instructions?: string;
+    ext?: ExtensionObject;
+  };
+  ext?: ExtensionObject;
+};
+/**
+ * Selects properties from a publisher's adagents.json. Used for both product definitions and agent authorization. Supports three selection patterns: all properties, specific IDs, or by tags. Each selector targets one publisher via `publisher_domain` (string) or a fan-out across many publishers that share the same selector via `publisher_domains` (array). Exactly one of `publisher_domain` or `publisher_domains` MUST be present. When `publisher_domains` is used, the selector is logically equivalent to repeating the same entry once per listed domain.
  */
 export type PublisherPropertySelector =
   | {
       /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com'). XOR with `publisher_domains` — exactly one MUST be present on each `publisher_properties[]` entry; both-present and neither-present both fail validation.
        * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
-      publisher_domain: string;
+      publisher_domain?: string;
       /**
-       * Discriminator indicating all properties from this publisher are included
+       * Compact form for fanning the same selector across many publishers (e.g., a managed network listing every publisher it represents). Each entry is the domain where that publisher's adagents.json is hosted. Each listed domain MUST be canonicalized to lowercase (the `pattern` already rejects uppercase). Mutually exclusive with `publisher_domain`. Each listed domain counts as explicitly scoped for the `managerdomain` fallback safety rule.
+       */
+      publisher_domains?: string[];
+      /**
+       * Discriminator indicating all properties from each addressed publisher are included
        */
       selection_type: 'all';
     }
   | {
       /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com').
        * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       publisher_domain: string;
@@ -804,16 +1517,20 @@ export type PublisherPropertySelector =
     }
   | {
       /**
-       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com'). XOR with `publisher_domains` — exactly one MUST be present on each `publisher_properties[]` entry; both-present and neither-present both fail validation.
        * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
-      publisher_domain: string;
+      publisher_domain?: string;
+      /**
+       * Compact form for fanning the same tag predicate across many publishers (canonical managed-network shape). Each entry is the domain where that publisher's adagents.json is hosted. Each listed domain MUST be canonicalized to lowercase (the `pattern` already rejects uppercase). Mutually exclusive with `publisher_domain`. Each listed domain counts as explicitly scoped for the `managerdomain` fallback safety rule.
+       */
+      publisher_domains?: string[];
       /**
        * Discriminator indicating selection by property tags
        */
       selection_type: 'by_tag';
       /**
-       * Property tags from the publisher's adagents.json. Selector covers all properties with these tags
+       * Property tags resolved against each addressed publisher's adagents.json, OR against the parent file's top-level `properties[]` when those properties carry a `publisher_domain` matching the selector. Selector covers all properties carrying any of these tags.
        */
       property_tags: PropertyTag[];
     };
@@ -827,6 +1544,536 @@ export type PropertyID = string;
  * @pattern ^[a-z0-9_]+$
  */
 export type PropertyTag = string;
+/**
+ * Inline format declaration on a product. The `format_kind` discriminator names which canonical format the product narrows; `params` carries the canonical's parameter schema (slots, dimensions, durations, codecs, character limits, platform_extensions, etc.). Optional `capability_id` (stable identifier for routing when a product's `format_options` contains multiple declarations sharing the same `format_kind`), `display_name` (seller-controlled human-readable label for dashboard and catalog UIs), and `applies_to_channels` (subset of the product's declared channels this declaration applies to — lets a multi-channel product carry distinct format_options per channel). Discriminated-union shape generates clean tagged unions in TypeScript and Pydantic codegen. Replaces v1's named-format pattern (where products referenced a separately-defined format file via compound `format_id`). v1 named formats remain supported through the deprecation cycle; v2 product-bound declarations are opt-in.
+ *
+ * **Closed-set semantics (normative).** `format_options[]` is the closed set of accepted formats for this product. Sellers MUST reject `create_media_buy` requests targeting any `format_kind` (or `capability_id`) not present in this list — typically with `UNSUPPORTED_FEATURE` or a seller-specific code; the rejection is structural, not negotiable. `seller_preference` modulates *within* the accepted set (a soft ranking hint between equally-acceptable options), it is NOT an enforcement axis. A product wanting to say 'this format is the only one that works' lists exactly that one entry in `format_options[]`; everything else falls outside the set and is rejected by the closed-set rule.
+ *
+ * **Custom format_kind** (`format_kind: "custom"`): for adopter-defined shapes that don't fit the 12 canonicals (multi-placement takeover, roadblock, branded content, cross-screen sponsorship, sponsorship lockup, newsletter sponsorship, AR lens, playable, live event sponsorship). When `format_kind` is `custom`, the declaration MUST carry `format_shape` (recognized global pattern from the [format-shape vocabulary registry](/schemas/core/format-shape-vocabulary.json)) AND `format_schema` (URI+digest reference to a fetchable schema describing the actual `params` and `slots`). Buyer agents fetch the schema, validate manifests structurally, and reason about manifests without per-seller integration code. See [adcp#3666](https://github.com/adcontextprotocol/adcp/issues/3666) for the canonical promotion queue.
+ */
+export type ProductFormatDeclaration = {
+  [k: string]: unknown | undefined;
+} & {
+  /**
+   * Stable identifier for this format declaration. REQUIRED when the parent product's `format_options` contains multiple declarations sharing the same `format_kind` (so buyers can disambiguate which option a manifest targets via `manifest.capability_id`). SHOULD be set on EVERY `format_options[]` entry — not just when structurally required to break a `format_kind` collision — so V2-mental-model buyers can use the V2 authoring path (`PackageRequest.capability_ids[]`, `creative-manifest.capability_id`) against the product. A product that ships without `capability_id` on its `format_options[]` entries is structurally 3.1-conformant but is not V2-authorable: buyers fall back to v1 `format_ids[]` and lose the cross-publisher-stable naming the V2 path was designed to provide. Sellers MUST reject V2 authoring against such products with `UNSUPPORTED_FEATURE` and `error.details.reason` set to `capability_ids_not_published` per `package-request.json`. The 4.0 cutover will tighten this from SHOULD to MUST (see #4857). Format-internal (not a URI). Examples: 'flashtalking_image_300x250', 'pmax_responsive_search', 'nytimes_homepage_image'.
+   */
+  capability_id?: string;
+  /**
+   * Optional seller-controlled human-readable label for this format declaration. Used by buyer dashboards, catalog UIs, and reporting surfaces to show a seller's own naming ('Homepage Takeover', 'Branded Canvas', 'Reels Premium Video') rather than the raw `format_kind` or `capability_id`. Has no machine semantics — buyer agents route on `format_kind` and `capability_id`; `display_name` is purely for human presentation. Freeform; no enumeration. Sellers SHOULD keep it stable once published to avoid dashboard churn.
+   */
+  display_name?: string;
+  /**
+   * Optional subset of the parent product's `channels` to which this declaration applies. When omitted, the declaration applies to ALL channels declared on the product. Lets a multi-channel product (e.g., `channels: ['display', 'video']`) carry distinct format_options per channel — `format_options: [{format_kind: 'image', applies_to_channels: ['display']}, {format_kind: 'video_hosted', applies_to_channels: ['video']}]`. Buyers ship channel-appropriate manifests per `applies_to_channels`.
+   */
+  applies_to_channels?: MediaChannel[];
+  /**
+   * Optional soft routing hint *within* a product's accepted set of formats — NOT an enforcement axis. `preferred` — seller actively recommends this format (often because of measurement, viewability, or render-quality differences); `accepted` — supported on equal footing with other format_options (default when omitted); `discouraged` — supported but suboptimal (e.g., legacy 3p-tag where the seller would prefer html5 for OM-SDK coverage). Buyer agents picking between format_options SHOULD respect seller preferences when their own constraints don't override.
+   *
+   * **Not an enforcement axis (normative).** `seller_preference` does NOT carry the meaning of 'this format won't work / required-only'. That case is structural: `format_options[]` IS the closed set of accepted formats; anything outside the list is rejected at `create_media_buy` regardless of preference. A seller that accepts only one format lists exactly that one entry — the structural fact does the enforcement work, no enum value needed. There is intentionally no `required` value; preference is bounded to *ranking within the already-accepted set*, not gating into it.
+   */
+  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
+  /**
+   * When true, this format declaration has no clean v1 projection and SDKs MUST NOT synthesize a v1 `format_id` for it. Buyers reading the product on the v1 wire path see this declaration absent from `format_ids`; only v2-aware buyers (reading `format_options`) discover it. Set explicitly for `format_kind: "custom"` declarations (no canonical exists in v1 to project onto) and for declarations whose canonical/parameter shape cannot round-trip through a v1 named format without semantic loss. The protocol does NOT mint synthetic v1 format_ids for unmappable declarations — the alternative (an `aao-synth/*` namespace populated automatically) was considered and rejected because adopters would index on synthetic IDs that have no stable identity. Producers SHOULD set `canonical_formats_only: true` rather than omit the declaration from `format_options` — explicit v2-only is more useful than silent absence.
+   */
+  canonical_formats_only?: boolean;
+  /**
+   * When true, THIS seller's specific product declaration may not work as declared — even if the underlying canonical is stable. Use for beta runtime paths, forward-looking catalog entries the runtime doesn't yet honor, or experimental products where the seller wants buyer-side caution. Buyers reading `experimental: true` on a product declaration SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via this declaration's `v1_format_ref`) and SHOULD validate via `validate_input` or a sandbox before routing production budget.
+   *
+   * Independent of the canonical's own `experimental` flag — a stable canonical (e.g., `image`, `video_hosted`) can carry an experimental product declaration when the seller is shipping a new runtime path that isn't fully wired yet. Conversely, an experimental canonical (`sponsored_placement`, `responsive_creative`, `agent_placement`) MAY carry non-experimental product declarations where the seller's adopter contract is well-tested. Buyer SDKs SHOULD filter products with `experimental: true` from default views and offer an opt-in flag to surface them.
+   *
+   * Replaces the earlier `runtime_status` enum (`stable | preview | declared_only`) — same semantic ('use with caution') without the cognitive overhead of two stability axes.
+   */
+  experimental?: boolean;
+  /**
+   * REQUIRED when `format_kind: "custom"`; otherwise MUST be absent. Recognized global pattern this custom shape is an instance of, drawn from the [format-shape vocabulary registry](/schemas/core/format-shape-vocabulary.json) (`multi_placement_takeover`, `roadblock`, `branded_content`, `cross_screen_sponsorship`, `sponsorship_lockup`, `newsletter_sponsorship`, `ar_lens`, `playable`, `live_event_sponsorship`, …). Non-canonical values valid (validators MAY soft-warn) — adopters CAN ship a shape that isn't yet in the registry. Adding entries is a vocabulary PR. Once a `format_shape` entry sees 2+ adopters with substantively similar `format_schema` content for 90+ days, the working group promotes it to a first-class canonical.
+   */
+  format_shape?: string;
+  /**
+   * Authoritative v2 → v1 link, expressed as an array of one or more v1 `format_id` ({agent_url, id}) values. Each entry asserts that this canonical-formats declaration IS the same underlying format as the referenced v1 named format. Always an array (single-ref is `[{...}]`) so the multi-size case below has a clean wire shape — adopters surveyed in the SDK implementor review pushed for this over the lossy single-ref form.
+   *
+   * The v2 declaration's `params` MUST narrow (be compatible with) each referenced v1 format's `requirements` — see the 'Narrows — formal definition' section in canonical-formats.mdx. SDKs comparing dual-emitted shapes (`Product.format_ids[]` ⊇ entries from `v1_format_ref` AND `Product.format_options[]` carrying this declaration) treat the link as the authoritative pairing and run the narrowing check between this declaration and EACH referenced v1 format file's `requirements`.
+   *
+   * **Multi-size fan-out (normative).** When the declaration carries `params.sizes: [{w,h}, ...]` (multi-size flexible slot), sellers SHOULD carry one `v1_format_ref[]` entry per size, each pointing at the per-size v1 named format in the AAO catalog. Example: a multi-size image declaration with `sizes: [300x250, 728x90, 970x250]` SHOULD carry `v1_format_ref: [{aao, display_300x250_image}, {aao, display_728x90_image}, {aao, display_970x250_image}]`. v1-only buyers then see the product on all three sizes via the `format_ids[]` dual-emission. When `v1_format_ref[]` count < `sizes[]` count, SDKs MUST emit `FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE` on the response `errors[]` (advisory, alongside the partial-coverage v1 emit — NOT in place of it). SDKs MAY (non-normative) fan out automatically by catalog lookup when `v1_format_ref[]` has length 1 and `sizes[]` has length N — opt-in, requires catalog access; sellers asserting refs is the source of truth.
+   *
+   * Mutually exclusive with `canonical_formats_only: true` — a declaration can EITHER assert no v1 projection (`canonical_formats_only: true`) OR link to v1 named formats (`v1_format_ref[]`), never both. When neither is present, SDKs fall back to the resolution order in `v1-canonical-mapping.json` (seller's explicit `canonical` field on the v1 file → registry glob → structural match → fail-closed).
+   *
+   * This is the v2-side authoritative replacement for the v1-side `canonical_parameters` field on `format.json` (which is deprecated for 3.1, removed at 4.0). Sellers SHOULD prefer authoring v2 declarations with `v1_format_ref[]` over mirroring the v2 shape onto v1 files via `canonical_parameters`; the directional link (v2 declaration → v1 identifiers) is the same fact without the parallel-shape drift surface.
+   *
+   * **AAO-hosted convention (normative).** For IAB-standard formats (image dimensions, VAST/DAAST tags, standard third-party tags, HTML5 banner bundles), sellers SHOULD point each `v1_format_ref[].agent_url` at the AAO-hosted canonical agent URL `https://creative.adcontextprotocol.org` and use the registry-published id (e.g., `display_300x250_image`, `video_vast_30s`, `audio_standard_30s`, `display_300x250_html`, `display_js`). This converges the v1-wire namespace: every seller's IAB MREC points at the same `{agent_url, id}` pair, so v1-only buyers' allowlists work uniformly. Without this convention, every publisher's 300x250 ships with a different `v1_format_ref` (theirs vs nytimes.example vs cnn.example vs …) and the v1 wire fragments into per-publisher namespaces — exactly what canonical-formats was designed to eliminate.
+   *
+   * For platform-specific formats (Meta Reels, TikTok Spark, Snap Spotlight, etc.), each `v1_format_ref[].agent_url` SHOULD point at the platform's own agent_url when the platform has adopted AdCP and publishes its own `adagents.json` with `formats[]`. When the platform has NOT adopted AdCP, sellers SHOULD point at the AAO community-registry mirror — `https://creative.adcontextprotocol.org/translated/<platform>` + `id: <platform-format-name>` (e.g., `https://creative.adcontextprotocol.org/translated/meta` + `id: meta_reels`). This keeps the v1 namespace converged across all sellers selling that platform's inventory until the platform owns its own adagents.json.
+   *
+   * **Platform-adoption cutover (normative).** When a platform adopts AdCP and publishes its own adagents.json, sellers MUST update `v1_format_ref[].agent_url` to the platform's adopted agent_url in the same minor release as the AAO mirror entry's `superseded_by` field goes live (see `static/schemas/source/adagents.json#superseded_by`). The AAO mirror entry SHOULD continue serving for ≥1 minor release after `superseded_by` is set, returning an advisory 'superseded' marker so v1 buyer allowlists keyed on the mirror URL get an explicit signal rather than a silent break. **Identity-confusion note**: the mirror URL is *format-shape namespace*, NOT seller identity. Inventory authorization always flows from `authorized_agents[]` + publisher signing keys; a buyer matching `v1_format_ref[].agent_url` against an allowlist is matching format-shape provenance, not seller identity.
+   *
+   * **Mirror domain migration (3.1).** Earlier drafts used `https://mirror.adcontextprotocol.org/translated/<platform>`. As of this release, the convention is `https://creative.adcontextprotocol.org/translated/<platform>` — sibling content under the AAO catalog domain we already host. Adopters who hardcoded the earlier mirror URL MUST migrate to the new path; the canonical-formats.mdx migration section documents the move. No transitional redirect is currently published (the earlier subdomain was never provisioned).
+   *
+   * For seller-bespoke formats (a publisher's `acme_homepage_takeover` that doesn't fit IAB conventions), each `v1_format_ref[].agent_url` is the seller's own agent_url and the id is seller-namespaced. These won't appear in `v1-canonical-mapping.json`'s registry; they're seller-asserted only.
+   */
+  v1_format_ref?: FormatReferenceStructuredObject[];
+  format_schema?: PlatformExtensionReference;
+} & (
+    | ImageFormatDeclaration
+    | HTML5FormatDeclaration
+    | DisplayTagFormatDeclaration
+    | ImageCarouselFormatDeclaration
+    | HostedVideoFormatDeclaration
+    | VASTVideoFormatDeclaration
+    | HostedAudioFormatDeclaration
+    | DAASTAudioFormatDeclaration
+    | SponsoredPlacementFormatDeclaration
+    | NativeInFeedFormatDeclaration
+    | ResponsiveCreativeFormatDeclaration
+    | AgentPlacementFormatDeclaration
+    | CustomFormatDeclaration
+  );
+/**
+ * Static image creative format. Slots: `image_main` (image asset, file or hosted URL), optional `headline` (text), `body_text` (text), `cta` (text/enum), `landing_page_url` (url). Tracking model: impression pixel + click URL via universal_macros, with optional viewability pixel. Distinct from `html5` (interactive bundles) and `display_tag` (third-party served). AR/dimensions narrow to specific sizes via product parameters — covers IAB display sizes (300x250, 728x90, 970x250, etc.) without a separate iab_size enum.
+ */
+export type CanonicalFormatImage = SizeModeMutex & {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for image canonical. Buyer ships an image asset (file or hosted URL) plus optional headline, body text, primary text (long-form caption), CTA (typically constrained to an enum via `cta_values`), and clickthrough URL. Products MAY override the default — make `headline` required, narrow `cta` to a value enum, or remove slots the surface doesn't consume.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Required image width in pixels — use for fixed-size slots (e.g., a 300×250 IAB MREC). For multi-size flexible slots (publisher MREC slot that accepts 300×250 OR 728×90 OR 970×250), use `sizes[]` instead; for responsive slots that adapt to viewport, use `min_width`/`max_width`/`min_height`/`max_height`. The three modes are mutually exclusive — set exactly one of `(width+height)`, `sizes[]`, or `min/max_width` + `min/max_height` ranges.
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Required image height in pixels. See `width` for size-mode mutual exclusion.
+   * @minimum 1
+   */
+  height?: number;
+  /**
+   * List of accepted (width, height) pairs for a multi-size flexible slot. Buyer ships an asset matching one of the listed sizes; SDK validates `assets.image_main.{width,height}` against the list (any-match). Mirrors OpenRTB `banner.format[]` semantics — one declaration with N accepted sizes is cleaner than N format_options entries. Mutually exclusive with `(width, height)` and with `min/max_width` + `min/max_height` ranges.
+   */
+  sizes?: {
+    /**
+     * @minimum 1
+     */
+    width: number;
+    /**
+     * @minimum 1
+     */
+    height: number;
+  }[];
+  /**
+   * Minimum accepted width in pixels for responsive slots that adapt within a range (e.g., 'any width from 300 to 970'). Use with `max_width` (and optionally `min_height`/`max_height`). Mutually exclusive with `(width, height)` and `sizes[]`.
+   * @minimum 1
+   */
+  min_width?: number;
+  /**
+   * Maximum accepted width in pixels for responsive slots. Pair with `min_width`. See `min_width` for size-mode mutual exclusion.
+   * @minimum 1
+   */
+  max_width?: number;
+  /**
+   * Minimum accepted height in pixels for responsive slots. Pair with `max_height`.
+   * @minimum 1
+   */
+  min_height?: number;
+  /**
+   * Maximum accepted height in pixels for responsive slots. Pair with `min_height`.
+   * @minimum 1
+   */
+  max_height?: number;
+  /**
+   * Optional aspect ratio constraint (e.g., '1.91:1', '1:1'). When provided alongside `width`/`height`, must agree. When used with `sizes[]` or responsive ranges, narrows accepted entries to those matching the aspect ratio.
+   * @pattern ^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$
+   */
+  aspect_ratio?: string;
+  /**
+   * Maximum file size in kilobytes.
+   * @minimum 1
+   */
+  max_file_size_kb?: number;
+  /**
+   * Permitted image file formats.
+   */
+  image_formats?: ('jpg' | 'jpeg' | 'png' | 'gif' | 'webp' | 'svg')[];
+  /**
+   * Whether the image and its trackers must be served over HTTPS.
+   */
+  ssl_required?: boolean;
+  /**
+   * @minimum 1
+   */
+  headline_max_chars?: number;
+  /**
+   * @minimum 1
+   */
+  body_text_max_chars?: number;
+  /**
+   * Permitted CTA values for this product (e.g., ['LEARN_MORE', 'SHOP_NOW']).
+   */
+  cta_values?: string[];
+  /**
+   * Where the rendered asset bytes come from. Single shared enum across all canonicals (`image`, `video_hosted`, `audio_hosted` — replaces the earlier per-canonical `image_source` / `video_source` / `audio_source` fields). `buyer_uploaded` (default): buyer ships a pre-rendered asset. `publisher_host_recorded`: publisher's host records the asset (audio-specific; podcast host-read pattern). `seller_pre_rendered_from_brief`: buyer ships a brief plus structured copy; seller renders ONE asset at sync_creatives or build_creative time (generative-DSP pattern). `seller_human_designed`: seller's design team renders manually from a brief. `agent_synthesized`: AI synthesis pipeline; pair with `synthesis_nondeterministic: true` when the platform cannot guarantee in-spec output (Veo/Sora/Imagen-class).
+   *
+   * Not every value is meaningful on every canonical — `publisher_host_recorded` is audio-specific; on `image` or `video_hosted` it has no defined behavior. Adopters MUST select a value appropriate to the canonical's asset type. The `slots` declaration is the binding contract for what the buyer ships; `asset_source` is informational and lets buyers understand the production model when picking products.
+   */
+  asset_source?:
+    | 'buyer_uploaded'
+    | 'publisher_host_recorded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized';
+  /**
+   * Whether the product accepts buyer-uploaded assets. When `rejected`, the buyer cannot ship pre-rendered bytes directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the asset. Combined with `asset_source`, lets a product declare 'I produce assets from briefs and refuse buyer uploads' (asset_source=`seller_pre_rendered_from_brief`, buyer_asset_acceptance=`rejected`).
+   */
+  buyer_asset_acceptance?: 'accepted' | 'rejected';
+};
+/**
+ * Exactly one of: (a) fixed (`width` + `height` both set), (b) multi-size (`sizes` set), (c) responsive (any of `min_width`/`max_width`/`min_height`/`max_height` set), (d) none (no size constraint declared — accepts any dimensions). Combining modes (e.g., `width` + `sizes`) is rejected at schema layer; same rule on `html5` and `display_tag` canonicals.
+ */
+export type SizeModeMutex = Fixed | MultiSize | Responsive | None;
+export type Responsive = {
+  [k: string]: unknown | undefined;
+};
+/**
+ * Interactive HTML5 banner delivered as a zip archive. Slot: `html5_bundle` (zip asset). Tracking model: MRAID + IAB Open Measurement (OM-SDK) + click-tag macro substitution + backup image fallback. Receivers unpack the zip, validate internal structure, and serve from CDN. Distinct from `image` (static, non-interactive) and `display_tag` (third-party served). The zip's entry point is typically `index.html`; click handling uses `clickTag` (or `clickTAG`) macro substitution.
+ */
+export type CanonicalFormatHTML5Banner = SizeModeMutex & {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for html5 canonical. Buyer ships a zip bundle plus optional backup image (required when `backup_image_required: true`) and clickthrough URL. The zip's entry point is typically `index.html`; click handling uses the `clickTag` (or `clickTAG`) macro substituted by the seller at serve time.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Required banner width in pixels — use for fixed-size slots. For multi-size flexible slots use `sizes[]`; for responsive use `min_width`/`max_width`/`min_height`/`max_height`. Exactly one of `(width, height)`, `sizes[]`, or `min/max_width` + `min/max_height` ranges MUST be set.
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Required banner height in pixels. See `width` for size-mode mutual exclusion.
+   * @minimum 1
+   */
+  height?: number;
+  /**
+   * List of accepted (width, height) pairs for a multi-size flexible slot (publisher banner that accepts 300×250 OR 728×90 OR 970×250). Mirrors OpenRTB `banner.format[]`. Mutually exclusive with `(width, height)` and with responsive ranges.
+   */
+  sizes?: {
+    /**
+     * @minimum 1
+     */
+    width: number;
+    /**
+     * @minimum 1
+     */
+    height: number;
+  }[];
+  /**
+   * Minimum accepted width for responsive HTML5 banners that adapt within a range. Pair with `max_width`. Mutually exclusive with `(width, height)` and `sizes[]`.
+   * @minimum 1
+   */
+  min_width?: number;
+  /**
+   * Maximum accepted width for responsive HTML5 banners. Pair with `min_width`.
+   * @minimum 1
+   */
+  max_width?: number;
+  /**
+   * Minimum accepted height for responsive HTML5 banners. Pair with `max_height`.
+   * @minimum 1
+   */
+  min_height?: number;
+  /**
+   * Maximum accepted height for responsive HTML5 banners. Pair with `min_height`.
+   * @minimum 1
+   */
+  max_height?: number;
+  /**
+   * Maximum initial-load file size (zip + above-the-fold assets) in kilobytes. IAB display standards: 200 KB for fixed sizes, 100 KB for mobile.
+   * @minimum 1
+   */
+  max_initial_load_kb?: number;
+  /**
+   * Maximum polite-load file size after host-initiated subload, in kilobytes. IAB display standards: 500 KB for fixed sizes.
+   * @minimum 1
+   */
+  max_polite_load_kb?: number;
+  /**
+   * Whether the host page must initiate the polite-load phase. IAB-compliant banners require true.
+   */
+  host_initiated_subload?: boolean;
+  /**
+   * Maximum total animation duration in milliseconds. IAB standard: 30000 (30 seconds).
+   * @minimum 0
+   */
+  max_animation_duration_ms?: number;
+  /**
+   * Maximum CPU load percentage during render.
+   * @minimum 1
+   * @maximum 100
+   */
+  max_cpu_load_percent?: number;
+  /**
+   * Whether MRAID compatibility is required (mobile in-app).
+   */
+  mraid_required?: boolean;
+  /**
+   * Required MRAID version when mraid_required is true.
+   */
+  mraid_version?: '2.0' | '3.0';
+  /**
+   * Whether IAB Open Measurement SDK integration is required.
+   */
+  om_sdk_required?: boolean;
+  /**
+   * Name of the click-tag macro the bundle must use.
+   */
+  clicktag_macro?: 'clickTag' | 'clickTAG';
+  /**
+   * Whether a backup image must accompany the zip for non-HTML5 environments.
+   */
+  backup_image_required?: boolean;
+  /**
+   * Maximum backup image file size in kilobytes.
+   * @minimum 1
+   */
+  backup_image_max_size_kb?: number;
+  ssl_required?: boolean;
+};
+/**
+ * Third-party-served display tag (JS, iframe, or 1×1 redirect). The buyer's adserver hosts the creative; the seller calls the tag URL at impression time. Slot: `tag_url` (url asset with appropriate `url_type`). Tracking model: opaque to seller — third party serves and measures. Click tracking via redirect URL substitution using universal_macros. Distinct from `image` (static asset hosted by seller) and `html5` (zip bundle hosted by seller).
+ */
+export type CanonicalFormatDisplayTag = SizeModeMutex & {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for display_tag canonical. Buyer ships a URL pointing at the third-party-served creative (JS, iframe, or 1×1 redirect) plus an optional backup image. Click and impression macros are substituted into the tag URL by the seller using `universal_macros`.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Required tag rendering width in pixels — use for fixed-size slots. For multi-size flexible slots use `sizes[]`; for responsive use `min_width`/`max_width`/`min_height`/`max_height`. Exactly one of `(width, height)`, `sizes[]`, or `min/max_width` + `min/max_height` ranges MUST be set.
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Required tag rendering height in pixels. See `width` for size-mode mutual exclusion.
+   * @minimum 1
+   */
+  height?: number;
+  /**
+   * List of accepted (width, height) pairs for a multi-size flexible slot. The buyer's third-party tag must render at one of the listed sizes; the seller picks which size to request at impression time. Mutually exclusive with `(width, height)` and with responsive ranges.
+   */
+  sizes?: {
+    /**
+     * @minimum 1
+     */
+    width: number;
+    /**
+     * @minimum 1
+     */
+    height: number;
+  }[];
+  /**
+   * Minimum accepted width for responsive third-party tags. Pair with `max_width`. Mutually exclusive with `(width, height)` and `sizes[]`.
+   * @minimum 1
+   */
+  min_width?: number;
+  /**
+   * Maximum accepted width for responsive third-party tags. Pair with `min_width`.
+   * @minimum 1
+   */
+  max_width?: number;
+  /**
+   * Minimum accepted height for responsive third-party tags. Pair with `max_height`.
+   * @minimum 1
+   */
+  min_height?: number;
+  /**
+   * Maximum accepted height for responsive third-party tags. Pair with `min_height`.
+   * @minimum 1
+   */
+  max_height?: number;
+  /**
+   * Tag delivery mechanisms accepted.
+   */
+  supported_tag_types?: ('iframe' | 'javascript' | '1x1_redirect')[];
+  /**
+   * Whether the tag URL must be HTTPS.
+   */
+  ssl_required?: boolean;
+  /**
+   * Maximum redirect chain depth permitted.
+   * @minimum 0
+   */
+  max_redirect_depth?: number;
+  /**
+   * Maximum tag-server response time in milliseconds.
+   * @minimum 1
+   */
+  max_response_time_ms?: number;
+  /**
+   * Whether a backup image must accompany the tag for environments that cannot render the third-party tag.
+   */
+  backup_image_required?: boolean;
+  /**
+   * @minimum 1
+   */
+  backup_image_max_size_kb?: number;
+  /**
+   * Whether the buyer's tag must integrate IAB Open Measurement SDK for viewability.
+   */
+  om_sdk_required?: boolean;
+};
 /**
  * A pricing model option offered by a publisher for a product. Discriminated by pricing_model field. If fixed_price is present, it's fixed pricing. If absent, it's auction-based (floor_price and price_guidance optional). Bid-based auction models may also include max_bid as a boolean signal to interpret bid_price as a buyer ceiling instead of an exact honored price.
  */
@@ -895,35 +2142,53 @@ export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 
  */
 export type MakegoodRemedy = 'additional_delivery' | 'credit' | 'invoice_adjustment';
 /**
+ * The action identifier.
+ */
+export type MediaBuyValidAction =
+  | 'pause'
+  | 'resume'
+  | 'cancel'
+  | 'extend_flight'
+  | 'shorten_flight'
+  | 'update_flight_dates'
+  | 'increase_budget'
+  | 'decrease_budget'
+  | 'reallocate_budget'
+  | 'update_targeting'
+  | 'update_pacing'
+  | 'update_frequency_caps'
+  | 'replace_creative'
+  | 'update_creative_assignments'
+  | 'remove_creative'
+  | 'add_packages'
+  | 'remove_packages'
+  | 'update_budget'
+  | 'update_dates'
+  | 'update_packages'
+  | 'sync_creatives';
+/**
+ * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, a proposal lifecycle round-trip, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`).
+ */
+export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+/**
+ * Status of a media buy.
+ */
+export type MediaBuyStatus =
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
+/**
  * Available frequencies for delivery reports and metrics updates
  */
 export type ReportingFrequency = 'hourly' | 'daily' | 'monthly';
 /**
- * Standard delivery and performance metrics available for reporting
+ * Identifier for the metric within the vendor's vocabulary (e.g., `attention_units`, `gco2e_per_impression`, `demographic_reach`).
  */
-export type AvailableMetric =
-  | 'impressions'
-  | 'spend'
-  | 'clicks'
-  | 'ctr'
-  | 'video_completions'
-  | 'completion_rate'
-  | 'conversions'
-  | 'conversion_value'
-  | 'roas'
-  | 'cost_per_acquisition'
-  | 'new_to_brand_rate'
-  | 'viewability'
-  | 'engagement_rate'
-  | 'views'
-  | 'completed_views'
-  | 'leads'
-  | 'reach'
-  | 'frequency'
-  | 'grps'
-  | 'quartile_data'
-  | 'dooh_metrics'
-  | 'cost_per_click';
+export type VendorMetricID = string;
 /**
  * Co-branding requirement
  */
@@ -1074,9 +2339,41 @@ export type ProposalStatus = 'draft' | 'committed';
  */
 export interface GetProductsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Array of matching products
    */
-  products: Product[];
+  products?: Product[];
+  /**
+   * Bundled platform-extension definitions referenced by any product in `products`. Keyed by `<extension_uri>@<digest>` (e.g., `https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel@sha256:abc...`). When present, lets buyers resolve `platform_extensions` references on product format declarations without a separate fetch. Buyer SDKs cache by URI@digest; subsequent get_products responses MAY omit definitions the buyer already has cached and rely on the digest match. Each value is an extension definition with `extends` (the canonical concept it extends, e.g., `tracking`), `fields` (the schema for additional fields the extension contributes), `version`, and optional `description`.
+   */
+  extensions?: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^https?://[^@]+@sha256:[a-f0-9]{64}$".
+     */
+    [k: string]: {
+      /**
+       * Canonical concept this extension extends (e.g., `tracking`, `cta_vocabulary`, `destinations`, `placement`).
+       */
+      extends: string;
+      /**
+       * JSON Schema fragment declaring the additional fields this extension contributes.
+       */
+      fields: {};
+      /**
+       * Semantic version of the extension definition. Distinct from the digest — version is human-readable; digest is the integrity check.
+       */
+      version?: string;
+      description?: string;
+    };
+  };
   /**
    * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
    */
@@ -1153,9 +2450,9 @@ export interface GetProductsResponse {
    */
   incomplete?: {
     /**
-     * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete.
+     * 'products': not all inventory sources were searched. 'pricing': products returned but pricing is absent or unconfirmed. 'forecast': products returned but forecast data is absent. 'proposals': proposals were not generated or are incomplete. 'catalog': in wholesale mode, whole-catalog enumeration could not complete in the time budget — symmetric with get_signals' 'catalog' scope so sellers have a precise way to declare wholesale-incomplete on the products surface.
      */
-    scope: 'products' | 'pricing' | 'forecast' | 'proposals';
+    scope: 'products' | 'pricing' | 'forecast' | 'proposals' | 'catalog';
     /**
      * Human-readable explanation of what is missing and why.
      */
@@ -1165,7 +2462,59 @@ export interface GetProductsResponse {
      */
     estimated_wait?: Duration;
   }[];
+  /**
+   * Optional non-fatal diagnostic block describing how the request's `filters` narrowed the candidate set. Use this to disambiguate empty/small result lists between 'no inventory matches the brief' and 'a specific filter excluded everything', without breaking the filter-not-fail convention (sellers still silently exclude unmatched products; this block is observability, not error reporting). Sellers MAY populate this when meaningful narrowing occurred; buyers MAY use it for triage UX without depending on its presence. Counts only — products are not enumerated by name to avoid leaking competitive intelligence about adjacent campaigns or seller inventory. `total_candidates` and `excluded_by` are independently optional — sellers whose baseline catalog size is sensitive MAY emit `excluded_by` without `total_candidates`, or vice versa.
+   */
+  filter_diagnostics?: {
+    /**
+     * How `excluded_by[*].count` values are computed across multiple filters. `only`: counts products that would have been included if not for THIS filter alone (deterministic; the right value for 'which filter killed my result set' triage — recommended when feasible). `any`: counts products excluded by ANY filter (so multiple filters' counts may overlap and sum to more than `total_candidates`). `approximate`: sellers SHOULD use this when their pipeline can't cleanly attribute exclusions to a single filter. Buyers SHOULD inspect `semantics` before doing arithmetic on counts.
+     */
+    semantics?: 'only' | 'any' | 'approximate';
+    /**
+     * Number of products the seller considered before applying `filters`. Baseline for interpreting per-filter exclusion counts. Approximate — sellers MAY return a sampled or capped count when their candidate pool is large. Optional; sellers whose baseline catalog size is sensitive (revealing market posture or competitive density) MAY omit this while still emitting `excluded_by`.
+     * @minimum 0
+     */
+    total_candidates?: number;
+    /**
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
+     */
+    excluded_by?: {
+      [k: string]:
+        | {
+            /**
+             * Number of products excluded by this filter, interpreted per the parent `semantics` field.
+             * @minimum 0
+             */
+            count: number;
+            /**
+             * Optional list of the specific filter values that contributed to exclusions, when meaningful. For `required_metrics`: the metric names that excluded products (strings). For `required_vendor_metrics`: the vendor/metric pin entries (objects). Item shape is filter-specific; the schema admits string OR object items. Buyers without filter-specific knowledge SHOULD treat as opaque.
+             */
+            values?: (string | {})[];
+            /**
+             * Optional human-readable note about why this filter narrowed the set (e.g., 'no products in this brief support DV viewability at the requested threshold').
+             */
+            notes?: string;
+          }
+        | undefined;
+    };
+  };
   pagination?: PaginationResponse;
+  /**
+   * Opaque token representing the version of the catalog state used to compose this response. Sellers that implement conditional-fetch (if_catalog_version) MUST return this on every response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, catalog_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/catalog-change-feed.md for the full cache layering model.
+   */
+  catalog_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the seller supports independent pricing versioning, pricing_version changes when prices move but catalog_version changes only when structure/metadata moves. Same cache_scope keying as catalog_version. Sellers not separating these MAY omit pricing_version and use catalog_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the catalog_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under (agent, buying_mode, filters, property_list, catalog, account_id). When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay for the (agent, filters, mode) tuple. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 sellers correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY when the request carried if_catalog_version (and/or if_pricing_version) matching the seller's current version for the buyer's cache_scope, in which case products[] MUST be omitted; catalog_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Buyers receiving unchanged: true MUST NOT mutate their local catalog mirror. **One shape per state:** sellers MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries products. Two shapes ({ unchanged: false, products: [...] } vs. { products: [...] }) for the same state would let some sellers always emit the field and some never would, creating an inconsistency the wire shouldn't carry.
+   */
+  unchanged?: true;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -1174,278 +2523,1171 @@ export interface GetProductsResponse {
   ext?: ExtensionObject;
 }
 /**
- * Represents available advertising inventory
+ * Product references one or more named formats by structured format_id ({ agent_url, id }). The v1 path; remains supported through 4.x.
  */
-export interface Product {
+export interface V1ProductNamedFormatReference {
+  [k: string]: unknown | undefined;
+}
+/**
+ * Product carries one or more inline ProductFormatDeclarations, each narrowing a canonical format. The v2 path introduced by RFC #3305. A single-element `format_options` array is the 90% case; multi-element arrays declare that the product accepts any of the listed format options.
+ */
+export interface V2ProductInlineFormatDeclarations {
+  [k: string]: unknown | undefined;
+}
+/**
+ * REQUIRED when `format_kind: "custom"`; otherwise MUST be absent. URI+digest reference to a fetchable schema describing this custom shape's actual `params` and `slots`. Same hosting model as `platform_extensions`: open-ecosystem publishers host the artifact at the canonical URI on their subdomain; closed-platform / walled-garden shapes resolve through the AAO mirror at `https://creative.adcontextprotocol.org/translated/...`. Buyer agents fetch by `uri@digest` (immutable per digest, aggressive caching, `Cache-Control: public, max-age=31536000, immutable`), validate `params` and `slots` against the fetched schema, and reason about manifests structurally — same mechanic as platform_extensions but at the format-structure level. Without `format_schema`, custom shapes would be opaque to buyer agents and the protocol would regress to per-seller integration code; that's why the schema is required, not optional.
+ *
+ * **Fetch contract (normative)** — `format_schema` is load-bearing for validation (unlike `platform_extensions`, which is informational on the *consumption* side). The *transport* rules below apply identically to BOTH fields — any SDK fetching a `platform-extension-ref.json` URI MUST apply this contract regardless of whether the field name is `format_schema` or `platform_extensions`. A shared SDK fetch path that drops to the weakest bar undermines `format_schema`'s hardening. The consumption distinction (load-bearing vs informational) is about *what the body means*; the transport distinction is `https`-and-allowlisted regardless.
+ *
+ * - **Transport**: `https` only. Buyers MUST reject `http://`, `file://`, `data:`, and any non-`https` scheme. The URI MUST resolve to a JSON document that is itself a valid JSON Schema (Draft 07 or 2020-12; producers MUST declare `$schema`).
+ * - **SSRF protection**: buyers MUST resolve the URI hostname and reject if any resolved address is in RFC 1918 private space (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), CGNAT (`100.64.0.0/10`), or any RFC 6761 special-use name (`.local`, `.localhost`, `.internal`, `.test`, `.example`, `.invalid`). Cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`, `kubernetes.default.svc`) are explicitly forbidden — these are credential-leak primitives. Buyers MUST pin the connection to the resolved IP (or re-resolve and re-validate the allowlist per request) to defeat DNS rebinding.
+ * - **HTTP redirects**: MUST be disabled. If a follow is implemented at all, the redirect target MUST pass the same scheme + SSRF + allowlist checks; otherwise the fetch hard-fails. Open redirects on same-origin paths are otherwise a free SSRF primitive.
+ * - **Response size cap**: response body MUST be capped at 1 MiB. Enforce during streaming, not after full buffering. Over-cap hard-fails identically to digest mismatch.
+ * - **Timeout**: SDKs SHOULD apply a fetch timeout ≤5 seconds. Timeout SHOULD be treated identically to an HTTP 5xx response (transient — retry policy at the SDK's discretion; on persistent failure surface as unresolved and skip the declaration for this session).
+ * - **Digest verification**: SHA-256 of the response body MUST equal `digest`. **Digest mismatch is a hard fail** — the buyer MUST treat the format declaration as unresolvable and MUST NOT validate manifests against the mismatched body. A divergent digest is either a malicious substitution or producer error; either way, falling back to the un-verified body breaks the trust model. Digest format: `sha256:` prefix + 64 lowercase hex characters. Cache key is `uri@digest`; digest mismatch MUST NOT be cached as a negative result keyed on `uri` alone (defeats CDN-flap recovery), and MUST be distinguishable in telemetry from network 5xx / 404 (sustained mismatch is a substitution-attack signal, not a flap).
+ * - **Sandboxing of `$ref`**: fetched schemas MAY use `$ref`. Buyers MUST resolve `$ref` only to URIs that are (a) same-origin as the parent `format_schema.uri` after RFC 3986 §6 normalization (lowercase scheme + host, strip default port, normalize path dot-segments, no userinfo component), OR (b) hosted under the AAO catalog domain (`https://creative.adcontextprotocol.org/...`), OR (c) intra-document JSON Pointer refs (`#/...`) bounded to the parent document's parsed tree. Cross-origin `$ref` to arbitrary URIs MUST be rejected. `$ref: file://...` MUST be rejected unconditionally. Transitive `$ref` chains MUST be bounded at depth ≤8 AND `$ref` count ≤256 across the resolved tree (depth 8 with breadth 100 per level is 10^16 nodes — depth alone is not enough). Publishers SHOULD inline rather than $ref where possible.
+ * - **Schema-compile bounds (DoS protection)**: validators MUST bound CPU/memory on fetched schemas. Recommended: compiled-schema keyword count ≤10 000, `pattern` regexes evaluated with a non-backtracking engine (re2) OR under a per-pattern timeout, per-manifest validation budget ≤250 ms (exceeded budget → treat manifest as invalid, surface telemetry signal). Without these, a 'valid' schema with catastrophic regex backtracking or exponential `allOf`/`anyOf` expansion pins a CPU forever.
+ * - **Cache**: buyers cache fetched schemas by `uri@digest` and treat them as immutable (the same hosting contract as `platform_extensions`). On `404`, network partition, or persistent fetch failure, buyers SHOULD degrade gracefully (treat the declaration as unresolved, skip it for the current `get_products` response, surface via `errors[]` with the relevant code) rather than failing the entire session.
+ * - **Schema-not-valid handling**: if the fetched body parses as JSON but is not a valid JSON Schema, the buyer MUST treat the declaration as unresolvable (same as digest mismatch) and surface via `errors[]`. Validators MUST NOT attempt partial validation against an invalid schema.
+ * - **AAO catalog trust**: `https://creative.adcontextprotocol.org/*` is a single trust anchor in the same-origin allowlist; compromise of the catalog domain or its CA compromises every buyer agent. Catalog-served bodies MUST be digest-pinned identically to origin fetches (the digest is on the *parent* `format_schema.uri@digest`, not on the catalog response). Future hardening (signed bodies, transparency log) is tracked separately.
+ */
+export interface PlatformExtensionReference {
   /**
-   * Unique identifier for the product
+   * HTTPS URL identifying the extension. `https://` is mandatory — `http://`, `file://`, `data:`, and other schemes are rejected at the schema layer (defense-in-depth on top of the fetch-contract normative rules). The URI base is the owning agent's URL; the path identifies the extension within that agent. Example: 'https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel'. The full fetch contract — SSRF allowlist, response-size cap, $ref sandbox, schema-compile bounds — is documented on `product-format-declaration.json#format_schema` and applies to ALL fetches of this reference shape regardless of whether the field is named `format_schema` (load-bearing for validation) or `platform_extensions` (informational); the *transport* rules are identical, only the *consumption* semantics differ.
+   * @pattern ^https:\/\/
    */
-  product_id: string;
+  uri: string;
   /**
-   * Human-readable product name
+   * SHA-256 content digest of the extension definition (sha256:<hex>). Used to detect drift — if the agent revises the extension, the digest changes and cached definitions become invalid.
+   * @pattern ^sha256:[a-f0-9]{64}$
    */
-  name: string;
+  digest: string;
+}
+export interface ImageFormatDeclaration {
+  format_kind: 'image';
+  params: CanonicalFormatImage;
+}
+export interface Fixed {
+  [k: string]: unknown | undefined;
+}
+export interface MultiSize {
+  [k: string]: unknown | undefined;
+}
+export interface None {
+  [k: string]: unknown | undefined;
+}
+export interface HTML5FormatDeclaration {
+  format_kind: 'html5';
+  params: CanonicalFormatHTML5Banner;
+}
+export interface DisplayTagFormatDeclaration {
+  format_kind: 'display_tag';
+  params: CanonicalFormatDisplayTag;
+}
+export interface ImageCarouselFormatDeclaration {
+  format_kind: 'image_carousel';
+  params: CanonicalFormatImageCarousel;
+}
+/**
+ * Multi-card swipeable carousel. The buyer ships a `cards` slot whose value is an **array** of [card-asset](/schemas/core/assets/card-asset.json) objects (a single key with an array value — NOT one key per card, NOT dotted/bracketed paths). Each card-asset carries: `asset_type: "card"`, `media` (an image or video asset), optional `headline` (text), optional `landing_page_url` (url asset). Per-card structure is the same across all cards; mixed orientations not allowed within a single carousel. Tracking model: per-card impression and engagement pixels + carousel-level engagement (swipe, view-time). Allowed asset types for a card's `media` field: `image` and `video` (Meta-style mixed-media); platforms can narrow to image-only or video-only via `allowed_card_media_asset_types`.
+ *
+ * The manifest's `assets.cards` value is an array of card-asset objects. Example: `"cards": [{"asset_type": "card", "media": {"asset_type": "image", "url": "..."}, "headline": "Buy now", "landing_page_url": {"asset_type": "url", "url_type": "clickthrough", "url": "..."}}, ...]`. Each card-asset validates against the card schema; per-card platform extensions attach via the card's `platform_extensions` field, never via inline non-canonical keys.
+ */
+export interface CanonicalFormatImageCarousel {
   /**
-   * Detailed description of the product and its inventory
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
-  description: string;
+  experimental?: boolean;
   /**
-   * Publisher properties covered by this product. Buyers fetch actual property definitions from each publisher's adagents.json and validate agent authorization. Selection patterns mirror the authorization patterns in adagents.json for consistency.
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
    */
-  publisher_properties: PublisherPropertySelector[];
+  deprecated?: boolean;
   /**
-   * Advertising channels this product is sold as. Products inherit from their properties' supported_channels but may narrow the scope. For example, a product covering YouTube properties might be sold as ['ctv'] even though those properties support ['olv', 'social', 'ctv'].
+   * Inherently new in v2 — multi-card carousels (Meta carousel, Pinterest pin collections, Snap collection ads) weren't expressible as v1 named formats. SDKs MUST NOT emit `FORMAT_PROJECTION_FAILED` for products using this canonical; the v1-unreachability is structural.
    */
-  channels?: MediaChannel[];
+  v1_translatable?: unknown;
   /**
-   * Array of supported creative format IDs - structured format_id objects with agent_url and id
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
    */
-  format_ids: FormatReferenceStructuredObject[];
+  since_version?: string;
   /**
-   * Optional array of specific placements within this product. When provided, buyers can target specific placements when assigning creatives.
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
    */
-  placements?: Placement[];
-  delivery_type: DeliveryType;
-  exclusivity?: Exclusivity;
+  migration_target_version?: string;
   /**
-   * Available pricing models for this product
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
    */
-  pricing_options: PricingOption[];
-  forecast?: DeliveryForecast;
-  outcome_measurement?: OutcomeMeasurement;
+  composition_model?: 'deterministic' | 'algorithmic';
   /**
-   * Measurement provider and methodology for delivery metrics. The buyer accepts the declared provider as the source of truth for the buy. When absent, buyers should apply their own measurement defaults.
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
    */
-  delivery_measurement?: {
-    /**
-     * Measurement provider(s) used for this product (e.g., 'Google Ad Manager with IAS viewability', 'Nielsen DAR', 'Geopath for DOOH impressions')
-     */
-    provider: string;
-    /**
-     * Additional details about measurement methodology in plain language (e.g., 'MRC-accredited viewability. 50% in-view for 1s display / 2s video', 'Panel-based demographic measurement updated monthly')
-     */
-    notes?: string;
-  };
-  measurement_terms?: MeasurementTerms;
+  provenance_required?: boolean;
   /**
-   * Seller's default performance standards for this product: viewability, IVT, completion rate, brand safety, attention score. Buyers may propose different standards at media buy creation. When absent, no structured performance standards apply.
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
    */
-  performance_standards?: PerformanceStandard[];
-  cancellation_policy?: CancellationPolicy;
-  reporting_capabilities: ReportingCapabilities;
-  creative_policy?: CreativePolicy;
+  platform_extensions?: PlatformExtensionReference[];
   /**
-   * Whether this is a custom product
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
    */
-  is_custom?: boolean;
+  synthesis_nondeterministic?: boolean;
   /**
-   * Whether buyers can filter this product to a subset of its publisher_properties. When false (default), the product is 'all or nothing' - buyers must accept all properties or the product is excluded from property_list filtering results.
+   * Default slots for image_carousel. The `cards` slot's value in the manifest is an array of [card-asset](/schemas/core/assets/card-asset.json) objects; `min` / `max` constrain card count.
    */
-  property_targeting_allowed?: boolean;
+  slots?: unknown;
   /**
-   * Data provider signals available for this product. Buyers fetch signal definitions from each data provider's adagents.json and can verify agent authorization.
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
-  data_provider_signals?: DataProviderSignalSelector[];
+  production_window_business_days?: number;
   /**
-   * Whether buyers can filter this product to a subset of its data_provider_signals. When false (default), the product includes all listed signals as a bundle. When true, buyers can target specific signals.
+   * Aspect ratio shared across all cards (e.g., '1:1', '1.91:1', '4:5').
+   * @pattern ^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$
    */
-  signal_targeting_allowed?: boolean;
+  card_aspect_ratio?: string;
   /**
-   * Catalog types this product supports for catalog-driven campaigns. A sponsored product listing declares ["product"], a job board declares ["job", "offering"]. Buyers match synced catalogs to products via this field.
+   * Minimum card count (typical: 2 or 3).
+   * @minimum 2
    */
-  catalog_types?: CatalogType[];
+  min_cards?: number;
   /**
-   * Metric optimization capabilities for this product. Presence indicates the product supports optimization_goals with kind: 'metric'. No event source or conversion tracking setup required — the seller tracks these metrics natively.
+   * Maximum card count (typical: 6, 10, or 35 depending on platform).
    */
-  metric_optimization?: {
-    /**
-     * Metric kinds this product can optimize for. Buyers should only request metric goals for kinds listed here.
-     */
-    supported_metrics: (
-      | 'clicks'
-      | 'views'
-      | 'completed_views'
-      | 'viewed_seconds'
-      | 'attention_seconds'
-      | 'attention_score'
-      | 'engagements'
-      | 'follows'
-      | 'saves'
-      | 'profile_visits'
-      | 'reach'
-    )[];
-    /**
-     * Reach units this product can optimize for. Required when supported_metrics includes 'reach'. Buyers must set reach_unit to a value in this list on reach optimization goals — sellers reject unsupported values.
-     */
-    supported_reach_units?: ReachUnit[];
-    /**
-     * Video view duration thresholds (in seconds) this product supports for completed_views goals. Only relevant when supported_metrics includes 'completed_views'. When absent, the seller uses their platform default. Buyers must set view_duration_seconds to a value in this list — sellers reject unsupported values.
-     */
-    supported_view_durations?: number[];
-    /**
-     * Target kinds available for metric goals on this product. Values match target.kind on the optimization goal. Only these target kinds are accepted — goals with unlisted target kinds will be rejected. When omitted, buyers can set target-less metric goals (maximize volume within budget) but cannot set specific targets.
-     */
-    supported_targets?: ('cost_per' | 'threshold_rate')[];
-  };
+  max_cards?: number;
   /**
-   * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
+   * Asset types each card's `media` field may carry. Default: ['image']. Polymorphic carousels (Meta) allow ['image', 'video']. Renamed from `allowed_card_asset_types` to disambiguate that this constrains the card's media payload, not the card-asset itself (which is always asset_type: "card").
+   */
+  allowed_card_media_asset_types?: ('image' | 'video')[];
+  /**
+   * DEPRECATED — alias for `allowed_card_media_asset_types`. Kept for back-compat; prefer the new field name. Removed in 5.0.
+   */
+  allowed_card_asset_types?: ('image' | 'video')[];
+  /**
    * @minimum 1
    */
-  max_optimization_goals?: number;
-  measurement_readiness?: MeasurementReadiness;
+  card_image_max_file_size_kb?: number;
   /**
-   * Conversion event tracking for this product. Presence indicates the product supports optimization_goals with kind: 'event'. Seller-level capabilities (supported event types, UID types, attribution windows) are declared in get_adcp_capabilities.
+   * @minimum 1
    */
-  conversion_tracking?: {
+  card_video_max_duration_ms?: number;
+  /**
+   * Maximum length of the carousel-level primary text.
+   * @minimum 1
+   */
+  primary_text_max_chars?: number;
+  /**
+   * Per-card headline character limit. Governs the `headline` field on each card-asset in the `cards` slot.
+   * @minimum 1
+   */
+  card_headline_max_chars?: number;
+  /**
+   * Per-card description character limit. Governs the `description` field on each card-asset in the `cards` slot. Distinct from `card_headline_max_chars`: description is longer body copy (typically 100-500 chars); headline is the short label (typically 25-40 chars).
+   * @minimum 1
+   */
+  card_description_max_chars?: number;
+  ssl_required?: boolean;
+}
+export interface HostedVideoFormatDeclaration {
+  format_kind: 'video_hosted';
+  params: CanonicalFormatHostedVideo;
+}
+/**
+ * Direct video file (mp4/webm/mov) hosted by the buyer. Slot: `video_main` (video asset, file or hosted URL), optional `headline`, `brand_name`, `cta`, `companion_banner`, `landing_page_url`. Tracking model: IAB Open Measurement SDK + external impression/click/quartile pixels via universal_macros. Orientation is a parameter (vertical 9:16 / horizontal 16:9 / square 1:1); slot shape includes optional `brand_name` (typical for vertical short-form) and optional `companion_banner` (typical for horizontal instream). Distinct from `video_vast` (VAST tag, inherent VAST event tracking) — receivers fire impression and click pixels at delivery time.
+ */
+export interface CanonicalFormatHostedVideo {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for video_hosted canonical. Buyer ships a video asset (file or hosted URL); optional headline, primary text (long-form caption), CTA (typically constrained via `cta_values`), brand_name (typical for vertical short-form), companion_banner (typical for horizontal instream), and clickthrough URL. Products MAY override or extend the default — e.g., remove `companion_banner` for short-form vertical, narrow `cta` to a value enum, mark `landing_page_url` as required.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Video orientation. Vertical = 9:16 (Reels, Stories, Shorts). Horizontal = 16:9 (instream, CTV). Square = 1:1 (in-feed).
+   */
+  orientation?: 'vertical' | 'horizontal' | 'square';
+  /**
+   * Aspect ratio. Inferred from orientation if omitted.
+   * @pattern ^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$
+   */
+  aspect_ratio?: string;
+  /**
+   * @minimum 1
+   */
+  min_width?: number;
+  /**
+   * @minimum 1
+   */
+  min_height?: number;
+  /**
+   * @minimum 1
+   */
+  max_width?: number;
+  /**
+   * @minimum 1
+   */
+  max_height?: number;
+  /**
+   * [min, max] duration in milliseconds. **Precedence**: when both `duration_ms_exact` and `duration_ms_range` ship on the same product, `duration_ms_exact` takes precedence — buyers MUST validate against the exact value and ignore the range. The range is treated as advisory metadata in that case (e.g., for UI display showing the broader product family). SDKs SHOULD lint a warning when both fields ship; producers SHOULD pick one.
+   */
+  duration_ms_range?: number[];
+  /**
+   * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship (see `duration_ms_range` description).
+   * @minimum 1
+   */
+  duration_ms_exact?: number;
+  video_codecs?: ('h264' | 'h265' | 'vp8' | 'vp9' | 'av1' | 'prores')[];
+  audio_codecs?: ('aac' | 'mp3' | 'opus' | 'pcm')[];
+  containers?: ('mp4' | 'webm' | 'mov')[];
+  /**
+   * @minimum 1
+   */
+  min_bitrate_kbps?: number;
+  /**
+   * @minimum 1
+   */
+  max_bitrate_kbps?: number;
+  /**
+   * @minimum 1
+   */
+  max_file_size_mb?: number;
+  frame_rates?: number[];
+  captions?: 'required' | 'recommended' | 'not_required';
+  om_sdk_required?: boolean;
+  /**
+   * @minimum 1
+   */
+  headline_max_chars?: number;
+  /**
+   * @minimum 1
+   */
+  primary_text_max_chars?: number;
+  /**
+   * @minimum 1
+   */
+  brand_name_max_chars?: number;
+  cta_values?: string[];
+  /**
+   * Permitted companion banner widths (instream video).
+   */
+  companion_banner_widths?: number[];
+  companion_banner_heights?: number[];
+  /**
+   * Where the rendered asset bytes come from. Single shared enum across canonicals. See `image.json#asset_source` for the full semantics. `publisher_host_recorded` is audio-specific and has no defined behavior on video — adopters MUST select a value appropriate to the canonical.
+   */
+  asset_source?:
+    | 'buyer_uploaded'
+    | 'publisher_host_recorded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized';
+  /**
+   * Whether the product accepts buyer-uploaded video. When `rejected`, the buyer cannot ship a video asset directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the video.
+   */
+  buyer_asset_acceptance?: 'accepted' | 'rejected';
+}
+export interface VASTVideoFormatDeclaration {
+  format_kind: 'video_vast';
+  params: CanonicalFormatVASTVideo;
+}
+/**
+ * VAST-tag-delivered video creative. Slot: `vast_tag` (vast asset, URL or inline XML, VAST 2.x-4.x). Tracking model: VAST events inherent to the spec — `impression`, `firstQuartile`, `midpoint`, `thirdQuartile`, `complete`, `start`, `pause`, `resume`, `mute`, `unmute`, `expand`, `collapse`, `fullscreen`, `creativeView`, `clickTracking`, `error`. VPAID interactivity via `vpaid_enabled: true` flag. SIMID extensions for interactive video supported as VAST extensions. Orientation is a parameter (vertical / horizontal / square). Distinct from `video_hosted` (direct file with external tracking).
+ */
+export interface CanonicalFormatVASTVideo {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for video_vast canonical. Buyer ships a VAST tag (URL or inline XML, VAST 2.x-4.x) plus an optional clickthrough URL (which falls back to the VAST `ClickThrough` element when omitted). Tracking events are inherent to VAST and don't require explicit slots.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  orientation?: 'vertical' | 'horizontal' | 'square';
+  /**
+   * @pattern ^[0-9]+(\.[0-9]+)?:[0-9]+(\.[0-9]+)?$
+   */
+  aspect_ratio?: string;
+  /**
+   * Required VAST version.
+   */
+  vast_version?: '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
+  /**
+   * Whether VPAID interactivity is supported. When true, the VAST tag may carry VPAID JS/Flash payloads.
+   */
+  vpaid_enabled?: boolean;
+  vpaid_version?: '1.0' | '2.0';
+  /**
+   * Whether IAB SIMID interactive video extensions are supported.
+   */
+  simid_supported?: boolean;
+  /**
+   * [min, max] duration in milliseconds. **Precedence**: `duration_ms_exact` takes precedence when both ship. SDKs SHOULD lint a warning when both fields ship.
+   */
+  duration_ms_range?: number[];
+  /**
+   * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
+   * @minimum 1
+   */
+  duration_ms_exact?: number;
+  /**
+   * @minimum 1
+   */
+  min_width?: number;
+  /**
+   * @minimum 1
+   */
+  max_width?: number;
+  /**
+   * @minimum 1
+   */
+  min_height?: number;
+  /**
+   * @minimum 1
+   */
+  max_height?: number;
+  /**
+   * Whether the VAST creative must be linear (non-skippable in-stream).
+   */
+  linear_required?: boolean;
+  /**
+   * When skippable, the buyer-side skip threshold in milliseconds (e.g., 5000 for 5-second skippable pre-roll).
+   * @minimum 0
+   */
+  skippable_after_ms?: number;
+  /**
+   * Maximum VAST wrapper redirect depth permitted.
+   * @minimum 0
+   */
+  max_wrapper_depth?: number;
+  ssl_required?: boolean;
+}
+export interface HostedAudioFormatDeclaration {
+  format_kind: 'audio_hosted';
+  params: CanonicalFormatHostedAudio;
+}
+/**
+ * Direct audio creative — buyer ships an `audio` asset (mp3/aac/wav) for asset-driven products, or ships a `script` / `creative_brief` text asset for products where the seller produces audio internally (podcast host-reads, TTS synthesis). Optional companion slots: `companion_image`, `brand_name`, `landing_page_url`. Tracking model: standard impression + completion + companion-image-click pixels via universal_macros. Distinct from `audio_daast` (DAAST tag, inherent DAAST event tracking). For host-reads and synthesized audio, the format declares `asset_source: 'publisher_host_recorded'` or `'agent_synthesized'` plus `buyer_asset_acceptance: 'rejected'`; the format's `slots` declaration enumerates which assets the buyer ships (e.g., `script` text asset for host-reads). The seller decides how to consume each asset (render verbatim vs produce audio from text) — there is no separate manifest 'inputs' map; everything the buyer ships goes in `assets`.
+ */
+export interface CanonicalFormatHostedAudio {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for buyer-uploaded audio. Host-read products override with a `script` (asset_type: text) or `creative_brief` (asset_type: brief) slot in place of `audio_main`, plus `asset_source: 'publisher_host_recorded'` and `buyer_asset_acceptance: 'rejected'`. TTS-from-script products override similarly with `asset_source: 'seller_pre_rendered_from_brief'`.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * [min, max] duration in milliseconds. **Precedence**: `duration_ms_exact` takes precedence when both ship on the same product. SDKs SHOULD lint a warning when both fields ship.
+   */
+  duration_ms_range?: number[];
+  /**
+   * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
+   * @minimum 1
+   */
+  duration_ms_exact?: number;
+  audio_codecs?: ('mp3' | 'aac' | 'wav' | 'opus' | 'flac')[];
+  audio_sample_rates?: number[];
+  audio_channels?: ('mono' | 'stereo')[];
+  /**
+   * @minimum 1
+   */
+  min_bitrate_kbps?: number;
+  /**
+   * @minimum 1
+   */
+  max_bitrate_kbps?: number;
+  /**
+   * Required integrated loudness in LUFS (typical: -16 for streaming/podcast, -23 for broadcast). Negative values.
+   */
+  loudness_lufs?: number;
+  /**
+   * Permitted deviation from loudness_lufs in dB.
+   * @minimum 0
+   */
+  loudness_tolerance_db?: number;
+  /**
+   * Maximum true-peak level in dBFS (typical: -2).
+   */
+  true_peak_dbfs?: number;
+  /**
+   * Where the rendered audio bytes come from. Single shared enum across canonicals (see `image.json#asset_source` for the full semantics). `publisher_host_recorded`: the publisher's host records the audio (podcast host-read pattern); buyer must use the publisher's build_creative capability. This value is audio-specific.
+   */
+  asset_source?:
+    | 'buyer_uploaded'
+    | 'publisher_host_recorded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized';
+  /**
+   * Whether the product accepts buyer-uploaded audio. When `rejected`, the buyer cannot ship an audio asset directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the audio. Combined with `asset_source`, lets a product declare 'I produce audio from briefs and refuse buyer uploads' (asset_source=`seller_pre_rendered_from_brief`, buyer_asset_acceptance=`rejected`).
+   */
+  buyer_asset_acceptance?: 'accepted' | 'rejected';
+  companion_image_required?: boolean;
+  companion_image_aspect_ratio?: string;
+  /**
+   * @minimum 1
+   */
+  companion_image_max_file_size_kb?: number;
+  /**
+   * @minimum 1
+   */
+  brand_name_max_chars?: number;
+}
+export interface DAASTAudioFormatDeclaration {
+  format_kind: 'audio_daast';
+  params: CanonicalFormatDAASTAudio;
+}
+/**
+ * DAAST-tag-delivered audio creative (audio analog of VAST). Slot: `daast_tag` (daast asset, URL or inline XML). Tracking model: DAAST events inherent to the spec — `impression`, `firstQuartile`, `midpoint`, `thirdQuartile`, `complete`, `start`, `pause`, `resume`, `mute`, `unmute`, `clickTracking`, `error`. Distinct from `audio_hosted` (direct file with external tracking).
+ */
+export interface CanonicalFormatDAASTAudio {
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) may not work as declared — adopters SHOULD have a v1 fallback ready and SHOULD NOT route production budget without testing. Same semantics as `experimental` on protocols: 'this is shipping but may break, evolve, or fail.' Buyers reading `experimental: true` SHOULD prefer the v1 path when a v1 fallback exists for the same product (via `format_ids` on the parent product or via the v2 declaration's `v1_format_ref`).
+   *
+   * Three drivers of `experimental: true`:
+   * 1. **Spec maturity** — the canonical's tracking model or parameter shape is still being settled (`agent_placement`'s tracking macros, `sponsored_placement`'s per-adapter contracts, `responsive_creative`'s algorithmic composition).
+   * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
+   * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
+   *
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   */
+  experimental?: boolean;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Whether this canonical has any v1 named-format equivalent. `true` (default) — the canonical is structurally expressible as one or more v1 named formats (IAB display sizes, VAST tags, DAAST tags, etc.); v1→v2 projection via `v1-canonical-mapping.json` is meaningful. `false` — the canonical is inherently new in v2 and has no v1 form; v1's `list_creative_formats` couldn't express it because the underlying concept (algorithmic surface composition, AI-surface mentions, retail-media catalog placements, multi-card carousels) didn't exist as a v1 named-format archetype.
+   *
+   * Lets SDKs distinguish two failure modes that today look identical: (a) the registry hasn't covered this canonical yet (correctable — seller adds explicit `canonical` field or files a registry entry) vs (b) no v1 path is possible (informational — buyer needs v2-aware consumption, or seller declares `canonical_formats_only: true` on the product declaration). SDKs encountering `v1_translatable: false` on a canonical SHOULD NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-coverage gap) — instead surface the inherent v1-unreachability as a different diagnostic or skip silently. The 4 inherently-v2 canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`, `responsive_creative`, `agent_placement`.
+   */
+  v1_translatable?: boolean;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slots for audio_daast canonical. Buyer ships a DAAST tag (URL or inline XML, 1.0 or 1.1) plus an optional clickthrough URL. Tracking events are inherent to DAAST and don't require explicit slots.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  daast_version?: '1.0' | '1.1';
+  /**
+   * [min, max] duration in milliseconds. **Precedence**: `duration_ms_exact` takes precedence when both ship. SDKs SHOULD lint a warning when both fields ship.
+   */
+  duration_ms_range?: number[];
+  /**
+   * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
+   * @minimum 1
+   */
+  duration_ms_exact?: number;
+  linear_required?: boolean;
+  /**
+   * @minimum 0
+   */
+  max_wrapper_depth?: number;
+  ssl_required?: boolean;
+  companion_image_required?: boolean;
+}
+export interface SponsoredPlacementFormatDeclaration {
+  format_kind: 'sponsored_placement';
+  params: CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven;
+}
+/**
+ * Catalog-driven retail-media format. Slot: `source_catalog` (catalog asset — product/SKU/ASIN/GTIN catalog reference, REQUIRED), optional `hero_asset`, optional `landing_page_url`. Buyer supplies the catalog reference; surface composes per-item or multi-item rendering using its native placement template. **Composition is deterministic** — buyer can predict per-slot rendering from the catalog item structure. Tracking model: per-item impression + click + conversion (catalog-keyed via offering_id/sku/gtin macros). Covers Amazon Sponsored Products, Criteo Sponsored Products, CitrusAd Sponsored Products, Walmart Connect Sponsored Products, Pinterest Collection (catalog-driven mode).
+ *
+ * **Scope (normative — buyer-agent routing).** This canonical is the home for catalog-driven retail-media placements ONLY. The defining feature is the `source_catalog` slot — products under this canonical compose their creative *per catalog item* using the buyer-supplied catalog feed. Without a catalog feed there is nothing to render against. Buyer agents reading `format_kind: sponsored_placement` MUST attach a catalog reference; sellers MUST require `source_catalog` in the manifest.
+ *
+ * **Not this canonical (route elsewhere):**
+ * - IAB in-feed native ads, content-recommendation widgets (Taboola, Outbrain, Yahoo Native, AdMob Native, in-feed sponsored cards) — use `native_in_feed` (asset-bundle composition; no catalog).
+ * - Algorithmic surface that picks from a buyer-supplied asset pool (Google PMax, Meta Advantage+) — use `responsive_creative`.
+ * - Single-image or single-video creative — use `image` or `video_hosted`.
+ *
+ * The earlier broader framing ('any sponsored placement') was too loose for buyer-agent routing — a buyer reading `sponsored_placement` couldn't disambiguate a catalog-driven Amazon SP from an in-feed Taboola widget. As of 3.1, the canonical is narrowed to catalog-keyed retail-media; native moves to `native_in_feed`. Distinct from `responsive_creative` (algorithmic combinator from buyer pool) and `agent_placement` (text/audio AI-surface composition).
+ */
+export interface CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven {
+  /**
+   * Marked experimental at 3.1 GA: the canonical covers 4 meaningfully different retail-media adapter contracts (Amazon SP, Criteo SP / CitrusAd SP, Pinterest Collection, generative-per-SKU). Adopter contracts vary; buyers MUST validate per-adapter behavior before routing budget. Promotion to non-experimental gated on the #4592 adapter-contract docs work.
+   */
+  experimental?: unknown;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Inherently new in v2 — retail-media catalog placements weren't expressible as v1 named formats. SDKs MUST NOT emit `FORMAT_PROJECTION_FAILED` for products using this canonical; the v1-unreachability is structural, not a registry-coverage gap.
+   */
+  v1_translatable?: unknown;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Catalog types this product accepts.
+   */
+  supported_catalog_types?: (
+    | 'product'
+    | 'store'
+    | 'offering'
+    | 'hotel'
+    | 'flight'
+    | 'vehicle'
+    | 'real_estate'
+    | 'education'
+    | 'destination'
+    | 'app'
+    | 'job'
+    | 'inventory'
+  )[];
+  /**
+   * Minimum catalog item count buyer must supply.
+   * @minimum 1
+   */
+  min_items?: number;
+  /**
+   * Maximum items considered for placement.
+   */
+  max_items?: number;
+  /**
+   * How items map to delivery: per_item = one ad per catalog item; multi_item_in_creative = composed multi-item ad (Pinterest Collection, Snap Collection); single_item = one ad showing one item.
+   */
+  fanout_mode?: 'per_item' | 'multi_item_in_creative' | 'single_item';
+  /**
+   * Catalog item fields the seller requires (e.g., ['title', 'image_url', 'price']).
+   */
+  required_catalog_fields?: string[];
+  /**
+   * Catalog identifier types the placement renders against.
+   */
+  supported_id_types?: (
+    | 'asin'
+    | 'sku'
+    | 'gtin'
+    | 'offering_id'
+    | 'store_id'
+    | 'hotel_id'
+    | 'flight_id'
+    | 'vehicle_id'
+    | 'listing_id'
+    | 'program_id'
+    | 'destination_id'
+    | 'app_id'
+    | 'job_id'
+  )[];
+  /**
+   * Whether the buyer can supply a hero/banner asset alongside the catalog (Pinterest Collection pattern).
+   */
+  hero_asset_supported?: boolean;
+  /**
+   * How each per-item creative is produced. Covers the same production-source axis as `asset_source` on `image` / `video_hosted` / `audio_hosted` but with a 4-value subset — drops `publisher_host_recorded` because it's audio-specific and doesn't apply to retail-media catalog placements. SDK codegen MAY share a base enum and narrow per-canonical, or emit two distinct enums; either way the wire values overlap exactly for the 4 retained values. `buyer_uploaded` (default, current Amazon/Criteo/CitrusAd pattern): the buyer's catalog already contains rendered assets per item; the seller composes the placement using those assets. ("Uploaded" reads slightly off for catalog-keyed items where the buyer didn't actively upload bytes — the catalog ingestion already supplied them — but the semantic is the same: rendered bytes are buyer-supplied, not seller-produced.) `seller_pre_rendered_from_brief`: the buyer ships a brief plus the catalog reference; the seller renders one creative per catalog item from the brief at sync_creatives time. `seller_human_designed`: seller's design team produces per-item renders manually. `agent_synthesized`: AI synthesis pipeline produces per-item renders; pair with `synthesis_nondeterministic: true` for Veo/Sora-class generative video applied per item. Captures the multi-output generative pattern (1 brief × N catalog items → N rendered creatives) under the existing canonical without requiring a separate canonical. Distinct from `fanout_mode`, which describes how items map to delivery slots after rendering.
+   */
+  item_production_model?:
+    | 'buyer_uploaded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized';
+}
+export interface NativeInFeedFormatDeclaration {
+  format_kind: 'native_in_feed';
+  params: CanonicalFormatNativeInFeed;
+}
+/**
+ * IAB-shaped native creative for in-feed and content-recommendation surfaces. Default slots cover the primary IAB OpenRTB Native 1.2 asset types — `title` (Title Asset), `body_text` (Data Asset type 2), `main_image` (Image Asset main), `icon` (Image Asset icon), `cta` (Data Asset type 12), `advertiser_name` (Data Asset type 1), `sponsored_label` (Title-adjacent), `landing_page_url` (Link Asset), `display_url` (Data Asset type 11 — visible URL/domain, distinct from clickthrough), `rating` (Data Asset type 3 — app/product rating), `price` (Data Asset type 6 — product price), plus renderer-fired `impression_tracker` / `viewability_tracker` / `click_tracker` (`pixel_tracker`). Products MAY use `slots_override` to add other IAB Native data asset types (likes — type 4, downloads — type 5, saleprice — type 7, phone_number — type 8, address — type 9, desc2 — type 10, etc.) or to remove slots the surface doesn't render. The publisher's renderer assembles these into its own look-and-feel — feed card, content-recommendation slot, in-stream native unit. Buyer ships a single asset bundle; the surface chooses presentation.
+ *
+ * **Scope (normative — buyer-agent routing).** This canonical is the home for:
+ * - IAB OpenRTB Native 1.2 in-feed native ads (publisher feeds, app feeds)
+ * - Content-recommendation widgets (Taboola, Outbrain, Yahoo Recommendations)
+ * - AdMob Native / Yahoo Native publisher slots
+ * - In-feed sponsored placements without catalog dependency
+ *
+ * **Not this canonical:**
+ * - Catalog-driven retail-media (Amazon SP, Criteo SP, CitrusAd SP) — use `sponsored_placement` (requires `source_catalog`).
+ * - Algorithmic surface that picks from a buyer-supplied asset pool (Google PMax, Meta Advantage+) — use `responsive_creative`.
+ * - Multi-card carousel — use `image_carousel`.
+ * - Video-first native units where the asset is a hosted video file — use `video_hosted` with `applies_to_channels: ["native"]`.
+ *
+ * Distinct from `sponsored_placement` along the catalog axis: native_in_feed is asset-bundle composition; sponsored_placement is catalog-row composition. A buyer agent reading `format_kind: native_in_feed` knows to assemble title + image + body + CTA; reading `format_kind: sponsored_placement` knows to attach a catalog feed.
+ */
+export interface CanonicalFormatNativeInFeed {
+  /**
+   * Stable at 3.1 GA. Shape mirrors IAB OpenRTB Native 1.2 — the renderer contract is well-established across in-feed native and content-recommendation adopters.
+   */
+  experimental?: unknown;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Translates to v1 named native formats (e.g., `native_standard`, `native_content`) via the projection registry. Sellers with existing v1 named native formats SHOULD point `v1_format_ref[]` at them.
+   */
+  v1_translatable?: unknown;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * Default slot shape for native_in_feed. Mirrors IAB OpenRTB Native 1.2 asset types. Products MAY override (`slots_override` on the projection ref) to narrow per-slot limits (`max_chars` on title/body) or remove unused slots (a content-recommendation slot that doesn't display an icon).
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * Maximum character length for the title slot. IAB native typical: 25 (short) to 90 (long). Buyer agents SHOULD validate ship-time title length against this.
+   * @minimum 1
+   */
+  title_max_chars?: number;
+  /**
+   * Maximum character length for the body_text slot. IAB native typical: 90 (mainline) to 140 (extended).
+   * @minimum 1
+   */
+  body_text_max_chars?: number;
+  /**
+   * Maximum character length for the cta slot. Typical: 15–25.
+   * @minimum 1
+   */
+  cta_max_chars?: number;
+  /**
+   * Permitted CTA values for this product (e.g., ['LEARN_MORE', 'SHOP_NOW', 'SIGN_UP', 'DOWNLOAD']). When set, narrows the cta slot to a closed enum.
+   */
+  cta_values?: string[];
+  /**
+   * Accepted (width, height) pairs for the main_image slot. Common IAB native sizes: 1200×627 (1.91:1), 1080×1080 (1:1), 1080×1350 (4:5).
+   */
+  main_image_sizes?: {
     /**
-     * Action sources relevant to this product (e.g. a retail media product might have 'in_store' and 'website', while a display product might only have 'website')
+     * @minimum 1
      */
-    action_sources?: ActionSource[];
+    width: number;
     /**
-     * Target kinds available for event goals on this product. Values match target.kind on the optimization goal. cost_per: target cost per conversion event. per_ad_spend: target return on ad spend (requires value_field on event sources). maximize_value: maximize total conversion value without a specific ratio target (requires value_field). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes conversion count within budget — no declaration needed for that mode. When omitted, buyers can still set target-less event goals.
+     * @minimum 1
      */
-    supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
+    height: number;
+  }[];
+  /**
+   * Required (width, height) for the icon slot when present (typical: 80×80 or 100×100).
+   */
+  icon_size?: {
     /**
-     * Whether the seller provides its own always-on measurement (e.g. Amazon sales attribution for Amazon advertisers). When true, sync_event_sources response will include seller-managed event sources with managed_by='seller'.
+     * @minimum 1
      */
-    platform_managed?: boolean;
+    width: number;
+    /**
+     * @minimum 1
+     */
+    height: number;
   };
   /**
-   * When the buyer provides a catalog on get_products, indicates which catalog items are eligible for this product. Only present for products where catalog matching is relevant (e.g., sponsored product listings, job boards, hotel ads).
+   * Maximum file size in kilobytes for main_image and icon.
+   * @minimum 1
    */
-  catalog_match?: {
-    /**
-     * GTINs from the buyer's catalog that are eligible on this product's inventory. Standard GTIN formats (GTIN-8 through GTIN-14). Only present for product-type catalogs with GTIN matching.
-     */
-    matched_gtins?: string[];
-    /**
-     * Item IDs from the buyer's catalog that matched this product's inventory. The ID type depends on the catalog type and content_id_type (e.g., SKUs for product catalogs, job_ids for job catalogs, offering_ids for offering catalogs).
-     */
-    matched_ids?: string[];
-    /**
-     * Number of catalog items that matched this product's inventory.
-     * @minimum 0
-     */
-    matched_count?: number;
-    /**
-     * Total catalog items evaluated from the buyer's catalog.
-     * @minimum 0
-     */
-    submitted_count: number;
-  };
+  max_image_file_size_kb?: number;
   /**
-   * Explanation of why this product matches the brief (only included when brief is provided)
+   * Permitted image file formats.
    */
-  brief_relevance?: string;
+  image_formats?: ('jpg' | 'jpeg' | 'png' | 'gif' | 'webp')[];
   /**
-   * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
-   * @format date-time
+   * Whether trackers, landing pages, and image URLs must be served over HTTPS.
    */
-  expires_at?: string;
+  ssl_required?: boolean;
   /**
-   * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
+   * Where the rendered native assets come from. `publisher_host_recorded` is omitted (audio-specific and not meaningful for native). Other values mirror the shared production-source axis used on `image` / `video_hosted`. `buyer_uploaded` (default): buyer ships pre-rendered title/image/body. `seller_pre_rendered_from_brief`: buyer ships a brief, seller renders the native bundle. `agent_synthesized`: AI synthesis pipeline produces title + image + body from a brief; pair with `synthesis_nondeterministic: true` for generative pipelines that can't guarantee in-spec output.
    */
-  product_card?: {
-    format_id: FormatReferenceStructuredObject;
-    /**
-     * Asset manifest for rendering the card, structure defined by the format
-     */
-    manifest: {};
-  };
+  asset_source?: 'buyer_uploaded' | 'seller_pre_rendered_from_brief' | 'seller_human_designed' | 'agent_synthesized';
   /**
-   * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
+   * Whether the product accepts buyer-uploaded native assets. When `rejected`, the buyer cannot ship pre-rendered title/image/body — they must use `build_creative` (or `sync_creatives` with brief inputs) so the seller produces the native bundle from a brief.
    */
-  product_card_detailed?: {
-    format_id: FormatReferenceStructuredObject;
-    /**
-     * Asset manifest for rendering the detailed card, structure defined by the format
-     */
-    manifest: {};
-  };
+  buyer_asset_acceptance?: 'accepted' | 'rejected';
+}
+export interface ResponsiveCreativeFormatDeclaration {
+  format_kind: 'responsive_creative';
+  params: CanonicalFormatResponsiveCreative;
+}
+/**
+ * Buyer supplies a pool of typed assets (multiple headlines, descriptions, images, videos, logos); the surface algorithmically composes combinations per placement. **Composition is algorithmic** — surface picks combinations and reports per-asset performance breakdowns. Covers Google Responsive Display Ads (RDA), Responsive Search Ads (RSA), Performance Max (PMax), Demand Gen, and Meta Advantage+ creative. Industry term: "Responsive" (Google) / "Advantage+ creative" (Meta) / "Dynamic Creative" (older Meta term). Distinct from `sponsored_placement` (catalog-driven, deterministic) and `agent_placement` (AI-surface composition). The structured `slots` field below enumerates expected canonical asset_group_id slots; per-slot count/length narrowing lives in flat parameters (`headlines_min`, `headline_max_chars`, etc.).
+ */
+export interface CanonicalFormatResponsiveCreative {
   /**
-   * Collections available in this product. Each entry references collections declared in an adagents.json by domain and collection ID. Buyers resolve full collection objects from the referenced adagents.json.
+   * Marked experimental at 3.1 GA: composition is algorithmic (the surface picks combinations and reports per-asset breakdowns), and there's no clean v1-translatable equivalent. Buyers ship asset pools rather than rendered creatives; the surface's per-impression composition cannot be predicted by `validate_input`. Adopters SHOULD validate behavior per surface (Google PMax vs Meta Advantage+ creative differ meaningfully).
    */
-  collections?: CollectionSelector[];
+  experimental?: unknown;
   /**
-   * Whether buyers can target a subset of this product's collections. When false (default), the product is a bundle — buyers get all listed collections. When true, buyers can select specific collections in the media buy.
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
    */
-  collection_targeting_allowed?: boolean;
+  deprecated?: boolean;
   /**
-   * Specific installments included in this product. Each installment references its parent collection via collection_id when the product spans multiple collections. When absent with collections present, the product covers the collections broadly (run-of-collection).
+   * Inherently new in v2 — algorithmic asset-pool composition (Google PMax / Meta Advantage+ creative) wasn't expressible as v1 named formats. SDKs MUST NOT emit `FORMAT_PROJECTION_FAILED` for products using this canonical; the v1-unreachability is structural.
    */
-  installments?: Installment[];
+  v1_translatable?: unknown;
   /**
-   * Registry policy IDs the seller enforces for this product. Enforcement level comes from the policy registry. Buyers can filter products by required policies.
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
    */
-  enforced_policies?: string[];
+  since_version?: string;
   /**
-   * Trusted Match Protocol capabilities for this product. When present, the product supports real-time contextual and/or identity matching via TMP. Buyers use this to determine what response types the publisher can accept and whether brands can be selected dynamically at match time.
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
    */
-  trusted_match?: {
-    /**
-     * Whether this product supports Context Match requests. When true, the publisher's TMP router will send context match requests to registered providers for this product's inventory.
-     */
-    context_match: boolean;
-    /**
-     * Whether this product supports Identity Match requests. When true, the publisher's TMP router will send identity match requests to evaluate user eligibility.
-     */
-    identity_match?: boolean;
-    /**
-     * What the publisher can accept back from context match.
-     */
-    response_types?: TMPResponseType[];
-    /**
-     * Whether the buyer can select a brand at match time. When false (default), the brand must be specified on the media buy/package. When true, the buyer's offer can include any brand — the publisher applies approval rules at match time. Enables multi-brand agreements where the holding company or buyer agent selects brand based on context.
-     */
-    dynamic_brands?: boolean;
-    /**
-     * TMP providers integrated with this product's inventory. Each entry identifies a provider by agent_url (from the registry) and declares what match types it supports for this product. The product-level context_match and identity_match booleans declare what the product supports overall; the per-provider booleans declare which provider handles each match type. Enables buyer discovery: 'find products where a specific provider does context matching.'
-     */
-    providers?: {
-      /**
-       * Provider's agent URL from the registry. Canonical identifier for this TMP provider.
-       */
-      agent_url: string;
-      /**
-       * Whether this provider handles context match for this product.
-       */
-      context_match?: boolean;
-      /**
-       * Whether this provider handles identity match for this product.
-       */
-      identity_match?: boolean;
-      /**
-       * ISO 3166-1 alpha-2 country codes this provider serves for identity match. The router uses this to select the correct regional provider based on the request's country field. Required when identity_match is true.
-       */
-      countries?: string[];
-      /**
-       * Identity types this regional provider can resolve. The router filters providers whose uid_types includes the request's uid_type. Required when identity_match is true.
-       */
-      uid_types?: UIDType[];
-    }[];
-  };
+  migration_target_version?: string;
   /**
-   * Instructions for submitting physical creative materials (print, static OOH, cinema). Present only for products requiring physical delivery outside the digital creative assignment flow. Buyer agents MUST validate url and email domains against the seller's known domains (from adagents.json) before submitting materials. Never auto-submit without human confirmation.
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
    */
-  material_submission?: {
-    /**
-     * HTTPS URL for uploading or submitting physical creative materials
-     * @pattern ^https:\/\/
-     */
-    url?: string;
-    /**
-     * Email address for creative material submission
-     * @format email
-     */
-    email?: string;
-    /**
-     * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
-     * @maxLength 2000
-     */
-    instructions?: string;
-    ext?: ExtensionObject;
-  };
-  ext?: ExtensionObject;
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * @minimum 0
+   */
+  headlines_min?: number;
+  /**
+   * @minimum 0
+   */
+  headlines_max?: number;
+  /**
+   * @minimum 1
+   */
+  headline_max_chars?: number;
+  /**
+   * @minimum 0
+   */
+  long_headlines_min?: number;
+  /**
+   * @minimum 0
+   */
+  long_headlines_max?: number;
+  /**
+   * @minimum 1
+   */
+  long_headline_max_chars?: number;
+  /**
+   * @minimum 0
+   */
+  descriptions_min?: number;
+  /**
+   * @minimum 0
+   */
+  descriptions_max?: number;
+  /**
+   * @minimum 1
+   */
+  description_max_chars?: number;
+  /**
+   * @minimum 0
+   */
+  images_landscape_min?: number;
+  /**
+   * @minimum 0
+   */
+  images_landscape_max?: number;
+  images_landscape_aspect_ratio?: string;
+  /**
+   * @minimum 0
+   */
+  images_square_min?: number;
+  /**
+   * @minimum 0
+   */
+  images_square_max?: number;
+  /**
+   * @minimum 0
+   */
+  images_vertical_min?: number;
+  /**
+   * @minimum 0
+   */
+  images_vertical_max?: number;
+  /**
+   * @minimum 0
+   */
+  videos_min?: number;
+  /**
+   * @minimum 0
+   */
+  videos_max?: number;
+  /**
+   * @minimum 1
+   */
+  video_min_duration_ms?: number;
+  /**
+   * @minimum 1
+   */
+  video_max_duration_ms?: number;
+  /**
+   * @minimum 0
+   */
+  logo_min?: number;
+  /**
+   * @minimum 0
+   */
+  logo_max?: number;
+  logo_aspect_ratios?: string[];
+  /**
+   * @minimum 1
+   */
+  business_name_max_chars?: number;
+  /**
+   * @minimum 1
+   */
+  asset_image_max_file_size_kb?: number;
+  /**
+   * Whether the product can additionally consume a catalog reference (e.g., PMax with product feed).
+   */
+  supports_catalog_input?: boolean;
+}
+export interface AgentPlacementFormatDeclaration {
+  format_kind: 'agent_placement';
+  params: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
+}
+/**
+ * **3.2-track canonical.** The structural shape (algorithmic composition + brand-context input + optional offering/landing_page) is captured here so adopters can declare against it in 3.1 catalogs, but the **mention-level tracking contract is intentionally underspecified for 3.1**: no normative macro vocabulary, no postback shape, no cross-surface dedup model. Adopters claiming `agent_placement` in 3.1 ship private tracking integrations and SHOULD set `runtime_status: 'preview'` or `'declared_only'` on the declaration; buyer agents MUST treat agent_placement attribution as adapter-defined until the 3.2 tracking-macro spec lands. The canonical promotes to a normatively-buyer-callable surface in 3.2 (or later) once the tracking contract is specified.
+ *
+ * Sponsored placement integrated into an AI-surface's response to a user. Buyer supplies a `BrandRef` (resolving brand.json for context), an optional `offering_ref` to focus the mention on a specific offering, and an optional `landing_page_url` the surface MAY attach as a citation. The surface (LLM, voice assistant, sponsored-search ranker) composes a natural-language mention, sponsored card, or audio snippet within its response to a user query. **Composition is algorithmic** — the agent chooses phrasing and presentation. Output asset_type varies by surface: `text` for chat UIs and sponsored search snippets; `audio` (synthesized) for voice assistants; `card` for structured AI-surface result cards. Tracking model: mention-level impression + attribution events; per-mention id keys back to brand and offering — but see the 3.2-track note above; the wire shape of these events is not yet specified. Distinct from `si_chat` (which is the user-converses-with-brand's-agent pattern — brand owns the conversational surface) and from `sponsored_placement` (retail-media catalog-driven). Parallels `sponsored_placement` structurally: both are surface-composed placements; agent_placement is for AI/agentic surfaces, sponsored_placement is for retail media.
+ */
+export interface CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement {
+  /**
+   * Marked experimental at 3.1 GA: the canonical's tracking model (mention-level impression + attribution, postback shape, cross-surface dedup) is intentionally underspecified for 3.1. Adopters claiming `agent_placement` ship private tracking integrations; buyer agents MUST treat attribution as adapter-defined until the 3.2 tracking-macro spec lands. Promotion to non-experimental gated on the 3.2 tracking-contract spec.
+   */
+  experimental?: unknown;
+  /**
+   * When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.
+   */
+  deprecated?: boolean;
+  /**
+   * Inherently new in v2 — AI-surface sponsored mentions weren't expressible as v1 named formats. SDKs MUST NOT emit `FORMAT_PROJECTION_FAILED` for products using this canonical; the v1-unreachability is structural.
+   */
+  v1_translatable?: unknown;
+  /**
+   * AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.
+   */
+  since_version?: string;
+  /**
+   * AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').
+   */
+  migration_target_version?: string;
+  /**
+   * Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).
+   */
+  composition_model?: 'deterministic' | 'algorithmic';
+  /**
+   * When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.
+   */
+  provenance_required?: boolean;
+  /**
+   * Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.
+   *
+   * **Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: "platform_extension_field", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  /**
+   * When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.
+   *
+   * **Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.
+   */
+  synthesis_nondeterministic?: boolean;
+  /**
+   * agent_placement has minimal buyer-shipped slots — the surface composes the rendered output from brand context (resolved via the manifest's top-level `brand` BrandRef) plus optional offering_ref and landing_page_url assets. None of these assets are rendered verbatim by the buyer; the agent chooses how to use them.
+   */
+  slots?: unknown;
+  /**
+   * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
+   */
+  production_window_business_days?: number;
+  /**
+   * How the surface presents the mention. `text` = inline text (chat, search snippet). `audio` = TTS-synthesized voice. `card` = structured card with optional image + text.
+   */
+  output_modality?: 'text' | 'audio' | 'card';
+  /**
+   * For text output: maximum length of the surface-composed mention text.
+   * @minimum 1
+   */
+  max_mention_length_chars?: number;
+  /**
+   * For audio output: maximum duration of the spoken mention in milliseconds.
+   * @minimum 1
+   */
+  max_mention_duration_ms?: number;
+  /**
+   * Whether the product accepts an offering reference (specific product/service to promote within the mention) in addition to brand context.
+   */
+  supports_offering_reference?: boolean;
+  /**
+   * Whether the surface attaches a landing page URL to the mention (citation, learn-more link).
+   */
+  supports_landing_page_url?: boolean;
+  /**
+   * **Advisory only.** Buyer-declared brand-voice preferences the surface SHOULD honor (e.g., ['formal', 'no_superlatives']). LLM/agentic surfaces have no protocol-level mechanism to verify enforcement — adopters that need hard guarantees should rely on brand.json voice declarations and post-mention review rather than this field. Future revisions may tie this to a structured tone vocabulary; for now treat as free-text guidance.
+   */
+  tone_constraints?: string[];
+  /**
+   * Whether the surface must include an explicit sponsorship disclosure label.
+   */
+  disclosure_required?: boolean;
+}
+/**
+ * Adopter-defined shape that doesn't fit the 12 canonicals. Requires `format_shape` (vocabulary-registered global pattern) and `format_schema` (URI+digest reference to a fetchable schema describing the actual params/slots). `params` shape is governed by the fetched schema rather than baked into AdCP — kept as `type: object` here with `additionalProperties: true` because the canonical schema validates dynamically post-fetch.
+ */
+export interface CustomFormatDeclaration {
+  format_kind: 'custom';
+  /**
+   * Custom shape's params. Validated against the schema fetched from `format_schema.uri` at the cached `format_schema.digest`.
+   */
+  params: {};
 }
 /**
  * Represents a specific ad placement within a product's inventory. When the publisher declares a placement registry in adagents.json, products SHOULD reuse those placement_id values. Reusing a registered placement_id preserves the registry's semantic identity; product-level placement objects may narrow format_ids or add operational detail, but SHOULD NOT redefine the placement's meaning incompatibly.
@@ -2056,9 +4298,9 @@ export interface ForecastPoint {
   };
 }
 /**
- * Business outcome measurement capabilities included with a product (e.g., incremental sales lift, brand lift, foot traffic). Distinct from delivery_measurement, which declares who counts ad impressions.
+ * **Deprecated as of this minor.** Outcome capabilities (incremental sales lift, brand lift, foot traffic, etc.) are now declared via `reporting_capabilities.available_metrics` (the same path used for impressions, conversions, ROAS) with `qualifier.attribution_methodology` and `qualifier.attribution_window` carrying the methodology and window on commit. New implementations SHOULD use the unified pattern; this field is retained for one-minor backwards compatibility and removed at the next major. See `outcome-measurement.json` description for migration guidance.
  */
-export interface OutcomeMeasurement {
+export interface OutcomeMeasurementDeprecated {
   /**
    * Type of measurement
    */
@@ -2094,6 +4336,11 @@ export interface MeasurementTerms {
      * Which measurement maturation stage the billing metric is reconciled against. References a window_id from the product's reporting_capabilities.measurement_windows. Examples: 'c7' for broadcast TV guarantees (live + 7 days DVR), 'final' for DOOH after IVT/fraud-check processing, 'post_sivt' for digital after sophisticated invalid-traffic filtering, 'downloads_30d' for podcast. When absent, billing is based on the seller's standard reporting without windowed maturation.
      */
     measurement_window?: string;
+    /**
+     * Maximum hours by which the authoritative party MUST publish a final record (`is_final: true` / `finalized_at` on `get_media_buy_delivery`, or `final: true` / `finalized_at` on `report_usage`). **Anchor:** when `measurement_window` is set, hours are counted from the close of that window (e.g., 240h after `c7` close = ~10 days after the 7-day DVR accumulation completes); when `measurement_window` is absent, hours are counted from `reporting_period.end`. Picking a single anchor avoids ambiguity for windowed channels where `reporting_period.end` and window close differ by days. The deadline applies to whichever party is named in `vendor` — seller, buyer, or third-party vendor — symmetrically. When the deadline elapses without a final record, the counterparty MAY fall back to its own attestation for invoicing (seller falls back to seller-attested numbers via `get_media_buy_delivery`; buyer falls back to a buyer-attested `report_usage` push), and the breach is treated like any other measurement-terms breach under `makegood_policy`. Absent means no contractual deadline — finalization is best-effort and disagreements resolve out of band.
+     * @minimum 0
+     */
+    finalization_deadline_hours?: number;
   };
   /**
    * Remedies available when a performance standard or billing measurement variance is breached. Seller declares which remedy types they support. When a breach occurs, the seller proposes a remedy from this menu; the buyer accepts or disputes.
@@ -2132,6 +4379,40 @@ export interface CancellationPolicy {
   };
 }
 /**
+ * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
+ */
+export interface ProductAllowedAction {
+  action: MediaBuyValidAction;
+  /**
+   * Modes available for this action on this product. A product may declare multiple modes (for example `self_serve` within tolerances, escalating to `requires_approval` outside) — the buy-side `available_actions[<action>].mode` resolves to the singular mode in effect at mutation time. SDKs that see multiple modes MUST NOT assume which one will fire; they must read the resolved `mode` on the buy.
+   */
+  modes: MediaBuyActionMode[];
+  /**
+   * Media buy statuses in which this action is permitted. When absent, the action is permitted in all non-terminal statuses (`pending_creatives`, `pending_start`, `active`, `paused`).
+   */
+  allowed_statuses?: MediaBuyStatus[];
+  sla?: SLAWindow;
+  /**
+   * Optional pointer into buy-terms negotiation (forward-references the buy-terms namespace landing via separate RFC). When present, the named term governs cancellation policy, makegoods, or other commercial remedies tied to this action. Schema accepts any string for now and will tighten to a structured reference when the buy-terms RFC ships.
+   */
+  terms_ref?: string;
+}
+/**
+ * Optional SLA commitment for this action on this product. Absence means no commitment.
+ */
+export interface SLAWindow {
+  /**
+   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, queue ack for requires_approval, proposal task creation for requires_proposal). ISO 8601 duration.
+   * @pattern ^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$
+   */
+  response_max?: string;
+  /**
+   * Maximum time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, approval resolved). ISO 8601 duration.
+   * @pattern ^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$
+   */
+  completion_max?: string;
+}
+/**
  * Reporting capabilities available for a product
  */
 export interface ReportingCapabilities {
@@ -2156,6 +4437,13 @@ export interface ReportingCapabilities {
    * Metrics available in reporting. Impressions and spend are always implicitly included. When a creative format declares reported_metrics, buyers receive the intersection of these product-level metrics and the format's reported_metrics.
    */
   available_metrics: AvailableMetric[];
+  /**
+   * Vendor-defined metrics this product can report, beyond the closed `available_metrics` enum. Each entry is a pointer (`{ vendor, metric_id }`) into the vendor's metric catalog — the canonical definition (standard alignment, accreditations, methodology, unit, human-readable description) lives at the vendor's `get_adcp_capabilities.measurement.metrics[]`, queried once per vendor when needed. Use this for proprietary metrics like attention scores, emissions, panel-based demographics, or platform-native social metrics not yet in the standard enum. Sellers populate values in delivery via `delivery-metrics.json#/properties/vendor_metric_values`. The metric is identified by the tuple `(vendor, metric_id)`; identifiers are namespaced by the vendor, so the same `metric_id` may mean different things in different vendors' vocabularies. Semantic uniqueness key is `(vendor.domain, vendor.brand_id, metric_id)`; sellers MUST de-duplicate before emission and MUST NOT declare the same vendor metric twice. Buyers MAY treat duplicate `(vendor, metric_id)` rows as a seller-side conformance bug. (JSON Schema `uniqueItems` is not used here because BrandRef carries optional fields whose absence/presence would defeat deep-equal — uniqueness is on the semantic key, enforced at build/validation time on the seller side.) Promotion path: when the industry converges on a metric via a published standard, the spec adds it to the closed `available_metrics` enum and the vendor extensions become historical aliases.
+   */
+  vendor_metrics?: {
+    vendor: BrandReference;
+    metric_id: VendorMetricID;
+  }[];
   /**
    * Whether this product supports creative-level metric breakdowns in delivery reporting (by_creative within by_package)
    */
@@ -2185,6 +4473,10 @@ export interface ReportingCapabilities {
    * Whether delivery data can be filtered to arbitrary date ranges. 'date_range' means the platform supports start_date/end_date parameters. 'lifetime_only' means the platform returns campaign lifetime totals and date range parameters are not accepted.
    */
   date_range_support: 'date_range' | 'lifetime_only';
+  /**
+   * Granularities at which this product honors per-window pulls on get_media_buy_delivery (via request `time_granularity` + `include_window_breakdown: true`). Closes the GET-side half of the snapshot/log two-paths-parity contract for data-bearing events: a buyer who missed a webhook fire at any granularity listed here can reconstruct an identical payload by polling. Capability-scoped MUST — sellers MUST honor pulls at any granularity declared here, and MUST return UNSUPPORTED_GRANULARITY for pulls outside the set. Sellers MAY emit higher-frequency webhooks than they expose for pull (common where the webhook is a Kafka tap and historical reads go through a warehouse with coarser granularity); buyers see the gap up front via this capability and treat the webhook as primary for those frequencies. Absent or empty means the product only supports cumulative date-range pulls and full per-window recovery via GET is unavailable — see snapshot-and-log Rule 4.
+   */
+  windowed_pull_granularities?: ReportingFrequency[];
   /**
    * Measurement maturation stages available for this product. Used by any channel where billing-grade data is produced in phases rather than arriving final on day one. Examples: broadcast/linear TV (Live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital with IVT filtering (raw → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads). Each window defines an accumulation period and expected data availability. When present, delivery reports reference a specific window_id. Sellers whose data is final on first delivery typically omit this.
    */
@@ -2258,6 +4550,57 @@ export interface CreativePolicy {
    * Whether creatives must include provenance metadata. When true, the seller requires buyers to attach provenance declarations to creative submissions. The seller may independently verify claims via get_creative_features.
    */
   provenance_required?: boolean;
+  /**
+   * Structured provenance requirements for creatives. Refines `provenance_required`: when `provenance_required` is true, the fields in this object specify which provenance features the seller requires. When `provenance_required` is false or absent, this object SHOULD be absent; if present, receivers MUST ignore it. Existing seller agents that do not read this object are unaffected; the wire shape does not change for them. Sellers that publish a requirement here MUST enforce it on creative submission: a `sync_creatives` request that omits a required field is rejected with the corresponding `PROVENANCE_*` error code (see error-code.json), and a creative whose provenance claim is contradicted by an independent verification (`get_creative_features` against a governance agent the seller operates or has allowlisted via `accepted_verifiers`) is rejected with `PROVENANCE_CLAIM_CONTRADICTED`. This is the structural-rejection surface; the truth-of-claim surface lives in `get_creative_features`. Field-level requirements are seller-enforced — JSON Schema validation does not check them.
+   */
+  provenance_requirements?: {
+    /**
+     * When true, the seller requires creatives to include a `digital_source_type` field in their provenance, set to a valid value from the `digital-source-type` enum (not null or absent). Submissions that omit this field are rejected with `PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING`. Supports EU AI Act Art. 50 and CA SB 942 compliance workflows where AI disclosure metadata must be present at the protocol level.
+     */
+    require_digital_source_type?: boolean;
+    /**
+     * When true, the seller requires creatives to include a `disclosure` object in their provenance with `disclosure.required` set to a boolean value (true or false). When `disclosure.required` is true, at least one entry in `disclosure.jurisdictions` is expected. Submissions that omit `disclosure.required` are rejected with `PROVENANCE_DISCLOSURE_MISSING`.
+     */
+    require_disclosure_metadata?: boolean;
+    /**
+     * When true, the seller requires creatives to include at least one `embedded_provenance` entry. For pipelines where sidecar metadata is stripped by intermediaries, this ensures provenance data persists through delivery. Submissions that omit `embedded_provenance` are rejected with `PROVENANCE_EMBEDDED_MISSING`.
+     */
+    require_embedded_provenance?: boolean;
+  };
+  /**
+   * Governance agents the seller operates, has allowlisted, or otherwise trusts to verify provenance claims via `get_creative_features`. Buyers attaching a `verify_agent` pointer on `embedded_provenance[]` or `watermarks[]` MUST select an `agent_url` that appears in this list (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) - the buyer is *representing* that they used a verifier the seller will recognize, not asserting unilateral routing. Sellers MUST reject `sync_creatives` submissions whose `verify_agent.agent_url` does not match any entry here with `PROVENANCE_VERIFIER_NOT_ACCEPTED`. The seller is the verifier-of-record: it is the seller, not the buyer, that decides which agent it will call. Publishing the list lets buyers pre-flight their creative shape against `get_products` and lets multiple buyers converge on the same verifier without coordinating with each other.
+   */
+  accepted_verifiers?: {
+    /**
+     * URL of the governance agent. MUST use the `https://` scheme. The seller calls this URL via `get_creative_features` to verify a buyer's claim; the seller has already vetted the endpoint and accepts responsibility for outbound calls to it.
+     * @pattern ^https:\/\/
+     */
+    agent_url: string;
+    /**
+     * Optional canonical `feature_id` the seller will request against this agent (e.g., `encypher.markers_present_v2`). When present, the buyer's `verify_agent.feature_id` SHOULD either match this value or be omitted. When absent, the seller selects a feature from the agent's `governance.creative_features` catalog at evaluation time. Resolves the selector ambiguity that would otherwise let two compliant receivers reach different verdicts.
+     */
+    feature_id?: string;
+    /**
+     * Optional `provider` labels this agent verifies (e.g., `['Encypher', 'Digimarc']`). When present, sellers SHOULD only invoke this agent for `embedded_provenance[]` / `watermarks[]` entries whose `provider` field matches one of these labels — letting buyers pre-flight whether their attached evidence is verifiable against the seller's allowlist. When absent, the agent is treated as provider-agnostic.
+     */
+    providers?: string[];
+  }[];
+}
+/**
+ * Vendor-attested metric optimization capabilities for this product. Presence indicates the product supports `optimization_goals` with `kind: 'vendor_metric'` — the seller's bidding stack can steer delivery toward a specific vendor's measurement (e.g., DV/IAS/Adelaide attention, Scope3 emissions, Kantar brand lift, retail-media partner metrics). Distinct from `metric_optimization` (seller-native metrics with no vendor binding) and from `reporting_capabilities.vendor_metrics` (which declares what the product can *report* rather than what it can *optimize against*). A product may report a vendor metric without being able to optimize for it. Buyers MUST verify the goal's `(vendor, metric_id)` is in `supported_metrics` AND that the package's `committed_metrics[]` includes a matching `{ scope: 'vendor', vendor, metric_id }` entry — optimization without committed reporting is unverifiable and is rejected at the wire level.
+ */
+export interface VendorMetricOptimization {
+  /**
+   * Vendor-defined metrics this product can steer delivery toward. Each entry pairs a vendor identity (BrandRef anchored on the vendor's `brand.json` `agents[type='measurement']`) with a `metric_id` from that vendor's published `measurement.metrics[]` catalog, plus the target kinds the seller supports for the pair. Semantic uniqueness key is `(vendor.domain, vendor.brand_id, metric_id)`; sellers MUST de-duplicate before publication. JSON Schema `uniqueItems` blocks exact-object duplicates; semantic deduplication on the BrandRef-domain key is a seller obligation.
+   */
+  supported_metrics: {
+    vendor: BrandReference;
+    metric_id: VendorMetricID;
+    /**
+     * Target kinds available for `vendor_metric` goals against this `(vendor, metric_id)` pair. Values match `target.kind` on the optimization goal. `cost_per` — target cost per metric unit (e.g., $0.05 per attention-second). `threshold_rate` — minimum per-impression value (e.g., attention_score ≥ 70). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes the metric within budget — no declaration needed for that mode. When omitted, buyers can still set target-less vendor_metric goals.
+     */
+    supported_targets?: ('cost_per' | 'threshold_rate')[];
+  }[];
 }
 /**
  * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
@@ -2691,7 +5034,7 @@ export interface InsertionOrder {
  */
 export interface Error {
   /**
-   * Error code for programmatic handling. Standard codes are defined in error-code.json and enable autonomous agent recovery. Sellers MAY use codes not in the standard vocabulary for platform-specific errors; agents MUST handle unknown codes gracefully by falling back to the recovery classification.
+   * Error code for programmatic handling. The error-code vocabulary is open: `error.code` is wire-typed `string` (not a closed enum), the standard codes published in `enums/error-code.json` are documentary, and senders MAY emit codes outside that set (platform-specific codes, or codes introduced in a later AdCP version). Receivers MUST decode unknown codes — treat the response as well-formed, read `error.recovery` for the recovery classification, and fall back to `transient` when `recovery` is absent. See `error-handling.mdx#forward-compatible-decoding-normative` for the full forward-compat contract — this rule is what lets future maintenance lines ship new codes additively.
    * @minLength 1
    * @maxLength 64
    */
@@ -2731,18 +5074,66 @@ export interface Error {
      */
     keyword: string;
     /**
-     * Optional. Path inside the schema that rejected the payload (e.g., '#/properties/packages/items/properties/targeting/oneOf/1'). Sellers SHOULD NOT emit on production-facing endpoints — `schemaPath` leaks which `oneOf` branch the validator selected before semantic rejection, which is a probe oracle for adversarial callers crafting payloads against polymorphic unions. Sellers MAY emit in dev/sandbox modes where the diagnostic value outweighs the fingerprinting risk.
+     * Optional. JSON Schema tree path of the rejecting keyword (e.g. '#/properties/packages/items/oneOf/1'). 3.1+ consumers SHOULD prefer `schema_id`; `schemaPath` is retained for 3.0.x compatibility (renamed to `schema_path` in a future major). See error-handling.mdx for the validator-internals production-emit rules.
      */
     schemaPath?: string;
+    /**
+     * Optional. `$id` of the rejecting (sub-)schema (e.g. `/schemas/3.1.0/core/activation-key.json`). MUST resolve to a `$id` published in the spec at the version the seller advertises via `get_adcp_capabilities` — either a deep sub-schema (the typical case) or the response-root `$id` (the bundled-tree fallback for tools served from bundles built before #3868). Sellers MUST NOT emit when the rejection occurred against a private extension, server-only sub-schema, or pre-release element — the public-spec replay rationale only holds when the rejecting element is reachable from the public bundle. Sellers populating `schemaPath` SHOULD also populate `schema_id` when they have it so 3.1+ readers don't get strictly less than 3.0.x readers. See error-handling.mdx for resolution guidance and the bundled-tree caveat.
+     */
+    schema_id?: string;
+    /**
+     * Optional. Const-discriminator property/value pair(s) identifying the variant the validator selected from values present in the payload. Sellers MUST populate only when (a) the rejecting schema is a const-discriminated `oneOf` / `anyOf` and (b) the discriminator property is present in the payload — emission on partial-match inference would fingerprint the seller's validator implementation. MUST omit when zero variants survive. Compound discriminators (e.g. `(type, value_type)`) produce multiple entries ordered by declaration in the rejecting schema's `properties` block. Same private-extensions / version-skew carve-out as `schema_id`. See error-handling.mdx.
+     */
+    discriminator?: {
+      /**
+       * Discriminator property name (e.g., `type`, `value_type`). Aligns with OpenAPI 3.x `discriminator.propertyName`.
+       */
+      property_name: string;
+      /**
+       * Value the caller sent at `property_name`. Typically a string for const-discriminated unions; numeric/boolean/null permitted. Object and array values are forbidden — const discriminators are scalars, and emitting a structured value would conflate 'caller sent a complex shape' with 'validator inferred from a structural match'.
+       */
+      value: string | number | boolean | null;
+    }[];
   }[];
   /**
    * Additional task-specific error details. Sellers MAY mirror `issues[]` here as `details.issues` for backward compatibility with pre-3.1 consumers reading from `details`; new consumers SHOULD prefer the top-level `issues` field.
+   *
+   * **Canonical rejection-set shape (3.1+).** When the error reports a rejected value against a closed set of accepted values (e.g., enum mismatch, unsupported pricing option, invalid signal id), sellers SHOULD use the canonical key `accepted_values: <array>` under `details` rather than seller-specific variants observed in the wild (`available`, `allowed`, `accepted_values` at the error root, etc.). The canonical shape:
+   *
+   * ```json
+   * {
+   *   "code": "INVALID_PRICING_MODEL",
+   *   "message": "Pricing option not found: po_prism_abandoner_cpm",
+   *   "field": "pricing_option_id",
+   *   "details": {
+   *     "rejected_value": "po_prism_abandoner_cpm",
+   *     "accepted_values": ["po_prism_cart_cpm", "po_prism_view_cpm"]
+   *   }
+   * }
+   * ```
+   *
+   * - `rejected_value` (optional): the offending value the buyer supplied, echoed for buyer-side diagnostic clarity (especially when the offending field is nested or transformed before validation).
+   * - `accepted_values` (optional): the closed set the seller would have accepted at this field on this call. Sellers MUST NOT enumerate the full ecosystem-wide accepted set if it differs from what's accepted for *this caller in this context* (account, brand, scope) — leaking ecosystem-wide accepted sets to a per-caller rejection turns the error into an enumeration oracle.
+   *
+   * This is **SHOULD-level guidance**, not MUST: `details` remains `additionalProperties: true` and pre-3.1 sellers using `available` / `allowed` / `accepted_values` at the error root remain conformant. The canonical shape lets buyer-side diagnostic tooling (SDK runner hints, dashboards, error classifiers) reliably surface the accepted-set without per-seller pattern matching. SDKs SHOULD accept any of the legacy variants and normalize on read; the canonical shape is what new sellers and 3.1+ adopters should emit going forward.
    */
   details?: {};
   /**
-   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found).
+   * Agent recovery classification. transient: retry after delay (rate limit, service unavailable, timeout). correctable: fix the request and resend (invalid field, budget too low, creative rejected). terminal: requires human action (account suspended, payment required, account not found). Senders SHOULD populate `recovery` on every error from 3.1 onward — it is the normative carrier of recovery semantics across version skew. A receiver that does not recognize `error.code` (a newer code, or a platform-specific code) MUST still be able to classify the error from `recovery`. The `enumMetadata.recovery` block in `enums/error-code.json` is the documentary mirror for known codes; `error.recovery` on the wire is authoritative.
    */
   recovery?: 'transient' | 'correctable' | 'terminal';
+  /**
+   * Who emitted this error entry. `producer` (default when absent): emitted by the response's authoring agent (the seller for `get_products`, the creative agent for `build_creative`, etc.). `sdk`: augmented by a consuming SDK that detected a non-fatal advisory condition on consumption (e.g., `FORMAT_PROJECTION_FAILED` when the buyer SDK couldn't project a v1 format to a canonical, or `FORMAT_DECLARATION_DIVERGENT` when the SDK detected a producer bug on read). SDK-augmented entries SHOULD also set `sdk_id` so downstream consumers can identify which intermediate processor inserted the entry.
+   *
+   * **Multi-hop propagation (normative).** AdCP is a federated agent network — responses commonly traverse multiple SDKs (e.g., sales agent → interchange → DSP → buyer). When an SDK augments `errors[]` with a consumption-detected entry, the augmented response carries the entry forward to subsequent hops. Each hop that detects the same condition independently SHOULD deduplicate by `(code, field)` rather than re-emit; the existing entry's `sdk_id` identifies which earlier processor saw it first. Producer entries (those without `source: "sdk"`) are authoritative for what the response's authoring agent self-detected; SDK entries are observations made on top.
+   *
+   * **Replay/audit safety.** Persisted or replayed responses carry `source` and `sdk_id` so the audit trail can distinguish seller-emitted entries from SDK-augmented ones. Without `source`, a downstream consumer can't tell whether a code came from the seller or an intermediate SDK, which corrupts attribution.
+   */
+  source?: 'producer' | 'sdk';
+  /**
+   * Optional identifier for the SDK that augmented this error entry. Format: `<sdk_package_name>@<version>` (e.g., `@adcontextprotocol/adcp@7.3.0`, `adcontextprotocol-adcp-python@1.2.0`). MUST be set when `source: "sdk"`; MUST be absent when `source: "producer"` or absent. Lets downstream consumers identify which intermediate processor inserted the entry, useful for debugging cross-SDK divergence (e.g., one SDK detects a projection failure that another SDK's registry version doesn't).
+   */
+  sdk_id?: string;
 }
 /**
  * Standard cursor-based pagination metadata for list responses
@@ -2787,30 +5178,15 @@ export type AssetContentType =
  */
 export type WCAGLevel = 'A' | 'AA' | 'AAA';
 /**
- * Where a required disclosure should appear within a creative. Used by creative briefs to specify disclosure placement and by formats to declare which positions they can render.
- */
-export type DisclosurePosition =
-  | 'prominent'
-  | 'footer'
-  | 'audio'
-  | 'subtitle'
-  | 'overlay'
-  | 'end_card'
-  | 'pre_roll'
-  | 'companion';
-/**
- * How long a disclosure must persist during content playback or display. Different jurisdictions and regulations require different persistence behaviors for AI-generated content labels. When multiple sources specify persistence for the same jurisdiction (e.g., brief and provenance), the most restrictive mode applies: continuous > initial > flexible.
- */
-export type DisclosurePersistence = 'continuous' | 'initial' | 'flexible';
-
-/**
  * Request parameters for discovering supported creative formats
  */
 export interface ListCreativeFormatsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -2845,6 +5221,12 @@ export interface ListCreativeFormatsRequest {
    * Search for formats by name (case-insensitive partial match)
    */
   name_search?: string;
+  /**
+   * Filter to formats supported by the named publisher. Agents resolve via the three-tier order documented in `docs/creative/canonical-formats.mdx#format-discovery` (publisher's hosted adagents.json → AAO community mirror → agent-derived from own products' format_options). All fetches in the chain MUST follow the same transport contract as `format_schema` (https-only, SSRF guards, ≤5s timeout, 1 MiB cap, no redirects — see `static/schemas/source/core/product-format-declaration.json#format_schema`). Response carries `source: "publisher" | "aao_mirror" | "agent_derived"` so buyers know which tier produced the list. The pattern below is a syntactic floor — NOT an SSRF guard; agents MUST resolve the hostname and reject private/loopback/link-local/metadata IPs before fetching.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain?: string;
+  property_id?: PropertyID;
   wcag_level?: WCAGLevel;
   /**
    * Filter to formats that support all of these disclosure positions. When a format has disclosure_capabilities, match against those positions. Otherwise fall back to supported_disclosure_positions. Use to find formats compatible with a brief's compliance requirements.
@@ -2932,6 +5314,10 @@ export type IndividualJavaScriptAsset = BaseIndividualAsset & {
   asset_type: 'javascript';
   requirements?: JavaScriptAssetRequirements;
 };
+/**
+ * Zip-bundled asset (HTML5 banner bundles, etc.)
+ */
+export type IndividualZipAsset = BaseIndividualAsset;
 /**
  * VAST asset
  */
@@ -3028,6 +5414,10 @@ export type GroupJavaScriptAsset = BaseGroupAsset & {
   asset_type: 'javascript';
   requirements?: JavaScriptAssetRequirements;
 };
+/**
+ * Zip-bundled asset in group (HTML5 banner bundles, etc.)
+ */
+export type GroupZipAsset = BaseGroupAsset;
 /**
  * VAST asset in group
  */
@@ -3143,6 +5533,23 @@ export type VendorPricingOption = {
  */
 export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
 /**
+ * The v2 canonical-format-kind this v1 format projects to (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `sponsored_placement`, `responsive_creative`, `agent_placement`, or `custom`).
+ */
+export type CanonicalFormatKind =
+  | 'image'
+  | 'html5'
+  | 'display_tag'
+  | 'image_carousel'
+  | 'video_hosted'
+  | 'video_vast'
+  | 'audio_hosted'
+  | 'audio_daast'
+  | 'sponsored_placement'
+  | 'native_in_feed'
+  | 'responsive_creative'
+  | 'agent_placement'
+  | 'custom';
+/**
  * Capabilities supported by creative agents for format handling
  */
 export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' | 'preview' | 'delivery';
@@ -3152,9 +5559,21 @@ export type CreativeAgentCapability = 'validation' | 'assembly' | 'generation' |
  */
 export interface ListCreativeFormatsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Full format definitions for all formats this agent supports. Each format's authoritative source is indicated by its agent_url field.
    */
   formats: Format[];
+  /**
+   * Which tier of the resolution order produced this `formats[]` list when the request carried a `publisher_domain` filter. `publisher`: agent fetched `<publisher_domain>/.well-known/adagents.json` and returned its `formats[]` directly (publisher-authoritative). `aao_mirror`: publisher's hosted file was 404 / lacked `formats[]`, agent fell back to `https://creative.adcontextprotocol.org/translated/<platform>/adagents.json` (community-curated; lower authority — buyer SHOULD treat as advisory until platform adopts). `agent_derived`: neither tier 1 nor tier 2 returned a catalog, so the agent synthesized `formats[]` from the union of its own products' `format_options[]` for products selling the publisher's inventory (lowest authority — agent's view of what it sells, not the publisher's catalog). When two SDKs query the same agent for the same publisher and the agent-derived tier is in play, results may diverge by product set; buyers SHOULD record `source` for telemetry. When the request did NOT carry `publisher_domain`, this field MAY be omitted.
+   */
+  source?: 'publisher' | 'aao_mirror' | 'agent_derived';
   /**
    * Optional: Creative agents that provide additional formats. Buyers can recursively query these agents to discover more formats. No authentication required for list_creative_formats.
    */
@@ -3337,6 +5756,8 @@ export interface Format {
    * Pricing options for this format. Used by transformation and generation agents that charge per format adapted, per image generated, or per unit of work. Present when the request included include_pricing=true and account. Ad servers and library-based agents expose pricing on list_creatives instead.
    */
   pricing_options?: VendorPricingOption[];
+  canonical?: CanonicalProjectionReference;
+  canonical_parameters?: ProductFormatDeclaration;
 }
 export interface BaseIndividualAsset {
   /**
@@ -3359,6 +5780,10 @@ export interface BaseIndividualAsset {
    * Publisher-controlled elements rendered on top of buyer content at this asset's position (e.g., video player controls, publisher logos). Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
    */
   overlays?: Overlay[];
+  /**
+   * Optional canonical asset_group_id this slot fills, drawn from /schemas/core/asset-group-vocabulary.json. Lets buyers and migration tools resolve v1 author-invented slot names (e.g., `click_url`) to canonical names (e.g., `landing_page_url`). Validators MAY soft-warn when a v1 slot's asset_id is a known alias but no asset_group_id is declared.
+   */
+  asset_group_id?: string;
 }
 /**
  * A publisher-controlled element that renders on top of buyer creative content within the ad placement. Creative agents should avoid placing critical content (CTAs, logos, key copy) within overlay bounds.
@@ -3461,6 +5886,10 @@ export interface BaseGroupAsset {
    * Descriptive label for this asset's purpose. For documentation and UI display only — manifests key assets by asset_id, not asset_role.
    */
   asset_role?: string;
+  /**
+   * Optional canonical asset_group_id this slot fills, drawn from /schemas/core/asset-group-vocabulary.json. Same semantics as on baseIndividualAsset — lets buyers and migration tools resolve v1 author-invented slot names to canonical names.
+   */
+  asset_group_id?: string;
   /**
    * Whether this asset is required within each repetition of the group
    */
@@ -3579,6 +6008,59 @@ export interface CustomPricing {
   currency?: string;
   ext?: ExtensionObject;
 }
+/**
+ * Optional v2 canonical-projection annotation. Always an object — bare-string shorthand (`canonical: "image"`) is not supported; the minimal form is `canonical: { "kind": "image" }`. Carries `kind` (which canonical the v1 format projects to) plus optional `asset_source` and `slots_override` for cases where the v1 format's shape doesn't follow the canonical's defaults (e.g., generative entries whose input is `generation_prompt: text` instead of `image_main: image`).
+ *
+ * When set, SDKs use this annotation as the authoritative v1 → v2 mapping for this format, bypassing the [v1 canonical mapping registry](/schemas/registries/v1-canonical-mapping.json) lookup. Combined with the slot-level `asset_group_id` declarations on each `assets[i]` entry, a v1 format declaration with `canonical` set is fully self-describing for v1↔v2 translation.
+ *
+ * Resolution order for SDK projection from v1 wire shape to v2 (per RFC #3305 amendment #3767):
+ * 1. If this `canonical` field is set, use it (seller-declared, highest priority). Apply `asset_source` and `slots_override` from the projection ref when present; otherwise inherit the canonical's defaults.
+ * 2. Else, look up `format_id` in the canonical mapping registry's `format_id_glob` entries.
+ * 3. Else, attempt structural match against the registry's `structural` entries (asset types, slot shape, vast_versions, etc.).
+ * 4. Else, fail closed: SDK MUST NOT emit `format_options` for products carrying this format. Surface `FORMAT_PROJECTION_FAILED` on the response `errors[]` suggesting the seller add an explicit `canonical` annotation or file a registry entry.
+ *
+ * When `canonical.kind` is `custom`, the seller MUST also declare `canonical_format_shape` and `canonical_format_schema` (parallel to ProductFormatDeclaration's `format_shape` and `format_schema`) so buyer SDKs can fetch the seller's custom format schema.
+ *
+ * See `canonical-projection-ref.json` for full projection semantics and examples (default-slot case, generative case, brief-driven case).
+ */
+export interface CanonicalProjectionReference {
+  kind: CanonicalFormatKind;
+  /**
+   * Where the rendered asset bytes come from on the projected v2 declaration. Default (when omitted) is `buyer_uploaded` — the canonical's default. Set explicitly when the v1 named format doesn't follow that default. Required for generative entries (`agent_synthesized` or `seller_pre_rendered_from_brief`) because their asset shape doesn't carry image/video/audio bytes — projection without this hint produces a lossy v2 declaration that claims buyer-uploaded bytes.
+   */
+  asset_source?:
+    | 'buyer_uploaded'
+    | 'publisher_host_recorded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized';
+  /**
+   * When the v1 named format's slot shape differs from the canonical's default slots, this carries the override that the projected v2 declaration's `params.slots[]` should use. REPLACES (does not merge with) the canonical's default slots — projection-time semantics. The slot vocabulary follows `asset-group-vocabulary.json`. Asset IDs in the v1 format's `assets[*]` MUST resolve (directly or via the vocabulary's aliases) to the `asset_group_id` values declared here.
+   */
+  slots_override?: {
+    /**
+     * Asset group identifier from `asset-group-vocabulary.json` (e.g., `generation_prompt`, `creative_brief`, `image_main`, `video_main`).
+     */
+    asset_group_id: string;
+    /**
+     * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
+     */
+    asset_type: string;
+    /**
+     * Whether the slot is required in the projected declaration.
+     */
+    required?: boolean;
+    /**
+     * Max character count for text slots.
+     * @minimum 1
+     */
+    max_chars?: number;
+    /**
+     * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
+     */
+    consumed_for_production?: boolean;
+  }[];
+}
 
 // create_media_buy parameters
 /**
@@ -3592,7 +6074,7 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression), attention_seconds (attention time per impression), attention_score (vendor-specific attention score). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks').
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
        */
       metric:
         | 'clicks'
@@ -3691,24 +6173,47 @@ export type OptimizationGoal =
             kind: 'maximize_value';
           };
       /**
-       * Attribution window for this optimization goal. Values must match an option declared in the seller's conversion_tracking.attribution_windows capability. Sellers must reject windows not in their declared capabilities. When omitted, the seller uses their default window.
+       * Attribution window for this optimization goal — references the canonical `attribution-window` shape (post_click, post_view, model). Values must match an option declared in the seller's `conversion_tracking.attribution_windows` capability. Sellers MUST reject windows not in their declared capabilities. When the entire field is omitted, the seller uses their default window.
        */
-      attribution_window?: {
-        /**
-         * Post-click attribution window. Conversions within this duration after a click are attributed to the ad (e.g. {"interval": 7, "unit": "days"}).
-         */
-        post_click: Duration;
-        /**
-         * Post-view attribution window. Conversions within this duration after an ad impression (without click) are attributed to the ad (e.g. {"interval": 1, "unit": "days"}).
-         */
-        post_view?: Duration;
-      };
+      attribution_window?: AttributionWindow;
+      /**
+       * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       * @minimum 1
+       */
+      priority?: number;
+    }
+  | {
+      kind: 'vendor_metric';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      /**
+       * Target for this vendor metric. When omitted, the seller optimizes for maximum metric volume / score within budget. `cost_per` and `threshold_rate` semantics mirror the same target kinds on the `metric` kind — units are vendor-defined and depend on the vendor's `measurement.metrics[]` declaration for this `metric_id`.
+       */
+      target?:
+        | {
+            kind: 'cost_per';
+            /**
+             * Target cost per metric unit in the buy currency. Units of the metric are vendor-defined.
+             */
+            value: number;
+          }
+        | {
+            kind: 'threshold_rate';
+            /**
+             * Minimum per-impression value. Units of the metric are vendor-defined.
+             */
+            value: number;
+          };
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
        * @minimum 1
        */
       priority?: number;
     };
+/**
+ * Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.
+ */
+export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_decay' | 'data_driven';
 /**
  * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
  */
@@ -3763,10 +6268,216 @@ export type DevicePlatform =
  */
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
 /**
+ * Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and `metric_aggregates` to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.
+ */
+export type CompletionSource = 'seller_attested' | 'vendor_attested';
+/**
+ * How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.
+ */
+export type AttributionMethodology = 'deterministic_purchase' | 'probabilistic' | 'panel_based' | 'modeled';
+/**
+ * Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.
+ */
+export type LiftDimension = 'awareness' | 'consideration' | 'favorability' | 'purchase_intent' | 'ad_recall';
+/**
+ * Creative asset for upload to library — supports static assets, generative formats, and third-party snippets. Identifies which format this creative conforms to via EITHER a v1 `format_id` (structured `{agent_url, id}`) OR v2 `format_kind` (canonical format name). Mutually exclusive — see the `oneOf` at the schema root.
+ */
+export type CreativeAsset = {
+  /**
+   * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
+   */
+  creative_id: string;
+  /**
+   * Human-readable creative name
+   */
+  name: string;
+  format_id?: FormatReferenceStructuredObject;
+  format_kind?: CanonicalFormatKind;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
+   */
+  capability_id?: string;
+  /**
+   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  /**
+   * Preview contexts for generative formats - defines what scenarios to generate previews for
+   */
+  inputs?: {
+    /**
+     * Human-readable name for this preview variant
+     */
+    name: string;
+    /**
+     * Macro values to apply for this preview
+     */
+    macros?: {
+      [k: string]: string | undefined;
+    };
+    /**
+     * Natural language description of the context for AI-generated content
+     */
+    context_description?: string;
+  }[];
+  /**
+   * User-defined tags for organization and searchability
+   */
+  tags?: string[];
+  status?: CreativeStatus;
+  /**
+   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   * @minimum 0
+   * @maximum 100
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+   */
+  placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+} & (
+  | {
+      /**
+       * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
+       */
+      creative_id: string;
+      /**
+       * Human-readable creative name
+       */
+      name: string;
+      format_id: FormatReferenceStructuredObject;
+      /**
+       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
+       */
+      capability_id?: string;
+      /**
+       * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+       */
+      assets: {
+        /**
+         * This interface was referenced by `undefined`'s JSON-Schema definition
+         * via the `patternProperty` "^[a-z0-9_]+$".
+         */
+        [k: string]: AssetVariant | AssetVariant[];
+      };
+      /**
+       * Preview contexts for generative formats - defines what scenarios to generate previews for
+       */
+      inputs?: {
+        /**
+         * Human-readable name for this preview variant
+         */
+        name: string;
+        /**
+         * Macro values to apply for this preview
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Natural language description of the context for AI-generated content
+         */
+        context_description?: string;
+      }[];
+      /**
+       * User-defined tags for organization and searchability
+       */
+      tags?: string[];
+      status?: CreativeStatus;
+      /**
+       * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+       * @minimum 0
+       * @maximum 100
+       */
+      weight?: number;
+      /**
+       * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+       */
+      placement_ids?: string[];
+      /**
+       * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+       */
+      industry_identifiers?: IndustryIdentifier[];
+      provenance?: Provenance;
+    }
+  | {
+      /**
+       * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
+       */
+      creative_id: string;
+      /**
+       * Human-readable creative name
+       */
+      name: string;
+      format_kind: CanonicalFormatKind;
+      /**
+       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
+       */
+      capability_id?: string;
+      /**
+       * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+       */
+      assets: {
+        /**
+         * This interface was referenced by `undefined`'s JSON-Schema definition
+         * via the `patternProperty` "^[a-z0-9_]+$".
+         */
+        [k: string]: AssetVariant | AssetVariant[];
+      };
+      /**
+       * Preview contexts for generative formats - defines what scenarios to generate previews for
+       */
+      inputs?: {
+        /**
+         * Human-readable name for this preview variant
+         */
+        name: string;
+        /**
+         * Macro values to apply for this preview
+         */
+        macros?: {
+          [k: string]: string | undefined;
+        };
+        /**
+         * Natural language description of the context for AI-generated content
+         */
+        context_description?: string;
+      }[];
+      /**
+       * User-defined tags for organization and searchability
+       */
+      tags?: string[];
+      status?: CreativeStatus;
+      /**
+       * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+       * @minimum 0
+       * @maximum 100
+       */
+      weight?: number;
+      /**
+       * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+       */
+      placement_ids?: string[];
+      /**
+       * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+       */
+      industry_identifiers?: IndustryIdentifier[];
+      provenance?: Provenance;
+    }
+);
+/**
  * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
- *
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z0-9_]+$".
  */
 export type AssetVariant =
   | ImageAsset
@@ -3777,25 +6488,14 @@ export type AssetVariant =
   | URLAsset
   | HTMLAsset
   | JavaScriptAsset
+  | ZipAsset
   | WebhookAsset
   | CSSAsset
   | DAASTAsset
   | MarkdownAsset
   | BriefAsset
-  | CatalogAsset;
-/**
- * IPTC-aligned classification of AI involvement in producing this content
- */
-export type DigitalSourceType =
-  | 'digital_capture'
-  | 'digital_creation'
-  | 'trained_algorithmic_media'
-  | 'composite_with_trained_algorithmic_media'
-  | 'algorithmic_media'
-  | 'composite_capture'
-  | 'composite_synthetic'
-  | 'human_edits'
-  | 'data_driven_media';
+  | CatalogAsset
+  | CardAsset;
 /**
  * Whether the video uses a constant or variable frame rate. Broadcast and SSAI contexts require constant frame rate for seamless splicing.
  */
@@ -3874,7 +6574,7 @@ export type VASTAsset = {
  */
 export type VASTVersion = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
 /**
- * Tracking events for video ads. Includes IAB VAST 4.2 TrackingEvents, plus flattened representations of Impression, Error, VideoClicks, and ViewableImpression elements. fullscreen/exitFullscreen retained for VAST 2.x/3.x compatibility. measurableImpression is an AdCP extension for MRC measurability signals.
+ * Tracking events for video ads. Includes the IAB VAST 4.2 `Tracking@event` enumeration (vast_4.2.xsd `TrackingEvents_type`, lines 112–136), plus AdCP-flattened representations of the `Impression`, `Error`, `VideoClicks`, and `ViewableImpression` elements (which live in dedicated VAST elements, not under `<TrackingEvents>` — they are surfaced here so a single declared list can cover everything a measurement vendor wants to track). `fullscreen` / `exitFullscreen` are retained for VAST 2.x / 3.x compatibility (VAST 4.0+ replaced them with `playerExpand` / `playerCollapse`). `measurableImpression` is an AdCP extension for MRC measurability signals.
  */
 export type VASTTrackingEvent =
   | 'impression'
@@ -3896,7 +6596,11 @@ export type VASTTrackingEvent =
   | 'fullscreen'
   | 'exitFullscreen'
   | 'progress'
-  | 'notUsed'
+  | 'acceptInvitation'
+  | 'adExpand'
+  | 'adCollapse'
+  | 'minimize'
+  | 'overlayViewDuration'
   | 'otherAdInteraction'
   | 'interactiveStart'
   | 'clickTracking'
@@ -3983,12 +6687,11 @@ export type DAASTAsset = {
  */
 export type DAASTVersion = '1.0' | '1.1';
 /**
- * Tracking events for audio ads. Includes DAAST-applicable events from IAB VAST/DAAST conventions, plus flattened Impression, Error, and ViewableImpression elements. creativeView included for companion ad tracking. measurableImpression is an AdCP extension.
+ * Tracking events for audio ads. Aligned to the IAB DAAST 1.1 `Tracking@event` enumeration from §3.2.1.7 of the spec (creativeView, start, firstQuartile, midpoint, thirdQuartile, complete, mute, unmute, pause, rewind, resume, skip, progress) — plus `close` (referenced descriptively in DAAST 1.1 §3.2.4.2 contrasting it with `skip`), and AdCP-flattened representations of the `Impression`, `Error`, and click elements (`<Impression>`, `<Error>`, and the click children of `<AdInteractions>`) so a single declared list can cover everything a measurement vendor wants to track. `viewable` / `notViewable` / `viewUndetermined` and `measurableImpression` / `viewableImpression` are AdCP extensions for OM-SDK Audio measurability signals (DAAST 1.1 itself does not define a `<ViewableImpression>` element). DAAST 1.1 audio-incompatible video events are deliberately omitted: no `loaded`, `playerExpand` / `playerCollapse`, `fullscreen` / `exitFullscreen`, `acceptInvitation`, `adExpand` / `adCollapse`, `minimize`, `overlayViewDuration`, or `interactiveStart`.
  */
 export type DAASTTrackingEvent =
   | 'impression'
   | 'creativeView'
-  | 'loaded'
   | 'start'
   | 'firstQuartile'
   | 'midpoint'
@@ -3998,6 +6701,7 @@ export type DAASTTrackingEvent =
   | 'unmute'
   | 'pause'
   | 'resume'
+  | 'rewind'
   | 'skip'
   | 'progress'
   | 'clickTracking'
@@ -4119,9 +6823,11 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
  */
 export interface CreateMediaBuyRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -4252,9 +6958,11 @@ export interface CreateMediaBuyRequest {
  */
 export interface PackageRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -4262,9 +6970,30 @@ export interface PackageRequest {
    */
   product_id: string;
   /**
-   * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
+   * v1 path. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and `capability_ids` is also omitted), defaults to all formats supported by the product.
    */
   format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * v2 path. Array of `capability_id` values, each referencing one of the product's `format_options[i].capability_id` entries. Lets a buyer reading the V2 mental model (`Product.format_options[]`) author a `create_media_buy` call without translating back through `v1_format_ref[]` to construct `format_ids[]`. Symmetric with the V2 path exposed on `creative-manifest` (which carries a single `capability_id`) — a package may activate multiple `format_options` entries, so the package-side shape is an array.
+   *
+   * **Resolution rules (normative).**
+   * - **Both `capability_ids` and `format_ids` present.** `capability_ids` wins; the seller routes by `capability_ids` and MUST NOT validate `format_ids` for consistency with the resolved declarations. The `format_ids` value is a v1-compat hint for intermediaries on the wire path; the resolving seller ignores it.
+   * - **`capability_ids` only.** Seller looks up each entry against the product's `format_options[]` and uses the matching declaration (and that declaration's `v1_format_ref[]` when projecting to v1-wire surfaces). This is the V2-native authoring path.
+   * - **`format_ids` only.** Existing v1 behavior; unchanged.
+   * - **Neither.** Default — all formats supported by the product are active.
+   *
+   * **Failure modes (normative).** Sellers MUST reject with `UNSUPPORTED_FEATURE` (with `field` pointing at the failing package and entry, e.g. `packages[0].capability_ids[1]`) when:
+   * - Any entry references a `capability_id` not present in the target product's `format_options[]`, OR
+   * - The target product carries `format_ids` but no `format_options[]` (v1-only product — there is no closed set to resolve against), OR
+   * - The target product carries `format_options[]` but none of the entries publish a `capability_id` (the V2 path is unauthorable against that product). Sellers SHOULD set `error.details.reason` to `capability_ids_not_published` in this case so buyers can distinguish it from an outright mismatch and fall back to `format_ids[]`.
+   *
+   * **Seller obligation.** For buyers to use the V2 path against a product, the seller MUST publish a `capability_id` on each `format_options[]` entry it expects buyers to select (the field is currently optional on `product-format-declaration.json` and only structurally required when multiple entries share a `format_kind`). Sellers SHOULD assign a stable `capability_id` to every entry to keep the V2 authoring path usable.
+   *
+   * **Dual emission.** V2-native buyer SDKs targeting a heterogeneous seller population (mix of v1- and v2-capable sellers) SHOULD emit `format_ids` alongside `capability_ids` so v1-only sellers — which ignore the unknown `capability_ids` field per `additionalProperties: true` — still receive an explicit format set rather than silently defaulting to all formats supported by the product.
+   *
+   * Backward-compatible: additive optional field. v1-only sellers ignore it.
+   */
+  capability_ids?: string[];
   /**
    * Budget allocation for this package in the media buy's currency
    * @minimum 0
@@ -4314,6 +7043,36 @@ export interface PackageRequest {
    */
   performance_standards?: PerformanceStandard[];
   /**
+   * Buyer's proposed reporting contract for this package — the metrics the buyer wants the seller to commit to populating in delivery reports. Same negotiation pattern as `measurement_terms` and `performance_standards`: seller accepts (echoes on confirmed package with `committed_at` stamped), rejects with `TERMS_REJECTED` (with explanation of which entries were unworkable), or normalizes (echoes a different but compatible list — buyer can accept by retrying with the normalized terms). When absent, the seller decides what to commit based on the product's `available_metrics` and the buyer's `required_metrics` filter on `get_products`. Each entry uses an explicit `scope` discriminator (`standard` or `vendor`) and identifies the metric — request-side entries do NOT carry `committed_at`; that timestamp is stamped by the seller on accept. Constraints on what the buyer MAY propose: each `scope: standard` entry's `metric_id` MUST be in the product's `available_metrics`, and each `scope: vendor` entry's `(vendor, metric_id)` MUST appear in the product's `vendor_metrics` — sellers SHOULD reject with `TERMS_REJECTED` and reference the offending entry when the proposal exceeds product capability.
+   */
+  committed_metrics?: (
+    | {
+        /**
+         * Standard metric from the closed `available-metric.json` enum.
+         */
+        scope: 'standard';
+        metric_id: AvailableMetric;
+        /**
+         * Disambiguator — same shape as on the response-side `committed_metrics`. Required when the buyer wants to pin a specific measurement path: `viewability_standard` for MRC vs GroupM viewability; `completion_source` for seller- vs vendor-attested `completion_rate`; `attribution_methodology` for how attribution was computed (deterministic_purchase, probabilistic, panel_based, modeled); `attribution_window` for the time window over which outcomes are attributed. See response-side description for full semantics.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+      }
+    | {
+        /**
+         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+         */
+        scope: 'vendor';
+        vendor: BrandReference;
+        metric_id: VendorMetricID;
+      }
+  )[];
+  /**
    * Assign existing library creatives to this package with optional weights and placement targeting
    */
   creative_assignments?: CreativeAssignment[];
@@ -4328,6 +7087,20 @@ export interface PackageRequest {
   agency_estimate_number?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.
+ */
+export interface AttributionWindow {
+  /**
+   * Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.
+   */
+  post_click?: Duration;
+  /**
+   * Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.
+   */
+  post_view?: Duration;
+  model?: AttributionModel;
 }
 /**
  * Optional restriction overlays for media buys. Most targeting should be expressed in the brief and handled by the publisher. These fields are for functional restrictions: geographic (RCT testing, regulatory compliance, proximity targeting), age verification (alcohol, gambling), device platform (app compatibility), language (localization), and keyword targeting (search/retail media).
@@ -4537,231 +7310,6 @@ export interface CreativeAssignment {
    * Optional array of placement IDs where this creative should run. When omitted, the creative runs on all placements in the package. References placement_id values from the product's placements array.
    */
   placement_ids?: string[];
-}
-/**
- * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
- */
-export interface CreativeAsset {
-  /**
-   * Unique identifier for the creative
-   */
-  creative_id: string;
-  /**
-   * Human-readable creative name
-   */
-  name: string;
-  format_id: FormatReferenceStructuredObject;
-  /**
-   * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
-   */
-  assets: {
-    [k: string]: AssetVariant | undefined;
-  };
-  /**
-   * Preview contexts for generative formats - defines what scenarios to generate previews for
-   */
-  inputs?: {
-    /**
-     * Human-readable name for this preview variant
-     */
-    name: string;
-    /**
-     * Macro values to apply for this preview
-     */
-    macros?: {
-      [k: string]: string | undefined;
-    };
-    /**
-     * Natural language description of the context for AI-generated content
-     */
-    context_description?: string;
-  }[];
-  /**
-   * User-defined tags for organization and searchability
-   */
-  tags?: string[];
-  status?: CreativeStatus;
-  /**
-   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
-   * @minimum 0
-   * @maximum 100
-   */
-  weight?: number;
-  /**
-   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-   */
-  placement_ids?: string[];
-  /**
-   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
-   */
-  industry_identifiers?: IndustryIdentifier[];
-  provenance?: Provenance;
-}
-/**
- * Image asset with URL and dimensions
- */
-export interface ImageAsset {
-  /**
-   * Discriminator identifying this as an image asset. See /schemas/creative/asset-types for the registry.
-   */
-  asset_type: 'image';
-  /**
-   * URL to the image asset
-   */
-  url: string;
-  /**
-   * Width in pixels
-   * @minimum 1
-   */
-  width: number;
-  /**
-   * Height in pixels
-   * @minimum 1
-   */
-  height: number;
-  /**
-   * Image file format (jpg, png, gif, webp, etc.)
-   */
-  format?: string;
-  /**
-   * Alternative text for accessibility
-   */
-  alt_text?: string;
-  provenance?: Provenance;
-}
-/**
- * Provenance metadata for this asset, overrides manifest-level provenance
- */
-export interface Provenance {
-  digital_source_type?: DigitalSourceType;
-  /**
-   * AI system used to generate or modify this content. Aligns with IPTC 2025.1 AI metadata fields and C2PA claim_generator.
-   */
-  ai_tool?: {
-    /**
-     * Name of the AI tool or model (e.g., 'DALL-E 3', 'Stable Diffusion XL', 'Gemini')
-     */
-    name: string;
-    /**
-     * Version identifier for the AI tool or model (e.g., '25.1', '0125', '2.1'). For generative models, use the model version rather than the API version.
-     */
-    version?: string;
-    /**
-     * Organization that provides the AI tool (e.g., 'OpenAI', 'Stability AI', 'Google')
-     */
-    provider?: string;
-  };
-  /**
-   * Level of human involvement in the AI-assisted creation process
-   */
-  human_oversight?: 'none' | 'prompt_only' | 'selected' | 'edited' | 'directed';
-  /**
-   * Party declaring this provenance. Identifies who attached the provenance claim, enabling receiving parties to assess trust.
-   */
-  declared_by?: {
-    /**
-     * URL of the agent or service that declared this provenance
-     */
-    agent_url?: string;
-    /**
-     * Role of the declaring party in the supply chain
-     */
-    role: 'creator' | 'advertiser' | 'agency' | 'platform' | 'tool';
-  };
-  /**
-   * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
-   * @format date-time
-   */
-  declared_at?: string;
-  /**
-   * When this content was created or generated (ISO 8601)
-   * @format date-time
-   */
-  created_time?: string;
-  /**
-   * C2PA Content Credentials reference. Links to the cryptographic provenance manifest for this content. Because file-level C2PA bindings break during ad-tech transcoding, this URL reference preserves the chain of provenance through the supply chain.
-   */
-  c2pa?: {
-    /**
-     * URL to the C2PA manifest store for this content
-     */
-    manifest_url: string;
-  };
-  /**
-   * Regulatory disclosure requirements for this content. Indicates whether AI disclosure is required and under which jurisdictions.
-   */
-  disclosure?: {
-    /**
-     * Whether AI disclosure is required for this content based on applicable regulations
-     */
-    required: boolean;
-    /**
-     * Jurisdictions where disclosure obligations apply
-     */
-    jurisdictions?: {
-      /**
-       * ISO 3166-1 alpha-2 country code (e.g., 'US', 'DE', 'CN')
-       */
-      country: string;
-      /**
-       * Sub-national region code (e.g., 'CA' for California, 'BY' for Bavaria)
-       */
-      region?: string;
-      /**
-       * Regulation identifier (e.g., 'eu_ai_act_article_50', 'ca_sb_942', 'cn_deep_synthesis')
-       */
-      regulation: string;
-      /**
-       * Required disclosure label text for this jurisdiction, in the local language
-       */
-      label_text?: string;
-      /**
-       * How the disclosure should be rendered for this jurisdiction. Expresses the declaring party's intent for persistence and position based on regulatory requirements. Publishers control actual rendering but governance agents can audit whether guidance was followed.
-       */
-      render_guidance?: {
-        persistence?: DisclosurePersistence;
-        /**
-         * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
-         * @minimum 1
-         */
-        min_duration_ms?: number;
-        /**
-         * Preferred disclosure positions in priority order. The first position a format supports should be used.
-         */
-        positions?: DisclosurePosition[];
-        ext?: ExtensionObject;
-      };
-    }[];
-  };
-  /**
-   * Third-party verification or detection results for this content. Multiple services may independently evaluate the same content. Provenance is a claim — verification results attached by the declaring party are supplementary. The enforcing party (e.g., seller/publisher) should run its own verification via get_creative_features or calibrate_content.
-   */
-  verification?: {
-    /**
-     * Name of the verification service (e.g., 'DoubleVerify', 'Hive Moderation', 'Reality Defender')
-     */
-    verified_by: string;
-    /**
-     * When the verification was performed (ISO 8601)
-     * @format date-time
-     */
-    verified_time?: string;
-    /**
-     * Verification outcome
-     */
-    result: 'authentic' | 'ai_generated' | 'ai_modified' | 'inconclusive';
-    /**
-     * Confidence score of the verification result (0.0 to 1.0)
-     * @minimum 0
-     * @maximum 1
-     */
-    confidence?: number;
-    /**
-     * URL to the full verification report
-     */
-    details_url?: string;
-  }[];
-  ext?: ExtensionObject;
 }
 /**
  * Video asset with URL and technical specifications including audio track properties
@@ -4976,7 +7524,7 @@ export interface URLAsset {
   provenance?: Provenance;
 }
 /**
- * HTML content asset
+ * Inline HTML content asset. For URL-delivered HTML5 banner bundles, use the zip asset type instead. For single-URL iframe-rendered tag references, use the url asset type with an appropriate url_type.
  */
 export interface HTMLAsset {
   /**
@@ -5015,7 +7563,7 @@ export interface HTMLAsset {
   provenance?: Provenance;
 }
 /**
- * JavaScript code asset
+ * Inline JavaScript content asset. For URL-delivered third-party tag scripts, use the url asset type with url_type 'tracker_script'. For HTML5 banner bundles that include JavaScript, use the zip asset type.
  */
 export interface JavaScriptAsset {
   /**
@@ -5027,6 +7575,63 @@ export interface JavaScriptAsset {
    */
   content: string;
   module_type?: JavaScriptModuleType;
+  /**
+   * Self-declared accessibility properties for this opaque creative
+   */
+  accessibility?: {
+    /**
+     * Text alternative describing the creative content
+     */
+    alt_text?: string;
+    /**
+     * Whether the creative can be fully operated via keyboard
+     */
+    keyboard_navigable?: boolean;
+    /**
+     * Whether the creative respects prefers-reduced-motion or provides pause/stop controls
+     */
+    motion_control?: boolean;
+    /**
+     * Whether the creative has been tested with screen readers
+     */
+    screen_reader_tested?: boolean;
+  };
+  provenance?: Provenance;
+}
+/**
+ * Bundled creative asset delivered as a zip archive — typically an HTML5 banner with index.html plus supporting CSS, JS, images, and fonts. Receivers unpack the zip, validate internal structure, and serve contents from CDN. Distinct from inline HTML (html asset) and from third-party tag URLs (url asset with url_type tracker_script).
+ */
+export interface ZipAsset {
+  /**
+   * Discriminator identifying this as a zip-bundled asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'zip';
+  /**
+   * URL where the zip archive is hosted. Must be HTTPS.
+   */
+  url: string;
+  /**
+   * Maximum file size in kilobytes. Receivers should reject zips exceeding this.
+   * @minimum 0
+   */
+  max_file_size_kb?: number;
+  /**
+   * Relative path to the entry file within the zip (typically 'index.html'). Receivers default to 'index.html' if absent.
+   */
+  entry_point?: string;
+  /**
+   * File extensions permitted inside the zip (e.g., ['html', 'css', 'js', 'png', 'jpg', 'svg', 'webp', 'json', 'woff2']). Receivers may reject zips containing other extensions.
+   */
+  allowed_inner_extensions?: string[];
+  /**
+   * Fallback image URL for environments that cannot render the bundled creative (e.g., non-HTML5 endpoints, ad blockers). Recommended for HTML5 banners.
+   */
+  backup_image_url?: string;
+  /**
+   * Optional SHA-256 content digest of the zip archive (sha256:<hex>) for integrity verification. Lets receivers detect tampered or stale archives.
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  digest?: string;
   /**
    * Self-declared accessibility properties for this opaque creative
    */
@@ -5299,6 +7904,41 @@ export interface CatalogAsset {
   asset_type: 'catalog';
 }
 /**
+ * A single card in a multi-card creative (image_carousel, future composed carousels). Carries: `media` (an image OR video asset), optional `headline` (short text), optional `description` (longer text), optional `cta` (call-to-action label), optional `landing_page_url` (url asset with `url_type: "clickthrough"`).
+ *
+ * Covers the multi-card patterns across Meta carousel, Pinterest sponsored pin, Snap Collection, TikTok carousel, and AI-surface result cards. The two-field text shape (`headline` + `description`) reflects how almost every adopter splits short labels from longer copy; Pinterest pin description and Meta per-card description both go in `description`.
+ *
+ * Used as the array element type for the `cards` slot on image_carousel canonicals. Adopters MUST NOT invent per-card key conventions like `card_0_headline` / `cards.0.headline` — the manifest's `assets.cards` value is an array of card-asset objects, period. Per-card platform extensions (e.g., Meta-specific carousel attributes, Pinterest rich-pin metadata, Snap Collection price tags) attach via the `platform_extensions` field, never via inline non-canonical keys.
+ */
+export interface CardAsset {
+  /**
+   * Discriminator identifying this as a card asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'card';
+  /**
+   * The card's primary visual asset. Either an `image` or `video` asset, matching the parent format's `allowed_card_media_asset_types` parameter.
+   */
+  media: ImageAsset | VideoAsset;
+  /**
+   * Optional per-card short text label (typically 25-40 chars). Length governed by `card_headline_max_chars` on the format declaration. Meta carousel headline, Pinterest pin title, Snap Collection sticker text, TikTok caption-short.
+   */
+  headline?: string;
+  /**
+   * Optional per-card longer text (typically 100-500 chars). Distinct from `headline`: `description` is body copy, `headline` is the label. Length governed by `card_description_max_chars` on the format declaration. Meta carousel description, Pinterest pin description, AI-surface result body text, TikTok long caption.
+   */
+  description?: string;
+  /**
+   * Optional per-card call-to-action label (e.g., 'SHOP_NOW', 'LEARN_MORE'). When the parent format declares `cta_values` (allowed CTA labels), the per-card `cta` MUST be one of those values. Lets a Meta or TikTok carousel show different CTAs per card.
+   */
+  cta?: string;
+  landing_page_url?: URLAsset;
+  /**
+   * Per-card platform-specific extensions (URI+digest references). Same hosting model as format-level platform_extensions. Use this for Meta carousel-card attributes, Pinterest pin overrides, etc. — NEVER inline non-canonical keys on the card object directly.
+   */
+  platform_extensions?: PlatformExtensionReference[];
+  provenance?: Provenance;
+}
+/**
  * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
  */
 export interface IndustryIdentifier {
@@ -5421,12 +8061,20 @@ export interface BusinessEntity {
  */
 export interface PushNotificationConfig {
   /**
-   * Webhook endpoint URL for task status notifications
+   * Webhook endpoint URL for task status notifications. The wire contract is unconstrained beyond `format: "uri"` — in particular, publishers SHOULD NOT enforce a destination-port allowlist by default, since buyers legitimately host receivers on non-standard TLS ports (`:9443`, `:4443`, path-routed multi-tenant gateways). The SSRF guard the protocol relies on is the IP-range check + DNS-rebinding-resistant connect pin defined in [Webhook URL validation (SSRF)](/docs/building/by-layer/L1/security#webhook-url-validation-ssrf), not port filtering. Operators who want a hardened destination-port allowlist as defense-in-depth (e.g., locked-down enterprise egress) opt in explicitly — see [Destination port: permissive by default](/docs/building/by-layer/L1/security#destination-port-permissive-by-default).
    */
   url: string;
   /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed the same value in the URL path or query as a routing aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  operation_id?: string;
+  /**
+   * Optional client-provided token for webhook validation. The seller MUST echo this value verbatim in every webhook payload's `token` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) for the receiver-side validation obligation). Length bounds give receivers a defensive range check on the echoed value; senders SHOULD generate tokens with at least 128 bits of entropy (≥22 base64url characters). This is a complementary authenticity mechanism that can layer on top of the RFC 9421 webhook signature — unlike the `authentication` block below, it is not on the 4.0 removal track. Receivers that registered both a signing key (RFC 9421) and a `token` MUST NOT treat a valid token echo as authorization to skip signature verification; both checks remain independent obligations.
    * @minLength 16
+   * @maxLength 4096
    */
   token?: string;
   /**
@@ -5486,7 +8134,16 @@ export interface ReportingWebhook {
 /**
  * Response payload for create_media_buy. Exactly one of three shapes: (1) synchronous success — media_buy_id and packages are issued in-line, no status or a MediaBuyStatus value (pending_creatives / pending_start / active); (2) terminal failure — an errors array with no media-buy artifact and status != 'submitted'; (3) submitted task envelope — status 'submitted' with task_id, the media buy is queued or awaiting a human decision (e.g., IO signing), and media_buy_id / packages land on the task's completion artifact, not this response. The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type CreateMediaBuyResponse = CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted;
+export type CreateMediaBuyResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (CreateMediaBuySuccess | CreateMediaBuyError | CreateMediaBuySubmitted);
 /**
  * Account lifecycle status. See the Accounts Protocol overview for the operations matrix showing which tasks are permitted in each state.
  */
@@ -5508,28 +8165,16 @@ export type AccountScope = 'operator' | 'brand' | 'operator_brand' | 'agent';
  */
 export type CloudStorageProtocol = 's3' | 'gcs' | 'azure_blob';
 /**
- * Initial media buy status. Either 'pending_creatives' (awaiting creative assets), 'pending_start' (ready to serve, waiting for flight date), or 'active' (immediate activation).
+ * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.purged`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. New notification types added to this enum MUST declare their anchor (media-buy or account) and per-type `notification_id` semantics in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored type, and MUST reject `push_notification_config` registrations for account-anchored types.
  */
-export type MediaBuyStatus =
-  | 'pending_creatives'
-  | 'pending_start'
-  | 'active'
-  | 'paused'
-  | 'completed'
-  | 'rejected'
-  | 'canceled';
-/**
- * Actions the buyer can perform on a media buy
- */
-export type MediaBuyValidAction =
-  | 'pause'
-  | 'resume'
-  | 'cancel'
-  | 'update_budget'
-  | 'update_dates'
-  | 'update_packages'
-  | 'add_packages'
-  | 'sync_creatives';
+export type NotificationType =
+  | 'scheduled'
+  | 'final'
+  | 'delayed'
+  | 'adjusted'
+  | 'impairment'
+  | 'creative.status_changed'
+  | 'creative.purged';
 /**
  * Which party initiated the package cancellation.
  */
@@ -5630,9 +8275,23 @@ export interface CreateMediaBuySuccess {
    */
   revision?: number;
   /**
-   * Actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys.
+   * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is denominated in this currency. Package-level fields may override with package.currency. In proposal mode the seller derives this from the request's total_budget object (total_budget.currency); in manual mode it is present when all packages share a currency. Matches the currency field in subsequent get_media_buys responses.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  /**
+   * Total budget amount across all packages, denominated in currency. Note: the create_media_buy request encodes total_budget as an object {amount, currency} (proposal mode only); this response field is the flattened scalar amount, with currency promoted to the sibling currency field. Present when the seller can compute a deterministic aggregate — always in proposal mode, conditionally in manual mode when all packages share a currency. Matches the total_budget field in subsequent get_media_buys responses.
+   * @minimum 0
+   */
+  total_budget?: number;
+  /**
+   * Flat-vocabulary actions the buyer can perform on this media buy after creation. Saves a round-trip to get_media_buys. Deprecated in favor of `available_actions[]`, which carries `mode`, optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
   valid_actions?: MediaBuyValidAction[];
+  /**
+   * Structured per-buy resolution of actions available immediately after creation. Authoritative — see `get-media-buys-response.json` for full semantics.
+   */
+  available_actions?: MediaBuyAvailableAction[];
   /**
    * Array of created packages with complete state information
    */
@@ -5712,7 +8371,7 @@ export interface Account {
   };
   account_scope?: AccountScope;
   /**
-   * Governance agent endpoints registered on this account. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
+   * Governance agent endpoint registered on this account. Exactly one entry per sync_governance's one-agent-per-account invariant. The array shape is preserved for wire compatibility with 3.0; `maxItems: 1` is load-bearing and mirrors the singular `governance_context` on the protocol envelope. Authentication credentials are write-only and not included in responses — use sync_governance to set or update credentials.
    */
   governance_agents?: {
     /**
@@ -5720,10 +8379,6 @@ export interface Account {
      * @pattern ^https:\/\/
      */
     url: string;
-    /**
-     * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
-     */
-    categories?: string[];
   }[];
   /**
    * Cloud storage bucket where the seller delivers offline reporting files for this account. Seller provisions a dedicated bucket or a per-account prefix within a shared bucket, and grants the buyer read access out-of-band. Access MUST be scoped at the IAM layer so each account can only read its own prefix — bucket-wide grants are non-compliant even with per-account prefixes. Seller MUST revoke access when the account's status transitions to inactive, suspended, or closed. See security considerations for offline delivery in docs/media-buy/media-buys/optimization-reporting. Only present when the seller supports offline delivery (reporting_delivery_methods includes 'offline' in capabilities).
@@ -5772,7 +8427,59 @@ export interface Account {
    * When true, this is a sandbox account — no real platform calls, no real spend. For explicit accounts (require_operator_auth: true), sandbox accounts are pre-existing test accounts on the platform discovered via list_accounts. For implicit accounts, sandbox is part of the natural key: the same brand/operator pair can have both a production and sandbox account.
    */
   sandbox?: boolean;
+  /**
+   * Account-level webhook subscriptions for notifications whose lifecycle outlives any single media buy (e.g., `creative.status_changed`, `creative.purged`). Distinct from `push_notification_config` on individual operations, which anchors at a per-resource scope. Buyers register and update entries via `sync_accounts`; sellers echo the applied state here on `list_accounts` reads so buyers can verify what's active. `authentication.credentials` is write-only — sellers MUST NOT echo legacy auth credentials in this response. When two or more entries register the same `event_types`, each receives an independent fire — see #3009 multi-subscriber composition.
+   */
+  notification_configs?: NotificationConfig[];
   ext?: ExtensionObject;
+}
+/**
+ * Account-level webhook subscription for notifications whose lifecycle outlives any single media buy — creative state changes, library purges, future org-level signals. Distinct from `push-notification-config.json`, which anchors at a per-resource operation (a single task or media buy). An account MAY register multiple notification configs to fan a single seller's events out to multiple buyer-side endpoints; each entry filters by `event_types`. As with push-notification-config, the default signing scheme is the AdCP RFC 9421 webhook profile against the seller's brand.json `agents[]` JWKS; the optional `authentication` block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in `authentication.credentials` are write-only — sellers MUST NOT echo them back in `list_accounts` responses.
+ */
+export interface NotificationConfig {
+  /**
+   * Buyer-supplied identifier for this subscription endpoint. Echoed on every webhook payload and on every `webhook_activity[]` record fired against this config so the buyer can attribute fires across multiple endpoints. MUST be unique within the account's `notification_configs[]` — uniqueness is enforced by the seller at registration time; duplicates are rejected with `errors[]`. Always required (even with a single subscriber) so the SDK contract is uniform — no conditional required-when-multiple rules to trip up implementations. Format is opaque — recommended values are short kebab-case slugs (`buyer-primary`, `audit-bus`, `dx-team`).
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  subscriber_id: string;
+  /**
+   * Webhook endpoint URL. Same wire contract as `push-notification-config.url` — `format: "uri"`, no destination-port allowlist enforced by the protocol, SSRF protection via the IP-range check defined in docs/building/by-layer/L1/security.mdx#webhook-url-validation-ssrf.
+   */
+  url: string;
+  /**
+   * Notification types this subscriber wishes to receive on the registered `url`. The seller MUST NOT fire other types against this endpoint, and MUST NOT silently widen the filter when new types are added to `notification-type.json`. When omitted, the seller MUST default to a no-fire policy and surface an `errors[]` entry on `sync_accounts` so the buyer notices the missing filter. Values are drawn from `notification-type.json`, but only types whose contract anchors at the account scope are valid here — media-buy-anchored types (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) belong on a media buy's `push_notification_config`, not on this surface; sellers MUST reject those entries with an `errors[]` warning rather than silently dropping them.
+   */
+  event_types: NotificationType[];
+  /**
+   * Legacy authentication selector. Same precedence and semantics as `push-notification-config.authentication` — presence opts the seller into Bearer or HMAC-SHA256 signing; absence selects the default RFC 9421 webhook profile keyed off the seller's brand.json `agents[]` JWKS. Deprecated; removed in AdCP 4.0. Credentials are write-only and MUST NOT be echoed on `list_accounts` reads.
+   */
+  authentication?: {
+    schemes: AuthenticationScheme[];
+    /**
+     * Credentials for the legacy scheme. Bearer: token. HMAC-SHA256: shared secret. Minimum 32 characters. Exchanged out-of-band during onboarding. Write-only.
+     * @minLength 32
+     */
+    credentials: string;
+  };
+  /**
+   * When false, the seller persists the configuration but suppresses fires. Use to pause a noisy subscriber without losing the registration. Sellers MUST NOT skip persisting the entry when `active: false` — the buyer's next `sync_accounts` MUST observe the same array, otherwise the buyer cannot distinguish pause from drop.
+   */
+  active?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * An action currently available on a media buy, resolved against the buy's current status, negotiated terms, account tier, and any buy-level overrides. Authoritative per-buy capability — buyer SDKs MUST read this rather than re-deriving from the product's `allowed_actions[]`, because divergence from the product template is expected (negotiated terms and IO addenda live on the deal, not the product SKU). The containing `available_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value (this is a contract-level invariant — JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately). Predicate evaluators consuming dotted paths like `available_actions.extend_flight.sla.response_max` MUST index by `action` rather than by array position. The `mode` and `sla` values are advisory at the moment of emission; sellers MAY resolve to a different mode by the time the mutation arrives (state can change), in which case the request is rejected with `ACTION_NOT_ALLOWED` (`reason: mode_mismatch`).
+ */
+export interface MediaBuyAvailableAction {
+  action: MediaBuyValidAction;
+  mode: MediaBuyActionMode;
+  sla?: SLAWindow;
+  /**
+   * Optional pointer into buy-terms negotiation (forward-references the buy-terms namespace landing via separate RFC). Schema accepts any string for now and will tighten to a structured reference when the buy-terms RFC ships.
+   */
+  terms_ref?: string;
 }
 /**
  * A specific product within a media buy (line item)
@@ -5821,6 +8528,46 @@ export interface Package {
    * Agreed performance standards for this package. When any entry specifies a vendor, creatives assigned to this package MUST include corresponding tracker_script or tracker_pixel assets from that vendor.
    */
   performance_standards?: PerformanceStandard[];
+  /**
+   * The binding reporting contract for this package — what the seller has agreed to populate in delivery reports. Each entry carries an explicit `committed_at` timestamp, so the array also serves as the contract amendment ledger: day-1 commitments share `committed_at = create_media_buy.confirmed_at`; mid-flight additions carry their own timestamps. The `missing_metrics` field on `get_media_buy_delivery` reconciles against this list, filtering to entries where `committed_at < reporting_period.end` (a metric committed mid-flight is only audited from its commitment timestamp forward). Sellers stamp the day-1 set on the `create_media_buy` response; mid-flight additions are appended via `update_media_buy` (append-only — sellers MUST reject attempts to modify or remove existing entries with `validation_error`, suggested code: `IMMUTABLE_FIELD`). Optional in v1; absence means the seller does not provide an audit-grade contract and `missing_metrics` falls back to the product's live `available_metrics` (a known audit gap — buyers SHOULD treat absence as 'no audit-grade contract' rather than 'clean delivery'). Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. The unified shape is symmetric with `missing_metrics` and `aggregated_totals.metric_aggregates` — same atomic unit `(scope, metric_id, qualifier)` across contract, diff, and delivery, so reconciliation collapses to a row-level join on the tuple. Replaces the parallel-array design that shipped briefly in #3510.
+   */
+  committed_metrics?: (
+    | {
+        /**
+         * Standard metric from the closed `available-metric.json` enum.
+         */
+        scope: 'standard';
+        metric_id: AvailableMetric;
+        /**
+         * Disambiguates metrics whose definition varies by qualifier. Today carries five keys — `viewability_standard` (MRC vs GroupM viewability), `completion_source` (seller- vs vendor-attested completion), `attribution_methodology` (how attribution was computed for outcome metrics), `attribution_window` (the time window over which outcomes were attributed), and `lift_dimension` (which dimension of brand_lift this row represents — awareness, consideration, etc.). Required when the underlying `metric_id` has multiple incompatible measurement paths AND the seller commits to a specific one. Symmetric on `missing_metrics`. Reserved for additive qualifiers in future minors — schema is closed (`additionalProperties: false`); new keys ship explicitly. **Heterogeneous value types**: qualifier values can be either string enums (`viewability_standard`, `completion_source`, `attribution_methodology`, `lift_dimension`) or structured objects (`attribution_window` is a duration `{interval, unit}`). Consumers MUST dispatch on key name to know value shape; structured-value qualifiers join on canonical (key-sorted) deep equality so `{interval: 14, unit: 'days'}` and `{unit: 'days', interval: 14}` resolve to the same partition. Rate-style metrics (`new_to_brand_rate`, `engagement_rate`, etc.) inherit the methodology of their numerator — when a rate carries `attribution_methodology` qualifier, it applies to the underlying conversions/events being rated.
+         */
+        qualifier?: {
+          viewability_standard?: ViewabilityStandard;
+          completion_source?: CompletionSource;
+          attribution_methodology?: AttributionMethodology;
+          attribution_window?: Duration;
+          lift_dimension?: LiftDimension;
+        };
+        /**
+         * ISO 8601 timestamp when this metric became part of the contract. Day-1 commitments use `create_media_buy.confirmed_at`; mid-flight additions use the time the amendment was accepted.
+         * @format date-time
+         */
+        committed_at: string;
+      }
+    | {
+        /**
+         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+         */
+        scope: 'vendor';
+        vendor: BrandReference;
+        metric_id: VendorMetricID;
+        /**
+         * ISO 8601 timestamp when this vendor metric became part of the contract.
+         * @format date-time
+         */
+        committed_at: string;
+      }
+  )[];
   /**
    * Creative assets assigned to this package
    */
@@ -5984,9 +8731,11 @@ export interface CreateMediaBuySubmitted {
  */
 export interface UpdateMediaBuyRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -6024,7 +8773,7 @@ export interface UpdateMediaBuyRequest {
   packages?: PackageUpdate[];
   invoice_recipient?: BusinessEntity;
   /**
-   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise add_packages in valid_actions. Sellers that do not support this MUST reject with UNSUPPORTED_FEATURE.
+   * New packages to add to this media buy. Uses the same schema as create_media_buy packages. Sellers that support mid-flight package additions advertise `add_packages` in both `valid_actions[]` (deprecated) and as an entry in `available_actions[]` (authoritative). Sellers that do not support this MUST reject with ACTION_NOT_ALLOWED (preferred) or UNSUPPORTED_FEATURE (legacy).
    */
   new_packages?: PackageRequest[];
   reporting_webhook?: ReportingWebhook;
@@ -6040,7 +8789,7 @@ export interface UpdateMediaBuyRequest {
   ext?: ExtensionObject;
 }
 /**
- * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Note: product_id, format_ids, and pricing_option_id cannot be changed after creation.
+ * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Fully-immutable fields (product_id, format_ids, pricing_option_id) cannot appear in update payloads — schema-enforced via the `not` constraint at the root of this object. The reporting contract field `committed_metrics` is append-only (sellers MUST accept new entries on update but reject attempts to modify or remove existing entries with validation_error per its own description).
  */
 export interface PackageUpdate {
   /**
@@ -6156,9 +8905,18 @@ export interface PackageUpdate {
   ext?: ExtensionObject;
 }
 /**
- * Response payload for update_media_buy task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - updates are either fully applied or not applied at all.
+ * Response payload for update_media_buy task. Exactly one of three shapes: (1) synchronous success — media_buy_id and updated state are issued in-line; (2) terminal failure — an errors array with no changes applied; (3) submitted task envelope — status 'submitted' with task_id when the update is queued for async processing (e.g., awaiting operator re-approval for mid-flight changes). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type UpdateMediaBuyResponse = UpdateMediaBuySuccess | UpdateMediaBuyError;
+export type UpdateMediaBuyResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (UpdateMediaBuySuccess | UpdateMediaBuyError | UpdateMediaBuySubmitted);
 /**
  * Success response - media buy updated successfully
  */
@@ -6174,6 +8932,16 @@ export interface UpdateMediaBuySuccess {
    */
   revision?: number;
   /**
+   * ISO 4217 currency code for monetary values at this media buy level. Echoed when the update affects budget or currency. Matches the currency field in subsequent get_media_buys responses.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  /**
+   * Updated total budget amount across all packages, denominated in currency. Echoed when the update affects package budgets so buyers can verify the new aggregate without a round-trip to get_media_buys. Matches the total_budget field in subsequent get_media_buys responses.
+   * @minimum 0
+   */
+  total_budget?: number;
+  /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
    * @format date-time
    */
@@ -6184,9 +8952,13 @@ export interface UpdateMediaBuySuccess {
    */
   affected_packages?: Package[];
   /**
-   * Actions the buyer can perform after this update. Saves a round-trip to get_media_buys.
+   * Flat-vocabulary actions the buyer can perform after this update. Saves a round-trip to get_media_buys. Deprecated in favor of `available_actions[]`, which carries `mode`, optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
   valid_actions?: MediaBuyValidAction[];
+  /**
+   * Structured per-buy resolution of actions available after this update. Authoritative — see `get-media-buys-response.json` for full semantics.
+   */
+  available_actions?: MediaBuyAvailableAction[];
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -6205,6 +8977,31 @@ export interface UpdateMediaBuyError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Async task envelope returned when update_media_buy cannot be confirmed before the response — for example, when operator re-approval is required for mid-flight changes. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the updated media buy state lands on the completion artifact, not this envelope.
+ */
+export interface UpdateMediaBuySubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose media_buy_id is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting operator re-approval; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
 
 // get_media_buys parameters
 /**
@@ -6212,9 +9009,11 @@ export interface UpdateMediaBuyError {
  */
 export interface GetMediaBuysRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -6236,12 +9035,42 @@ export interface GetMediaBuysRequest {
    * @maximum 1000
    */
   include_history?: number;
+  /**
+   * When true, each returned media buy includes a `webhook_activity` array describing recent delivery-report webhook fires for the calling principal. Used by buyer agents to verify whether a publisher actually fired against the buyer's registered endpoint and what the endpoint returned — closes the operator-ticket loop for webhook debugging. Scoped to the calling principal: a buyer sees only fires targeting its own endpoint, even when multiple principals share visibility into the same media buy. Defaults to false. See `webhook_activity_limit` for the per-buy cap.
+   */
+  include_webhook_activity?: boolean;
+  /**
+   * Maximum number of webhook delivery records to return per media buy, ordered most-recent first. Ignored when `include_webhook_activity` is false. Sellers that surface webhook activity MUST retain records for at least 30 days from each record's `completed_at` (see `webhook_activity` description in the response schema for the `pending`-status carve-out); sellers unable to honor that floor MUST omit the field entirely rather than truncate. When a buy has more historical fires than the limit, only the most recent are returned — there is no cursor for older fires; this surface is a debug aid, not a full audit log.
+   * @minimum 1
+   * @maximum 200
+   */
+  webhook_activity_limit?: number;
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
 
 // get_media_buys response
+/**
+ * Aggregate health of a media buy based on upstream dependency state. Orthogonal to media-buy-status — a buy can be paused-and-impaired, pending-and-impaired, or active-and-impaired. Always set; defaults to 'ok' when no open impairments exist.
+ */
+export type MediaBuyHealth = 'ok' | 'impaired';
+/**
+ * Current (offline) status of the resource. Drawn from the resource_type's canonical lifecycle enum; see impairment-offline-state for per-value resource_type pairing. The pairing is validated by impairment.coherence.
+ */
+export type ImpairmentOfflineState = 'suspended' | 'rejected' | 'withdrawn' | 'insufficient' | 'depublished';
+/**
+ * Categorical reason for the offline transition. Drives buyer-side remediation logic.
+ */
+export type ImpairmentReasonCode =
+  | 'policy_violation'
+  | 'consent_expired'
+  | 'ttl_expired'
+  | 'pii_audit_failed'
+  | 'seller_removed'
+  | 'content_rejected'
+  | 'source_offline'
+  | 'property_depublished';
 /**
  * Approval state of a creative on a specific package
  */
@@ -6259,6 +9088,14 @@ export type SnapshotUnavailableReason =
  */
 export interface GetMediaBuysResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Array of media buys with status, creative approval state, and optional delivery snapshots
    */
   media_buys: {
@@ -6269,6 +9106,18 @@ export interface GetMediaBuysResponse {
     account?: Account;
     invoice_recipient?: BusinessEntity;
     status: MediaBuyStatus;
+    /**
+     * Dependency health of the media buy, orthogonal to `status`. `ok` (default) when no upstream resource that this buy depends on is in an offline state. `impaired` when at least one such resource (audience, creative, catalog_item, event_source, property) is offline and affects delivery for one or more packages — `impairments[]` MUST be non-empty in that case. On terminal-status buys, the seller MAY leave this field in whatever state held at the terminal transition. See lifecycle.mdx § Compliance and the impairment.coherence assertion.
+     */
+    health?: MediaBuyHealth & string;
+    /**
+     * Open impairments — upstream dependency state changes that affect delivery for at least one package on this buy. Empty when `health` is `ok`; non-empty iff `health` is `impaired` (health-iff rule on non-terminal buys). Sellers MUST add an entry on the next read after a referenced resource transitions to an offline state, and MUST remove the entry when the resource returns to a serviceable state or stops being a dependency (e.g., via assignment swap via update_media_buy). Staleness budget: the snapshot MUST reflect the impairment within 5 minutes of `impairment.observed_at` regardless of buyer poll cadence — sellers cannot rely on rare buyer polls to defer write propagation. See impairment.coherence assertion for the cross-resource invariant.
+     */
+    impairments?: Impairment[];
+    /**
+     * Reason provided by the seller when status is 'rejected'. Present only when status is 'rejected'.
+     */
+    rejection_reason?: string;
     /**
      * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
      * @pattern ^[A-Z]{3}$
@@ -6331,9 +9180,17 @@ export interface GetMediaBuysResponse {
      */
     updated_at?: string;
     /**
-     * Actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now.
+     * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_proposal / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
      */
     valid_actions?: MediaBuyValidAction[];
+    /**
+     * Structured per-buy resolution of the actions buyer can perform right now. Authoritative — divergence from product `allowed_actions[]` is expected (negotiated terms, account tier, buy-level overrides live on the deal, not the product). Each entry carries the resolved `mode` (singular, since the buy has a concrete state), optional `sla` commitment, and optional `terms_ref`. Predicate queries via #4425's `requires` grammar address fields by dotted path, e.g. `available_actions.extend_flight.sla.response_max`. Absent SLA means no commitment, not zero commitment — callers composing duration predicates MUST also compose with `present: true` to avoid silently matching sellers who never declared one.
+     */
+    available_actions?: MediaBuyAvailableAction[];
+    /**
+     * Recent reporting and health webhook fires for the calling principal, most-recent first. Present only when `include_webhook_activity` was true in the request AND the seller surfaces this debug capability for this buy. Three-state semantics: (a) field omitted — seller does not surface webhook activity (either does not persist fire history, or `capabilities.media_buy.propagation_surfaces` excludes webhook surfaces, or the buy has no registered `push_notification_config` for this principal); (b) empty array `[]` — seller persists fire history but has fired nothing recent for this principal; (c) non-empty array — actual fire records. Sellers whose declared `propagation_surfaces` does not include `webhook` MUST omit the field. **Retention (normative):** sellers that surface this field MUST retain records for at least 30 days from each record's `completed_at` (for records still in `pending` status the clock runs from `fired_at` until the attempt terminates, then resets to 30 days from `completed_at` — so retry trails do not age out mid-flight). Sellers that cannot honor the 30-day floor MUST omit the field entirely rather than return a shorter window. Sellers MAY return fewer than `webhook_activity_limit` records when fewer fire records exist within the retention window. Sellers MUST emit one record per attempt — single-attempt successes appear as a single record with `attempt: 1`. Record shape is canonical across resources: see [`/schemas/core/webhook-activity-record.json`](/schemas/v3/core/webhook-activity-record.json) and snapshot-and-log.mdx § Webhook activity log pattern.
+     */
+    webhook_activity?: WebhookActivityRecord[];
     /**
      * Revision history entries, most recent first. Only present when include_history > 0 in the request. Each entry represents a state change or update to the media buy. Entries are append-only: sellers MUST NOT modify or delete previously emitted history entries. Callers MAY cache entries by revision number. Returns min(N, available entries) when include_history exceeds the total.
      */
@@ -6383,6 +9240,118 @@ export interface GetMediaBuysResponse {
    */
   sandbox?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A single upstream dependency state change that affects delivery for one or more packages within a media buy. An impairment is open until the underlying resource returns to a serviceable state. Materiality: an impairment MUST list at least one package whose ability to serve is degraded; cosmetic-only effects (e.g., one rejected creative when peers remain serviceable in the same package) MUST NOT be reported as impairments. Sellers MAY report conservatively when uncertain (list a package when the materiality join is expensive to compute); sellers MUST NOT report when serving is provably unaffected. Materiality is required (MUST) for resource types where the resource→buy join is cheap and 1:N — audience, event_source, property; SHOULD-strength for creative and catalog_item, where the resource is shared across a larger pool and the join cost is higher.
+ */
+export interface Impairment {
+  /**
+   * Stable identifier for this impairment, used as the notification_id when the impairment fires via webhook. Stable across re-emissions of the same open impairment (e.g., the seller re-fires after the buyer's receiver was down) and across the closing fire that signals resolution. A new impairment for the same resource_id after closure receives a new impairment_id. Distinct from the per-fire idempotency_key issued at the webhook transport layer — see snapshot-and-log Rule 1. Receivers correlate webhook fires to current impairments[] state by impairment_id; receivers suppress duplicate transport-layer retries by idempotency_key. Seeing the same impairment_id with different idempotency_keys is a re-emission signal, not a retry — the buyer should treat it as a notice that something may have been missed.
+   */
+  impairment_id: string;
+  /**
+   * The kind of upstream dependency that transitioned to an offline state. Values are drawn from the x-entity vocabulary (see core/x-entity-types.json) and identify a buyer-referenced object with its own lifecycle that the seller can take offline. This is the subset of x-entity types for which a media buy's serving depends on the resource — not a new typology, just the impairment-relevant slice.
+   */
+  resource_type: 'audience' | 'creative' | 'catalog_item' | 'event_source' | 'property';
+  /**
+   * Seller's identifier for the specific resource that transitioned. References the same id space as the corresponding sync_/list_ task responses (e.g., audience_id, creative_id).
+   */
+  resource_id: string;
+  /**
+   * Packages within this media buy whose delivery is degraded by the impairment. MUST list at least one package — cosmetic effects that do not degrade any package's ability to serve MUST NOT be reported as impairments.
+   */
+  package_ids: string[];
+  /**
+   * The resource-level status transition that triggered this impairment.
+   */
+  transition: {
+    /**
+     * Prior status of the resource (e.g., 'ready', 'approved', 'good'). Optional — sellers SHOULD include when known, MAY omit when the resource was discovered already in an offline state (e.g., a property depublished via brand.json crawl with no prior snapshot). Open string at the schema layer because each resource_type has its own serviceable-state vocabulary; the pattern constraint blocks free-form garbage, and the impairment.coherence assertion validates that 'from' is a known serviceable value for the resource_type.
+     * @pattern ^[a-z][a-z0-9_]*$
+     */
+    from?: string;
+    to: ImpairmentOfflineState;
+  };
+  reason_code: ImpairmentReasonCode;
+  /**
+   * Human-readable explanation. Supplements reason_code with seller-specific detail.
+   * @maxLength 500
+   */
+  reason?: string;
+  /**
+   * ISO 8601 timestamp when the seller observed the resource transition to its offline state.
+   * @format date-time
+   */
+  observed_at: string;
+  /**
+   * Action the buyer can take to clear the impairment, if any. Free text. Absent when no buyer-side remediation is possible (e.g., seller-initiated withdrawal pending re-publication).
+   * @maxLength 500
+   */
+  remediation?: string;
+}
+/**
+ * Single webhook delivery attempt surfaced to a calling principal as a buyer-side debug aid. Represents one HTTP attempt of a logical webhook fire from the seller to the buyer's registered endpoint — retries of the same logical fire share `idempotency_key` and differ by `attempt`. This is the canonical record shape for any AdCP resource that exposes a `webhook_activity[]` log on its read API; see snapshot-and-log.mdx § Webhook activity log pattern for the full normative contract (scoping, retention, three-state presence, request-field conventions).
+ */
+export interface WebhookActivityRecord {
+  /**
+   * Equals the `idempotency_key` carried in the webhook payload itself (see docs/building/by-layer/L3/webhooks.mdx § Dedup by `idempotency_key`). Stable across retry attempts of the same logical fire — retries with `attempt` > 1 reuse this key. Buyers correlate this surface with their own endpoint logs via this exact field; the spec deliberately reuses the payload key rather than minting a parallel `delivery_id` so callers do not need a join table. Format is sender-defined; callers MUST treat as opaque.
+   */
+  idempotency_key: string;
+  /**
+   * Identifies which registered webhook subscriber received this fire. **Required on records from account-anchored notification channels** (`notification_configs[]` registered via `sync_accounts`) — every subscriber has a `subscriber_id` at registration time, the seller MUST echo it on every fire and every activity record. **Optional on records from per-resource push channels** (`push_notification_config` on a media buy or task) — the calling principal is unambiguous in single-subscriber configurations and the field MAY be omitted; sellers MUST populate it once `reporting_webhook` adopts multi-subscriber (per #3009 in AdCP 4.0). Buyers MUST NOT use absence as a signal that no other subscribers exist; that information is not exposed by this surface.
+   */
+  subscriber_id?: string;
+  /**
+   * ISO 8601 timestamp when the seller initiated the HTTP request for this attempt.
+   * @format date-time
+   */
+  fired_at: string;
+  /**
+   * ISO 8601 timestamp when the seller observed the response (or terminal timeout / connection error — for `timeout` and `connection_error` outcomes, `completed_at` is set to the moment the seller declared the attempt terminal). Explicitly `null` when the attempt is still in flight or queued for retry (status `pending`); MUST be set as `null` rather than omitted so callers can distinguish 'still in flight' from 'field missing'.
+   * @format date-time
+   */
+  completed_at?: string | null;
+  notification_type: NotificationType;
+  /**
+   * Sequence number from the webhook payload. Surfaced here so the buyer can spot stale-sequence drops and gaps without correlating against their own endpoint log. Absent for notification types that do not carry a sequence number.
+   * @minimum 0
+   */
+  sequence_number?: number;
+  /**
+   * 1-indexed retry counter for this logical fire. Initial fire is attempt=1; retries increment. Sellers MUST emit one record per attempt, so a successful first-attempt fire appears as a single record with `attempt: 1` and a 3-attempt retry trail appears as three records sharing `idempotency_key`.
+   * @minimum 1
+   */
+  attempt: number;
+  /**
+   * Outcome of this attempt. `success` — response received with 2xx (`http_status_code` populated). `failed` — response received with non-2xx (`http_status_code` populated). `timeout` — no response within the seller's configured timeout (`http_status_code` null). `connection_error` — DNS / TLS / socket failure before any HTTP response (`http_status_code` null). `pending` — attempt is in flight or queued for retry (`completed_at` null, `http_status_code` null). The `timeout` / `connection_error` split is intentional and operationally distinct: `timeout` typically signals a slow / overloaded buyer endpoint, `connection_error` typically signals it is unreachable or misconfigured.
+   */
+  status: 'success' | 'failed' | 'timeout' | 'connection_error' | 'pending';
+  /**
+   * Target URL for this fire. Query string and fragment MUST be stripped before surfacing — buyers commonly stash bearer tokens in the query string and sellers MUST NOT echo those back through this debug surface. Sellers SHOULD additionally redact path segments matching obvious secret patterns (e.g., a path segment that is high-entropy random material or matches a UUID / token format). Buyers matching this against their own configured URL should compare by origin + path; query strings will not match and that mismatch is expected.
+   */
+  url: string;
+  /**
+   * HTTP status code returned by the buyer's endpoint. Explicitly `null` when no HTTP response was received (status `timeout`, `connection_error`, or `pending`); MUST be set as `null` rather than omitted.
+   * @minimum 100
+   * @maximum 599
+   */
+  http_status_code?: number | null;
+  /**
+   * Wall-clock latency between request send and response receipt, in milliseconds. Explicitly `null` when the attempt did not complete (`timeout`, `connection_error`, `pending`); MUST be set as `null` rather than omitted.
+   * @minimum 0
+   */
+  response_time_ms?: number | null;
+  /**
+   * Size of the request body the seller sent, in bytes. Useful for diagnosing oversized-payload rejections from the buyer's gateway.
+   * @minimum 0
+   */
+  payload_size_bytes?: number;
+  /**
+   * Short human-readable server-side classification of why this attempt did not succeed (e.g., `connection refused`, `TLS handshake timeout`, `HTTP 503 Service Unavailable`). Explicitly `null` for `success` (MUST be set as `null` rather than omitted). Sellers MUST NOT include request headers, request body content, or response body content in this field — payload surfacing is reserved for a future `include_webhook_payloads` extension and is subject to stricter access controls. Sellers SHOULD also avoid including buyer-endpoint internal hostnames, stack traces, or other implementation detail leaked by the response — keep it a stable classification string.
+   * @maxLength 500
+   */
+  error_message?: string | null;
   ext?: ExtensionObject;
 }
 /**
@@ -6524,10 +9493,6 @@ export interface PackageStatus {
   ext?: ExtensionObject;
 }
 /**
- * Attribution model to use. When omitted, the seller applies their default model.
- */
-export type AttributionModel = 'last_touch' | 'first_touch' | 'linear' | 'time_decay' | 'data_driven';
-/**
  * Metric to sort breakdown rows by (descending). Falls back to 'spend' if the seller does not report the requested metric.
  */
 export type SortMetric =
@@ -6558,9 +9523,11 @@ export type SortMetric =
  */
 export interface GetMediaBuyDeliveryRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -6586,6 +9553,11 @@ export interface GetMediaBuyDeliveryRequest {
    * When true, include daily_breakdown arrays within each package in by_package. Useful for per-package pacing analysis and line-item monitoring. Omit or set false to reduce response size — package daily data can be large for multi-package buys over long flights.
    */
   include_package_daily_breakdown?: boolean;
+  time_granularity?: ReportingFrequency;
+  /**
+   * When true, the response includes media_buy_deliveries[].windows[] — an array of per-window delivery slices over the date range at the requested time_granularity. Ignored when time_granularity is omitted. Each window's payload mirrors what reporting_webhook would have delivered for the same window, enabling lossless GET-path recovery for buyers who missed webhook fires. Omit or set false to reduce response size when only cumulative aggregates are needed.
+   */
+  include_window_breakdown?: boolean;
   /**
    * Attribution window to apply for conversion metrics. When provided, the seller returns conversion data using the requested lookback windows instead of their platform default. The seller echoes the applied window in the response. Sellers that do not support configurable windows ignore this field and return their default. Check get_adcp_capabilities conversion_tracking.attribution_windows for available options.
    */
@@ -6683,6 +9655,14 @@ export type AudienceSource = 'synced' | 'platform' | 'third_party' | 'lookalike'
  * Response payload for get_media_buy_delivery task
  */
 export interface GetMediaBuyDeliveryResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Type of webhook notification (only present in webhook deliveries): scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = resending period with corrected data (same window), window_update = resending period with a wider measurement window (e.g., C3 superseding live, C7 superseding C3)
    */
@@ -6807,6 +9787,93 @@ export interface GetMediaBuyDeliveryResponse {
      * @minimum 0
      */
     media_buy_count: number;
+    /**
+     * Cross-buy delivery aggregates partitioned by qualifier. Row-symmetric with `package.committed_metrics` and `by_package[].missing_metrics` — same atomic unit `(scope, metric_id, qualifier)` — so reconciliation collapses to a row-level join on the tuple. Granularity rule: one row per `(metric_id, full-qualifier-set)`, reported at the finest available granularity; buyers re-aggregate up if they want a coarser view. Used only for metrics with non-empty qualifier sets — unqualified metrics (`impressions`, `spend`, `media_buy_count`, etc.) remain at the top of `aggregated_totals`. **Mutual exclusion MUST**: for any `metric_id` appearing in `metric_aggregates`, the corresponding top-level scalar in `aggregated_totals` MUST be omitted (not zeroed) — avoids duplicate sources of truth. The qualifier vocabulary on this delivery surface is closed today (`additionalProperties: false`, same content as `committed_metrics.qualifier`) but is expected to **diverge from contract qualifier in future minors** as transparency disclosures buyers don't commit to ship delivery-only (e.g., `tracker_firing` pending #3832 resolution). Each row carries a `value` plus inlined per-metric component fields (e.g., `measurable_impressions` and `viewable_impressions` for `viewable_rate`; `spend` and `conversions` for `cost_per_acquisition`). Per-buy `totals` keeps its flat shape — each buy is single-qualifier by definition; only the aggregate spans qualifiers. **Qualifier-set drift across reports**: when a campaign gains a new qualifier mid-flight (e.g., adds `tracker_firing` partitioning in week 2), prior periods' rows remain valid at their original granularity; buyers SHOULD NOT retroactively repartition.
+     */
+    metric_aggregates?: (
+      | {
+          /**
+           * Standard metric from the closed `available-metric.json` enum.
+           */
+          scope: 'standard';
+          metric_id: AvailableMetric;
+          /**
+           * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
+           */
+          qualifier?: {
+            viewability_standard?: ViewabilityStandard;
+            completion_source?: CompletionSource;
+            attribution_methodology?: AttributionMethodology;
+            attribution_window?: Duration;
+            lift_dimension?: LiftDimension;
+          };
+          /**
+           * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
+           */
+          value: number;
+          /**
+           * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
+           * @minimum 0
+           */
+          measurable_impressions?: number;
+          /**
+           * Component for `viewable_rate` (numerator).
+           * @minimum 0
+           */
+          viewable_impressions?: number;
+          /**
+           * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
+           * @minimum 0
+           */
+          impressions?: number;
+          /**
+           * Component for `completion_rate` (numerator).
+           * @minimum 0
+           */
+          completed_views?: number;
+          /**
+           * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
+           * @minimum 0
+           */
+          spend?: number;
+          /**
+           * Component for `cost_per_acquisition` and ROAS-family metrics.
+           * @minimum 0
+           */
+          conversions?: number;
+          /**
+           * Component for `roas` (numerator).
+           * @minimum 0
+           */
+          conversion_value?: number;
+          /**
+           * Component for `cost_per_click` and click-rate metrics.
+           * @minimum 0
+           */
+          clicks?: number;
+        }
+      | {
+          /**
+           * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+           */
+          scope: 'vendor';
+          vendor: BrandReference;
+          metric_id: VendorMetricID;
+          /**
+           * Optional qualifier keys for vendor metrics that need disambiguation (rare today — most vendor methodologies are intrinsic to the metric definition).
+           */
+          qualifier?: {};
+          /**
+           * Aggregated vendor-attested value. Unit semantics defined by the vendor — see the vendor's measurement-agent metric definition.
+           */
+          value: number;
+          /**
+           * Coverage denominator — vendor measurement is rarely 100% of delivery (only impressions where the vendor's SDK fired or panel matched). Buyers compute coverage as `measurable_impressions / impressions`. Same convention as `vendor_metric_value.measurable_impressions`.
+           * @minimum 0
+           */
+          measurable_impressions?: number;
+        }
+    )[];
   };
   /**
    * Array of delivery data for media buys. When used in webhook notifications, may contain multiple media buys aggregated by publisher. When used in get_media_buy_delivery API responses, typically contains requested media buys.
@@ -6839,6 +9906,15 @@ export interface GetMediaBuyDeliveryResponse {
      * Indicates this delivery contains updated data for a previously reported period. Buyer should replace previous period data with these totals.
      */
     is_adjusted?: boolean;
+    /**
+     * Whether this row's delivery data is final for the reporting period. The row does not carry its own `measurement_window` — that lives on each `by_package[*]` entry. Reconciliation joins on per-package `measurement_window`; this row-level flag is a convenience roll-up. Sellers MUST NOT emit `is_final: true` at the row level unless every entry in `by_package` has `is_final: true` for the same `measurement_window` as the buy's `measurement_terms.billing_measurement.measurement_window` (or for the row's natural window when no `billing_measurement.measurement_window` is set). On any disagreement between row-level and package-level finality, package-level is authoritative. When true, the seller considers these numbers closed and is willing to invoice on them subject to `measurement_terms.billing_measurement`. When false, numbers may still move as measurement matures (broadcast C3 → C7) or processing completes (IVT scrubbing, dedup). When absent, the seller does not distinguish provisional from final at the row level — consult per-package `is_final`.
+     */
+    is_final?: boolean;
+    /**
+     * ISO 8601 timestamp at which this row became final. Present only when `is_final: true`. Anchors the buyer's reconciliation and (when later defined) dispute-window clocks against the buy's `measurement_terms.billing_measurement`. Computed as the latest `finalized_at` across the row's packages for the reconciliation window.
+     * @format date-time
+     */
+    finalized_at?: string;
     pricing_model?: PricingModel;
     totals: DeliveryMetrics & {
       /**
@@ -6880,9 +9956,14 @@ export interface GetMediaBuyDeliveryResponse {
        */
       paused?: boolean;
       /**
-       * Whether this delivery data is final for the reporting period. When false, the data may be updated as measurement matures (e.g., broadcast C7 window accumulating DVR playback) or as processing completes (e.g., IVT filtering, deduplication). When true, the seller considers this data closed — no further updates for this period. Absent means the seller does not distinguish provisional from final data.
+       * Whether this delivery data is final for the reporting period. When false, the data may be updated as measurement matures (e.g., broadcast C7 window accumulating DVR playback) or as processing completes (e.g., IVT filtering, deduplication). When true, the seller considers this data closed — no further updates for this period — and is willing to invoice on it subject to the buy's `measurement_terms.billing_measurement`. Absent means the seller does not distinguish provisional from final data.
        */
       is_final?: boolean;
+      /**
+       * ISO 8601 timestamp at which this package's data became final. Present only when `is_final: true`. Anchors reconciliation and (when later defined) dispute-window clocks against the buy's `measurement_terms.billing_measurement.measurement_window`.
+       * @format date-time
+       */
+      finalized_at?: string;
       /**
        * Which measurement window this data represents, referencing a window_id from the product's reporting_capabilities.measurement_windows. For broadcast: 'live', 'c3', 'c7'. When absent, the data is not windowed (standard digital reporting). When present with is_final: false, a later report for the same period will provide a wider window or more complete data.
        * @maxLength 50
@@ -6893,6 +9974,30 @@ export interface GetMediaBuyDeliveryResponse {
        * @maxLength 50
        */
       supersedes_window?: string;
+      /**
+       * Metrics that the binding reporting contract declared but that are NOT populated in this report. Reconciliation source: when `package.committed_metrics` is present, `missing_metrics` is computed against entries where `committed_at < reporting_period.end` — independent of subsequent product mutations and respecting the commitment timestamp on each entry (a metric committed mid-flight is only flagged missing in reports for periods after its commitment). When `package.committed_metrics` is absent, fall back to the product's current `reporting_capabilities.available_metrics` (no timestamp filter). Empty array (or absent) indicates clean delivery against the contract. Non-empty signals an accountability breach — the seller committed to the metric but did not produce the value here. Sellers MUST exclude metrics that are not yet measurable for the current `measurement_window` (e.g., post-IVT counts during the live window) — those will appear (or not) when a wider window supersedes this report via `supersedes_window`. Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. Symmetric with `committed_metrics`.
+       */
+      missing_metrics?: (
+        | {
+            scope: 'standard';
+            metric_id: AvailableMetric;
+            /**
+             * Mirrors the qualifier on `committed_metrics` so the missing entry preserves the contract distinction (e.g., flagging MRC viewability as missing when only GroupM was reported, vendor-attested completion as missing when only seller-attested was reported, or deterministic_purchase attribution as missing when only probabilistic was reported). MUST match the qualifier on the corresponding `committed_metrics` entry the missing flag refers to.
+             */
+            qualifier?: {
+              viewability_standard?: ViewabilityStandard;
+              completion_source?: CompletionSource;
+              attribution_methodology?: AttributionMethodology;
+              attribution_window?: Duration;
+              lift_dimension?: LiftDimension;
+            };
+          }
+        | {
+            scope: 'vendor';
+            vendor: BrandReference;
+            metric_id: VendorMetricID;
+          }
+      )[];
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
@@ -7048,6 +10153,43 @@ export interface GetMediaBuyDeliveryResponse {
       }[];
     })[];
     /**
+     * Per-window delivery slices over the reporting period at the requested time_granularity. Only present when the request set time_granularity and include_window_breakdown: true. Each slice mirrors what reporting_webhook would have delivered for the same window — buyers who missed webhook fires can reconstruct identical data by reading this array. Slice rows are ordered by window_start ascending; consecutive rows are contiguous (each row's window_end equals the next row's window_start) and partition the requested date range at the chosen granularity. Sellers MUST exclude this field when time_granularity is omitted; when set, sellers MUST honor pulls at any granularity in reporting_capabilities.windowed_pull_granularities (otherwise return UNSUPPORTED_GRANULARITY). See snapshot-and-log Rule 4 for the two-paths-parity contract this surface anchors.
+     */
+    windows?: {
+      /**
+       * ISO 8601 start of the window slice (inclusive). UTC.
+       * @format date-time
+       */
+      window_start: string;
+      /**
+       * ISO 8601 end of the window slice (exclusive). The next row's window_start equals this value when slices are contiguous.
+       * @format date-time
+       */
+      window_end: string;
+      /**
+       * Aggregate metrics for this window slice across all packages. Shape-aligned with reporting_webhook fire payloads at the same granularity.
+       */
+      totals: DeliveryMetrics;
+      /**
+       * Per-package metrics for this window slice. Same shape as the parent media_buy_deliveries[].by_package row but scoped to the window. Sellers MAY omit when per-package window-level data is unavailable; when present, package_id values MUST match the parent by_package entries.
+       */
+      by_package?: (DeliveryMetrics & {
+        /**
+         * Seller's package identifier
+         */
+        package_id: string;
+      })[];
+      /**
+       * Whether the slice data is final for this window. Same semantics as the per-package is_final flag — when false, a later read may return revised numbers for the same window as measurement matures (broadcast C3 → C7, post-IVT filtering, etc.).
+       */
+      is_final?: boolean;
+      /**
+       * Which measurement-window stage this slice represents (e.g., 'live', 'c3', 'c7'), referencing a window_id from the product's reporting_capabilities.measurement_windows. Absent when the data is not phased.
+       * @maxLength 50
+       */
+      measurement_window?: string;
+    }[];
+    /**
      * Day-by-day delivery
      */
     daily_breakdown?: {
@@ -7099,20 +10241,6 @@ export interface GetMediaBuyDeliveryResponse {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * Attribution methodology and lookback windows used for conversion metrics in this response. All media buys from a single seller share the same attribution methodology. Enables cross-platform comparison (e.g., Amazon 14-day click vs. Criteo 30-day click).
- */
-export interface AttributionWindow {
-  /**
-   * Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.
-   */
-  post_click?: Duration;
-  /**
-   * Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.
-   */
-  post_view?: Duration;
-  model: AttributionModel;
 }
 /**
  * Standard delivery metrics that can be reported at media buy, package, or creative level
@@ -7176,7 +10304,7 @@ export interface DeliveryMetrics {
    */
   cost_per_acquisition?: number;
   /**
-   * Fraction of conversions from first-time brand buyers (0 = none, 1 = all)
+   * Fraction of `conversions` (transactions) from first-time brand buyers, 0 = none, 1 = all. For retail-media unit-volume tracking of first-time buyers, see `new_to_brand_units` (count, not rate).
    * @minimum 0
    * @maximum 1
    */
@@ -7186,6 +10314,36 @@ export interface DeliveryMetrics {
    * @minimum 0
    */
   leads?: number;
+  /**
+   * Incremental sales lift attributed to the campaign — sales above the control/holdout baseline. Reported as a fraction (0.15 = 15% lift) or as an absolute value depending on seller convention. The seller's `attribution_methodology` qualifier (typically `deterministic_purchase` or `modeled`) and `attribution_window` qualifier on the matching `committed_metrics` entry disambiguate the methodology and window.
+   * @minimum 0
+   */
+  incremental_sales_lift?: number;
+  /**
+   * Brand lift — measured change in a brand metric (awareness, consideration, favorability, purchase intent, or ad recall) attributed to the campaign. Typically panel-based or survey-based. Reported as a fraction (0.05 = 5% lift). **Multidimensional in production** — Kantar, Upwave, Cint, DV all report each dimension separately with its own sample size and confidence interval. The dimension flows through `qualifier.lift_dimension` on `committed_metrics` / `metric_aggregates` (`awareness` | `consideration` | `favorability` | `purchase_intent` | `ad_recall`); rows under different dimensions are different surveyed outcomes and must not be combined. Use `attribution_methodology: 'panel_based'` qualifier when the underlying methodology is a panel.
+   * @minimum 0
+   */
+  brand_lift?: number;
+  /**
+   * Store visits attributed to ad exposure. Count of incremental visits over baseline. Typically uses location-data panel methodology (`attribution_methodology: 'panel_based'`) or deterministic loyalty-card match (`attribution_methodology: 'deterministic_purchase'`).
+   * @minimum 0
+   */
+  foot_traffic?: number;
+  /**
+   * Incremental conversions attributed to the campaign — conversions above the control/holdout baseline. Reported as a fraction (0.10 = 10% lift) or as an absolute count depending on seller convention. Distinct from `conversions` (raw count of attributed conversions); conversion_lift requires a control group and an incrementality methodology.
+   * @minimum 0
+   */
+  conversion_lift?: number;
+  /**
+   * Lift in brand search query volume attributed to the campaign — measured via search-data partnerships (Google, Microsoft) or survey methodology. Reported as a fraction (0.20 = 20% lift in branded search).
+   * @minimum 0
+   */
+  brand_search_lift?: number;
+  /**
+   * Number of times the ad creative was displayed on a DOOH screen or played in a loop. Raw play count before any impression multiplier is applied. Mirrors `forecastable-metric.json`'s `plays` token for forecast↔delivery reconciliation. Distinct from `dooh_metrics.loop_plays` (per-screen rotation count) and from `impressions` (multiplied audience figure). Used for DOOH and broadcast inventory where buyers reconcile against forecast `plays`.
+   * @minimum 0
+   */
+  plays?: number;
   /**
    * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
    */
@@ -7212,7 +10370,7 @@ export interface DeliveryMetrics {
    */
   grps?: number;
   /**
-   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit.
+   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit. The measurement window for this value is declared in `reach_window`; when `reach_window` is omitted, the window is unspecified and buyers MUST NOT sum reach across reports (the value MAY be a daily snapshot, a cumulative total, or something else).
    * @minimum 0
    */
   reach?: number;
@@ -7221,7 +10379,20 @@ export interface DeliveryMetrics {
    */
   reach_unit?: ReachUnit;
   /**
-   * Average frequency per reach unit (typically measured over campaign duration, but can vary by measurement provider). When reach_unit is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc.
+   * Measurement window for the reported `reach` and `frequency` values in this row. Declares whether the values are a per-period snapshot, a trailing rolling window, or cumulative-to-date — without this declaration, buyers summing `reach` across rows (e.g., daily delivery reports) can silently double-count audiences. Sellers SHOULD populate this whenever `reach` is present.
+   */
+  reach_window?: {
+    /**
+     * Window semantics. `cumulative` — uniques since campaign start; the value is the total unique count to date and MUST NOT be summed across rows (each later row supersedes the earlier value). `period` — uniques within a single non-overlapping reporting period (e.g., a daily snapshot for a specific calendar day). Adjacent `period` rows do not share audiences by construction, but the same person MAY appear across multiple periods, so MUST NOT be summed across rows to compute campaign reach. `rolling` — uniques within a trailing window ending at the row's reporting timestamp (e.g., trailing-7-day reach). Adjacent rolling rows overlap and MUST NOT be summed; each row's value stands alone.
+     */
+    kind: 'cumulative' | 'period' | 'rolling';
+    /**
+     * Duration of the measurement window. REQUIRED when `kind` is `period` or `rolling` — declares the snapshot length (e.g., `{"interval": 1, "unit": "days"}` for a daily snapshot) or the trailing-window length (e.g., `{"interval": 7, "unit": "days"}` for trailing-7-day rolling reach). When `kind` is `cumulative`, this field is implicit (campaign-to-date) and SHOULD be omitted.
+     */
+    period?: Duration;
+  };
+  /**
+   * Average frequency per reach unit, measured over the window declared in `reach_window`. When `reach_unit` is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc. When `reach_window` is omitted, the window is unspecified — buyers MUST NOT compare or average frequency values across rows.
    * @minimum 0
    */
   frequency?: number;
@@ -7276,7 +10447,7 @@ export interface DeliveryMetrics {
      */
     sov_achieved?: number;
     /**
-     * Explanation of how DOOH impressions were calculated
+     * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
      */
     calculation_notes?: string;
     /**
@@ -7313,11 +10484,12 @@ export interface DeliveryMetrics {
     }[];
   };
   /**
-   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability.
+   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — since duration is governed by the same viewability threshold (`standard`) and shares the same `measurable_impressions` denominator.
    */
   viewability?: {
+    vendor?: BrandReference;
     /**
-     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments).
+     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate` AND `viewed_seconds` — both metrics are computed over the same measurable population.
      * @minimum 0
      */
     measurable_impressions?: number;
@@ -7332,10 +10504,15 @@ export interface DeliveryMetrics {
      * @maximum 1
      */
     viewable_rate?: number;
+    /**
+     * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
+     * @minimum 0
+     */
+    viewed_seconds?: number;
     standard?: ViewabilityStandard;
   };
   /**
-   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric.
+   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric. Maps to DBCFM KPI_INTERACTIONS (Interaktionen) in the Reporting/Performance block.
    * @minimum 0
    */
   engagements?: number;
@@ -7366,6 +10543,31 @@ export interface DeliveryMetrics {
    */
   cost_per_click?: number;
   /**
+   * Cost per completed view (spend / completed_views). Primary CPCV pricing scalar for video/audio inventory; the package's `pricing_model` is `cpcv` when this field is the billing basis.
+   * @minimum 0
+   */
+  cost_per_completed_view?: number;
+  /**
+   * Cost per thousand impressions, computed as (spend / impressions) × 1000. Universal pricing scalar across CTV, display, mobile/web video, native, audio, and DOOH inventory; the package's `pricing_model` is `cpm` when this field is the billing basis. Field name aligns with the canonical `cpm` token in `enums/pricing-model.json` and `pricing-options/cpm-option.json` so buyers cross-walk pricing model → reported scalar without a translation table.
+   * @minimum 0
+   */
+  cpm?: number;
+  /**
+   * Audio/podcast downloads (IAB Podcast Measurement Technical Guidelines 2.x methodology). Distinct from `views` — for podcast inventory this is the count of podcast episode downloads; for streaming audio it is the count of stream starts that meet the platform's download threshold. Prefer this over `views` for audio inventory.
+   * @minimum 0
+   */
+  downloads?: number;
+  /**
+   * Items sold attributed to this delivery. Retail-media scalar distinct from `conversions` — a single conversion (transaction) may carry multiple `units_sold`. Used by retail media platforms where the buyer optimizes against unit movement, not transaction count. Attribution lookback windows are platform-specific (commonly 7/14/30 days, view-through and click-through variants); sellers SHOULD declare the window via `reporting_capabilities.measurement_windows` or `measurement_terms` rather than encoding it in this scalar.
+   * @minimum 0
+   */
+  units_sold?: number;
+  /**
+   * Units sold to first-time brand buyers (count, not rate). Retail-media scalar — the unit-volume parallel to the conversion-fraction `new_to_brand_rate`. Used by retail media platforms where new-customer acquisition unit volume is a primary KPI. Same attribution-window note as `units_sold` applies.
+   * @minimum 0
+   */
+  new_to_brand_units?: number;
+  /**
    * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
    */
   by_action_source?: {
@@ -7385,13 +10587,41 @@ export interface DeliveryMetrics {
      */
     value?: number;
   }[];
+  /**
+   * Reported values for vendor-defined metrics that the product's `reporting_capabilities.vendor_metrics` declared. Each entry carries the vendor (BrandRef), the metric identifier within the vendor's vocabulary, the value, optional unit, and `measurable_impressions` as the coverage denominator — vendor measurement is rarely 100% of delivered impressions, since vendors only score impressions where their SDK fires or their panel matches. When a declared vendor metric is omitted from this array, buyers infer no measurement happened (no integration). One row per `(vendor.domain, vendor.brand_id, metric_id)` per reporting period — sellers MUST de-duplicate before emission and MUST NOT emit the same vendor metric twice; buyers MAY treat duplicate rows as a seller-side conformance bug. The structured `vendor_metric_values` array is the recommended path for vendor metrics; `additionalProperties: true` on this parent object is preserved so existing free-form vendor emissions remain conformant during migration.
+   */
+  vendor_metric_values?: VendorMetricValue[];
+}
+/**
+ * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
+ */
+export interface VendorMetricValue {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  /**
+   * The reported value. Unit semantics are vendor-defined — see `unit` field below and the vendor's `brand.json` measurement-agent documentation.
+   */
+  value: number;
+  /**
+   * Unit of the value. Free-form to accommodate the heterogeneity of vendor metrics (e.g., `score`, `seconds`, `persons`, `gCO2e`, `USD`, `lift_percent`). When the value is monetary, use the ISO 4217 code (e.g., `USD`, `EUR`); for non-monetary, use whatever the vendor publishes. Optional on every row — the canonical unit lives at the vendor's measurement-agent metric definition (`brand.json` `agents[type='measurement']`). When sellers populate it inline they SHOULD match the vendor's published unit; buyers MAY resolve from the vendor's measurement agent when this field is absent.
+   */
+  unit?: string;
+  /**
+   * Number of impressions in this reporting period that the vendor was able to measure. Coverage denominator — buyers compute coverage rate as `measurable_impressions / impressions`. When absent, coverage is unspecified — buyers MUST NOT compute a coverage rate or assume full coverage. When the vendor measured zero impressions but is integrated, set to 0 explicitly. When the entry is omitted from `vendor_metric_values` entirely, the buyer infers no measurement happened (no integration). This pattern parallels `viewability.measurable_impressions` (`delivery-metrics.json#/properties/viewability`), which has handled vendor coverage in the IAS/DV/MRC ecosystem for over a decade — same convention: absence is unknown, not full.
+   * @minimum 0
+   */
+  measurable_impressions?: number;
+  /**
+   * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
+   */
+  breakdown?: {};
 }
 
 // provide_performance_feedback parameters
 /**
  * The business metric being measured
  */
-export type MetricType =
+export type MetricTypeDeprecated =
   | 'overall_performance'
   | 'conversion_rate'
   | 'brand_lift'
@@ -7414,9 +10644,11 @@ export type FeedbackSource =
  */
 export interface ProvidePerformanceFeedbackRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -7447,7 +10679,7 @@ export interface ProvidePerformanceFeedbackRequest {
    * @minLength 1
    */
   creative_id?: string;
-  metric_type?: MetricType;
+  metric_type?: MetricTypeDeprecated;
   feedback_source?: FeedbackSource;
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -7472,7 +10704,16 @@ export interface DatetimeRange {
 /**
  * Response payload for provide_performance_feedback task. Returns either success confirmation OR error information, never both.
  */
-export type ProvidePerformanceFeedbackResponse = ProvidePerformanceFeedbackSuccess | ProvidePerformanceFeedbackError;
+export type ProvidePerformanceFeedbackResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (ProvidePerformanceFeedbackSuccess | ProvidePerformanceFeedbackError);
 
 /**
  * Success response - feedback received and processed
@@ -7507,9 +10748,11 @@ export interface ProvidePerformanceFeedbackError {
  */
 export interface SyncEventSourcesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -7553,7 +10796,16 @@ export interface SyncEventSourcesRequest {
 /**
  * Response from event source sync operation. Returns either per-source results OR operation-level errors.
  */
-export type SyncEventSourcesResponse = SyncEventSourcesSuccess | SyncEventSourcesError;
+export type SyncEventSourcesResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncEventSourcesSuccess | SyncEventSourcesError);
 /**
  * Success response - sync operation processed event sources
  */
@@ -7730,9 +10982,11 @@ export type UserMatch = {
  */
 export interface LogEventRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -7859,7 +11113,16 @@ export interface EventCustomData {
 /**
  * Response from event logging operation. Returns either event processing results OR operation-level errors.
  */
-export type LogEventResponse = LogEventSuccess | LogEventError;
+export type LogEventResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (LogEventSuccess | LogEventError);
 
 /**
  * Success response - events received and queued for processing
@@ -7964,9 +11227,11 @@ export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'leg
  */
 export interface SyncAudiencesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -8025,13 +11290,22 @@ export interface SyncAudiencesRequest {
 
 // sync_audiences response
 /**
- * Response from audience sync operation. Returns either per-audience results OR operation-level errors.
+ * Response from audience sync operation. Exactly one of three shapes: (1) synchronous success — per-audience results in the audiences array (best-effort processing with per-item status/failures); (2) terminal failure — errors array with no audiences processed; (3) submitted task envelope — status 'submitted' with task_id when the whole operation is queued (batch ingestion, governance-gated upload, or any flow where the seller cannot return per-audience results before the response is emitted). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. Final per-audience results land on the task completion artifact, not this envelope. Per-audience asynchronous matching (an audience reported with status 'processing' while the rest of the sync resolves synchronously) belongs on the synchronous success branch via audience-status, NOT here — operation-level async is for when the seller has no per-item results to return yet. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type SyncAudiencesResponse = SyncAudiencesSuccess | SyncAudiencesError;
+export type SyncAudiencesResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncAudiencesSuccess | SyncAudiencesError | SyncAudiencesSubmitted);
 /**
  * Matching status. Present when action is created, updated, or unchanged; absent when action is deleted or failed.
  */
-export type AudienceStatus = 'processing' | 'ready' | 'too_small';
+export type AudienceStatus = 'processing' | 'ready' | 'too_small' | 'suspended';
 /**
  * Identifier type. Combines hashed PII types (hashed_email, hashed_phone) with universal ID types (rampid, uid2, maid, etc.).
  */
@@ -8047,7 +11321,7 @@ export type MatchIDType =
   | 'other';
 
 /**
- * Success response - sync operation processed audiences
+ * Success response - sync operation processed audiences (may include per-item failures)
  */
 export interface SyncAudiencesSuccess {
   /**
@@ -8137,13 +11411,37 @@ export interface SyncAudiencesSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Error response - operation failed completely
+ * Error response - operation failed completely, no audiences were processed
  */
 export interface SyncAudiencesError {
   /**
-   * Operation-level errors that prevented processing
+   * Operation-level errors that prevented processing any audiences (e.g., authentication failure, account not found, invalid request format)
    */
   errors: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Async task envelope returned when the whole sync operation cannot be confirmed before the response is emitted — for example, when the seller batches ingestion, when governance review gates the upload before matching can start, or when an upstream clean-room flow needs to settle before any per-audience result can be issued. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the audiences array with per-item action/status lands on the completion artifact, not this envelope. Per-audience asynchronous matching (one audience in 'processing' while the rest of the sync resolves synchronously) belongs on the SyncAudiencesSuccess branch with status: processing on that item, not here. Matching latency on the per-audience status enum (processing → ready / too_small) is the common case; this envelope is the less-common operation-level case.
+ */
+export interface SyncAudiencesSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose audiences array carries per-item matching state via audience-status. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The audiences array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -8159,9 +11457,11 @@ export type ValidationMode = 'strict' | 'lenient';
  */
 export interface SyncCatalogsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -8196,9 +11496,18 @@ export interface SyncCatalogsRequest {
 
 // sync_catalogs response
 /**
- * Response from catalog sync operation. Returns either per-catalog results (best-effort processing) OR operation-level errors (complete failure). Platforms may approve, reject, or flag individual items within each catalog (similar to Google Merchant Center product review).
+ * Response from catalog sync operation. Exactly one of three shapes: (1) synchronous success — per-catalog results in the catalogs array (best-effort processing, may include per-catalog failures); (2) terminal failure — errors array with no catalogs processed; (3) submitted task envelope — status 'submitted' with task_id when the whole operation is queued (e.g., batch catalog ingestion and deduplication). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one. Platforms may approve, reject, or flag individual items within each catalog (similar to Google Merchant Center product review).
  */
-export type SyncCatalogsResponse = SyncCatalogsSuccess | SyncCatalogsError;
+export type SyncCatalogsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncCatalogsSuccess | SyncCatalogsError | SyncCatalogsSubmitted);
 /**
  * Action taken for this catalog
  */
@@ -8206,7 +11515,7 @@ export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'de
 /**
  * Item review status
  */
-export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
+export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning' | 'withdrawn';
 
 /**
  * Success response - sync operation processed catalogs (may include per-catalog failures)
@@ -8304,9 +11613,128 @@ export interface SyncCatalogsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Async task envelope returned when sync_catalogs cannot be confirmed before the response — for example, when catalog ingestion and deduplication are queued for batch processing. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the per-catalog results land on the completion artifact, not this envelope.
+ */
+export interface SyncCatalogsSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose catalogs array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Catalog ingestion queued; typical turnaround 5–15 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 
 
 // build_creative parameters
+/**
+ * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
+ */
+export type CreativeManifest = {
+  format_id?: FormatReferenceStructuredObject;
+  format_kind?: CanonicalFormatKind;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+   */
+  capability_id?: string;
+  /**
+   * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   *
+   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  brand?: BrandReference;
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+  ext?: ExtensionObject;
+} & (
+  | {
+      format_id: FormatReferenceStructuredObject;
+      /**
+       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+       */
+      capability_id?: string;
+      /**
+       * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+       *
+       * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+       */
+      assets: {
+        /**
+         * This interface was referenced by `undefined`'s JSON-Schema definition
+         * via the `patternProperty` "^[a-z0-9_]+$".
+         */
+        [k: string]: AssetVariant | AssetVariant[];
+      };
+      brand?: BrandReference;
+      /**
+       * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+       */
+      rights?: RightsConstraint[];
+      /**
+       * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+       */
+      industry_identifiers?: IndustryIdentifier[];
+      provenance?: Provenance;
+      ext?: ExtensionObject;
+    }
+  | {
+      format_kind: CanonicalFormatKind;
+      /**
+       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+       */
+      capability_id?: string;
+      /**
+       * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+       *
+       * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+       */
+      assets: {
+        /**
+         * This interface was referenced by `undefined`'s JSON-Schema definition
+         * via the `patternProperty` "^[a-z0-9_]+$".
+         */
+        [k: string]: AssetVariant | AssetVariant[];
+      };
+      brand?: BrandReference;
+      /**
+       * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+       */
+      rights?: RightsConstraint[];
+      /**
+       * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+       */
+      industry_identifiers?: IndustryIdentifier[];
+      provenance?: Provenance;
+      ext?: ExtensionObject;
+    }
+);
 /**
  * Types of rights usage that can be licensed through the brand protocol. Aligned with DDEX UseType direction for interoperability with music and media rights systems.
  */
@@ -8341,9 +11769,11 @@ export type PreviewOutputFormat = 'url' | 'html';
  */
 export interface BuildCreativeRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -8422,30 +11852,6 @@ export interface BuildCreativeRequest {
   ext?: ExtensionObject;
 }
 /**
- * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets. For transformation (e.g., resizing, reformatting), this is the complete creative to adapt. When creative_id is provided, the agent resolves the creative from its library and this field is ignored.
- */
-export interface CreativeManifest {
-  format_id: FormatReferenceStructuredObject;
-  /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
-   *
-   * Each asset value carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
-   */
-  assets: {
-    [k: string]: AssetVariant | undefined;
-  };
-  /**
-   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
-   */
-  rights?: RightsConstraint[];
-  /**
-   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
-   */
-  industry_identifiers?: IndustryIdentifier[];
-  provenance?: Provenance;
-  ext?: ExtensionObject;
-}
-/**
  * Rights metadata attached to a creative manifest. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
  */
 export interface RightsConstraint {
@@ -8507,9 +11913,18 @@ export interface RightsConstraint {
 
 // build_creative response
 /**
- * Response containing the transformed or generated creative manifest(s), ready for use with preview_creative or sync_creatives. Returns either a single creative_manifest, an array of creative_manifests (for multi-format requests), or error information.
+ * Response payload for build_creative. Exactly one of four shapes: (1) synchronous single-format success — creative_manifest issued in-line (target_format_id request); (2) synchronous multi-format success — creative_manifests issued in-line (target_format_ids request); (3) terminal failure — an errors array; (4) submitted task envelope — status 'submitted' with task_id when the build is queued (e.g., slow generative or multi-minute LLM pipeline). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These four shapes are mutually exclusive — a response has exactly one.
  */
-export type BuildCreativeResponse = BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError;
+export type BuildCreativeResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError | BuildCreativeSubmitted);
 /**
  * A single rendered piece of a creative preview with discriminated output format
  */
@@ -8674,7 +12089,6 @@ export type PreviewRender =
         csp_policy?: string;
       };
     };
-
 /**
  * Single-format success response. Returned when the request used target_format_id.
  */
@@ -8863,16 +12277,48 @@ export interface BuildCreativeMultiSuccess {
   ext?: ExtensionObject;
 }
 /**
- * Error response - creative generation failed
+ * Error response — creative generation failed. Multi-format requests (`target_format_ids[]`) are atomic per `BuildCreativeMultiSuccess` semantics: a single format failing means the entire batch returns an error response, not a partial success. Buyers diagnose per-format failures by reading the `errors[]` array's per-format attribution (see the `errors` field description).
  */
 export interface BuildCreativeError {
   /**
-   * Array of errors explaining why creative generation failed
+   * Array of errors explaining why creative generation failed.
+   *
+   * **Per-format attribution on multi-format requests.** When the request used `target_format_ids[]` (a batch request), sellers MUST attribute each failure to the specific format(s) that caused it so buyers can correct and retry the failing subset rather than re-running the entire batch. Two attribution surfaces, populated together:
+   *
+   * 1. **`error.field`** — set to `target_format_ids[N]` where `N` is the zero-based index of the failing format in the request's `target_format_ids[]` array (e.g., `target_format_ids[1]` for the second requested format). Mirrors the JSONPath-lite convention `error.field` uses elsewhere. Required when the error is format-scoped.
+   * 2. **`error.details.format_id`** — the resolved `format_id` value (e.g., `"meta-reels-9x16"`). Required when the error is format-scoped. Lets buyers dispatch on the format identity without re-parsing `error.field`.
+   *
+   * Errors not attributable to a specific format (whole-batch failures: authentication, governance denial, transport-level errors) MAY omit `field` and `details.format_id`. Buyers MUST treat per-format errors as scoped to the named format only — a `correctable` error on `target_format_ids[1]` does NOT mean the buyer must reshape the entire batch; they may retry just that format with corrected input. Sellers SHOULD emit one error per failing format (rather than collapsing multiple format failures into a single error entry) so per-format recovery routing is unambiguous.
    */
   errors: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Async task envelope returned when build_creative cannot be confirmed before the response — for example, when a slow generative pipeline or multi-minute LLM workflow is queued. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the creative_manifest(s) land on the completion artifact, not this envelope.
+ */
+export interface BuildCreativeSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shapes, whose creative_manifest or creative_manifests are issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Generative build queued; typical turnaround 3–5 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
 
 // preview_creative parameters
 /**
@@ -8880,9 +12326,11 @@ export interface BuildCreativeError {
  */
 export interface PreviewCreativeRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -8974,10 +12422,16 @@ export interface PreviewCreativeRequest {
 /**
  * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
-export type PreviewCreativeResponse =
-  | PreviewCreativeSingleResponse
-  | PreviewCreativeBatchResponse
-  | PreviewCreativeVariantResponse;
+export type PreviewCreativeResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (PreviewCreativeSingleResponse | PreviewCreativeBatchResponse | PreviewCreativeVariantResponse);
 /**
  * Single preview response - each preview URL returns an HTML page that can be embedded in an iframe
  */
@@ -9023,10 +12477,10 @@ export interface PreviewCreativeSingleResponse {
    */
   interactive_url?: string;
   /**
-   * ISO 8601 timestamp when preview links expire
+   * ISO 8601 timestamp when preview links expire. **Optional.** Omit when preview URLs do not expire (some creative agents serve perpetually-valid preview URLs — e.g., signed asset URLs with no TTL, or session-scoped previews that the agent retires explicitly via revocation). When present, consumers MUST treat the URLs as invalid after this timestamp; when omitted, consumers MAY assume the preview URLs are valid until the creative agent revokes them out-of-band (no protocol-level revocation signal exists in 3.x — buyers requiring expiry guarantees SHOULD require sellers that publish `expires_at`).
    * @format date-time
    */
-  expires_at: string;
+  expires_at?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -9088,7 +12542,7 @@ export interface PreviewCreativeVariantResponse {
   }[];
   manifest?: CreativeManifest;
   /**
-   * ISO 8601 timestamp when preview links expire
+   * ISO 8601 timestamp when preview links expire. **Optional** — omit for non-expiring preview URLs. See the top-level `PreviewCreativeResponse` branch for the full convention.
    * @format date-time
    */
   expires_at?: string;
@@ -9104,9 +12558,11 @@ export type GetCreativeDeliveryRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -9200,6 +12656,14 @@ export type PropertyIdentifierTypes =
  */
 export interface GetCreativeDeliveryResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Account identifier. Present when the response spans or is scoped to a specific account.
    */
   account_id?: string;
@@ -9256,7 +12720,7 @@ export interface GetCreativeDeliveryResponse {
     variants: CreativeVariant[];
   }[];
   /**
-   * Pagination information. Present when the request included pagination parameters.
+   * Pagination information. Present when the request included pagination parameters. **Note:** `get_creative_delivery` uses page-based pagination (`limit`/`offset`) for historical reasons, distinct from the cursor-based [`PaginationResponse`](/schemas/v3/core/pagination-response.json) used by `list_*` tools. Field naming aligned with `PaginationResponse.total_count` in 3.1; the legacy `total` field is retained as a deprecated alias until 4.0. Sellers MUST populate both fields identically; buyers SHOULD prefer `total_count` (the canonical name) and ignore `total` if both are present.
    */
   pagination?: {
     /**
@@ -9274,7 +12738,13 @@ export interface GetCreativeDeliveryResponse {
      */
     has_more: boolean;
     /**
-     * Total number of creatives matching the request filters
+     * Total number of creatives matching the request filters. Canonical field name (matches `PaginationResponse.total_count`). Sellers SHOULD populate this and the deprecated `total` field identically until 4.0; buyers SHOULD prefer this field.
+     * @minimum 0
+     */
+    total_count?: number;
+    /**
+     * @deprecated
+     * **Deprecated** — use `total_count` instead. Retained as a legacy alias for 3.x backward compatibility; removed in AdCP 4.0. Sellers populating this field MUST also populate `total_count` with the same value.
      * @minimum 0
      */
     total?: number;
@@ -9311,9 +12781,11 @@ export type SortDirection = 'asc' | 'desc';
  */
 export interface ListCreativesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   filters?: CreativeFilters;
@@ -9345,6 +12817,20 @@ export interface ListCreativesRequest {
    * Include pricing_options on each creative. Requires account to be provided. When false or omitted, pricing is not computed.
    */
   include_pricing?: boolean;
+  /**
+   * Include soft-purged creative tombstones in the result set. When true, creatives destroyed via `creative.purged` with `purge_kind: soft` surface as tombstone records carrying `purged: true`, `purged_at`, and the purge reason — within the seller's webhook activity retention window (30 days from `purged_at`, MUST match `webhook-activity-record` retention). Hard-purged creatives MUST NOT appear regardless of this flag. When false or omitted, the result set excludes all purged creatives — same default as today.
+   */
+  include_purged?: boolean;
+  /**
+   * Include recent webhook activity per creative. When true, each returned creative carries a `webhook_activity[]` array of the most recent fires scoped to that creative — `creative.status_changed` and `creative.purged` deliveries. Adoption of the `webhook_activity[]` pattern per `snapshot-and-log.mdx § Webhook activity log pattern`. Retention is 30 days from `completed_at` (MUST). Three-state presence applies: omitted = seller does not surface; `[]` = persists but no recent fires; non-empty = actual records.
+   */
+  include_webhook_activity?: boolean;
+  /**
+   * Maximum number of `webhook_activity[]` records to return per creative. Only meaningful when `include_webhook_activity: true`. Sellers MUST respect the cap; structural enforcement is provided by the response schema's `maxItems: 200` on the array.
+   * @minimum 1
+   * @maximum 200
+   */
+  webhook_activity_limit?: number;
   account?: AccountReference;
   /**
    * Specific fields to include in response (omit for all fields). The 'concept' value returns both concept_id and concept_name.
@@ -9487,9 +12973,34 @@ export type CreativeItem =
       content: string | string[];
     };
 /**
+ * Categorical reason for the purge. Matches the value the seller emitted on the corresponding `creative.purged` webhook fire.
+ */
+export type CreativeEventReasonCode =
+  | 'review_passed'
+  | 'review_failure'
+  | 'processing_failure'
+  | 'seller_rereview'
+  | 'policy_revocation'
+  | 'content_drift'
+  | 'takedown_request'
+  | 'advertiser_request'
+  | 'seller_archive'
+  | 'account_closed'
+  | 'account_suspended'
+  | 'retention_expired'
+  | 'legal_erasure';
+/**
  * Response from creative library query with filtered results, metadata, and optional enriched data
  */
 export interface ListCreativesResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Summary of the query that was executed
    */
@@ -9543,10 +13054,14 @@ export interface ListCreativesResponse {
      */
     updated_date: string;
     /**
-     * Assets for this creative, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+     * Assets for this creative, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
      */
     assets?: {
-      [k: string]: AssetVariant | undefined;
+      /**
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-z0-9_]+$".
+       */
+      [k: string]: AssetVariant | AssetVariant[];
     };
     /**
      * User-defined tags for organization and searchability
@@ -9622,6 +13137,25 @@ export interface ListCreativesResponse {
      * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
      */
     pricing_options?: VendorPricingOption[];
+    /**
+     * Tombstone block — present only when this record is a soft-purged creative surfaced via `include_purged: true`. The record's `status` field reflects the last status before purge (frozen — buyers MUST treat the creative as gone; assignments, snapshot, and serving operations no longer apply). Tombstones surface for the seller's webhook activity retention window (30 days from `purge.at`). Hard purges (`purge_kind: hard` on the webhook) do not surface on this read — the [`creative.purged`](https://adcontextprotocol.org/schemas/v3/creative/creative-purged-webhook.json) webhook is the only signal.
+     */
+    purge?: {
+      /**
+       * Always `soft` on tombstones — hard purges do not surface on this read.
+       */
+      kind: 'soft';
+      /**
+       * ISO 8601 timestamp when the creative was destroyed. Matches the `purged_at` field on the corresponding `creative.purged` webhook fire.
+       * @format date-time
+       */
+      at: string;
+      reason_code: CreativeEventReasonCode;
+    };
+    /**
+     * Recent webhook fires scoped to this creative — `creative.status_changed` and `creative.purged` deliveries. Present only when the request set `include_webhook_activity: true`. Each item is a `webhook-activity-record`; the `notification_type` field discriminates between status changes and purges. The `ext.creative_id` slot MAY be populated on records nested inside larger reads where the parent does not already key the array; on `list_creatives` the parent creative_id is unambiguous and `ext.creative_id` MAY be omitted. Retention: 30 days from `completed_at` (MUST). See `snapshot-and-log.mdx § Webhook activity log pattern` for the full normative contract.
+     */
+    webhook_activity?: WebhookActivityRecord[];
   }[];
   /**
    * Breakdown of creatives by format. Keys are agent-defined format identifiers, optionally including dimensions (e.g., 'display_static_300x250', 'video_30s_vast'). Key construction is platform-specific — there is no required format.
@@ -9709,9 +13243,11 @@ export interface CreativeVariable {
  */
 export interface SyncCreativesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -9771,7 +13307,16 @@ export interface SyncCreativesRequest {
 /**
  * Response from creative sync operation. Exactly one of three shapes: (1) synchronous success — per-creative results in the creatives array (best-effort processing with per-item status/failures); (2) terminal failure — errors array with no creatives processed; (3) submitted task envelope — status 'submitted' with task_id when the whole operation is queued (batch ingestion, async review that must settle before per-item results can be issued). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. Final per-item results land on the task completion artifact, not this envelope. These three shapes are mutually exclusive — a response has exactly one.
  */
-export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted;
+export type SyncCreativesResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted);
 /**
  * Action taken for this creative during this sync operation (lifecycle operation, not approval state).
  */
@@ -9881,47 +13426,106 @@ export interface SyncCreativesSubmitted {
 }
 
 
-// get_signals parameters
+// validate_input parameters
 /**
- * Request parameters for discovering and refining signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, or both to refine previous results (signal_ids anchor the starting set, signal_spec guides adjustments).
+ * Request payload for the validate_input task. Lets buyers dry-run a creative manifest against canonical formats and/or specific products before committing to a render. Cheaper than preview_creative (no synthesis cost). Used by build_creative internally to validate inputs before producing output. For genuinely nondeterministic generative platforms (Veo/Sora/Runway-class) where predictive validation is impossible, the platform's own post-synthesis QA loop applies — validate_input is the predictable-case primitive.
+ *
+ * The `targets[]` array is a discriminated list of validation targets, mirroring the response shape on `validate-input-result.json#target`. Each entry has a `kind` (canonical | product | third_party_format) plus a kind-specific identifier. Discriminated-by-kind on both sides eliminates a wire-shape mismatch: a previous draft used `format_ids: string[]` for canonical names alongside `product_ids: string[]`, which collided with `Product.format_ids: FormatId[]` ({agent_url, id}) — codegen would emit the same field name with two different types. Discriminated `targets[]` makes the intent explicit and codegen-clean.
  */
-export type GetSignalsRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface ValidateInputRequest {
+  manifest: CreativeManifest;
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Discriminated list of validation targets. Each entry mirrors the `target` shape on `validate-input-result.json` so the request/response wire shapes match exactly. Multi-target requests enable universal-creative scenarios where one manifest targets multiple sellers' format declarations in a single round-trip; the response carries one result per target in the same order.
    */
-  adcp_major_version?: number;
-  account?: AccountReference;
+  targets?: (CanonicalFormatTarget | ProductTarget | ThirdPartyFormatTarget)[];
+}
+export interface CanonicalFormatTarget {
+  kind: 'canonical';
   /**
-   * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first.
+   * Canonical format name from `canonical-format-kind.json` (e.g., `image`, `video_hosted`, `audio_daast`). Validators check the manifest against the canonical's parameter schema.
    */
-  signal_spec?: string;
+  id: string;
+}
+export interface ProductTarget {
+  kind: 'product';
   /**
-   * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. When combined with signal_spec, these signals anchor the starting set and signal_spec guides adjustments.
+   * Product ID. Validators check the manifest against the product's inline `ProductFormatDeclaration` narrowing of the canonical (parameter constraints, slot requirements, platform extensions).
    */
-  signal_ids?: SignalID[];
+  id: string;
+}
+export interface ThirdPartyFormatTarget {
+  kind: 'third_party_format';
   /**
-   * Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   * URI-form format identifier referencing a third-party format definition (e.g., `https://flashtalking.example/formats/image_300x250@sha256:...`). Validators fetch the definition (digest-pinned, cached) and validate the manifest against it.
    */
-  destinations?: Destination[];
+  id: string;
+}
+
+
+// validate_input response
+/**
+ * Response payload for the validate_input task. Returns per-target validation results — one entry per format_id or product_id requested. Each result carries a `result_kind` discriminator (`validated_pass` / `validated_fail` / `unvalidatable_nondeterministic`) so callers can branch on three meaningfully different outcomes. The `predicted` field on violations carries the platform's pre-flight estimate (e.g., predicted audio duration from text-length analysis), NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts. For nondeterministic generative platforms (Veo / Sora / Runway-class with `synthesis_nondeterministic: true`), the result_kind is `unvalidatable_nondeterministic` — predictive validation is impossible, the platform's post-synthesis QA loop applies on `build_creative`, and out-of-spec output never reaches this surface (instead `build_creative` returns task_failed with synthesis_failed reason).
+ *
+ * The `ValidateInputResult` type is split into its own schema (`/schemas/creative/validate-input-result.json`) rather than inlined here because the same per-target shape is intended for reuse by adjacent async-validation surfaces (planned: per-batch result envelopes on `build_creative` async paths, and asynchronous canonical-against-product validation in `sync_creatives`). Producers that only need the synchronous batch shape today MAY treat the split as YAGNI, but the schema reuse anchors the violation/retry shape so downstream surfaces don't drift.
+ */
+export interface ValidateInputResponse {
   /**
-   * Countries where signals will be used (ISO 3166-1 alpha-2 codes). When omitted, no geographic filter is applied.
+   * Per-target validation results.
    */
-  countries?: string[];
-  filters?: SignalFilters;
+  results: ValidateInputResult[];
+}
+/**
+ * Per-target result of a validate_input call. The `result_kind` discriminator (replacing the earlier boolean `ok`) lets buyers distinguish three meaningfully different outcomes:
+ *
+ * - `validated_pass` — manifest validates cleanly against the target. Buyers can submit with confidence.
+ * - `validated_fail` — manifest is structurally evaluable AND fails specific constraints. `violations[]` enumerates which. Buyers fix and retry.
+ * - `unvalidatable_nondeterministic` — predictive validation is impossible because the target's production pipeline is genuinely nondeterministic (Veo / Sora / Runway-class formats with `synthesis_nondeterministic: true`). The platform's own post-synthesis QA loop applies; outcome is unknowable until `build_creative` runs. Buyers MUST plan for the QA-loop semantics: submission may return `task_failed` with a `synthesis_failed` reason if the QA loop exhausts. There is no protocol state for orphaned out-of-spec artifacts.
+ *
+ * The boolean `ok` field carried in earlier drafts is removed — it conflated `validated_fail` (a real validation result the buyer can act on) with `unvalidatable_nondeterministic` (a structural property of the target the buyer needs to handle differently). `validated_fail` returns `violations[]`; `unvalidatable_nondeterministic` does not (there's nothing to enumerate).
+ *
+ * **Scope of validation (normative).** `validate_input` validates **manifest structure** against the canonical / product / third-party format target — slot counts, asset types, parameter ranges, format-shape constraints. It does NOT predict the surface's per-impression rendering choice. This distinction matters for `composition_model: algorithmic` formats (`responsive_creative`, `agent_placement`) where the surface picks combinations or phrasing at delivery time: the buyer's asset pool can still be structurally validated (does it meet the count/size/length requirements?) → `validated_pass` or `validated_fail` with violations. What's unpredictable is the rendered output composition, and that's NOT what `validate_input` claims to predict. `unvalidatable_nondeterministic` is reserved for `synthesis_nondeterministic: true` cases where the production pipeline itself can't be evaluated upfront — distinct from algorithmic composition where the inputs ARE evaluable but the output rendering isn't. Buyers calling `validate_input` on an algorithmic-composition target SHOULD expect a structural verdict (pass/fail), not a rendering preview.
+ */
+export interface ValidateInputResult {
+  target: {
+    kind: 'canonical' | 'product' | 'third_party_format';
+    /**
+     * Canonical format name (e.g., 'image'), product_id, or URI-form format_id.
+     */
+    id: string;
+  };
   /**
-   * @deprecated
-   * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
-   * @minimum 1
+   * Discriminator for the validation outcome. See schema description for the three states. Replaces the earlier boolean `ok` to distinguish 'failed validation' from 'platform is nondeterministic, can't pre-validate'.
    */
-  max_results?: number;
-  pagination?: PaginationRequest;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-};
+  result_kind: 'validated_pass' | 'validated_fail' | 'unvalidatable_nondeterministic';
+  /**
+   * When `result_kind` is `validated_fail`, the specific constraints the manifest fails to meet. MUST be absent (or empty) for `validated_pass` and `unvalidatable_nondeterministic` — neither has constraint violations to enumerate (`unvalidatable_nondeterministic` doesn't validate at all; `validated_pass` has nothing to fail).
+   */
+  violations?: {
+    /**
+     * Rule name (e.g., 'duration_ms_range', 'aspect_ratio', 'max_file_size_kb').
+     */
+    rule: string;
+    /**
+     * Expected value or range (e.g., '28000-32000', '9:16', 200).
+     */
+    expected?: unknown;
+    /**
+     * Platform's pre-flight estimate for this field (NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts). For TTS, this might be the predicted audio duration from text-length analysis. Helps the buyer fix the input before committing to a build.
+     */
+    predicted?: unknown;
+    /**
+     * Path to the violating field (e.g., 'assets.video_main.duration_ms').
+     */
+    field: string;
+    /**
+     * Optional advisory adjustment hint. Platforms MAY suggest a corrected input shape; buyers MUST treat this as advisory, not authoritative.
+     */
+    retry_with?: {};
+  }[];
+}
+
+
+// get_signals parameters
 /**
  * A deployment target where signals can be activated (DSP, sales agent, etc.)
  */
@@ -9959,6 +13563,58 @@ export type Destination =
  */
 export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
 
+/**
+ * Request parameters for discovering and refining signals. Use signal_spec for natural language discovery, signal_ids for exact lookups, both together to refine previous results, or discovery_mode: 'wholesale' to enumerate the agent's full priced catalog (symmetric with get_products buying_mode: 'wholesale').
+ */
+export interface GetSignalsRequest {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Declares caller intent for this request. 'brief' (default): semantic discovery — signal_spec or signal_ids is required and the agent performs inference/RAG. 'wholesale': raw catalog enumeration — signal_spec and signal_ids MUST NOT be provided and the agent returns its full priced catalog, paginated, scoped by filters/account/destinations/countries when present. Sellers receiving requests from pre-v3.1 clients without discovery_mode MUST default to 'brief'. Timing semantics: 'wholesale' is a catalog read — agents SHOULD respond synchronously and MUST NOT route a 'wholesale' request through the async/Submitted arm; partial completion is signalled via the response's incomplete[] field, not via a task-handoff envelope. Agents that do not implement wholesale enumeration MAY return INVALID_REQUEST for wholesale calls; callers SHOULD probe via get_adcp_capabilities (signals.discovery_modes) first.
+   */
+  discovery_mode?: 'brief' | 'wholesale';
+  account?: AccountReference;
+  /**
+   * Natural language description of the desired signals. When used alone, enables semantic discovery. When combined with signal_ids, provides context for the agent but signal_ids matches are returned first. MUST NOT be provided when discovery_mode is 'wholesale'.
+   */
+  signal_spec?: string;
+  /**
+   * Specific signals to look up by data provider and ID. Returns exact matches from the data provider's catalog. When combined with signal_spec, these signals anchor the starting set and signal_spec guides adjustments. MUST NOT be provided when discovery_mode is 'wholesale'.
+   */
+  signal_ids?: SignalID[];
+  /**
+   * Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. If the authenticated caller matches one of these destinations, activation keys will be included in the response.
+   */
+  destinations?: Destination[];
+  /**
+   * Countries where signals will be used (ISO 3166-1 alpha-2 codes). When omitted, no geographic filter is applied.
+   */
+  countries?: string[];
+  filters?: SignalFilters;
+  /**
+   * @deprecated
+   * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
+   * @minimum 1
+   */
+  max_results?: number;
+  pagination?: PaginationRequest;
+  /**
+   * Opaque catalog_version token returned by a prior get_signals response from this agent. When provided, the agent compares against its current catalog version for the caller's cache_scope and MAY return an unchanged: true response (with signals omitted) if nothing has changed. The token is scope-keyed: callers cache `(cache_scope, catalog_version)` pairs. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/catalog-change-feed.md for the full sync pattern.
+   */
+  if_catalog_version?: string;
+  /**
+   * Opaque pricing_version token from a prior get_signals response. MUST only be sent together with if_catalog_version — pricing version has no structural baseline to compare against on its own. Evaluation order: (1) if_catalog_version mismatch → agent returns the full payload; (2) if_catalog_version matches but if_pricing_version mismatches → agent returns the full payload so the caller sees updated pricing_options; (3) both match → agent MAY return unchanged: true. Agents that don't track pricing separately ignore this and fall back to if_catalog_version semantics.
+   */
+  if_pricing_version?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
 /**
  * Filters to refine signal discovery results
  */
@@ -10090,12 +13746,20 @@ export type ActivationKey =
  */
 export interface GetSignalsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Array of matching signals
    */
-  signals: {
+  signals?: {
     signal_id: SignalID;
     /**
-     * Opaque identifier used for activation. This is the signals agent's internal segment ID.
+     * Opaque activation handle. Pass this string verbatim to activate_signal.signal_agent_segment_id — do not pass the signal_id object.
      */
     signal_agent_segment_id: string;
     /**
@@ -10148,6 +13812,39 @@ export interface GetSignalsResponse {
    * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
    */
   errors?: Error[];
+  /**
+   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   */
+  incomplete?: {
+    /**
+     * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'catalog': in wholesale mode, whole-catalog enumeration could not complete in the time budget.
+     */
+    scope: 'signals' | 'pricing' | 'catalog';
+    /**
+     * Human-readable explanation of what is missing and why.
+     */
+    description: string;
+    /**
+     * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+     */
+    estimated_wait?: Duration;
+  }[];
+  /**
+   * Opaque token representing the version of the catalog state used to compose this response. Agents that implement conditional-fetch (if_catalog_version) MUST return this on every response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, catalog_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/catalog-change-feed.md for the full cache layering model.
+   */
+  catalog_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but catalog_version changes only when structure/metadata moves. Same cache_scope keying as catalog_version. Agents not separating these MAY omit pricing_version and use catalog_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the catalog_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY when the request carried if_catalog_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; catalog_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local catalog mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals.
+   */
+  unchanged?: true;
   pagination?: PaginationResponse;
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -10163,9 +13860,11 @@ export interface GetSignalsResponse {
  */
 export interface ActivateSignalRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -10173,7 +13872,7 @@ export interface ActivateSignalRequest {
    */
   action?: 'activate' | 'deactivate';
   /**
-   * The universal identifier for the signal to activate
+   * Opaque activation handle returned in the signal_agent_segment_id field of each get_signals response entry. Pass this string verbatim — do not pass the signal_id object.
    */
   signal_agent_segment_id: string;
   /**
@@ -10200,7 +13899,16 @@ export interface ActivateSignalRequest {
 /**
  * Response payload for activate_signal task. Returns either complete success data OR error information, never both. This enforces atomic operation semantics - the signal is either fully activated or not activated at all.
  */
-export type ActivateSignalResponse = ActivateSignalSuccess | ActivateSignalError;
+export type ActivateSignalResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (ActivateSignalSuccess | ActivateSignalError);
 /**
  * Success response - signal activated successfully to one or more deployment targets
  */
@@ -10253,9 +13961,11 @@ export type PropertyType =
  */
 export interface CreatePropertyListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -10382,7 +14092,7 @@ export interface FeatureRequirement {
    */
   if_not_covered?: 'exclude' | 'include';
   /**
-   * Optional attribution — when this requirement exists to satisfy a specific policy, policy_id references the authorizing PolicyEntry. Reserved field; populated by producers in 3.1 and later (see issue #2303). Governance agents MAY ignore in 3.0.
+   * Optional attribution — when this requirement encodes a specific buyer-chosen threshold authorized by a policy, policy_id references the authorizing PolicyEntry. Producers populate when the mechanism exists because of a specific policy (e.g., max_value: 15 on audience_children_composition because of uk_hfss); do NOT populate when the requirement is a general filter unrelated to any policy. Governance findings echo this policy_id when emitting denials traced to the requirement. See /docs/governance/policy-attribution.
    */
   policy_id?: string;
 }
@@ -10392,13 +14102,21 @@ export interface FeatureRequirement {
  * Response payload for create_property_list task
  */
 export interface CreatePropertyListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: PropertyList;
   /**
    * Token that can be shared with sellers to authorize fetching this list. Store this - it is only returned at creation time.
    */
   auth_token: string;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -10462,9 +14180,11 @@ export interface PropertyList {
  */
 export interface UpdatePropertyListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -10506,9 +14226,17 @@ export interface UpdatePropertyListRequest {
  * Response payload for update_property_list task
  */
 export interface UpdatePropertyListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: PropertyList;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -10521,9 +14249,11 @@ export interface UpdatePropertyListResponse {
  */
 export interface GetPropertyListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -10559,6 +14289,14 @@ export interface GetPropertyListRequest {
  * Response payload for get_property_list task. Returns identifiers only (not full property objects or scores). Consumers should cache the resolved identifiers and refresh based on cache_valid_until.
  */
 export interface GetPropertyListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: PropertyList;
   /**
    * Resolved identifiers that passed filters (if resolve=true). Cache these locally for real-time use.
@@ -10591,9 +14329,11 @@ export interface GetPropertyListResponse {
  */
 export interface ListPropertyListsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -10612,6 +14352,14 @@ export interface ListPropertyListsRequest {
  */
 export interface ListPropertyListsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Array of property lists (metadata only, not resolved properties)
    */
   lists: PropertyList[];
@@ -10626,9 +14374,11 @@ export interface ListPropertyListsResponse {
  */
 export interface DeletePropertyListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -10653,6 +14403,14 @@ export interface DeletePropertyListRequest {
  */
 export interface DeletePropertyListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Whether the list was successfully deleted
    */
   deleted: boolean;
@@ -10661,7 +14419,7 @@ export interface DeletePropertyListResponse {
    */
   list_id: string;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -10725,9 +14483,11 @@ export type ProductionQuality = 'professional' | 'prosumer' | 'ugc';
  */
 export interface CreateCollectionListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -10857,13 +14617,21 @@ export interface CollectionListFilters {
  * Response payload for create_collection_list task
  */
 export interface CreateCollectionListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: CollectionList;
   /**
    * Token that authorizes sellers to fetch this list via get_collection_list. Only returned at creation time — buyers MUST store it in a secret manager. Scoped to this one list_id; MUST NOT be reused across lists. Governance agents MUST issue a distinct token per seller so per-relationship revocation is possible. Tokens MUST NOT be logged, appear in cache keys, or echo in error responses. delete_collection_list MUST revoke the token immediately; compromise-driven revocation MUST also signal cache invalidation to sellers (reduced cache_valid_until or a list-changed webhook). See Security considerations in docs/governance/collection/tasks/collection_lists.
    */
   auth_token: string;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -10923,9 +14691,11 @@ export interface CollectionList {
  */
 export interface UpdateCollectionListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -10967,9 +14737,17 @@ export interface UpdateCollectionListRequest {
  * Response payload for update_collection_list task
  */
 export interface UpdateCollectionListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: CollectionList;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -10982,9 +14760,11 @@ export interface UpdateCollectionListResponse {
  */
 export interface GetCollectionListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11020,6 +14800,14 @@ export interface GetCollectionListRequest {
  * Response payload for get_collection_list task. Returns resolved collection entries with identification and key metadata for matching. Consumers should cache the resolved collections and refresh based on cache_valid_until.
  */
 export interface GetCollectionListResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   list: CollectionList;
   /**
    * Resolved collections that passed filters (if resolve=true). Each entry contains identification and key metadata for seller matching.
@@ -11084,9 +14872,11 @@ export interface GetCollectionListResponse {
  */
 export interface ListCollectionListsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -11105,6 +14895,14 @@ export interface ListCollectionListsRequest {
  */
 export interface ListCollectionListsResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Array of collection lists (metadata only, not resolved collections)
    */
   lists: CollectionList[];
@@ -11119,9 +14917,11 @@ export interface ListCollectionListsResponse {
  */
 export interface DeleteCollectionListRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11146,6 +14946,14 @@ export interface DeleteCollectionListRequest {
  */
 export interface DeleteCollectionListResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Whether the list was successfully deleted
    */
   deleted: boolean;
@@ -11154,7 +14962,7 @@ export interface DeleteCollectionListResponse {
    */
   list_id: string;
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -11167,9 +14975,11 @@ export interface DeleteCollectionListResponse {
  */
 export interface ListContentStandardsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11193,7 +15003,16 @@ export interface ListContentStandardsRequest {
 /**
  * Response payload with list of content standards configurations
  */
-export type ListContentStandardsResponse =
+export type ListContentStandardsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Array of content standards configurations matching the filter criteria
@@ -11207,7 +15026,8 @@ export type ListContentStandardsResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 /**
  * The nature of the obligation: regulation (legal requirement) or standard (best practice). Optional for inline bespoke policies — defaults to "standard".
  */
@@ -11604,9 +15424,11 @@ export interface Artifact {
  */
 export interface GetContentStandardsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11621,7 +15443,16 @@ export interface GetContentStandardsRequest {
 /**
  * Response payload with content safety policies
  */
-export type GetContentStandardsResponse =
+export type GetContentStandardsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Unique identifier for this standards configuration
@@ -11671,7 +15502,8 @@ export type GetContentStandardsResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 
 // create_content_standards parameters
 /**
@@ -11681,9 +15513,11 @@ export type CreateContentStandardsRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11773,7 +15607,16 @@ export type CreateContentStandardsRequest = {
 /**
  * Response payload for creating a content standards configuration
  */
-export type CreateContentStandardsResponse =
+export type CreateContentStandardsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Unique identifier for the created standards configuration
@@ -11790,7 +15633,8 @@ export type CreateContentStandardsResponse =
       conflicting_standards_id?: string;
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 
 
 // update_content_standards parameters
@@ -11799,9 +15643,11 @@ export type CreateContentStandardsResponse =
  */
 export interface UpdateContentStandardsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11897,7 +15743,16 @@ export interface UpdateContentStandardsRequest {
 /**
  * Response from updating a content standards configuration
  */
-export type UpdateContentStandardsResponse = UpdateContentStandardsSuccess | UpdateContentStandardsError;
+export type UpdateContentStandardsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (UpdateContentStandardsSuccess | UpdateContentStandardsError);
 
 export interface UpdateContentStandardsSuccess {
   /**
@@ -11934,9 +15789,11 @@ export interface UpdateContentStandardsError {
  */
 export interface CalibrateContentRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -11959,7 +15816,16 @@ export interface CalibrateContentRequest {
 /**
  * Response payload with verdict and detailed explanations for collaborative calibration
  */
-export type CalibrateContentResponse =
+export type CalibrateContentResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       verdict: BinaryVerdict;
       /**
@@ -12003,7 +15869,8 @@ export type CalibrateContentResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 /**
  * Strictly two-outcome evaluation result used for overall record-level verdicts in content standards tasks. For per-feature breakdowns that include warning and unevaluated states, see feature-check-status.
  */
@@ -12020,9 +15887,11 @@ export type FeatureCheckStatus = 'passed' | 'failed' | 'warning' | 'unevaluated'
  */
 export interface ValidateContentDeliveryRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -12085,7 +15954,16 @@ export interface ValidateContentDeliveryRequest {
 /**
  * Response payload with per-record verdicts and optional feature breakdown
  */
-export type ValidateContentDeliveryResponse =
+export type ValidateContentDeliveryResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Summary counts across all records
@@ -12136,7 +16014,8 @@ export type ValidateContentDeliveryResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 
 // get_media_buy_artifacts parameters
 /**
@@ -12144,9 +16023,11 @@ export type ValidateContentDeliveryResponse =
  */
 export interface GetMediaBuyArtifactsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -12200,7 +16081,16 @@ export interface GetMediaBuyArtifactsRequest {
 /**
  * Response containing content artifacts from a media buy for validation
  */
-export type GetMediaBuyArtifactsResponse =
+export type GetMediaBuyArtifactsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Media buy these artifacts belong to
@@ -12279,7 +16169,8 @@ export type GetMediaBuyArtifactsResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 
 // get_creative_features parameters
 /**
@@ -12287,9 +16178,11 @@ export type GetMediaBuyArtifactsResponse =
  */
 export interface GetCreativeFeaturesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   creative_manifest: CreativeManifest;
@@ -12306,7 +16199,16 @@ export interface GetCreativeFeaturesRequest {
 /**
  * Response payload for the get_creative_features task. Returns scored feature values from the governance agent's evaluation of the submitted creative manifest.
  */
-export type GetCreativeFeaturesResponse =
+export type GetCreativeFeaturesResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | {
       /**
        * Feature values for the evaluated creative
@@ -12338,7 +16240,8 @@ export type GetCreativeFeaturesResponse =
       errors: Error[];
       context?: ContextObject;
       ext?: ExtensionObject;
-    };
+    }
+);
 
 /**
  * A single feature evaluation result for a creative. Uses the same value structure as property-feature-value (value, confidence, expires_at, etc.).
@@ -12381,7 +16284,7 @@ export interface CreativeFeatureResult {
    */
   details?: {};
   /**
-   * Optional attribution — when this feature was evaluated to satisfy a specific policy, policy_id references the authorizing PolicyEntry. Reserved field; populated by producers in 3.1 and later (see issue #2303). Governance agents MAY ignore in 3.0.
+   * Optional attribution — when this feature was evaluated for the purpose of a specific policy, policy_id references the authorizing PolicyEntry. Creative agents and sellers populate when the measurement was motivated by a specific policy; do NOT populate when the feature is a generic measurement (carbon score, brand consistency) unrelated to any policy. See /docs/governance/policy-attribution.
    */
   policy_id?: string;
   ext?: ExtensionObject;
@@ -12412,9 +16315,11 @@ export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
  */
 export interface SyncPlansRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -12672,6 +16577,14 @@ export interface AudienceConstraints {
  */
 export interface SyncPlansResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Status for each synced plan.
    */
   plans: {
@@ -12720,7 +16633,7 @@ export interface SyncPlansResponse {
     }[];
   }[];
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -12741,9 +16654,11 @@ export type OutcomeType = 'completed' | 'failed' | 'delivery';
  */
 export interface ReportPlanOutcomeRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -12867,6 +16782,14 @@ export type EscalationSeverity = 'info' | 'warning' | 'critical';
  */
 export interface ReportPlanOutcomeResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Unique identifier for this outcome record.
    */
   outcome_id: string;
@@ -12910,7 +16833,7 @@ export interface ReportPlanOutcomeResponse {
     budget_remaining?: number;
   };
   /**
-   * Set to true when this response is a cached replay returned for an idempotency_key that was already processed. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, and any downstream system that assumes exactly-once event semantics. Only present on responses to mutating requests that carry idempotency_key.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
    */
   replayed?: boolean;
   context?: ContextObject;
@@ -12925,9 +16848,11 @@ export type GetPlanAuditLogsRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -12967,6 +16892,14 @@ export type GovernanceMode = 'audit' | 'advisory' | 'enforce';
  * Governance state and audit trail for one or more plans.
  */
 export interface GetPlanAuditLogsResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Audit data for each requested plan.
    */
@@ -13256,13 +17189,15 @@ export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
  */
 export interface CheckGovernanceRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
-   * Campaign governance plan identifier. The plan uniquely scopes the account and operator; do not include a separate `account` field — the governance agent resolves account from the plan. Including `account` is rejected by `additionalProperties: false`.
+   * Campaign governance plan identifier. The plan uniquely scopes the account and operator; do not include a separate `account` field — the governance agent resolves account from the plan. Governance agents MUST treat any sibling `account` field as a contract violation and reject the request.
    */
   plan_id: string;
   /**
@@ -13396,6 +17331,14 @@ export interface CheckGovernanceRequest {
  */
 export interface CheckGovernanceResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
    */
   check_id: string;
@@ -13413,11 +17356,11 @@ export interface CheckGovernanceResponse {
    */
   findings?: {
     /**
-     * Validation category that flagged the issue (e.g., 'budget_compliance', 'regulatory_compliance', 'brand_safety').
+     * Validation category that flagged the issue (e.g., 'budget_compliance', 'regulatory_compliance', 'brand_safety'). This is an **agent-internal** taxonomy: the string is defined by the governance agent's own policy model and is not constrained to any protocol-level enum. Sellers and buyers MUST NOT pattern-match `category_id` values against a fixed list — treat them as opaque labels with human-readable significance for audit but no machine-level contract. See the Campaign Governance specification for how an agent composes internal specialist review behind one endpoint.
      */
     category_id: string;
     /**
-     * ID of the policy that triggered this finding. May reference a registry policy (with source: registry) or a bespoke inline policy (with source: inline). Bespoke policy_ids are unique within their authoring container; use source_plan_id when findings aggregate across multiple plans (e.g., portfolio evaluations).
+     * ID of the policy that triggered this finding. May reference a registry policy (with source: registry) or a bespoke inline policy (with source: inline). Bespoke policy_ids are unique within their authoring container; use source_plan_id when findings aggregate across multiple plans (e.g., portfolio evaluations). When the violation traces to a producer-tagged surface (feature-requirement, creative-feature-result, or validation-result feature) carrying policy_id, governance agents SHOULD echo that policy_id here for end-to-end traceability, and MUST NOT invent a policy_id that wasn't present on the originating surface. See /docs/governance/policy-attribution.
      */
     policy_id?: string;
     /**
@@ -13472,7 +17415,7 @@ export interface CheckGovernanceResponse {
    */
   next_check?: string;
   /**
-   * Governance categories evaluated during this check.
+   * Governance categories evaluated during this check. Each value is an **agent-internal** label (e.g., `budget_authority`, `regulatory_compliance`, or any internal-reviewer key the agent's policy model defines) — not a protocol-level enum. Since one governance agent per account composes all specialist review behind its single endpoint, `categories_evaluated` is how that internal decomposition surfaces to auditors. Consumers MUST treat values as opaque labels for display and audit, not as a machine-level contract.
    */
   categories_evaluated?: string[];
   /**
@@ -13501,9 +17444,11 @@ export interface CheckGovernanceResponse {
  */
 export interface SIGetOfferingRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -13533,6 +17478,14 @@ export interface SIGetOfferingRequest {
  * Offering details, availability status, and optionally matching products. Use the offering_token in si_initiate_session for correlation.
  */
 export interface SIGetOfferingResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Whether the offering is currently available
    */
@@ -13649,9 +17602,11 @@ export interface SIGetOfferingResponse {
  */
 export interface SIInitiateSessionRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -13863,6 +17818,14 @@ export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'termi
  */
 export interface SIInitiateSessionResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Unique session identifier for subsequent messages
    */
   session_id: string;
@@ -13923,9 +17886,11 @@ export type SISendMessageRequest = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -13966,6 +17931,14 @@ export type SISendMessageRequest = {
  * Brand agent's response to a user message
  */
 export interface SISendMessageResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Session identifier
    */
@@ -14090,9 +18063,11 @@ export interface A2UIComponent {
  */
 export interface SITerminateSessionRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -14135,6 +18110,14 @@ export interface SITerminateSessionRequest {
  * Confirmation of session termination
  */
 export interface SITerminateSessionResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Terminated session identifier
    */
@@ -14187,9 +18170,11 @@ export interface SITerminateSessionResponse {
  */
 export interface GetAdCPCapabilitiesRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. When provided, the seller validates this against its supported major_versions and returns VERSION_UNSUPPORTED if the version is not in range. When omitted, the seller assumes the highest major version it supports.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -14228,31 +18213,57 @@ export type AdCPSpecialism =
   | 'sales-social'
   | 'signal-marketplace'
   | 'signal-owned'
-  | 'signed-requests';
+  | 'signed-requests'
+  | 'sponsored-intelligence';
 
 /**
  * Response payload for get_adcp_capabilities task. Protocol-level capability discovery across all AdCP protocols. Each protocol has its own capability section.
  */
 export interface GetAdCPCapabilitiesResponse {
   /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
    * Core AdCP protocol information
    */
   adcp: {
     /**
-     * AdCP major versions supported by this seller. Major versions indicate breaking changes. When multiple versions are listed, the buyer declares its version via the adcp_major_version field on requests.
+     * DEPRECATED in favor of `supported_versions` (release-precision strings). Servers MUST continue to emit this field through 3.x for backwards compatibility. Removed in 4.0. Original semantics: AdCP major versions supported by this seller. Major versions indicate breaking changes.
      */
     major_versions: number[];
+    /**
+     * Release-precision (VERSION.RELEASE) AdCP versions this seller speaks. Authoritative for buyer-side release pinning — buyers SHOULD declare `adcp_version` (release-precision string) on each request. Sellers downshift to the highest supported release ≤ the buyer's pin within the same major; cross-major mismatch returns VERSION_UNSUPPORTED. Pre-release tags (e.g. `"3.1-beta"`) hang off release.
+     */
+    supported_versions?: string[];
+    /**
+     * Optional advisory metadata: full semver build identifier of the seller's deployment — MAJOR.MINOR.PATCH plus optional pre-release and build-metadata segments per semver §9–§10. Patches are not part of the wire contract — semver patch by definition introduces no contract change — but surfacing the build helps buyers triage incidents and bug reports against a specific seller deployment lineage. Buyers MUST NOT use this field for negotiation; use `supported_versions` (release-precision) instead.
+     * @pattern ^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$
+     */
+    build_version?: string;
     /**
      * Idempotency semantics for mutating requests. Sellers MUST declare whether they honor idempotency_key replay protection so buyers can reason about safe retry behavior. Modeled as a discriminated union on the supported boolean so that code generators produce two named types (IdempotencySupported, IdempotencyUnsupported) with the replay_ttl_seconds invariant enforced at the type level — draft-07 if/then would be dropped by most generators (openapi-typescript, zod-to-json-schema, datamodel-code-generator pre-0.25, quicktype). Clients MUST NOT assume a default — a seller without this declaration is non-compliant and should be treated as unsafe for retry-sensitive operations.
      */
     idempotency: IdempotencySupported | IdempotencyUnsupported;
   };
   /**
-   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
+   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). The `measurement` protocol is in development — currently scoped to `get_adcp_capabilities` for catalog discovery; additional measurement tasks (reporting, attribution, etc.) and a baseline storyboard land in subsequent minors. Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
-  supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
+  supported_protocols: (
+    | 'media_buy'
+    | 'signals'
+    | 'governance'
+    | 'sponsored_intelligence'
+    | 'creative'
+    | 'brand'
+    | 'measurement'
+  )[];
   /**
-   * Account management capabilities. Required when media_buy is in supported_protocols; optional otherwise. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
+   * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
   account?: {
     /**
@@ -14266,13 +18277,13 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing?: BillingParty[];
+    supported_billing: BillingParty[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
     required_for_products?: boolean;
     /**
-     * Whether this seller supports the get_account_financials task for querying account-level financial status (spend, credit, invoices). Only applicable to operator-billed accounts.
+     * Whether this seller exposes the `get_account_financials` task for querying account-level financial status (spend, credit, invoices). Acts as a **pre-call discriminator** — buyers MUST consult this field before issuing `get_account_financials`; when `false` (or absent), sellers MAY reject the call with an `UNSUPPORTED_FEATURE` / `OPERATION_NOT_SUPPORTED` error. Companion pattern to `creative.bills_through_adcp` (issue #2881) — both fields let buyers gate optional capability calls on a single declared boolean rather than probing for support. Only applicable to operator-billed accounts; sellers using buyer-billed flows omit or set to `false`.
      */
     account_financials?: boolean;
     /**
@@ -14281,13 +18292,17 @@ export interface GetAdCPCapabilitiesResponse {
     sandbox?: boolean;
   };
   /**
-   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy MUST include account with supported_billing.
+   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
    */
   media_buy?: {
     /**
      * Pricing models this seller supports across its product portfolio. Buyers can use this for pre-flight filtering before querying individual products. Individual products may support a subset of these models.
      */
     supported_pricing_models?: PricingModel[];
+    /**
+     * Buying modes this seller supports on get_products. 'brief' (semantic discovery driven by the brief) is universally supported and implicit. 'wholesale' (raw catalog enumeration — caller omits brief and the seller returns the full priced catalog, paginated) is opt-in and SHOULD be declared explicitly so buyers can probe before issuing wholesale calls. 'refine' (iterate on prior products/proposals) is implicit when the seller declares supports_proposals or otherwise honors the refine array. Sellers MAY declare ['brief', 'wholesale'] to signal wholesale support; absent declaration is treated as ['brief'] for catalog-enumeration probing purposes and sellers MAY return INVALID_REQUEST for wholesale calls they do not support. Symmetric with signals.discovery_modes.
+     */
+    buying_modes?: ('brief' | 'wholesale' | 'refine')[];
     /**
      * How this seller delivers reporting data to buyers. Polling via get_media_buy_delivery is always available as a baseline regardless of this field. This array declares additional push-based delivery methods the seller supports. 'webhook': seller pushes to buyer-provided URL (configured per buy via reporting_webhook). 'offline': seller pushes batch files to a cloud storage bucket (seller-provisioned per account via reporting_bucket on the account object). When absent, only polling is available.
      */
@@ -14296,6 +18311,20 @@ export interface GetAdCPCapabilitiesResponse {
      * Cloud storage protocols this seller supports for offline file delivery. Only meaningful when reporting_delivery_methods includes 'offline'. Buyers express a protocol preference in sync_accounts; the seller provisions the account's reporting_bucket using a supported protocol.
      */
     offline_delivery_protocols?: CloudStorageProtocol[];
+    /**
+     * Whether this seller commits to the proposal lifecycle on get_products: when called with buying_mode: 'brief' the seller will return at least one entry in proposals[]; when called with buying_mode: 'refine' + action: 'finalize' the seller will transition a proposal from draft to committed. A declaration of true is a commitment the seller will be graded against, not just a feature flag — sellers that decline a brief on policy grounds still owe a structured proposal-shaped rejection rather than an empty proposals[]. Most guaranteed-deal sellers (premium pubs, broadcast, CTV) declare true; auction-based PG, retail SKU, and quoted-rate direct-buy flows declare false. When false or absent, the seller serves products directly without proposal abstraction; conformance runners skip proposal-lifecycle storyboards.
+     */
+    supports_proposals?: boolean;
+    /**
+     * Where this seller surfaces dependency-resource impairments (creative rejected post-approval, audience suspended, catalog item withdrawn, event source insufficient, property depublished) to buyers. Non-exclusive: a seller mirroring impairments on both the buy snapshot AND firing webhooks declares `["snapshot", "webhook"]` (the common case for premium guaranteed sellers). Each value names one surface where buyers can observe an impairment:
+     *
+     * - **`snapshot`** — seller propagates resource transitions into `media_buy.health` and `media_buy.impairments[]` on the next `get_media_buys` read. The `impairment.coherence` compliance assertion grades this surface; storyboards that exercise it (`media_buy_seller/dependency_impairment`, `media_buy_seller/dependency_impairment_cardinality`) require `"snapshot"` to be declared, else they grade `not_applicable`.
+     * - **`webhook`** — seller fires `notification-type: impairment` webhooks (configured via `push_notification_config`). Sellers declaring `"webhook"` MUST satisfy the persistent-channel webhook contract for the impairment event type. A seller declaring `["webhook"]` without `"snapshot"` is webhook-only — buyers reconcile state from the push channel alone, and snapshot-coherence storyboards grade `not_applicable`.
+     * - **`out_of_band`** — seller propagates via channels outside the AdCP protocol surface entirely (email to trafficker, separate dashboard, partner-specific notification feed). Long-tail and enterprise-bundled platforms commonly use this when impairment workflows are managed in human channels. Sellers declaring only `["out_of_band"]` are not graded by snapshot or webhook compliance — their bar is the offline agreement, not a protocol assertion. If a seller has impairment data in their API under a non-AdCP field name (a mapping gap, not truly out-of-band), they SHOULD document the mapping rather than declare `out_of_band` — the spec's gap, not the seller's posture, is what `out_of_band` legitimately covers.
+     *
+     * Default: `["snapshot"]` when absent (preserves the existing snapshot-coherence contract for sellers that don't declare). Empty array `[]` is invalid (`minItems: 1`) — omit the field to inherit the default rather than declaring no surfaces. Pick the surfaces that honestly describe where buyers will see impairments on this agent. Mixing is normative — `["snapshot", "webhook"]` is the documented common case; `["snapshot", "webhook", "out_of_band"]` is valid for sellers that ship all three surfaces (rare but legal). See lifecycle.mdx § Compliance for the per-surface contract.
+     */
+    propagation_surfaces?: ('snapshot' | 'webhook' | 'out_of_band')[];
     features?: MediaBuyFeatures;
     /**
      * Technical execution capabilities for media buying
@@ -14476,6 +18505,22 @@ export interface GetAdCPCapabilitiesResponse {
       };
     };
     /**
+     * Optimization metrics this seller can support on at least one of their products. Seller-level rollup of product-level metric_optimization.supported_metrics declarations (core/product.json). Buyers SHOULD filter their requested optimization goals against this list before submitting briefs. Sellers MUST keep this in sync with their product catalog — if no products support a metric, it must not appear here. Omitting this field means the seller declares no specific guarantees about which metrics they support; buyers should fall back to per-product inspection of metric_optimization.supported_metrics.
+     */
+    supported_optimization_metrics?: (
+      | 'clicks'
+      | 'views'
+      | 'completed_views'
+      | 'viewed_seconds'
+      | 'attention_seconds'
+      | 'attention_score'
+      | 'engagements'
+      | 'follows'
+      | 'saves'
+      | 'profile_visits'
+      | 'reach'
+    )[];
+    /**
      * Seller-level conversion tracking capabilities. Presence of this object indicates the seller supports sync_event_sources and log_event for conversion event tracking.
      */
     conversion_tracking?: {
@@ -14484,9 +18529,17 @@ export interface GetAdCPCapabilitiesResponse {
        */
       multi_source_event_dedup?: boolean;
       /**
+       * Whether the seller can attribute conversions to specific creatives within a package and surface that breakdown via media_buy_deliveries[].by_package[].by_creative[].conversions in get_media_buy_delivery. Defaults to false when omitted. Sellers that report conversions only at the line / package / placement / campaign granularity (retail-media, MMP-mediated mobile, CTV performance) declare false (or omit) and the per-creative scenario grades not_applicable for them. Sellers that surface ad-level conversion attribution (most social platforms) declare true and the scenario asserts the breakdown is populated end-to-end. Defaults to false to preserve backward compatibility.
+       */
+      per_creative_attribution?: boolean;
+      /**
        * Event types this seller can track and attribute. If omitted, all standard event types are supported.
        */
       supported_event_types?: EventType[];
+      /**
+       * Event-goal target kinds this seller can compute against. Buyers should only submit event-kind optimization goals whose target.kind is listed here — sellers MUST reject goals with unlisted target kinds. When omitted, only target-less event goals (maximize conversion count within budget) are guaranteed; sellers MAY accept specific target kinds but buyers should not rely on it. Named to parallel `metric_optimization.supported_targets` at the product level — same concept (which target kinds are supported), one at seller-capability granularity and one at product granularity.
+       */
+      supported_targets?: ('cost_per' | 'per_ad_spend' | 'maximize_value')[];
       /**
        * Universal ID types accepted for user matching
        */
@@ -14513,6 +18566,19 @@ export interface GetAdCPCapabilitiesResponse {
          */
         post_view?: Duration[];
       }[];
+    };
+    /**
+     * Frequency capping capabilities. Presence of this object indicates the seller honors targeting.frequency_cap on packages and MUST reject caps it cannot enforce rather than silently dropping them. Buyers SHOULD inspect supported_per_units and supported_window_units before submitting caps; sellers without these sub-fields populated MAY accept any reach-unit / duration-unit combination they can enforce. Per-product overrides (for sellers with mixed addressable/non-addressable inventory) are a likely follow-up — file a separate RFC if needed.
+     */
+    frequency_capping?: {
+      /**
+       * Entity granularities the seller can enforce caps against. Values from the reach-unit enum. Omit to indicate all reach-unit values are supported.
+       */
+      supported_per_units?: ReachUnit[];
+      /**
+       * Duration units the seller supports for frequency cap windows. Values must match the duration.json unit enum (e.g., 'hours', 'days', 'campaign'). Omit to indicate all duration units are supported.
+       */
+      supported_window_units?: string[];
     };
     /**
      * Content standards implementation details. Presence of this object indicates the seller supports content_standards configuration including sampling rates and category filtering. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities.
@@ -14567,6 +18633,10 @@ export interface GetAdCPCapabilitiesResponse {
      * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for signal catalog definitions and to verify authorization.
      */
     data_provider_domains?: string[];
+    /**
+     * Discovery modes this signals agent supports on get_signals. 'brief' (default — every signals agent supports this): semantic discovery driven by signal_spec or signal_ids. 'wholesale': raw catalog enumeration — caller omits signal_spec/signal_ids and the agent returns its full priced catalog, paginated, scoped by filters/account/destinations/countries. Agents that do not declare 'wholesale' MAY return INVALID_REQUEST for wholesale calls. Absent declaration is treated as ['brief'].
+     */
+    discovery_modes?: ('brief' | 'wholesale')[];
     /**
      * Optional signals features supported
      */
@@ -14743,6 +18813,25 @@ export interface GetAdCPCapabilitiesResponse {
      * When true, this agent can transform or resize existing manifests via build_creative. The buyer provides a creative_manifest and a target_format_id, and the agent adapts the creative to the new format.
      */
     supports_transformation?: boolean;
+    /**
+     * Canonical-formats path: format declarations describing which canonical formats this creative agent can produce via `build_creative`. Each entry uses the same `ProductFormatDeclaration` shape as a product's inline `format_options[i]` — `format_kind` discriminator + `params` (canonical's parameter schema including `slots`, dimensions, durations, codecs, character limits, platform_extensions, tracking_extensions). Replaces the v1 `list_creative_formats` discovery surface for creative agents.
+     */
+    supported_formats?: {
+      /**
+       * Stable identifier for this format declaration within the agent (e.g., 'audiostack_audio_30s'). Optional but recommended for declarations that may be referenced over time.
+       */
+      capability_id?: string;
+      format: ProductFormatDeclaration;
+    }[];
+    /**
+     * When true, this creative agent bills through the AdCP rate-card surface: list_creatives returns pricing_options when include_pricing=true with an authenticated account, build_creative populates pricing_option_id and vendor_cost on the response, and report_usage accepts records against the rate card. When false or absent, the agent bills out of band (flat license, SaaS contract, bundled enterprise agreement) and buyers should skip pricing fields and tolerate report_usage returning accepted: 0 with errors carrying BILLING_OUT_OF_BAND. A pre-call discriminator so buyer agents can route across many creative agents without first establishing an account to probe pricing.
+     */
+    bills_through_adcp?: boolean;
+    /**
+     * Optional. The AdCP canonical-formats catalog version this agent's runtime is built against (e.g., `3.1`, `3.2.0`). Lets buyer SDKs detect canonical-catalog skew between their generated types and the seller's actual support. SDKs MAY declare the version they were generated against (typically the AdCP version they ship for); when seller and SDK versions disagree, SDKs SHOULD soft-warn rather than fail (the open-enum semantics on `canonical-format-kind.json` make unknown canonicals safe to retain, so skew is not a hard error — it just means the older side might not understand newer canonical values). Omitted by sellers who haven't yet generated against a versioned catalog; absence is interpreted as the AdCP version advertised by the broader capabilities response.
+     * @pattern ^\d+\.\d+(\.\d+)?$
+     */
+    canonical_catalog_version?: string;
   };
   /**
    * RFC 9421 HTTP Signatures support for incoming requests. Optional in 3.0 — capability-advertised so counterparties can opt into signing selectively. Required for spend-committing operations in 4.0 (the next breaking-changes accumulation window). The full profile is defined in docs/building/implementation/security.mdx (Signed Requests (Transport Layer)).
@@ -14757,24 +18846,36 @@ export interface GetAdCPCapabilitiesResponse {
      */
     covers_content_digest?: 'required' | 'forbidden' | 'either';
     /**
-     * AdCP protocol operation names (e.g., 'create_media_buy') for which this agent rejects unsigned requests with request_signature_required. Not MCP tool names, A2A skill names, or any transport-specific rename — verifiers MUST NOT accept operation names that are not defined by the AdCP protocol spec. Empty in 3.0 by default; sellers populate selectively during per-counterparty pilots. In 4.0 this list MUST include all spend-committing operations the agent supports (create_media_buy, acquire_*, etc.). Counterparties MUST sign any listed operation.
+     * AdCP protocol operation names (e.g., 'create_media_buy') for which this agent rejects unsigned requests with request_signature_required. Not MCP tool names, A2A skill names, or any transport-specific rename — verifiers MUST NOT accept operation names that are not defined by the AdCP protocol spec. JSON-RPC protocol method names like `tasks/cancel` belong in `protocol_methods_required_for`, not here. Empty in 3.0 by default; sellers populate selectively during per-counterparty pilots. In 4.0 this list MUST include all spend-committing operations the agent supports (create_media_buy, acquire_*, etc.). Counterparties MUST sign any listed operation. Every operation listed MUST also appear in `supported_for` (an operation can't be required without being supported); see `x-adcp-validation`.
      */
     required_for?: string[];
     /**
-     * AdCP protocol operation names for which this agent verifies signatures when present and logs failures but does NOT reject the request. Used as a shadow-mode bridge between supported_for and required_for: the verifier surfaces failure rates in monitoring before flipping an operation to required. Precedence: required_for > warn_for > supported_for. An operation in required_for ignores warn_for. Counterparties SHOULD sign operations in warn_for; verifiers MUST NOT reject if the signature is missing or invalid.
+     * AdCP protocol operation names for which this agent verifies signatures when present and logs failures but does NOT reject the request. Used as a shadow-mode bridge between supported_for and required_for: the verifier surfaces failure rates in monitoring before flipping an operation to required. Precedence: required_for > warn_for > supported_for. An operation in required_for ignores warn_for. Counterparties SHOULD sign operations in warn_for; verifiers MUST NOT reject if the signature is missing or invalid. An operation MUST NOT appear in both `warn_for` and `required_for`; see `x-adcp-validation`.
      */
     warn_for?: string[];
     /**
      * AdCP protocol operation names for which this agent verifies signatures when present but does not require them. Counterparties SHOULD sign operations in this list. Typically a superset of required_for and warn_for.
      */
     supported_for?: string[];
+    /**
+     * JSON-RPC protocol method names (e.g., 'tasks/cancel', 'tasks/get') for which this agent verifies signatures when present. Disjoint from `supported_for`, which carries AdCP tool names only. Counterparties SHOULD sign listed methods. The `tasks/*` family enumerated here matches the A2A 0.3.0 task-lifecycle methods (§7.x); future protocol additions extend this list, not `supported_for`. Items MUST be wire-format JSON-RPC method strings (containing `/`); plain AdCP tool names belong in `supported_for`.
+     */
+    protocol_methods_supported_for?: string[];
+    /**
+     * Protocol method names for which this agent verifies signatures when present and logs failures but does NOT reject. Shadow-mode bridge between `protocol_methods_supported_for` and `protocol_methods_required_for`, mirroring `warn_for` semantics in the AdCP-tool namespace. An item MUST NOT appear in both `protocol_methods_warn_for` and `protocol_methods_required_for`; see `x-adcp-validation`.
+     */
+    protocol_methods_warn_for?: string[];
+    /**
+     * JSON-RPC protocol method names for which this agent rejects unsigned requests with `request_signature_required`. Separate namespace from `required_for` (which carries AdCP tool names) so verifiers and storyboard runners don't conflate the two — an AdCP tool name and an A2A method name could in principle collide as bare strings, but the protocol_methods_* bucket binds the match against the JSON-RPC `method` field, not the `tools/call` `params.name`. Every method listed MUST also appear in `protocol_methods_supported_for`; see `x-adcp-validation`.
+     */
+    protocol_methods_required_for?: string[];
   };
   /**
    * RFC 9421 webhook-signature support for outbound webhook callbacks (top-level peer of request_signing). Declares which AdCP webhook-signing profile version and algorithms this agent produces on delivery, and whether it supports the legacy HMAC-SHA256 fallback for receivers that have not yet adopted RFC 9421. See docs/building/implementation/webhooks.mdx.
    */
   webhook_signing?: {
     /**
-     * Whether this agent signs outbound webhooks with the AdCP RFC 9421 webhook profile. When false or absent, webhooks are delivered with legacy Bearer or HMAC-SHA256 auth only and receivers MUST NOT expect a Signature header.
+     * Whether this agent signs outbound webhooks with the AdCP RFC 9421 webhook profile. When false or absent, webhooks are delivered with legacy Bearer or HMAC-SHA256 auth only and receivers MUST NOT expect a Signature header. When the seller advertises mutating-webhook emission (i.e., `media_buy.reporting_delivery_methods` includes `webhook` OR `media_buy.content_standards.supports_webhook_delivery` is true), this MUST be `true` — emitting state-changing webhooks unsigned is a downgrade vector that lets an on-path attacker forge delivery callbacks. See `x-adcp-validation`.
      */
     supported: boolean;
     /**
@@ -14791,15 +18892,20 @@ export interface GetAdCPCapabilitiesResponse {
     legacy_hmac_fallback?: boolean;
   };
   /**
-   * Operator identity posture — key-scoping and compromise-response controls the agent operates. Fields are independent, all advisory in 3.x; receivers use them to reason about blast radius and revocation latency at onboarding rather than discovering the posture after an incident. Semantics of an empty object: `identity: {}` means "posture block present but no posture claimed" — schema-valid but advisory-neutral; receivers MUST treat it as equivalent to omitting the block (no capability claim inferred). Operators SHOULD populate at least one field to make a declaration meaningful.
+   * Operator identity posture — trust-root pointer (`brand_json_url`) plus key-scoping and compromise-response controls the agent operates. `brand_json_url` is **load-bearing** for signature verification: when the agent declares any signing posture (`request_signing.supported_for`/`required_for` non-empty, `webhook_signing.supported === true`, or any `key_origins` subfield), `brand_json_url` MUST be present (storyboard-enforced in 3.x; schema-required in 4.0). Verifiers use it to bootstrap from the agent URL to the operator's brand.json (and from there to signing keys); see [security.mdx §Discovering an agent's signing keys](https://adcontextprotocol.org/docs/building/by-layer/L1/security#discovering-an-agents-signing-keys-via-brand_json_url). The remaining fields (`per_principal_key_isolation`, `key_origins`, `compromise_notification`) are advisory and receivers use them to reason about blast radius and revocation latency at onboarding. Empty-object semantics: `identity: {}` means "posture block present but no posture claimed" — schema-valid but advisory-neutral and receivers MUST treat it as equivalent to omitting the block, **except** that an agent declaring a signing posture elsewhere in the response with an empty `identity` MUST be rejected by storyboard runners as missing `brand_json_url`.
    */
   identity?: {
+    /**
+     * HTTPS URL of the operator's brand.json (typically `https://{operator-domain}/.well-known/brand.json`). Trust-root pointer for this agent's signing keys. See [security.mdx §Discovering an agent's signing keys via `brand_json_url`](https://adcontextprotocol.org/docs/building/by-layer/L1/security#discovering-an-agents-signing-keys-via-brand_json_url) for the verifier algorithm and `x-adcp-validation` for structured constraints. Distinct from `sponsored_intelligence.brand_url`, which is a rendering pointer for SI agent visuals — verifiers MUST use this field for key discovery and MUST NOT fall back to `sponsored_intelligence.brand_url` as a trust-root pointer.
+     * @pattern ^https:\/\/
+     */
+    brand_json_url?: string;
     /**
      * When true, this multi-principal operator scopes signing keys per-principal so a single principal's key compromise does not silently re-scope across principals served by the same operator. `kid` values remain opaque to verifiers per RFC 7517; any operator-side naming convention (e.g., `{operator}:{principal}:{key_version}`) is internal bookkeeping and MUST NOT be parsed by verifiers. See docs/building/understanding/security-model.mdx.
      */
     per_principal_key_isolation?: boolean;
     /**
-     * Map of signing-key purpose → publishing origin, so counterparties can verify origin separation (e.g., governance keys served from a separate origin than transport/webhook keys) at onboarding. Absent means the operator has not declared a separation scheme; receivers SHOULD assume shared-origin. See docs/building/implementation/security.mdx §Origin separation.
+     * Map of signing-key purpose → publishing origin, so counterparties can verify origin separation (e.g., governance keys served from a separate origin than transport/webhook keys) at onboarding. Absent means the operator has not declared a separation scheme; receivers SHOULD assume shared-origin. Every purpose listed MUST have a corresponding signing posture declared elsewhere — `request_signing` requires non-empty `request_signing.supported_for`/`required_for`/`protocol_methods_supported_for`/`protocol_methods_required_for`; `webhook_signing` requires `webhook_signing.supported === true` — otherwise the consistency check at signature-verification time has nothing to anchor against. See `x-adcp-validation` and docs/building/implementation/security.mdx §Origin separation.
      */
     key_origins?: {
       /**
@@ -14834,6 +18940,60 @@ export interface GetAdCPCapabilitiesResponse {
     };
   };
   /**
+   * Measurement capability block. Presence indicates this agent computes one or more quantitative metrics about ad delivery, exposure, or effect, and is willing to be discovered as a measurement vendor. Returns metric definitions (this surface), not pricing/coverage (negotiated via `measurement_terms` on `create_media_buy`) or live values (returned per buy via `vendor_metric_values`). Modeled as a capability block (like `compliance_testing` and `webhook_signing`) rather than a `supported_protocols` value because measurement agents have one surface — this catalog — not a tool-set with mandatory tasks. AAO crawls each measurement agent's `metrics[]` on a TTL to populate the federated cross-vendor index. Same self-describing pattern as `governance.property_features[]`: agents own the catalog; the registry aggregates.
+   */
+  measurement?: {
+    /**
+     * Metrics this agent computes. Each entry is identified by `metric_id` within the vendor's vocabulary; the canonical reference everywhere a measurement value appears (`committed_metrics`, `vendor_metric_values`, `missing_metrics`) is the tuple `(vendor.domain, vendor.brand_id, metric_id)`.
+     */
+    metrics: {
+      metric_id: VendorMetricID;
+      /**
+       * Optional URI pointing at the published standard this metric IMPLEMENTS (e.g., IAB Attention Measurement Guidelines, MRC Viewable Impression Measurement, GARM emissions framework). Distinct from `accreditations[]` — `standard_reference` is what the metric is built against; `accreditations[]` is third-party certification that the implementation actually conforms. Buyer agents normalizing across vendors SHOULD apply the AdCP URL canonicalization rules before comparing — vendors implementing the same standard MAY use different URL forms for the same canonical document.
+       */
+      standard_reference?: string;
+      /**
+       * Third-party accreditations this metric holds (MRC, ARF, JIC, ABC, BARB, AGOF, etc.). Distinct from `standard_reference`: a metric can implement a standard without being independently accredited. Buyers asking 'is this MRC-accredited?' SHOULD check this array, not just `standard_reference`. Each entry names the accrediting body and optionally pins a certification ID, validity date, and evidence URL.
+       */
+      accreditations?: {
+        /**
+         * Accrediting organization — open string (the global landscape includes MRC, ARF, ABC, BARB, JICWEBS, AGOF, JIC bodies in many markets). Use the canonical short name where one exists.
+         */
+        accrediting_body: string;
+        /**
+         * Optional identifier for the certification in the accrediting body's records (when one exists; many bodies do not issue stable IDs).
+         */
+        certification_id?: string;
+        /**
+         * Optional ISO 8601 date when the current accreditation expires. Buyers MAY treat post-expiry data as un-accredited. Absence means the vendor does not assert an expiry — buyers SHOULD verify currency at the accrediting body's directory.
+         * @format date
+         */
+        valid_until?: string;
+        /**
+         * Optional URL pointing at the accrediting body's public listing for this certification (the buyer's path to verify the claim independently).
+         */
+        evidence_url?: string;
+      }[];
+      /**
+       * Unit of the metric value when reported via `vendor_metric_values.value` (e.g., `score`, `seconds`, `persons`, `gCO2e`, `lift_percent`, `USD`). Buyers SHOULD render the unit alongside the value rather than computing units locally; sellers populating `vendor_metric_values.unit` MUST match this declaration when present.
+       */
+      unit?: string;
+      /**
+       * Human-readable description of what this metric measures and any relevant methodology notes. Surfaced in buyer-agent UX when explaining the metric to humans.
+       */
+      description?: string;
+      /**
+       * URL to the vendor's full methodology documentation for this metric. Buyers SHOULD link or fetch this when human review of the methodology is in scope (compliance, RFP review, accreditation audit). Field name mirrors `governance.property_features[].methodology_url`.
+       */
+      methodology_url?: string;
+      /**
+       * Optional version identifier (semver, ISO date, or vendor-defined version string) for the methodology this metric currently implements. When present, buyer agents pin the contracted version on `committed_metrics` so silent vendor methodology changes are detectable; absence means the vendor does not version their methodology and buyers MUST treat any change as untracked.
+       */
+      methodology_version?: string;
+      ext?: ExtensionObject;
+    }[];
+  };
+  /**
    * Compliance testing capabilities. The presence of this block declares that the agent supports deterministic testing via comply_test_controller for lifecycle state machine validation. Omit the block entirely if the agent does not support compliance testing.
    */
   compliance_testing?: {
@@ -14862,6 +19022,55 @@ export interface GetAdCPCapabilitiesResponse {
    */
   experimental_features?: string[];
   /**
+   * Conditional-fetch token capabilities for get_products and get_signals. Independent of the change feed: an agent MAY support cheap version probes via if_catalog_version without implementing the full feed (and vice versa). When supported is true, the agent returns catalog_version on every get_products / get_signals response and honors if_catalog_version on subsequent requests. When absent or supported is false, callers MAY still send if_catalog_version — pre-3.1 agents that ignore it just return the full payload (correct, just inefficient). Pre-flight declaration here lets buyers fast-path which agents to bother caching versions for. See get_products / get_signals 'Catalog versioning' sections.
+   */
+  catalog_versioning?: {
+    /**
+     * Whether the agent returns catalog_version on responses and honors if_catalog_version on requests. When absent, treated as false; buyers MAY still probe (the field-presence detection path) but cannot pre-flight-decide.
+     */
+    supported: boolean;
+    /**
+     * Whether the agent tracks pricing_version independently of catalog_version. When true, the agent returns both tokens and honors if_pricing_version separately — useful for rate-card sweeps that don't change product/signal metadata. When false or absent, the agent collapses both into catalog_version; callers SHOULD NOT send if_pricing_version (it will be ignored and may produce INVALID_REQUEST when sent without if_catalog_version per the dependencies rule).
+     */
+    pricing_version_separate?: boolean;
+    /**
+     * Whether the agent ever returns cache_scope: 'account' (i.e., publishes per-account overlays distinct from the public rate card). When true, buyers MUST be prepared to maintain account-overlay caches alongside the public layer. When false or absent, all responses are cache_scope: 'public' regardless of whether account was provided — the agent's rate card is universal. Confidentiality note: declaring true advertises that the agent runs custom-pricing deals (low-grade market-posture signal); agents preferring not to disclose this MAY omit the field and let consumers detect-on-call via cache_scope on response.
+     */
+    cache_scope_account?: boolean;
+  };
+  /**
+   * Per-agent inventory change-feed capabilities. Declared by sales agents (products) and signals agents (signals). When supported is true, consumers can poll GET /catalog/events on this agent to maintain a near-real-time mirror of its product and/or signal catalog without re-fetching unchanged inventory. Complementary to (and independent of) the catalog_version conditional-fetch tokens declared in catalog_versioning. See specs/catalog-change-feed.md.
+   */
+  catalog_change_feed?: {
+    /**
+     * Whether this agent publishes a change feed. When false or this stanza is absent, consumers fall back to wholesale polling, optionally with if_catalog_version probes.
+     */
+    supported: boolean;
+    /**
+     * Minimum age of events that the agent guarantees to serve. Consumers whose cursor is older than this window get a RETENTION_EXPIRED error and MUST resync via wholesale enumeration. Specification SHOULDs 30 days; MUST NOT be less than 7.
+     * @minimum 7
+     */
+    retention_window_days?: number;
+    /**
+     * Whether this agent supports webhook subscriptions on /catalog/subscriptions. Polling the feed is always the source of truth — webhooks are best-effort notifications.
+     */
+    webhooks_supported?: boolean;
+    /**
+     * Event types this agent emits. Sales agents emit product.* events. Signals agents emit signal.* events. Agents that are both publish both event families on one feed. catalog.bulk_change is the fast-forward event recommended for rate-card sweeps that would otherwise produce thousands of individual events.
+     */
+    event_types?: (
+      | 'product.created'
+      | 'product.updated'
+      | 'product.priced'
+      | 'product.removed'
+      | 'signal.created'
+      | 'signal.updated'
+      | 'signal.priced'
+      | 'signal.removed'
+      | 'catalog.bulk_change'
+    )[];
+  };
+  /**
    * ISO 8601 timestamp of when capabilities were last updated. Buyers can use this for cache invalidation.
    * @format date-time
    */
@@ -14888,12 +19097,18 @@ export interface IdempotencySupported {
    */
   replay_ttl_seconds: number;
   /**
+   * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes `error.details.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
+   * @minimum 1
+   * @maximum 604800
+   */
+  in_flight_max_seconds?: number;
+  /**
    * When true, the seller derives `account_id` via an HKDF-based one-way transform of the buyer's natural account key rather than echoing the natural key on the wire. Buyers MUST NOT attempt to invert the opaque id and MUST treat it as a blind handle scoped to this seller. Absent or false, callers should assume `account_id` is the natural key (or a server-assigned but non-opaque id). This flag does not change the wire shape, but it DOES change buyer behavior — buyers MUST NOT cache, log, or treat `account_id` as a natural-key analog when this flag is true. Migration note for sellers already returning an opaque id without this flag: set it to true at the next capabilities refresh so buyers stop inferring natural-key semantics; until set, new-buyer replay/retry logic will misclassify these ids as natural keys.
    */
   account_id_is_opaque?: boolean;
 }
 /**
- * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds MUST be absent — it has no meaning without replay support.
+ * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds and in_flight_max_seconds MUST be absent — they have no meaning without replay support.
  */
 export interface IdempotencyUnsupported {
   /**
@@ -14908,9 +19123,11 @@ export interface IdempotencyUnsupported {
  */
 export interface ListAccountsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -14928,13 +19145,33 @@ export interface ListAccountsRequest {
 
 // list_accounts response
 /**
+ * Standard named scopes defined by the AdCP spec. `attestation_verifier` binds to the AAO Verified (Live) qualifier (a Media Buy Protocol flow — live observation requires real ad delivery) — the authorization mechanism itself is protocol-neutral, but this particular named scope is media-buy-specific.
+ */
+export type StandardScope = 'attestation_verifier';
+/**
+ * Agent-defined scope name, prefixed with `custom:`. Any vendor agent (media-buy seller, signals agent, governance agent, creative agent, brand agent) MAY define custom scopes. Callers MUST NOT assume any semantics from a custom-prefixed scope name.
+ * @pattern ^custom:[a-z][a-z0-9_]*$
+ */
+export type CustomScope = string;
+
+/**
  * Response payload for list_accounts task
  */
 export interface ListAccountsResponse {
   /**
-   * Array of accounts accessible to the authenticated agent
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
    */
-  accounts: Account[];
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Array of accounts accessible to the authenticated agent. Each entry is the full Account object plus an optional `authorization` object describing what the calling agent is permitted to do on that account.
+   */
+  accounts: (Account & {
+    authorization?: AccountAuthorization;
+  })[];
   /**
    * Task-specific errors and warnings
    */
@@ -14943,16 +19180,47 @@ export interface ListAccountsResponse {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Optional. The caller's scope grant against this account. Vendor agents of any type (media-buy, signals, governance, creative, brand) that support scope introspection SHOULD populate this so callers can preempt SCOPE_INSUFFICIENT / FIELD_NOT_PERMITTED errors rather than discovering scope by trial and error. Media-buy sales agents claiming the `attestation_verifier` standard scope MUST populate it. Absence means the vendor agent does not advertise introspectable scope for this account — callers MUST NOT infer access from absence, and fall back to error-driven discovery via the RBAC error codes.
+ */
+export interface AccountAuthorization {
+  /**
+   * Canonical snake_case task names the caller may invoke against this account (e.g., get_media_buys, update_media_buy, create_media_buy, sync_creatives). Absence of a task from this list MUST be interpreted as 'not permitted' — invoking an absent task MUST return SCOPE_INSUFFICIENT. This list reflects the caller's grant, not the seller's universal capability surface (for that, see get_adcp_capabilities). A seller may grant narrower subsets to different callers on the same account.
+   */
+  allowed_tasks: string[];
+  /**
+   * Optional per-task allowlist of request fields the caller may set. Keys are task names (which MUST also appear in allowed_tasks). Values are arrays of top-level request-field paths permitted for that task. When a task appears in field_scopes, requests to that task with any field outside the allowlist MUST be rejected with FIELD_NOT_PERMITTED. Implicit framing fields are always permitted and do NOT need to appear in the allowlist — they identify the resource or shape the call rather than mutating business state. The list is non-exhaustive but covers the common cases: typed entity references (`account`, `media_buy_id`, `package_id`, `creative_id`, `signal_id`, `format_id`, `proposal_id`, `plan_id`, `session_id`), concurrency/idempotency (`revision`, `idempotency_key`), buyer-side correlation (`buyer_ref`, `po_number`), mode flags (`dry_run`), pagination (`pagination`, `cursor`, `max_results`), and envelope fields (`context`, `ext`, `adcp_major_version`, `push_notification_config` — transport-level async receipt, not business state). Any other typed entity-id parameter or query-shaping field on a read task SHOULD be treated as framing and not require listing. Tasks absent from field_scopes have no field-level restriction beyond what the task schema already enforces. An entry with an empty array means 'framing fields only, no business fields' — semantically distinct from the task being absent from field_scopes.
+   */
+  field_scopes?: {
+    [k: string]: string[] | undefined;
+  };
+  /**
+   * Optional named scope identifier. When present, callers and the vendor agent can reason about the grant by name rather than by enumerating allowed_tasks and field_scopes. Modeled as a discriminated union so code generators produce a literal type for the standard scope(s) and a distinct type for agent-defined values — this prevents a typo of `attestation_verifier` from being silently accepted as a custom scope. Agent-defined scope names MUST use a `custom:` prefix to avoid collision with future standard scopes. The prefix is protocol-neutral: a signals agent, a governance agent, or a creative agent defines custom scopes the same way a media-buy sales agent does.
+   */
+  scope_name?: StandardScope | CustomScope;
+  /**
+   * Convenience flag. When true, the caller is permitted only non-mutating tasks. Sellers MUST reject any mutation from a read-only caller with READ_ONLY_SCOPE. Sellers MAY omit this field; omission is equivalent to `false`. Callers MUST NOT infer read-only from `allowed_tasks` alone — the seller MUST set this explicitly when it applies.
+   */
+  read_only?: boolean;
+}
 
 // sync_accounts parameters
 /**
- * Sync advertiser accounts with a seller using upsert semantics. The agent declares which brands it represents, who operates on each brand's behalf, and the billing model. The seller provisions or links accounts accordingly, returning per-account status.
+ * Sync advertiser account state with a seller. Two modes, distinguished by the key on each per-account entry:
+ *
+ * - **Provisioning mode** (`brand` + `operator` + `billing` at the entry root): the agent declares which brands it represents, who operates on each brand's behalf, and the billing model. The seller provisions or links accounts via upsert. Used for implicit accounts (`require_operator_auth: false`).
+ *
+ * - **Settings-update mode** (`account` field carrying an [`AccountRef`](/schemas/core/account-ref.json)): targets an existing account by `account_id` (or by natural key for the implicit case). The seller updates the account's settable state (notification subscriptions, payment terms, billing entity refinements) — no provisioning side effects. Used for explicit accounts (`require_operator_auth: true`) where accounts are pre-provisioned out of band, and discovered via `list_accounts`. Implicit-account sellers MAY also accept this mode for settings updates against accounts they previously provisioned.
+ *
+ * Exactly one of the two key shapes is allowed per entry. Sellers that do not implement settings-update mode MUST return `UNSUPPORTED_PROVISIONING` on entries keyed by `account.account_id`; sellers that do not provision MUST return `UNSUPPORTED_PROVISIONING` on entries keyed by the natural-key trio.
  */
 export interface SyncAccountsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -14963,24 +19231,9 @@ export interface SyncAccountsRequest {
    */
   idempotency_key: string;
   /**
-   * Advertiser accounts to sync
+   * Per-account sync entries. Each entry uses one of two key shapes: the `account` field (AccountRef) for settings-update mode, or the flat `brand` + `operator` + `billing` trio for provisioning mode.
    */
-  accounts: {
-    brand: BrandReference;
-    /**
-     * Domain of the entity operating on the brand's behalf (e.g., 'pinnacle-media.com'). When the brand operates directly, this is the brand's domain. Verified against the brand's authorized_operators in brand.json.
-     * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
-     */
-    operator: string;
-    billing: BillingParty;
-    billing_entity?: BusinessEntity;
-    payment_terms?: PaymentTerms;
-    /**
-     * When true, provision this as a sandbox account with no real platform calls or billing. Only applicable to implicit accounts (require_operator_auth: false). For explicit accounts, sandbox accounts are pre-existing test accounts discovered via list_accounts.
-     */
-    sandbox?: boolean;
-    preferred_reporting_protocol?: CloudStorageProtocol;
-  }[];
+  accounts: (ProvisioningMode | SettingsUpdateMode)[];
   /**
    * When true, accounts previously synced by this agent but not included in this request will be deactivated. Scoped to the authenticated agent — does not affect accounts managed by other agents. Use with caution.
    */
@@ -14993,12 +19246,33 @@ export interface SyncAccountsRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+/**
+ * Provisioning-mode entry — natural-key trio is required, `account` is forbidden.
+ */
+export interface ProvisioningMode {
+  [k: string]: unknown | undefined;
+}
+/**
+ * Settings-update entry — `account` (AccountRef) is required, provisioning trio fields are forbidden.
+ */
+export interface SettingsUpdateMode {
+  [k: string]: unknown | undefined;
+}
 
 // sync_accounts response
 /**
  * Response from account sync operation. Returns per-account results with status and billing, or operation-level errors on complete failure.
  */
-export type SyncAccountsResponse = SyncAccountsSuccess | SyncAccountsError;
+export type SyncAccountsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncAccountsSuccess | SyncAccountsError);
 /**
  * Sync operation processed accounts (individual accounts may be pending or have action=failed)
  */
@@ -15080,6 +19354,11 @@ export interface SyncAccountsSuccess {
      * Whether this is a sandbox account, echoed from the request. Only present for implicit accounts.
      */
     sandbox?: boolean;
+    /**
+     * Applied notification subscribers for this account, echoed after the seller diffs the requested state against persisted state. Present on `created`, `updated`, and `unchanged` results when the buyer included `notification_configs` in the request or any persisted entries exist on the account. `authentication.credentials` is omitted on every entry (write-only).
+     */
+    notification_configs?: NotificationConfig[];
+    authorization?: AccountAuthorization;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -15099,13 +19378,19 @@ export interface SyncAccountsError {
 
 // sync_governance parameters
 /**
- * Sync governance agent endpoints against specific accounts. The seller persists these governance agents and calls them for approval during media buy lifecycle events via check_governance. Uses replace semantics: each call replaces any previously synced agents on the specified accounts. The seller MUST verify that the authenticated agent has authority over each referenced account before persisting governance agents.
+ * Sync the governance agent endpoint against specific accounts. The seller persists the governance agent and calls it for approval during media buy lifecycle events via check_governance. Uses replace semantics: each call replaces any previously synced agent on the specified accounts. The seller MUST verify that the authenticated agent has authority over each referenced account before persisting the governance agent.
+ *
+ * The binding is **account-scoped, not plan-scoped**. Each account binds to exactly one governance agent, and that agent owns the lifecycle for every plan on the account — `plan_id` is threaded through `check_governance` calls so the agent can route internally, but governance registration does not vary per plan. Senders MUST NOT attempt to bind different governance agents to different plans on the same account; the wire offers no field for it and brand/seller implementations resolve the bound agent from the account alone.
+ *
+ * A plan is unitary — budget authority, delivery monitoring, and regulatory compliance are phases of the same evaluation (`purchase` / `modification` / `delivery` on check_governance), not specialisms held by different agents — so a single agent owns the full lifecycle. Buyers that need internal specialist review (e.g., a separate legal reviewer) compose that inside the governance agent, not at the registration layer. `governance_agents` is an array (not a scalar) because that is the shape 3.0 shipped with and existing senders MUST continue to work; the `maxItems: 1` constraint is load-bearing and not anticipated to relax. The single-agent rule is also baked into the wire below this layer (`protocol-envelope.governance_context` is singular), so loosening `maxItems` here would require a coordinated change across the envelope and every task that threads the context.
  */
 export interface SyncGovernanceRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -15121,7 +19406,7 @@ export interface SyncGovernanceRequest {
   accounts: {
     account: AccountReference;
     /**
-     * Governance agent endpoints for this account. The seller calls these agents via check_governance during media buy lifecycle events.
+     * Governance agent endpoint for this account. Exactly one entry — the single agent that owns the account's full governance lifecycle. The seller calls this agent via check_governance during media buy lifecycle events. The array shape is preserved for wire compatibility with 3.0 senders; `maxItems: 1` is load-bearing and mirrors the singular `governance_context` on the protocol envelope.
      */
     governance_agents: {
       /**
@@ -15140,10 +19425,6 @@ export interface SyncGovernanceRequest {
          */
         credentials: string;
       };
-      /**
-       * Governance categories this agent handles (e.g., ['budget_authority', 'strategic_alignment']). When omitted, the agent handles all categories.
-       */
-      categories?: string[];
     }[];
   }[];
   context?: ContextObject;
@@ -15154,7 +19435,16 @@ export interface SyncGovernanceRequest {
 /**
  * Response from governance agent sync. Returns per-account results confirming sync, or operation-level errors on complete failure.
  */
-export type SyncGovernanceResponse = SyncGovernanceSuccess | SyncGovernanceError;
+export type SyncGovernanceResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (SyncGovernanceSuccess | SyncGovernanceError);
 /**
  * Sync processed — individual accounts may have errors
  */
@@ -15169,7 +19459,7 @@ export interface SyncGovernanceSuccess {
      */
     status: 'synced' | 'failed';
     /**
-     * Governance agents now synced on this account. Reflects the persisted state after sync.
+     * Governance agent now synced on this account. Reflects the persisted state after sync. Exactly one entry; the array shape mirrors the request schema and the one-agent-per-account invariant. See sync_governance request schema.
      */
     governance_agents?: {
       /**
@@ -15177,10 +19467,6 @@ export interface SyncGovernanceSuccess {
        * @pattern ^https:\/\/
        */
       url: string;
-      /**
-       * Governance categories this agent handles.
-       */
-      categories?: string[];
     }[];
     /**
      * Per-account errors (only present when status is 'failed')
@@ -15205,13 +19491,15 @@ export interface SyncGovernanceError {
 
 // report_usage parameters
 /**
- * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative) what was used so the vendor can track earned revenue and verify billing. Records can span multiple accounts and campaigns in a single request.
+ * Reports how a vendor's service was consumed after campaign delivery. Used by orchestrators (DSPs, storefronts) to inform vendor agents (signals, governance, creative, or — when the receiving agent is the seller of the media buy itself — a sales agent for buyer-attested or vendor-attested billing reconciliation) what was used so the receiver can track earned revenue and verify billing. Records can span multiple accounts and campaigns in a single request. When the buy's `measurement_terms.billing_measurement.vendor` names a party other than the seller's own ad server, that party (or the buyer on its behalf) pushes final measurements via this task; the seller invoices against those final records. See [Billing authority](/docs/media-buy/advanced-topics/billing-authority) for the end-to-end flow.
  */
 export interface ReportUsageRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   /**
@@ -15272,6 +19560,20 @@ export interface ReportUsageRequest {
      * Property list identifier from list_property_lists. Required for property list agents. Links usage records to specific property lists for billing verification.
      */
     property_list_id?: string;
+    /**
+     * Whether this usage record represents the reporter's final, billing-authoritative numbers for the reporting period. **Absent means unknown** — the reporter has not declared finality on this record. Set `true` only when the reporter has actually settled the numbers (e.g., 3PAS month-end close after SIVT scrubbing, conversion dedup, and view-through windows have closed; vendor file post-C7 for broadcast). Set `false` when pushing preliminary measurements (daily pacing pushes, intra-period progress) that are still settling. Receivers MUST NOT invoice on `final: false` records, and MUST NOT invoice on records where `final` is absent for buys whose `measurement_terms.billing_measurement` names this reporter as authoritative — request a final record first. Receivers MAY invoice on absent for buys with no `measurement_terms.billing_measurement` (3.0-style usage where the receiver treats reports as authoritative on receipt) and for non-media-buy variants (signals, governance, creative, brand — domains with no provisional state concept). When the same `(account, media_buy_id, reporting_period)` is later reported with `final: true`, that record supersedes any prior records for the period.
+     */
+    final?: boolean;
+    /**
+     * ISO 8601 timestamp at which the reporter considered these numbers final. Present only when `final: true`. Anchors any deadline declared in the buy's `measurement_terms.billing_measurement.finalization_deadline_hours`.
+     * @format date-time
+     */
+    finalized_at?: string;
+    /**
+     * Which measurement window this record represents, referencing a window_id from the product's reporting_capabilities.measurement_windows or from `measurement_terms.billing_measurement.measurement_window`. Examples: 'c7' for broadcast TV, 'post_sivt' for digital post-IVT, 'downloads_30d' for podcast. When absent, the record is not windowed (standard digital reporting). When the buy's `measurement_terms.billing_measurement.measurement_window` is set, reporters SHOULD include `measurement_window` so the receiver can reconcile against the correct stage.
+     * @maxLength 50
+     */
+    measurement_window?: string;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -15282,6 +19584,14 @@ export interface ReportUsageRequest {
  * Response from report_usage. Partial acceptance is valid — records that pass validation are stored even when others fail.
  */
 export interface ReportUsageResponse {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
   /**
    * Number of usage records successfully stored.
    * @minimum 0
@@ -15305,9 +19615,11 @@ export interface ReportUsageResponse {
  */
 export interface GetAccountFinancialsRequest {
   /**
-   * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -15335,7 +19647,16 @@ export interface DateRange {
 /**
  * Financial status for an operator-billed account. Returns spend summary, credit/balance status, payment status, and invoice history. The level of detail varies by seller — only account, currency, and period are guaranteed on success.
  */
-export type GetAccountFinancialsResponse = GetAccountFinancialsSuccess | GetAccountFinancialsError;
+export type GetAccountFinancialsResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (GetAccountFinancialsSuccess | GetAccountFinancialsError);
 /**
  * Financial data retrieved successfully
  */
@@ -15494,7 +19815,15 @@ export type AdCPAsyncResponseData =
  */
 export interface ComplyTestControllerRequest {
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy, creative format) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects.
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy, creative format) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. The contract raises the bar against unintentional façades — adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context — cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal.
    */
   scenario:
     | 'list_scenarios'
@@ -15511,7 +19840,8 @@ export interface ComplyTestControllerRequest {
     | 'seed_creative'
     | 'seed_plan'
     | 'seed_media_buy'
-    | 'seed_creative_format';
+    | 'seed_creative_format'
+    | 'query_upstream_traffic';
   /**
    * Scenario-specific parameters. Required for all scenarios except list_scenarios.
    */
@@ -15616,6 +19946,15 @@ export interface ComplyTestControllerRequest {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
+  /**
+   * Sandbox account assertion. The runner MUST set sandbox: true on every comply_test_controller request. The seller MUST refuse the request (returning a structured error) if the targeted account is not a sandbox account in the seller's persisted records. This field is a caller-side declaration of intent — it does not grant sandbox status; sellers verify against their own account state. The (Sandbox) verification tier is defined by this gate: real production endpoints accept sandbox-flagged traffic and process it without real-world side effects, no separate test-mode endpoint required. See spec issue #3755 and the (Sandbox) framing in #4379.
+   */
+  account: {
+    /**
+     * MUST be true. The seller MUST verify the targeted account is sandbox by looking up the persisted account record, not by trusting this field. A request asserting sandbox: false schema-rejects before reaching the seller — defense-in-depth on top of the per-request gate.
+     */
+    sandbox: true;
+  };
 }
 /**
  * Progress data for working get_products
@@ -15666,10 +20005,27 @@ export interface GetProductsAsyncInputRequired {
  */
 export interface GetProductsAsyncSubmitted {
   /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose products array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The products array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Custom curation queued; typical turnaround 10–30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
    * Estimated completion time for the search
    * @format date-time
    */
   estimated_completion?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15719,6 +20075,23 @@ export interface CreateMediaBuyAsyncInputRequired {
  * Acknowledgment for submitted create_media_buy
  */
 export interface CreateMediaBuyAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose status field carries a MediaBuyStatus value (pending_creatives, pending_start, active). See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The media_buy_id is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15764,6 +20137,23 @@ export interface UpdateMediaBuyAsyncInputRequired {
  * Acknowledgment for submitted update_media_buy
  */
 export interface UpdateMediaBuyAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose media_buy_id is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting operator re-approval; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15813,6 +20203,23 @@ export interface BuildCreativeAsyncInputRequired {
  * Acknowledgment for submitted build_creative
  */
 export interface BuildCreativeAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shapes, whose creative_manifest or creative_manifests are issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Generative build queued; typical turnaround 3–5 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15868,6 +20275,23 @@ export interface SyncCreativesAsyncInputRequired {
  * Acknowledgment for submitted sync_creatives
  */
 export interface SyncCreativesAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose creatives array carries per-item approval state via CreativeStatus. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. The creatives array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15933,6 +20357,23 @@ export interface SyncCatalogsAsyncInputRequired {
  * Acknowledgment for submitted sync_catalogs
  */
 export interface SyncCatalogsAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose catalogs array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the buyer uses with tasks/get, and that the seller references on push-notification callbacks. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Catalog ingestion queued; typical turnaround 5–15 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -15942,13 +20383,24 @@ export interface SyncCatalogsAsyncSubmitted {
 /**
  * Response from the comply_test_controller tool. Shape varies by scenario type: list_scenarios returns available scenarios, force_* returns state transition results, simulate_* returns simulation results.
  */
-export type ComplyTestControllerResponse =
+export type ComplyTestControllerResponse = {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+} & (
   | ListScenariosSuccess
   | StateTransitionSuccess
   | SimulationSuccess
   | ForcedDirectiveSuccess
   | SeedSuccess
-  | ControllerError;
+  | UpstreamTrafficSuccess
+  | ControllerError
+);
 
 /**
  * Lists which scenarios this seller's test controller supports
@@ -15956,7 +20408,7 @@ export type ComplyTestControllerResponse =
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive minor bumps.
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive minor bumps. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade `not_applicable` against adopters who do not advertise it.
    */
   scenarios: (
     | 'force_creative_status'
@@ -15973,6 +20425,7 @@ export interface ListScenariosSuccess {
     | 'seed_plan'
     | 'seed_media_buy'
     | 'seed_creative_format'
+    | 'query_upstream_traffic'
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -16051,6 +20504,44 @@ export interface SeedSuccess {
   message?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * A query_upstream_traffic scenario returned the outbound HTTP calls the agent has made since the requested time window. Used by storyboard runners to apply `check: upstream_traffic` assertions. The mechanism raises the bar against unintentional façades — adapters (often LLM-generated) that satisfy AdCP schema requirements with synthetic placeholders without forwarding data upstream. Adopters self-report their own traffic; this contract is NOT an adversarial integrity check, and consumers MUST NOT treat upstream_traffic passing as cryptographic proof of adapter behavior. Synthetic vectors only: adopters MUST NOT enable query_upstream_traffic against a sandbox that processes production identifier values, regardless of attestation mode. Storyboards SHOULD use synthetic hashed inputs (e.g., the `acme-user-NNNN` form in the example below). The synthetic-vectors-only requirement applies to digest mode as well as raw — the digest carrying production hashed PII would still let a runner with the right precomputed digest set learn membership of arbitrary identifiers in the adopter's production user base (existence-oracle), which is exactly the threat synthetic vectors close. Privacy-conscious adopters use digest mode to support upstream_traffic conformance without raw-payload disclosure of synthetic test data — not to enable testing against production data. Caller scoping: adopters MUST scope recorded_calls to traffic caused by the requesting principal's session/auth context — cross-caller traffic MUST NOT be returned regardless of `since_timestamp`. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal, not just process-global. Secret redaction: adopters MUST recursively redact values at keys matching the case-insensitive pattern `^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|offering[_-]token|cookie|set[_-]cookie)$` from the recorded payload before emission (raw mode) or before digest computation (digest mode). The redaction obligation is normative on the controller — runner-side redaction is a backstop, not a substitute.
+ */
+export interface UpstreamTrafficSuccess {
+  success: true;
+  /**
+   * Outbound HTTP calls caused by the requesting principal in the requested window, ordered by `timestamp` ascending. Cross-caller calls MUST NOT appear here. Each item declares its `attestation_mode`: `raw` items carry the full `payload`; `digest` items carry `payload_digest_sha256` + `payload_length` + optional `identifier_match_proofs[]` instead, for adopters who can't return raw payloads under their privacy/data-residency policy.
+   */
+  recorded_calls: (RawAttestation | DigestAttestation)[];
+  /**
+   * Total calls in the requested window before any pagination — `recorded_calls.length` may be smaller when `params.limit` truncated the response.
+   * @minimum 0
+   */
+  total_count: number;
+  /**
+   * True when `total_count > recorded_calls.length`. Runners MAY raise the `limit` and re-query, but storyboards SHOULD declare assertions that fit within the default 100-call window — a truncated response is a signal that the storyboard step is causing more upstream activity than expected.
+   */
+  truncated?: boolean;
+  /**
+   * Echo of the `since_timestamp` the runner requested (or the session-start timestamp the adopter substituted when the runner omitted it). Informational — the runner SHOULD use its own clock-bracket of when it issued the AdCP step request, not this echo, when attributing recorded_calls to a specific step. The controller is part of the adopter's claimed conformance; the echo is not adversarially trustworthy.
+   * @format date-time
+   */
+  since_timestamp: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * attestation_mode raw — payload is required; payload_digest_sha256 and identifier_match_proofs are absent. attestation_mode is required at the item level so the discriminator always has a value to dispatch on (no implicit defaults inside oneOf branches).
+ */
+export interface RawAttestation {
+  attestation_mode: 'raw';
+}
+/**
+ * attestation_mode digest — payload_digest_sha256 required, payload absent. identifier_match_proofs present when the request supplied identifier_value_digests.
+ */
+export interface DigestAttestation {
+  attestation_mode: 'digest';
 }
 /**
  * The scenario failed — invalid transition, unknown entity, unsupported scenario, or invalid params

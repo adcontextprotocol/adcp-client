@@ -1181,8 +1181,13 @@ function summarize(data: ComplyTestControllerResponse): string {
   // SeedSuccess (3.0.1+): message-only arm. dispatchSeed sets the message
   // to 'Fixture seeded' / 'Fixture re-seeded (equivalent)'; third-party
   // sellers may emit other strings (or none — the spec only requires
-  // success).
-  return data.message ?? 'Scenario succeeded';
+  // success). UpstreamTrafficSuccess (3.1+): no message field — summarize
+  // recorded-calls count instead.
+  if ('message' in data && typeof data.message === 'string') return data.message;
+  if ('recorded_calls' in data) {
+    return `Recorded ${data.total_count} upstream call(s)${data.truncated ? ' (truncated)' : ''}`;
+  }
+  return 'Scenario succeeded';
 }
 
 /**

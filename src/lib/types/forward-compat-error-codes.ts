@@ -45,71 +45,18 @@ export interface ForwardCompatErrorCodeInfo extends StandardErrorCodeInfo {
  * Codes published in AdCP releases newer than the SDK's primary `ADCP_VERSION`
  * pin. Composed into `STANDARD_ERROR_CODES` and `StandardErrorCode` at the
  * consumer site so the rest of the SDK treats them as first-class.
+ *
+ * **Currently empty.** The 8.0-beta cut advanced the primary `ADCP_VERSION`
+ * pin to `3.1.0-beta.2`, which folded the prior overlay entries
+ * (`AUTH_MISSING`, `AUTH_INVALID`, `AGENT_SUSPENDED`, `AGENT_BLOCKED`) into
+ * the manifest-driven surface. The compile-time disjointness check in
+ * `error-codes.ts` fails closed if a code returns to this map after the
+ * manifest already declares it.
+ *
+ * Future codes that 3.1.0-beta.N+1 publishes go here ahead of the next
+ * pin advance — same pattern as #1883 originally introduced.
  */
-export const FORWARD_COMPAT_ERROR_CODES = {
-  /**
-   * Introduced by adcp#3730 (AdCP 3.1). Replaces the missing-credentials
-   * branch of `AUTH_REQUIRED`. Recovery is `correctable` — the agent
-   * provides credentials and retries.
-   */
-  AUTH_MISSING: {
-    description:
-      'No credentials were presented. Sellers MUST return this code when no `Authorization` header was included in the request. Recovery: correctable (provide credentials via the auth header and retry).',
-    recovery: 'correctable' as ErrorRecovery,
-    suggestion: 'provide credentials via the auth header and retry',
-    sinceAdcpVersion: '3.1.0',
-  },
-  /**
-   * Introduced by adcp#3730 (AdCP 3.1). Replaces the rejected-credentials
-   * branch of `AUTH_REQUIRED`. Recovery is `terminal` — credentials were
-   * revoked, expired, or carry an invalid signature. Auto-retry creates a
-   * retry-storm against the seller's SSO endpoint indistinguishable from
-   * brute-force probing. OAuth 2.1 refresh-token rotation is a permitted
-   * one-shot exception (see spec note); otherwise escalate to a human.
-   */
-  AUTH_INVALID: {
-    description:
-      "Credentials were presented but rejected — revoked, malformed signature, or a key no longer in the seller's keystore. Sellers MUST return this code when an `Authorization` header was present but verification failed. Recovery: terminal. Exception: agents with a valid OAuth 2.1 refresh grant MAY treat this as correctable when the rejection reason is token expiry — silently refresh and retry once; if the refresh fails or the seller explicitly signals revocation, escalate to human.",
-    recovery: 'terminal' as ErrorRecovery,
-    suggestion:
-      'do NOT auto-retry — credentials were rejected; rotate keys, refresh OAuth tokens once if applicable, otherwise escalate to a human',
-    sinceAdcpVersion: '3.1.0',
-  },
-  /**
-   * Introduced by adcp#3906 (AdCP 3.1). Consolidates the 3.0.5 placeholder
-   * shape `PERMISSION_DENIED + details.scope:'agent' + details.status:'suspended'`
-   * into a dedicated code. The placeholder's `details.status` field is
-   * removed in 3.1 — envelopes carrying it fail schema validation.
-   *
-   * Recovery is `terminal` at the wire level (the placeholder's inherited
-   * `correctable` contradicted the no-retry MUST). The transient-vs-permanent
-   * distinction lives at the buyer-agent record's `status` field in the
-   * seller's database, not at the error-code wire level — a buyer cannot
-   * "wait out" a suspension by retrying the same request.
-   */
-  AGENT_SUSPENDED: {
-    description:
-      "The buyer agent's commercial relationship with the seller is suspended. New requests rejected; in-flight tasks proceed. Recovery: terminal — re-onboarding or contacting the seller is required; no auto-retry of the same request will succeed.",
-    recovery: 'terminal' as ErrorRecovery,
-    suggestion: 'contact the seller to restore access; do NOT auto-retry the same request',
-    sinceAdcpVersion: '3.1.0',
-  },
-  /**
-   * Introduced by adcp#3906 (AdCP 3.1). Consolidates the 3.0.5 placeholder
-   * shape `PERMISSION_DENIED + details.scope:'agent' + details.status:'blocked'`
-   * into a dedicated code. See {@link AGENT_SUSPENDED} for the rationale.
-   *
-   * Recovery is `terminal` — `blocked` is permanent at the agent level;
-   * re-onboarding under a new agent identity is the only recovery path.
-   */
-  AGENT_BLOCKED: {
-    description:
-      'The buyer agent is permanently denied by the seller. New requests rejected. Recovery: terminal — re-onboarding under a new agent identity is the only recovery path.',
-    recovery: 'terminal' as ErrorRecovery,
-    suggestion: 're-onboard under a new agent identity; auto-retry will not recover',
-    sinceAdcpVersion: '3.1.0',
-  },
-} as const satisfies Record<string, ForwardCompatErrorCodeInfo>;
+export const FORWARD_COMPAT_ERROR_CODES = {} as const satisfies Record<string, ForwardCompatErrorCodeInfo>;
 
 /**
  * Union of overlay codes. Composed with the manifest-derived enum to form

@@ -105,7 +105,7 @@ import { mergeSeedProduct } from '../testing/seed-merge';
  * Derived via lookup so it stays in lockstep with the generated wire schema.
  * Dedup key: `signal_id`.
  */
-export type SeededSignal = GetSignalsResponse['signals'][number];
+export type SeededSignal = NonNullable<GetSignalsResponse['signals']>[number];
 
 /**
  * Seeded creative-delivery entry — the inline element type of
