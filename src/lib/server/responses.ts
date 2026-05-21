@@ -128,12 +128,20 @@ function assertNoTopLevelSetup(data: unknown, builder: string): void {
  *
  * `supported_protocols` lists AdCP domain protocols (media_buy, signals, governance, etc.),
  * NOT transport protocols (mcp, a2a).
+ *
+ * Stamps the v3 protocol envelope's required `status: "completed"` field at
+ * the top level of `structuredContent`. Synchronous task responses MUST carry
+ * `status` per `protocol-envelope.json` (AdCP #4876); without it the
+ * `v3_envelope_integrity/no_legacy_status_fields` conformance step fails.
+ * The status is injected here rather than added to `GetAdCPCapabilitiesResponse`
+ * because it's an envelope concern, not a payload field — the wire shape and
+ * the typed payload model live at different layers.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Agent capabilities retrieved' }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
