@@ -27,7 +27,7 @@ const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 // `npm run sync-schemas:3.1-beta`; the loader (registry.ts) tracks
 // whichever 3.1 beta the workspace has.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
-const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
+const REGISTRY_EXISTS = ['3.1.0-beta.2', '3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
 const SKIP_REASON = REGISTRY_EXISTS

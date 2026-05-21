@@ -21,7 +21,7 @@ const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
 // registry loader (`src/lib/v2/projection/registry.ts`) reads from
 // whichever exists.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
-const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
+const REGISTRY_EXISTS = ['3.1.0-beta.2', '3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
 
