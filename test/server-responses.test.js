@@ -69,6 +69,11 @@ describe('productsResponse', () => {
     const result = productsResponse({ products: [] });
     assert.strictEqual(result.content[0].text, 'Found 0 products');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = productsResponse({ products: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('mediaBuyResponse', () => {
@@ -349,6 +354,11 @@ describe('syncCreativesResponse', () => {
     });
     assert.strictEqual(result.content[0].text, 'Synced 1 creative');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = syncCreativesResponse({ creatives: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('getSignalsResponse', () => {
@@ -357,6 +367,11 @@ describe('getSignalsResponse', () => {
       signals: [{ signal_agent_segment_id: 's1', name: 'Test' }],
     });
     assert.strictEqual(result.content[0].text, 'Found 1 signal');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = getSignalsResponse({ signals: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -428,13 +443,15 @@ describe('validActionsForStatus', () => {
 });
 
 describe('cancelMediaBuyResponse', () => {
-  it('sets status to canceled and valid_actions to empty', () => {
+  it('stamps envelope status: "completed" and valid_actions to empty', () => {
     const result = cancelMediaBuyResponse({
       media_buy_id: 'mb_1',
       canceled_by: 'buyer',
       revision: 3,
     });
-    assert.strictEqual(result.structuredContent.status, 'canceled');
+    // Envelope task status is 'completed' (tool call succeeded); cancellation
+    // state is communicated through valid_actions: [] and the cancellation object.
+    assert.strictEqual(result.structuredContent.status, 'completed');
     assert.deepStrictEqual(result.structuredContent.valid_actions, []);
   });
 

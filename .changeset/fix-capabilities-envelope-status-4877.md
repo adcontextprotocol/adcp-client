@@ -2,10 +2,12 @@
 '@adcp/sdk': patch
 ---
 
-fix(server): emit envelope `status: "completed"` on `get_adcp_capabilities` responses
+fix(server): emit envelope `status: "completed"` on all v5 sync response helpers
 
-`capabilitiesResponse` (and the framework's auto-registered `get_adcp_capabilities` handler that uses it) now stamps the v3 protocol envelope's required `status: "completed"` field at the top level of `structuredContent`. Synchronous task responses MUST carry `status` per `protocol-envelope.json` (AdCP #4876); the helper previously built `structuredContent` from the typed `GetAdCPCapabilitiesResponse` payload alone, never threading the envelope-level status. Adopters who didn't override the helper hit `v3_envelope_integrity/no_legacy_status_fields` conformance failure.
+Extends the fix originally scoped to `capabilitiesResponse` (#4877) across the full non-collision surface. 19 additional `*Response` helpers in `src/lib/server/responses.ts` were building `structuredContent: toStructuredContent(data)` with no envelope-level status, producing the same `v3_envelope_integrity/no_legacy_status_fields` conformance failure on every tool they serve.
 
-The auto-registered handler in `createAdcpServer` inherits the fix because it calls `capabilitiesResponse` for its wire output. v5 raw-handler adopters still calling `capabilitiesResponse` directly also get the fix for free. Adopters who hand-rolled their own `get_adcp_capabilities` MCP tool (not using the helper) must add `status: "completed"` to their structuredContent themselves.
+Fixed helpers: `productsResponse`, `deliveryResponse`, `listAccountsResponse`, `listCreativeFormatsResponse`, `getMediaBuysResponse`, `performanceFeedbackResponse`, `buildCreativeResponse`, `previewCreativeResponse`, `creativeDeliveryResponse`, `listCreativesResponse`, `listPropertyListsResponse`, `listCollectionListsResponse`, `listContentStandardsResponse`, `getPlanAuditLogsResponse`, `syncCreativesResponse`, `getSignalsResponse`, `activateSignalResponse`, `cancelMediaBuyResponse`, `reportUsageResponse`.
 
-Fixes adcontextprotocol/adcp#4877. Reported by @kapoost (`@adcp/sdk@7.7.0`, 117/121 storyboards passing; this was the remaining `v3_envelope_integrity` failure surfaced in adcontextprotocol/adcp#4832).
+`mediaBuyResponse` and `updateMediaBuyResponse` are intentionally excluded — their `MediaBuyStatus.status` payload field collides with the envelope `status` field; those are blocked on adcontextprotocol/adcp#4876 (spec-side disambiguation).
+
+Fixes adcontextprotocol/adcp#4877 (original `get_adcp_capabilities` gap). Refs adcontextprotocol/adcp-client#1897 (full surface audit). Reported by @kapoost (`@adcp/sdk@7.7.0`, adcontextprotocol/adcp#4832).

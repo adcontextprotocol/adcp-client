@@ -152,7 +152,7 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.products.length} products` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -198,7 +198,7 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
           `Delivery data for ${data.media_buy_deliveries.length} media buy${data.media_buy_deliveries.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -209,7 +209,7 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
 export function listAccountsResponse(data: ListAccountsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.accounts.length} accounts` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -220,7 +220,7 @@ export function listAccountsResponse(data: ListAccountsResponse, summary?: strin
 export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.formats.length} creative formats` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -260,7 +260,7 @@ export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: strin
         text: summary ?? `Found ${data.media_buys.length} media buy${data.media_buys.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -274,7 +274,7 @@ export function performanceFeedbackResponse(
 ): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Performance feedback accepted' }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -290,7 +290,7 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
   const formatId = data.creative_manifest?.format_id?.id;
   return {
     content: [{ type: 'text', text: summary ?? (formatId ? `Creative built: ${formatId}` : 'Creative built') }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -328,7 +328,7 @@ export function previewCreativeResponse(
         : `Variant preview generated`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -339,7 +339,7 @@ export function previewCreativeResponse(
 export function creativeDeliveryResponse(data: GetCreativeDeliveryResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Creative delivery data for ${data.currency} report` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -356,7 +356,7 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
           summary ?? `Found ${data.query_summary.total_matching} creatives (${data.query_summary.returned} returned)`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -375,7 +375,7 @@ export function listPropertyListsResponse(data: ListPropertyListsResponse, summa
         text: summary ?? `Found ${data.lists.length} property list${data.lists.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -393,7 +393,7 @@ export function listCollectionListsResponse(data: ListCollectionListsResponse, s
         text: summary ?? `Found ${data.lists.length} collection list${data.lists.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -417,7 +417,7 @@ export function listContentStandardsResponse(data: ListContentStandardsResponse,
       : 'Content standards lookup error';
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -435,7 +435,7 @@ export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary
         text: summary ?? `Audit data for ${data.plans.length} plan${data.plans.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -451,7 +451,7 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
         text: summary ?? `Synced ${data.creatives.length} creative${data.creatives.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -464,7 +464,7 @@ export function getSignalsResponse(data: GetSignalsResponse, summary?: string): 
     content: [
       { type: 'text', text: summary ?? `Found ${data.signals.length} signal${data.signals.length === 1 ? '' : 's'}` },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -482,7 +482,7 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
           `Signal activated across ${data.deployments.length} deployment${data.deployments.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -541,7 +541,7 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
 
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${input.media_buy_id} canceled` }],
-    structuredContent: data,
+    structuredContent: { ...data, status: 'completed' },
   };
 }
 
@@ -756,7 +756,7 @@ export function reportUsageResponse(data: ReportUsageResponse, summary?: string)
     content: [
       { type: 'text', text: summary ?? `Accepted ${data.accepted} usage record${data.accepted === 1 ? '' : 's'}` },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
