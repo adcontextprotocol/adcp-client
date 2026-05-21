@@ -91,25 +91,31 @@ export function clearPreviewCache(): void {
 }
 
 /**
- * Generate batch previews for products with product_card manifests
+ * Extract preview URLs from products' `product_card` fields.
  *
- * Products with product_card fields will have their cards rendered via the creative agent.
- * Products without product_card will be returned with no preview.
+ * AdCP 3.1.0-beta.2 changed `product_card` from a creative-agent-rendered
+ * shape (`{ format_id, manifest }`) to a self-contained visual card
+ * (`{ image, title, description, price_label, cta_label }`). The card IS
+ * the preview — no creative-agent round-trip required. This function now
+ * extracts the image URL directly from the inline card.
  *
- * @param products - Array of products to preview
- * @param creativeAgentClient - ADCP client configured for creative agent
- * @param options - Preview generation options
- * @returns Array of preview results matching input products
+ * Products with no `product_card`, or with a card that lacks an `image.url`,
+ * return a result with no `previewUrl`. The function preserves its
+ * `Promise<PreviewResult[]>` return shape so existing adopters' code paths
+ * keep compiling and behaving correctly.
+ *
+ * @param products - Array of products to extract previews from
+ * @param creativeAgentClient - Retained for signature compatibility; unused
+ *   under 3.1.0-beta.2's self-rendering card model. Will be removed in
+ *   8.0 final (or 9.0 at the latest) — pass any value through during the
+ *   beta cycle.
+ * @param options - Retained for signature compatibility. Cache fields
+ *   (`cacheTtl`, `skipCache`) are unused — there's no expensive call to
+ *   cache. Will be removed alongside `creativeAgentClient`.
+ * @returns Array of preview results matching input products by index.
  *
  * @example
  * ```typescript
- * const creativeAgent = new SingleAgentClient({
- *   id: 'creative',
- *   name: 'Creative Agent',
- *   agent_uri: 'https://creative.adcontextprotocol.org/mcp',
- *   protocol: 'mcp'
- * });
- *
  * const previews = await batchPreviewProducts(products, creativeAgent);
  * previews.forEach(p => {
  *   if (p.previewUrl) {
@@ -117,141 +123,23 @@ export function clearPreviewCache(): void {
  *   }
  * });
  * ```
+ *
+ * @deprecated Use `product.product_card?.image?.url` directly. This wrapper
+ *   only exists for 8.0-beta migration ergonomics and will be removed.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function batchPreviewProducts(
   products: Product[],
-  creativeAgentClient: SingleAgentClient,
-  options: BatchPreviewOptions = {}
+  _creativeAgentClient: SingleAgentClient,
+  _options: BatchPreviewOptions = {}
 ): Promise<PreviewResult[]> {
-  const cacheTtl = options.cacheTtl ?? 3600000; // 1 hour default
-  const skipCache = options.skipCache ?? false;
-
-  // Collect all products that have product_card manifests
-  const previewRequests: {
-    product: Product;
-    formatId: FormatID;
-    manifest: any;
-    cacheKey: string;
-    inputName: string;
-  }[] = [];
-
-  const results: PreviewResult[] = [];
-
-  products.forEach(product => {
-    if (product.product_card) {
-      const cacheKey = getCacheKey(product.product_card.format_id, product.product_card.manifest);
-
-      // Check cache first
-      if (!skipCache) {
-        const cached = getCachedPreview(cacheKey, cacheTtl);
-        if (cached) {
-          results.push({
-            item: product,
-            previewUrl: cached.previewUrl,
-            previewId: cached.previewId,
-          });
-          return;
-        }
-      }
-
-      previewRequests.push({
-        product,
-        formatId: product.product_card.format_id,
-        manifest: product.product_card.manifest,
-        cacheKey,
-        inputName: product.name || 'Product Card',
-      });
-    } else {
-      // No product_card, return product with no preview
-      results.push({
-        item: product,
-      });
+  return products.map(product => {
+    const imageUrl = product.product_card?.image?.url;
+    if (imageUrl) {
+      return { item: product, previewUrl: imageUrl };
     }
+    return { item: product };
   });
-
-  // If all were cached or none have product_card, return early
-  if (previewRequests.length === 0) {
-    return results;
-  }
-
-  // Batch preview using preview_creative with inputs array
-  // Group by format_id since preview_creative takes one format_id
-  const groupedByFormat = new Map<string, typeof previewRequests>();
-
-  previewRequests.forEach(req => {
-    const formatKey = `${req.formatId.agent_url}:${req.formatId.id}`;
-    if (!groupedByFormat.has(formatKey)) {
-      groupedByFormat.set(formatKey, []);
-    }
-    groupedByFormat.get(formatKey)!.push(req);
-  });
-
-  // Process each product individually
-  // Note: Each product has different manifest data, so we can't truly batch them
-  // We process them sequentially but could parallelize in the future
-  for (const req of previewRequests) {
-    try {
-      // Build preview_creative request for this product
-      const previewRequest: PreviewCreativeRequest = {
-        request_type: 'single',
-        format_id: req.formatId,
-        creative_manifest: {
-          format_id: req.formatId,
-          assets: req.manifest, // manifest contains the asset map (product_image, product_name, etc)
-        },
-      };
-
-      // Call preview_creative
-      const response = await creativeAgentClient.previewCreative(previewRequest);
-
-      // Check for data even if validation failed (response.success may be false due to schema warnings)
-      // Handle both single request (previews) and batch request (results) response formats
-      const responseData = response.data;
-      if (responseData && 'previews' in responseData && responseData.previews && responseData.previews.length > 0) {
-        const preview = responseData.previews[0]!;
-        if (preview.renders && preview.renders.length > 0) {
-          const render = preview.renders[0]!;
-          const previewUrl =
-            render.output_format === 'url' || render.output_format === 'both' ? render.preview_url : undefined;
-          const previewId = preview.preview_id;
-
-          if (previewUrl) {
-            // Cache the result
-            setCachedPreview(req.cacheKey, previewUrl, previewId);
-
-            results.push({
-              item: req.product,
-              previewUrl,
-              previewId,
-            });
-          } else {
-            results.push({
-              item: req.product,
-              error: 'Preview render has no URL',
-            });
-          }
-        } else {
-          results.push({
-            item: req.product,
-            error: 'No renders in preview response',
-          });
-        }
-      } else {
-        // Only treat as error if we have no data at all
-        results.push({
-          item: req.product,
-          error: response.error || 'Preview generation failed',
-        });
-      }
-    } catch (error) {
-      results.push({
-        item: req.product,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-  }
-
-  return results;
 }
 
 /**
