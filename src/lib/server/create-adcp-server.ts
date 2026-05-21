@@ -2653,6 +2653,50 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  * `resolveBundleKey(adcpVersion)`). For now it always reflects the seller's
  * own pin; downshift (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up.
  */
+/**
+ * Stamp the v3 protocol envelope's required `status` field on success
+ * responses. Per AdCP #4876, every task response envelope MUST carry
+ * `status`; synchronous calls emit `"completed"`. Mirrors
+ * `injectContextIntoResponse`'s structuredContent + L2-text-fallback
+ * dual write so MCP clients reading either layer see the field.
+ *
+ * Skipped when:
+ * - `isError: true` — error envelopes carry their own status semantics
+ *   (`failed` / `rejected` / etc.). Wired separately by the adcp_error
+ *   path; not this seam's concern.
+ * - `structuredContent.status` already present — handler-declared status
+ *   takes precedence. Preserves:
+ *     • the Submitted envelope's `status: 'submitted'`,
+ *     • payloads whose typed shape carries its own top-level `status`
+ *       discriminator (`CreateMediaBuySuccess.status: MediaBuyStatus`,
+ *       `UpdateMediaBuySuccess.status: MediaBuyStatus`, the
+ *       `cancelMediaBuyResponse` builder's hard-coded `status: 'canceled'`).
+ *   The MediaBuyStatus/TaskStatus collision at the same top-level key is
+ *   a spec ambiguity tracked at adcp-client#1897; this seam refuses to
+ *   destroy payload semantics until the spec disambiguates.
+ */
+function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
+  if (response.isError === true) return;
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return;
+  if ('status' in sc) return;
+  sc.status = 'completed';
+  if (Array.isArray(response.content)) {
+    const first = response.content[0];
+    if (first && first.type === 'text' && typeof first.text === 'string') {
+      try {
+        const parsed = JSON.parse(first.text);
+        if (parsed && typeof parsed === 'object' && !('status' in parsed)) {
+          parsed.status = 'completed';
+          first.text = JSON.stringify(parsed);
+        }
+      } catch {
+        // Text isn't JSON — leave it alone
+      }
+    }
+  }
+}
+
 function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
   if (!servedVersion) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
@@ -3412,6 +3456,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, toolsWithErrorArm);
+          injectEnvelopeStatusIntoResponse(response);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
           return response;

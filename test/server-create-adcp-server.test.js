@@ -432,6 +432,69 @@ describe('createAdcpServer', () => {
       const result = await callToolRaw(server, 'get_signals', {});
       assert.strictEqual(result.content[0].text, 'Found 1 signal');
     });
+  });
+
+  describe('envelope status (AdCP #4876 / adcp-client#1897)', () => {
+    // The v3 protocol envelope requires top-level `status` on every task
+    // response. The framework stamps `status: "completed"` at the dispatch
+    // chokepoint when the handler-projected payload doesn't already carry one,
+    // so every per-tool wrap helper + the genericResponse fallback inherit
+    // envelope conformance without needing per-helper edits.
+
+    it('stamps status: "completed" on get_products (productsResponse path)', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'p1' }] }) },
+      });
+      const caps = await callTool(server, 'get_products', { buying_mode: 'brief', brief: 't' });
+      assert.strictEqual(caps.status, 'completed');
+    });
+
+    it('stamps status: "completed" on get_signals (getSignalsResponse path)', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        signals: { getSignals: async () => ({ signals: [{ signal_id: 's1' }] }) },
+      });
+      const caps = await callTool(server, 'get_signals', {});
+      assert.strictEqual(caps.status, 'completed');
+    });
+
+    it('stamps status: "completed" on list_property_lists (genericResponse fallback)', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        governance: {
+          listPropertyLists: async () => ({ property_lists: [] }),
+        },
+      });
+      const caps = await callTool(server, 'list_property_lists', {});
+      assert.strictEqual(caps.status, 'completed');
+    });
+
+    it('preserves MediaBuyStatus on create_media_buy (does NOT clobber payload status)', async () => {
+      // `CreateMediaBuySuccess.status` carries MediaBuyStatus, which partly
+      // overlaps but is not equal to TaskStatus. The chokepoint must NOT
+      // overwrite a handler-declared payload `status` — until the spec
+      // disambiguates envelope vs payload status at the same key, the
+      // MediaBuy lifecycle value wins.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [], status: 'active' }),
+        },
+      });
+      const caps = await callTool(server, 'create_media_buy', {
+        account: { account_id: 'a1' },
+        brand: { brand_id: 'b1' },
+        start_time: '2026-01-01T00:00:00Z',
+        end_time: '2026-02-01T00:00:00Z',
+      });
+      assert.strictEqual(caps.status, 'active');
+    });
 
     it('uses generic wrapper for tools without dedicated builders', async () => {
       const server = createAdcpServer({
