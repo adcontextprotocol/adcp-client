@@ -152,8 +152,11 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
   }
 
   throw new Error(
-    `AAO catalog (reference-formats.json) not found. Looked in: ${candidates.join(', ')}. ` +
-      `Vendor a copy at test/lib/v2-projection-fixtures/aao-reference-formats.json.`
+    `AAO catalog (aao-reference-formats.json) not found. Looked in: ${candidates.join(', ')}. ` +
+      `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
+      `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
+      `your install method (npm/yarn/pnpm) and Node version. ` +
+      `If you're working from a source checkout, run \`npm run build:lib\` first.`
   );
 }
 
