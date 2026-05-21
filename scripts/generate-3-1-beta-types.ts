@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Generate TypeScript request/response interfaces from the cached AdCP
- * 3.1.0-beta.1 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
+ * 3.1.0-beta.2 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
  *
  * The SDK's primary type surface (`src/lib/types/tools.generated.ts`) is
  * pinned to the GA `ADCP_VERSION` (3.0.x). The v3-1-beta surface is an
@@ -28,7 +28,7 @@ import { removeArrayLengthConstraints } from './schema-utils';
 import { enforceStrictSchema, removeNumberedTypeDuplicates } from './generate-types';
 
 const REPO_ROOT = path.join(__dirname, '..');
-const BETA_VERSION = '3.1.0-beta.1';
+const BETA_VERSION = '3.1.0-beta.2';
 const BETA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache', BETA_VERSION);
 const OUTPUT_DIR = path.join(REPO_ROOT, 'src/lib/types/v3-1-beta');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'tools.generated.ts');
@@ -50,7 +50,7 @@ interface SchemaIndex {
 
 /**
  * Resolve a schema $ref to a path in the cached beta bundle. The bundle ships
- * with refs already normalized to `/schemas/3.1.0-beta.1/...`; this just
+ * with refs already normalized to `/schemas/3.1.0-beta.2/...`; this just
  * strips the leading version segment so the relative path resolves against
  * the cache root.
  */
@@ -373,7 +373,7 @@ async function main(): Promise<void> {
   body = removeNumberedTypeDuplicates(body);
   body = widenIndexSignaturesOnAnonymousObjects(body);
 
-  const banner = `// AdCP 3.1.0-beta.1 tool request/response types — DO NOT EDIT
+  const banner = `// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
 // Generated from schemas/cache/${BETA_VERSION}/ via scripts/generate-3-1-beta-types.ts
 // Refresh with: npm run sync-schemas:3.1-beta && npm run generate-types:3.1-beta
 `;

@@ -275,16 +275,23 @@ describe('resolveSchemaRefs — security hardening (post-review)', () => {
     );
   });
 
-  test('both default mirror hosts accepted during transitional period', async () => {
-    // Spec migration: mirror.adcontextprotocol.org → creative.adcontextprotocol.org.
-    // The default mirrorHosts list contains both; either resolves.
+  test('creative.adcontextprotocol.org is the single default mirror anchor (post-beta.2)', async () => {
+    // 3.1.0-beta.2 (adcp#4866) deprecated mirror.adcontextprotocol.org —
+    // it was never provisioned. Only creative.adcontextprotocol.org is
+    // in DEFAULT_MIRROR_HOSTS now. The legacy host is rejected as
+    // cross-origin.
     const fetchExternal = async () => ({ type: 'string' });
-    const schema1 = { $ref: 'https://mirror.adcontextprotocol.org/x.json' };
-    const schema2 = { $ref: 'https://creative.adcontextprotocol.org/x.json' };
-    const r1 = await resolveSchemaRefs(schema1, 'https://publisher.example/p.json', { fetchExternal });
-    const r2 = await resolveSchemaRefs(schema2, 'https://publisher.example/p.json', { fetchExternal });
-    assert.strictEqual(r1.schema.type, 'string');
-    assert.strictEqual(r2.schema.type, 'string');
+    const allowed = { $ref: 'https://creative.adcontextprotocol.org/x.json' };
+    const { schema: resolved } = await resolveSchemaRefs(allowed, 'https://publisher.example/p.json', {
+      fetchExternal,
+    });
+    assert.strictEqual(resolved.type, 'string');
+
+    const legacy = { $ref: 'https://mirror.adcontextprotocol.org/x.json' };
+    await assert.rejects(
+      () => resolveSchemaRefs(legacy, 'https://publisher.example/p.json', { fetchExternal }),
+      err => err instanceof SchemaRefSandboxError && err.code === 'cross_origin_rejected'
+    );
   });
 
   test('subdomain-spoofed mirror host rejected (strict equality, not suffix)', async () => {

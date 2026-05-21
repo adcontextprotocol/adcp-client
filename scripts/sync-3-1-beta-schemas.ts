@@ -1,9 +1,9 @@
 #!/usr/bin/env tsx
 /**
- * Opt-in sync of the AdCP 3.1.0-beta.1 schema bundle into
- * `schemas/cache/3.1.0-beta.1/`. The SDK's primary pin stays at the
+ * Opt-in sync of the AdCP 3.1.0-beta.2 schema bundle into
+ * `schemas/cache/3.1.0-beta.2/`. The SDK's primary pin stays at the
  * `ADCP_VERSION` file value (3.0.x GA); clients pinning `adcpVersion:
- * "3.1.0-beta.1"` or `"3.1-beta"` get strict validation against the beta
+ * "3.1.0-beta.2"` or `"3.1-beta"` get strict validation against the beta
  * schemas (conditional fetch, wholesale signals, catalog change-feed).
  *
  * Wraps `syncSchemas()` so we inherit cosign verification, sha256 check,
@@ -21,7 +21,7 @@ import { syncSchemas } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
-const BETA_VERSION = '3.1.0-beta.1';
+const BETA_VERSION = '3.1.0-beta.2';
 
 /**
  * Paths that `syncSchemas` overwrites as a side effect of any tarball

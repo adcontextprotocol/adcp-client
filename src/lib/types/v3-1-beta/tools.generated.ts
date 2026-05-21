@@ -1,5 +1,5 @@
-// AdCP 3.1.0-beta.1 tool request/response types — DO NOT EDIT
-// Generated from schemas/cache/3.1.0-beta.1/ via scripts/generate-3-1-beta-types.ts
+// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
+// Generated from schemas/cache/3.1.0-beta.2/ via scripts/generate-3-1-beta-types.ts
 // Refresh with: npm run sync-schemas:3.1-beta && npm run generate-types:3.1-beta
 
 /**
@@ -1265,7 +1265,7 @@ export type PublisherPropertySelector =
        */
       selection_type: 'by_tag';
       /**
-       * Property tags resolved against each addressed publisher's adagents.json. Selector covers all properties carrying any of these tags.
+       * Property tags resolved against each addressed publisher's adagents.json, OR against the parent file's top-level `properties[]` when those properties carry a `publisher_domain` matching the selector. Selector covers all properties carrying any of these tags.
        */
       property_tags: PropertyTag[];
     };
@@ -1288,7 +1288,7 @@ export type ProductFormatDeclaration = {
   [k: string]: unknown | undefined;
 } & {
   /**
-   * Optional stable identifier for this format declaration. REQUIRED when the parent product's `format_options` contains multiple declarations sharing the same `format_kind` (so buyers can disambiguate which option a manifest targets via `manifest.capability_id`). Recommended for any declaration that may be referenced by capability_id over time. Format-internal (not a URI). Examples: 'flashtalking_image_300x250', 'pmax_responsive_search'.
+   * Stable identifier for this format declaration. REQUIRED when the parent product's `format_options` contains multiple declarations sharing the same `format_kind` (so buyers can disambiguate which option a manifest targets via `manifest.capability_id`). SHOULD be set on EVERY `format_options[]` entry — not just when structurally required to break a `format_kind` collision — so V2-mental-model buyers can use the V2 authoring path (`PackageRequest.capability_ids[]`, `creative-manifest.capability_id`) against the product. A product that ships without `capability_id` on its `format_options[]` entries is structurally 3.1-conformant but is not V2-authorable: buyers fall back to v1 `format_ids[]` and lose the cross-publisher-stable naming the V2 path was designed to provide. Sellers MUST reject V2 authoring against such products with `UNSUPPORTED_FEATURE` and `error.details.reason` set to `capability_ids_not_published` per `package-request.json`. The 4.0 cutover will tighten this from SHOULD to MUST (see #4857). Format-internal (not a URI). Examples: 'flashtalking_image_300x250', 'pmax_responsive_search', 'nytimes_homepage_image'.
    */
   capability_id?: string;
   /**
@@ -2813,9 +2813,30 @@ export type PackageRequest = AdCPVersionEnvelope & {
    */
   product_id: string;
   /**
-   * Array of format IDs that will be used for this package - must be supported by the product. If omitted, defaults to all formats supported by the product.
+   * v1 path. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and `capability_ids` is also omitted), defaults to all formats supported by the product.
    */
   format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * v2 path. Array of `capability_id` values, each referencing one of the product's `format_options[i].capability_id` entries. Lets a buyer reading the V2 mental model (`Product.format_options[]`) author a `create_media_buy` call without translating back through `v1_format_ref[]` to construct `format_ids[]`. Symmetric with the V2 path exposed on `creative-manifest` (which carries a single `capability_id`) — a package may activate multiple `format_options` entries, so the package-side shape is an array.
+   *
+   * **Resolution rules (normative).**
+   * - **Both `capability_ids` and `format_ids` present.** `capability_ids` wins; the seller routes by `capability_ids` and MUST NOT validate `format_ids` for consistency with the resolved declarations. The `format_ids` value is a v1-compat hint for intermediaries on the wire path; the resolving seller ignores it.
+   * - **`capability_ids` only.** Seller looks up each entry against the product's `format_options[]` and uses the matching declaration (and that declaration's `v1_format_ref[]` when projecting to v1-wire surfaces). This is the V2-native authoring path.
+   * - **`format_ids` only.** Existing v1 behavior; unchanged.
+   * - **Neither.** Default — all formats supported by the product are active.
+   *
+   * **Failure modes (normative).** Sellers MUST reject with `UNSUPPORTED_FEATURE` (with `field` pointing at the failing package and entry, e.g. `packages[0].capability_ids[1]`) when:
+   * - Any entry references a `capability_id` not present in the target product's `format_options[]`, OR
+   * - The target product carries `format_ids` but no `format_options[]` (v1-only product — there is no closed set to resolve against), OR
+   * - The target product carries `format_options[]` but none of the entries publish a `capability_id` (the V2 path is unauthorable against that product). Sellers SHOULD set `error.details.reason` to `capability_ids_not_published` in this case so buyers can distinguish it from an outright mismatch and fall back to `format_ids[]`.
+   *
+   * **Seller obligation.** For buyers to use the V2 path against a product, the seller MUST publish a `capability_id` on each `format_options[]` entry it expects buyers to select (the field is currently optional on `product-format-declaration.json` and only structurally required when multiple entries share a `format_kind`). Sellers SHOULD assign a stable `capability_id` to every entry to keep the V2 authoring path usable.
+   *
+   * **Dual emission.** V2-native buyer SDKs targeting a heterogeneous seller population (mix of v1- and v2-capable sellers) SHOULD emit `format_ids` alongside `capability_ids` so v1-only sellers — which ignore the unknown `capability_ids` field per `additionalProperties: true` — still receive an explicit format set rather than silently defaulting to all formats supported by the product.
+   *
+   * Backward-compatible: additive optional field. v1-only sellers ignore it.
+   */
+  capability_ids?: string[];
   /**
    * Budget allocation for this package in the media buy's currency
    */
@@ -11037,7 +11058,7 @@ export interface PushNotificationConfig {
    */
   operation_id?: string;
   /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   * Optional client-provided token for webhook validation. The seller MUST echo this value verbatim in every webhook payload's `token` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) for the receiver-side validation obligation). Length bounds give receivers a defensive range check on the echoed value; senders SHOULD generate tokens with at least 128 bits of entropy (≥22 base64url characters). This is a complementary authenticity mechanism that can layer on top of the RFC 9421 webhook signature — unlike the `authentication` block below, it is not on the 4.0 removal track. Receivers that registered both a signing key (RFC 9421) and a `token` MUST NOT treat a valid token echo as authorization to skip signature verification; both checks remain independent obligations.
    */
   token?: string;
   /**
@@ -11682,11 +11703,11 @@ export interface V2ProductInlineFormatDeclarations {
  * - **Response size cap**: response body MUST be capped at 1 MiB. Enforce during streaming, not after full buffering. Over-cap hard-fails identically to digest mismatch.
  * - **Timeout**: SDKs SHOULD apply a fetch timeout ≤5 seconds. Timeout SHOULD be treated identically to an HTTP 5xx response (transient — retry policy at the SDK's discretion; on persistent failure surface as unresolved and skip the declaration for this session).
  * - **Digest verification**: SHA-256 of the response body MUST equal `digest`. **Digest mismatch is a hard fail** — the buyer MUST treat the format declaration as unresolvable and MUST NOT validate manifests against the mismatched body. A divergent digest is either a malicious substitution or producer error; either way, falling back to the un-verified body breaks the trust model. Digest format: `sha256:` prefix + 64 lowercase hex characters. Cache key is `uri@digest`; digest mismatch MUST NOT be cached as a negative result keyed on `uri` alone (defeats CDN-flap recovery), and MUST be distinguishable in telemetry from network 5xx / 404 (sustained mismatch is a substitution-attack signal, not a flap).
- * - **Sandboxing of `$ref`**: fetched schemas MAY use `$ref`. Buyers MUST resolve `$ref` only to URIs that are (a) same-origin as the parent `format_schema.uri` after RFC 3986 §6 normalization (lowercase scheme + host, strip default port, normalize path dot-segments, no userinfo component), OR (b) hosted under the AAO mirror namespace (`https://mirror.adcontextprotocol.org/...`), OR (c) intra-document JSON Pointer refs (`#/...`) bounded to the parent document's parsed tree. Cross-origin `$ref` to arbitrary URIs MUST be rejected. `$ref: file://...` MUST be rejected unconditionally. Transitive `$ref` chains MUST be bounded at depth ≤8 AND `$ref` count ≤256 across the resolved tree (depth 8 with breadth 100 per level is 10^16 nodes — depth alone is not enough). Publishers SHOULD inline rather than $ref where possible.
+ * - **Sandboxing of `$ref`**: fetched schemas MAY use `$ref`. Buyers MUST resolve `$ref` only to URIs that are (a) same-origin as the parent `format_schema.uri` after RFC 3986 §6 normalization (lowercase scheme + host, strip default port, normalize path dot-segments, no userinfo component), OR (b) hosted under the AAO catalog domain (`https://creative.adcontextprotocol.org/...`), OR (c) intra-document JSON Pointer refs (`#/...`) bounded to the parent document's parsed tree. Cross-origin `$ref` to arbitrary URIs MUST be rejected. `$ref: file://...` MUST be rejected unconditionally. Transitive `$ref` chains MUST be bounded at depth ≤8 AND `$ref` count ≤256 across the resolved tree (depth 8 with breadth 100 per level is 10^16 nodes — depth alone is not enough). Publishers SHOULD inline rather than $ref where possible.
  * - **Schema-compile bounds (DoS protection)**: validators MUST bound CPU/memory on fetched schemas. Recommended: compiled-schema keyword count ≤10 000, `pattern` regexes evaluated with a non-backtracking engine (re2) OR under a per-pattern timeout, per-manifest validation budget ≤250 ms (exceeded budget → treat manifest as invalid, surface telemetry signal). Without these, a 'valid' schema with catastrophic regex backtracking or exponential `allOf`/`anyOf` expansion pins a CPU forever.
  * - **Cache**: buyers cache fetched schemas by `uri@digest` and treat them as immutable (the same hosting contract as `platform_extensions`). On `404`, network partition, or persistent fetch failure, buyers SHOULD degrade gracefully (treat the declaration as unresolved, skip it for the current `get_products` response, surface via `errors[]` with the relevant code) rather than failing the entire session.
  * - **Schema-not-valid handling**: if the fetched body parses as JSON but is not a valid JSON Schema, the buyer MUST treat the declaration as unresolvable (same as digest mismatch) and surface via `errors[]`. Validators MUST NOT attempt partial validation against an invalid schema.
- * - **AAO mirror trust**: `https://mirror.adcontextprotocol.org/*` is a single trust anchor in the same-origin allowlist; compromise of the mirror or its CA compromises every buyer agent. Mirror-served bodies MUST be digest-pinned identically to origin fetches (the digest is on the *parent* `format_schema.uri@digest`, not on the mirror response). Future hardening (signed bodies, transparency log) is tracked separately.
+ * - **AAO catalog trust**: `https://creative.adcontextprotocol.org/*` is a single trust anchor in the same-origin allowlist; compromise of the catalog domain or its CA compromises every buyer agent. Catalog-served bodies MUST be digest-pinned identically to origin fetches (the digest is on the *parent* `format_schema.uri@digest`, not on the catalog response). Future hardening (signed bodies, transparency log) is tracked separately.
  */
 export interface PlatformExtensionReference {
   /**

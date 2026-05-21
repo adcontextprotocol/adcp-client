@@ -138,19 +138,15 @@ export const DEFAULT_MAX_REF_DEPTH = 8;
 /** Spec ceiling for total `$ref` count across the resolved tree. */
 export const DEFAULT_MAX_REF_COUNT = 256;
 /**
- * Spec-normative AAO mirror trust anchors for `$ref` resolution. The
- * `$ref` sandboxing section in `product-format-declaration.json`
- * references the legacy `mirror.adcontextprotocol.org` host, while the
- * surrounding 3.1 spec text migrated the AAO catalog mirror to
- * `creative.adcontextprotocol.org/translated/`. Both are accepted
- * during the transitional period — adcontextprotocol/adcp issue
- * tracking the inconsistency to be filed; once the spec PR lands and
- * picks one anchor, drop the unused host from this list.
+ * Spec-normative AAO mirror trust anchor for `$ref` resolution
+ * (`product-format-declaration.json#format_schema`, post-beta.2). The
+ * legacy `mirror.adcontextprotocol.org` host was deprecated in
+ * adcontextprotocol/adcp#4866 (3.1.0-beta.2) — it was never
+ * provisioned and authorizing a ghost hostname is liability with no
+ * upside. `creative.adcontextprotocol.org` is the single trust anchor
+ * going forward.
  */
-export const DEFAULT_MIRROR_HOSTS: readonly string[] = [
-  'mirror.adcontextprotocol.org',
-  'creative.adcontextprotocol.org',
-];
+export const DEFAULT_MIRROR_HOSTS: readonly string[] = ['creative.adcontextprotocol.org'];
 
 /**
  * Single-host alias kept for backward compatibility with the 7.10

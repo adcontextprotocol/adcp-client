@@ -43,7 +43,7 @@ function findCacheRoot(): string {
   // points at a cache that lacks canonical-format schemas — the loader
   // would silently return `true` for every v1_translatable check and miss
   // the 4 inherently-v2 canonicals.
-  const versionsToTry = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'];
+  const versionsToTry = ['3.1.0-beta.2', '3.1.0-beta.1', '3.1.0-beta.0', 'latest'];
   const candidates = versionsToTry.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v));
   for (const c of candidates) {
     if (existsSync(c)) return c;

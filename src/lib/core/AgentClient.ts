@@ -556,38 +556,38 @@ export class AgentClient {
   /**
    * Create a new media buy.
    *
-   * **V2-mental-model write flow.** After `getProducts()` returns the
-   * V2-augmented response (`format_options[]` auto-populated), pick a
-   * declaration and bridge to v1 `format_ids[]` via the projection
-   * module's write-side helpers. The 3.1-beta spec still only carries
-   * `format_ids[]` on `PackageRequest` (see adcontextprotocol/adcp#4842
-   * for the upstream `capability_id` proposal); these helpers are the
-   * canonical bridge until that lands.
+   * **V2-mental-model write flow (preferred at 3.1.0-beta.2+).** After
+   * `getProducts()` returns the V2-augmented response (`format_options[]`
+   * auto-populated), pick declarations by `capability_id` and use
+   * `packageRefsForCapabilities` to author the package. The helper emits
+   * BOTH `capability_ids[]` (the V2-native path; adcontextprotocol/adcp
+   * #4844 in 3.1.0-beta.2) AND `format_ids[]` (v1-compat dual emission)
+   * so a single request works against both V2-capable and v1-only sellers.
    *
    * ```ts
-   * import { formatIdsFromOptions } from '@adcp/sdk/v2/projection';
+   * import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
    *
    * const { data: { products } } = await agent.getProducts({ brief: '...' });
    * const product = products[0];
-   * const chosen = product.format_options.find(o => o.format_kind === 'image');
-   * if (!chosen) throw new Error('no image format on this product');
    *
    * await agent.createMediaBuy({
    *   packages: [{
    *     package_id: 'pkg-1',
    *     product_id: product.product_id,
    *     pricing_option_id: product.pricing_options[0].pricing_option_id,
-   *     format_ids: formatIdsFromOptions(chosen), // throws if no v1 form
+   *     ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+   *     // ↑ spreads `{ capability_ids, format_ids }`
    *     budget: { currency: 'USD', total: 5000 },
    *   }],
    *   // ...
    * });
    * ```
    *
-   * `formatIdsFromOptions` throws (fail-closed) when the chosen
-   * declaration has no v1 form (`canonical_formats_only: true` or an
-   * inherently-v2 canonical). Use `tryFormatIdsFromOptions` instead if
-   * iterating to find the first v1-purchasable option on a product.
+   * The bridge helpers (`formatIdsFromOptions` /
+   * `tryFormatIdsFromOptions` / `formatIdsForCapability`) remain
+   * exported as `@deprecated` for callers writing strictly to v1 sellers
+   * or maintaining existing code. New V2 code should use
+   * `packageRefsForCapabilities` to get clean dual emission.
    */
   async createMediaBuy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,

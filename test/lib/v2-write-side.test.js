@@ -11,6 +11,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const {
+  packageRefsForCapabilities,
   formatIdsFromOptions,
   tryFormatIdsFromOptions,
   formatIdsForCapability,
@@ -106,6 +107,103 @@ describe('formatIdsFromOptions', () => {
     const ids = formatIdsFromOptions(decl);
     ids[0].id = 'mutated';
     assert.strictEqual(decl.v1_format_ref[0].id, 'display_300x250_image');
+  });
+});
+
+describe('packageRefsForCapabilities (3.1.0-beta.2+ dual-emission)', () => {
+  const product = {
+    product_id: 'p1',
+    format_options: [
+      {
+        format_kind: 'image',
+        capability_id: 'nytimes_mrec',
+        v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+      },
+      {
+        format_kind: 'video_hosted',
+        capability_id: 'nytimes_video_30s',
+        v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'video_standard_30s' }],
+      },
+      {
+        format_kind: 'sponsored_placement',
+        capability_id: 'sponsored_v2_only',
+        // No v1_format_ref — inherently-v2.
+      },
+    ],
+  };
+
+  test('emits both capability_ids[] and format_ids[] (dual emission)', () => {
+    const refs = packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']);
+    assert.deepStrictEqual(refs.capability_ids, ['nytimes_mrec', 'nytimes_video_30s']);
+    assert.strictEqual(refs.format_ids.length, 2);
+    assert.deepStrictEqual(refs.format_ids.map(f => f.id).sort(), ['display_300x250_image', 'video_standard_30s']);
+  });
+
+  test('v2-only capability emits capability_ids[] but no v1 format_ids[]', () => {
+    // Buyer is purchasing an inherently-v2 declaration from a v2-only
+    // seller. capability_ids carries the choice; format_ids is empty
+    // because no v1 representation exists. v1-only sellers reading this
+    // request would reject the package — that's the expected outcome.
+    const refs = packageRefsForCapabilities(product, ['sponsored_v2_only']);
+    assert.deepStrictEqual(refs.capability_ids, ['sponsored_v2_only']);
+    assert.deepStrictEqual(refs.format_ids, []);
+  });
+
+  test('throws on unknown capability_id with available list in the error', () => {
+    assert.throws(
+      () => packageRefsForCapabilities(product, ['nytimes_mrec', 'unknown_cap']),
+      err => {
+        assert.match(err.message, /unknown_cap/);
+        assert.match(err.message, /nytimes_mrec/);
+        assert.match(err.message, /nytimes_video_30s/);
+        assert.match(err.message, /sponsored_v2_only/);
+        return true;
+      }
+    );
+  });
+
+  test('de-duplicates v1 format_ids when multiple declarations share a ref', () => {
+    const productWithDupes = {
+      format_options: [
+        {
+          format_kind: 'image',
+          capability_id: 'cap_a',
+          v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        },
+        {
+          format_kind: 'image',
+          capability_id: 'cap_b',
+          v1_format_ref: [
+            { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' },
+            { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_728x90_image' },
+          ],
+        },
+      ],
+    };
+    const refs = packageRefsForCapabilities(productWithDupes, ['cap_a', 'cap_b']);
+    assert.deepStrictEqual(refs.capability_ids, ['cap_a', 'cap_b']);
+    // 3 declared, 2 unique on the wire.
+    assert.strictEqual(refs.format_ids.length, 2);
+    assert.deepStrictEqual(refs.format_ids.map(f => f.id).sort(), ['display_300x250_image', 'display_728x90_image']);
+  });
+
+  test('handles product with no format_options[] (empty capability_ids → empty refs)', () => {
+    const refs = packageRefsForCapabilities({}, []);
+    assert.deepStrictEqual(refs, { capability_ids: [], format_ids: [] });
+  });
+
+  test('result is spreadable into a PackageRequest', () => {
+    // Documents the spec-recommended call shape.
+    const refs = packageRefsForCapabilities(product, ['nytimes_mrec']);
+    const pkg = {
+      package_id: 'pkg-1',
+      product_id: product.product_id,
+      ...refs,
+      budget: { currency: 'USD', total: 5000 },
+    };
+    assert.ok(Array.isArray(pkg.capability_ids));
+    assert.ok(Array.isArray(pkg.format_ids));
+    assert.strictEqual(pkg.budget.total, 5000);
   });
 });
 
