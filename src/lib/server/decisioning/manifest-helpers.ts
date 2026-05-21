@@ -40,9 +40,37 @@ export function getAsset<T extends AssetInstanceType>(
   assetId: string,
   assetType: T
 ): Extract<AssetInstance, { asset_type: T }> | undefined {
-  const asset = manifest?.assets?.[assetId];
+  // AdCP 3.1.0-beta.2 widened each slot from `AssetVariant` to
+  // `AssetVariant | AssetVariant[]` so carousel `cards` and
+  // responsive_creative `headlines` can carry multiple assets per slot.
+  // For single-slot callers, take the first array element — preserves the
+  // pre-3.1 behavior. Multi-asset slots use {@link getAssetSlot}.
+  const slot = manifest?.assets?.[assetId];
+  const asset = Array.isArray(slot) ? slot[0] : slot;
   if (!asset || asset.asset_type !== assetType) return undefined;
   return asset as Extract<AssetInstance, { asset_type: T }>;
+}
+
+/**
+ * Type-narrowed asset slot accessor for multi-element slots (carousel
+ * `cards`, responsive_creative `headlines`, etc.). Returns the full
+ * array — every element must match `assetType`; mixed-type slots are
+ * the adopter's responsibility to discriminate per-element.
+ *
+ * Returns `undefined` if the slot is missing or empty. Returns `[]` if
+ * the slot is present but every element fails the asset_type check.
+ *
+ * @since AdCP 3.1.0-beta.2 (slot widening to `AssetVariant | AssetVariant[]`).
+ */
+export function getAssetSlot<T extends AssetInstanceType>(
+  manifest: CreativeManifest | undefined,
+  assetId: string,
+  assetType: T
+): Array<Extract<AssetInstance, { asset_type: T }>> | undefined {
+  const slot = manifest?.assets?.[assetId];
+  if (!slot) return undefined;
+  const arr = Array.isArray(slot) ? slot : [slot];
+  return arr.filter(a => a.asset_type === assetType) as Array<Extract<AssetInstance, { asset_type: T }>>;
 }
 
 /**
@@ -66,7 +94,10 @@ export function requireAsset<T extends AssetInstanceType>(
   assetType: T,
   messageOverride?: string
 ): Extract<AssetInstance, { asset_type: T }> {
-  const asset = manifest?.assets?.[assetId];
+  // Slot widening (3.1.0-beta.2): unwrap array slots to the first element
+  // for single-asset callers. Multi-element slots go through getAssetSlot.
+  const slot = manifest?.assets?.[assetId];
+  const asset = Array.isArray(slot) ? slot[0] : slot;
   if (!asset) {
     throw new AdcpError('INVALID_REQUEST', {
       message: messageOverride ?? `creative_manifest.assets.${assetId} is required`,
