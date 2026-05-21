@@ -183,7 +183,10 @@ describe('deliveryResponse', () => {
   });
 
   it('stamps envelope status: "completed" on structuredContent', () => {
-    const result = deliveryResponse({ reporting_period: { start: '2026-01-01', end: '2026-01-02' }, media_buy_deliveries: [] });
+    const result = deliveryResponse({
+      reporting_period: { start: '2026-01-01', end: '2026-01-02' },
+      media_buy_deliveries: [],
+    });
     assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
