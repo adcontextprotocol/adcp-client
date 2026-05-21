@@ -1,5 +1,27 @@
 # Changelog
 
+## 7.10.1
+
+### Patch Changes
+
+- 0b5f42e: fix(v2/projection): vendor `aao-reference-formats.json` into the published bundle
+
+  The v1↔v2 projection loader (`v2/projection/catalog.ts`, new in 7.10) requires
+  the AAO canonical-formats catalog at runtime. The previous build resolved it
+  from `test/lib/v2-projection-fixtures/aao-reference-formats.json` (not in the
+  published `files` glob) and `.context/adcp-3307/...` (a dev-machine path),
+  so any consumer that exercised `get_products`-class augmentation
+  (`augmentProductWithFormatOptions` / `withFormatOptions`) crashed with
+  `AAO catalog (reference-formats.json) not found`.
+
+  The build now copies the fixture to `dist/lib/v2/projection/aao-reference-formats.json`
+  via `scripts/copy-v2-projection-catalog.ts`, and the loader looks adjacent to
+  its compiled location first. The source-tree `test/` path is retained as a
+  dev fallback (tsx / vitest / source checkouts) but is not required for the
+  published bundle to function.
+
+  Reported as adcontextprotocol/adcp-client#1909.
+
 ## 7.10.0
 
 ### Minor Changes
@@ -284,37 +306,38 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-    ```ts
-    import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+        ```ts
+        import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-    const {
-      data: { products },
-    } = await agent.getProducts({ brief: '...' });
-    const product = products[0];
+        const {
+          data: { products },
+        } = await agent.getProducts({ brief: '...' });
+        const product = products[0];
 
-    await agent.createMediaBuy({
-      packages: [
-        {
-          package_id: 'pkg-1',
-          product_id: product.product_id,
-          pricing_option_id: product.pricing_options[0].pricing_option_id,
-          ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-          budget: { currency: 'USD', total: 5000 },
-        },
-      ],
-    });
-    ```
+        await agent.createMediaBuy({
+          packages: [
+            {
+              package_id: 'pkg-1',
+              product_id: product.product_id,
+              pricing_option_id: product.pricing_options[0].pricing_option_id,
+              ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+              budget: { currency: 'USD', total: 5000 },
+            },
+          ],
+        });
+        ```
 
-    Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-    in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
-'empty_input' | 'invalid_product' }`) so adopters can branch on
+        Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+        in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+
+    'empty_input' | 'invalid_product' }`) so adopters can branch on
     "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
     De-duplicates `format_ids` by full identity (`{agent_url, id,
-width, height, duration_ms}`) — multi-size declarations sharing
-    `{agent_url, id}` survive de-dup. When every chosen capability is
-    V2-only (no `v1_format_ref`), `format_ids` is **omitted entirely**
-    from the result rather than emitted as `[]` (which would violate the
-    wire schema's `minItems: 1` constraint).
+    width, height, duration_ms}`) — multi-size declarations sharing
+    `{agent_url, id}`survive de-dup. When every chosen capability is
+    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+    from the result rather than emitted as`[]`(which would violate the
+    wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
