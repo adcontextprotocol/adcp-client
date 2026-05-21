@@ -1,5 +1,581 @@
 # Changelog
 
+## 7.10.0
+
+### Minor Changes
+
+- 07703a8: feat(discovery): `fetchAgentAuthorizationsFromDirectory` for AAO inverse-lookup (#1885 part 2)
+
+  Adopts AdCP spec PR [adcontextprotocol/adcp#4828](https://github.com/adcontextprotocol/adcp/pull/4828) ([issue #4823](https://github.com/adcontextprotocol/adcp/issues/4823)). Given an `agent_url`, fetch the set of publishers whose `adagents.json` authorizes it from an AAO-compatible directory via `GET /v1/agents/{agent_url}/publishers`. Part 2 of #1885; Part 1 (inline resolution) shipped separately as #1891.
+
+  **API**
+
+  ```ts
+  import { fetchAgentAuthorizationsFromDirectory } from '@adcp/sdk';
+
+  for await (const publisher of fetchAgentAuthorizationsFromDirectory(myAgentUrl, {
+    directoryUrl: 'https://aao.example.com',
+    status: ['authorized'],
+  })) {
+    console.log(publisher.publisher_domain, publisher.properties_authorized);
+  }
+  ```
+
+  The returned iterator transparently pages — consumers iterate `DirectoryPublisherEntry` values without managing cursors. A `.toArray()` convenience drains the iterator for small directories.
+
+  **Options:** `directoryUrl` (required), `since`, `status`, `cursor`, `limit`, `timeoutMs`, `userAgent`, `signal`.
+
+  **Trust model.** The directory is discovery, not authorization. Each `DirectoryPublisherEntry` tells the operator which publisher's `adagents.json` to verify directly via the SDK's per-domain primitives. The publisher's own file remains the trust root; `properties_authorized` / `status` are operator-facing summaries.
+
+  **Defensive parsing.** Counterparty-controlled response fields are validated per the AAO `agent-publishers.json` schema; malformed publisher entries are dropped (witness, not translator). HTTP 4xx/5xx and non-JSON-object responses surface as errors.
+
+  **SSRF safety.** Outbound HTTP routes through the SDK's existing `ssrfSafeFetch` — private IPs, link-local, loopback, and metadata-service hosts are refused. Adopters with internal directories enable internal probes via the SDK's probe policy.
+
+  **No default `directoryUrl`.** The SDK does not default to a canonical AAO host — directory choice is an operator trust decision. Adopters explicitly opt into a specific directory.
+
+  **New public exports:**
+  - `fetchAgentAuthorizationsFromDirectory(agentUrl, options)`
+  - `DirectoryPublisherEntry`, `DirectoryLookupPage`, `FetchAgentAuthorizationsOptions`, `AgentAuthorizationsIterator`, `DirectoryDiscoveryMethod`, `DirectoryPublisherStatus` types
+
+  **References:**
+  - Spec issue: [adcontextprotocol/adcp#4823](https://github.com/adcontextprotocol/adcp/issues/4823)
+  - Spec PR: [adcontextprotocol/adcp#4828](https://github.com/adcontextprotocol/adcp/pull/4828)
+  - Schema: [`agent-publishers.json`](https://github.com/adcontextprotocol/adcp/blob/main/static/schemas/source/aao/agent-publishers.json)
+  - Companion PR (Part 1, merged): #1891
+
+- a46b1b1: feat(errors): adopt `AGENT_SUSPENDED` / `AGENT_BLOCKED` typed codes (adcp#3906 consolidates the 3.0.5 placeholder)
+
+  Adopt the dedicated 3.1 error codes for buyer-agent commercial-status rejections. Closes #1406.
+
+  **Wire-level changes (server-side emission):**
+  - Suspended buyer agents now reject with `code: 'AGENT_SUSPENDED'` instead of `code: 'PERMISSION_DENIED', details: { scope: 'agent', status: 'suspended' }`.
+  - Blocked buyer agents now reject with `code: 'AGENT_BLOCKED'` instead of `code: 'PERMISSION_DENIED', details: { scope: 'agent', status: 'blocked' }`.
+  - Both codes carry `recovery: 'terminal'` at the wire envelope. The 3.0.5 placeholder shape's `recovery: 'transient'` for suspended contradicted the no-retry MUST; the transient-vs-permanent distinction lives at the seller's `BuyerAgent.status` record, not on the wire.
+  - The `details.status` field is removed — envelopes carrying it fail schema validation against AdCP 3.1.
+  - The `PERMISSION_DENIED + scope: 'agent' + reason: 'sandbox-only'` path is unchanged.
+
+  **Typed surface (forward-compat overlay extension):**
+  - New typed error classes: `AgentSuspendedError`, `AgentBlockedError` (in `src/lib/server/decisioning/errors-typed.ts`).
+  - Both codes added to the forward-compat overlay (`src/lib/types/forward-compat-error-codes.ts`) with `sinceAdcpVersion: '3.1.0'` and `recovery: 'terminal'`.
+  - `BuyerRetryPolicy.DEFAULT_CODE_POLICY` now maps both codes to `{ action: 'escalate', escalateReason: 'terminal' }` — auto-retry is refused by default.
+
+  **Adopter migration:**
+  - Code that parsed `error.code === 'PERMISSION_DENIED' && error.details?.status === 'suspended'` should switch to `error.code === 'AGENT_SUSPENDED'`. Same for `'blocked'`.
+  - The `details.status` field will no longer be present.
+  - Adopters using `BuyerRetryPolicy` defaults get the correct terminal-escalate behavior automatically.
+
+  **References:**
+  - Spec PR: [adcontextprotocol/adcp#3906](https://github.com/adcontextprotocol/adcp/pull/3906)
+  - 3.0.5 placeholder registration: [adcontextprotocol/adcp#3887](https://github.com/adcontextprotocol/adcp/pull/3887)
+  - Closes spec issue: [adcontextprotocol/adcp#3871](https://github.com/adcontextprotocol/adcp/issues/3871)
+
+- e4ba8c9: feat(types, validation): opt-in support for AdCP 3.1.0-beta.1 (catalog-sync cluster)
+
+  Adopters can now pin `adcpVersion: '3.1-beta'` to validate against the beta schemas including the catalog-sync cluster from [adcontextprotocol/adcp#4767](https://github.com/adcontextprotocol/adcp/pull/4767):
+  - **Conditional fetch:** `if_catalog_version` / `if_pricing_version` request fields on `get_products` and `get_signals`, plus `catalog_version`, `pricing_version`, `cache_scope`, and `unchanged` on responses — buyers cache catalogs and probe with one cheap round-trip.
+  - **Wholesale signals:** `discovery_mode: 'wholesale'` on `get_signals` (symmetric with `buying_mode: 'wholesale'` on `get_products`) — enumerate the full priced signal catalog without a brief.
+  - **Catalog change feed:** `catalog_change_feed` stanza in `get_adcp_capabilities` plus the new `core/catalog-event.json` (9-branch discriminated union) and `core/catalog-events-response.json` schemas — the wire shape buyers poll at `GET /catalog/events` to maintain a near-real-time mirror.
+
+  The SDK's primary pin stays at the GA `ADCP_VERSION` — this is a side-bundle, not a default move. The `latest` symlink in `schemas/cache/` continues to point at the GA pin.
+
+  ```ts
+  import { AdCPClient } from '@adcp/sdk';
+  import type * as V31Beta from '@adcp/sdk/types/v3-1-beta';
+
+  const client = new AdCPClient({
+    agentUrl: 'https://salesagent.example.com',
+    adcpVersion: '3.1-beta', // canonical: release-precision; survives beta.N → beta.N+1
+  });
+
+  const req: V31Beta.GetProductsRequest = {
+    buying_mode: 'wholesale',
+    if_catalog_version: 'v2026-05-18T08:00:00Z-acme-rev412',
+  };
+  ```
+
+  **Importing the beta types.** Prefer `import * as V31Beta` (namespaced) when you're mixing 3.0 and 3.1-beta types in the same file — `GetProductsRequest`, `GetProductsResponse`, and several other names exist in both `@adcp/sdk/types` and `@adcp/sdk/types/v3-1-beta` with different shapes, and flat-named imports will collide.
+
+  **Until the `CatalogSync` client lands** (consumer-facing mirror with mode selection, conditional fetch, and change-feed polling — follow-on PR), adopters build their own mirror loop directly against the typed surface:
+
+  ```ts
+  import type * as V31Beta from '@adcp/sdk/types/v3-1-beta';
+
+  let catalogVersion: string | undefined;
+  async function probe(): Promise<void> {
+    const res = (await client.callTool('get_products', {
+      buying_mode: 'wholesale',
+      ...(catalogVersion ? { if_catalog_version: catalogVersion } : {}),
+    })) as V31Beta.GetProductsResponse;
+    if (res.unchanged) return; // catalog state is current
+    catalogVersion = res.catalog_version;
+    // ...apply res.products to local mirror
+  }
+  ```
+
+  **Pinning.** Use `'3.1-beta'` (release-precision) as the canonical pin — it matches what sellers advertise in `supported_versions` and survives the `beta.1 → beta.2` bundle rename without a code change. Pin `'3.1.0-beta.1'` (full semver) only if you need bit-fidelity for cross-version interop tests.
+
+  **Refresh.** `npm run sync-schemas:3.1-beta` pulls the cosign-verified upstream tarball; `npm run generate-types:3.1-beta` regenerates the typed surface. The wrapper restores `schemas/registry/registry.yaml` and protocol-managed skills to the primary-pin state on every opt-in sync, so the beta cache never leaks into surfaces the SDK ships against the GA pin.
+
+- 93208e8: feat(catalog-sync): `CatalogSync` client — in-memory catalog mirror for AdCP 3.1 agents
+
+  `CatalogSync` is the consumer-facing companion to the AdCP 3.1 catalog-sync cluster ([adcontextprotocol/adcp#4794](https://github.com/adcontextprotocol/adcp/issues/4794)). It mirrors a sales or signals agent's full priced catalog in memory and keeps it current via the best sync strategy the agent supports — change-feed polling, conditional-fetch probes, or manual refresh — selected automatically from the agent's `get_adcp_capabilities` response.
+
+  ```ts
+  import { AdCPClient } from '@adcp/sdk';
+  import { CatalogSync } from '@adcp/sdk/catalog-sync';
+
+  const client = new AdCPClient({ agentUrl, adcpVersion: '3.1-beta' });
+
+  const catalog = new CatalogSync({
+    client,
+    feedOrigin: agentUrl, // origin of GET /catalog/events
+    feedHeaders: { Authorization: `Bearer ${token}` },
+  });
+
+  catalog.on('product.priced', ({ event }) => {
+    const p = event.payload as { product_id: string };
+    console.log('reprice:', p.product_id);
+  });
+
+  await catalog.start();
+  console.log(`Mirroring ${catalog.products.count} products via ${catalog.mode} mode`);
+
+  const ctv = catalog.products.search({ format_ids: ['video_ctv_1080p_30s'] });
+  ```
+
+  **Mode selection (automatic from capabilities):**
+
+  | Agent declares                                 | `catalog.mode` | Behavior                                                                                                                             |
+  | ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+  | `catalog_change_feed.supported: true`          | `'live'`       | Wholesale bootstrap, then poll `GET /catalog/events`. Lowest latency.                                                                |
+  | `catalog_versioning.supported: true` (no feed) | `'auto-poll'`  | Wholesale bootstrap, then re-probe with `if_catalog_version` at `probeIntervalMs`. On version change, re-fetch and diff-emit events. |
+  | Neither (pre-3.1 agents)                       | `'manual'`     | Wholesale bootstrap on `start()`. No background sync. `refresh()` triggers re-bootstrap and diff-emits any detected changes.         |
+
+  **Read API:**
+  - `catalog.products.list()` / `catalog.products.get(id)` / `catalog.products.search(filter)` — zero-latency in-memory reads.
+  - `catalog.signals.list()` / `catalog.signals.get(id)` / `catalog.signals.search(filter)` — same shape for signals (when the agent supports `discovery_mode: 'wholesale'`; flagged via `catalog.signals.queryable`).
+  - `catalog.mode` / `catalog.capabilities` / `catalog.lastSyncedAt` / `catalog.lastEventAt` — introspection for UI mode badges and observability.
+
+  **Event API:**
+
+  ```ts
+  catalog.on('product.created', ({ event, synthetic }) => { ... });
+  catalog.on('product.priced', ({ event, synthetic }) => { ... });
+  catalog.on('product.removed', ({ event, synthetic }) => { ... });
+  catalog.on('signal.priced', ({ event, synthetic }) => { ... });
+  catalog.on('catalog.bulk_change', ({ event }) => { ... });
+  catalog.on('resyncing', ({ reason }) => { /* 'bulk_change' | 'retention_expired' | 'manual' */ });
+  catalog.on('event', ({ event, synthetic }) => { /* fires for every catalog change */ });
+  ```
+
+  Per-event-type listeners fire for both live-mode feed events AND auto-poll/manual diff-emits — adopters write one set of handlers and the SDK takes care of which mode produced the event.
+
+  **Authoritative vs synthetic events.** Events delivered from the agent's change feed are AUTHORITATIVE — they carry the seller's UUID v7 `event_id` and the documented `applies_to` cache scope. Events emitted during `refresh()` / `'auto-poll'` mode are SYNTHESIZED by the SDK from a diff of previous-vs-fresh state; they carry locally generated event IDs (NOT v7) and `synthetic: true` on the emit envelope. Adopters writing event_ids to a dedupe table MUST check `synthetic` before storing — synthetic IDs don't satisfy the cursor-ordering invariant.
+
+  **Recovery semantics:**
+  - `catalog.bulk_change` events trigger an immediate re-bootstrap (the spec's recommended fast-forward when a single operation touches many entities). `resyncing` fires before the re-bootstrap with `reason: 'bulk_change'`.
+  - `RETENTION_EXPIRED` (HTTP 410) triggers a re-bootstrap with `reason: 'retention_expired'`.
+  - Mode upgrades (manual → auto-poll → live, when an agent adopts new spec surfaces) are picked up automatically by the capability-refresh loop (default: every 24 hours; tunable via `capabilityRefreshIntervalMs`).
+
+  **Cursor persistence:** `cursorStore` defaults to in-memory (cursor lost on restart). Long-running consumers pass `FileCursorStore` (re-exported from `@adcp/sdk/catalog-sync`) to survive restarts. The `CursorStore` interface gained a `clearCursor()` method so retention-expired recovery resets to a clean `null` rather than relying on an empty-string sentinel.
+
+  **Security guards:**
+  - **SSRF defense:** `feedOrigin` construction throws if the protocol is not `http:` or `https:`. Rejects `file:`, `data:`, `blob:` schemes that would otherwise let a misconfigured tenant config turn the poll loop into a credential-leaking SSRF primitive.
+  - **Response-size cap:** `maxFeedResponseBytes` (default 25 MB) bounds the size of a single `GET /catalog/events` response; bodies exceeding the cap are rejected before parsing. Protects mirror processes from hostile or runaway agents that stream unbounded chunked responses.
+
+  **Auth headers and token rotation:** `feedHeaders` accepts either a static `Record<string, string>` (captured by reference; mutate to rotate) OR an async function `() => Headers | Promise<Headers>` (called on every poll, picks up token rotation without restart).
+
+  **What's NOT in this release** (per the spec — follow-on PRs):
+  - Webhook subscription lifecycle (`POST /catalog/subscriptions`) — adopters needing low-latency notifications stay in polling-only `'live'` mode for now; webhook landing is gated on AdCP 3.1 GA and the upstream webhook conformance harness.
+  - Python / Go SDK ports — TypeScript first; ports follow on the same release cadence as `RegistrySync`.
+
+  The SDK's primary version pin stays at GA. `CatalogSync` is available at any `adcpVersion` — it gates behavior on capability stanzas, not on the client's pin. Against pre-3.1 agents it falls through cleanly to `'manual'` mode.
+
+  Imports:
+
+  ```ts
+  // Recommended namespace import
+  import { CatalogSync } from '@adcp/sdk/catalog-sync';
+  import type { CatalogSyncConfig, CatalogSyncMode, ProductFilter, SignalFilter } from '@adcp/sdk/catalog-sync';
+  ```
+
+- 752a9b5: feat(errors): forward-compat overlay for AdCP 3.1 error codes + `AUTH_REQUIRED` split
+
+  Adopters using `@adcp/sdk` against forward-rolled (3.1+) sellers now get typed handling for codes the SDK pre-emptively recognizes ahead of its primary `ADCP_VERSION` pin (currently 3.0.12 GA). Two new typed-error classes ship in this release:
+  - **`AuthMissingError`** (code `AUTH_MISSING`) — no credentials presented. Recovery: correctable.
+  - **`AuthInvalidError`** (code `AUTH_INVALID`) — credentials presented but rejected. Recovery: **terminal** — auto-retry against an SSO endpoint on a revoked token is the retry-storm pattern [adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) split the code to prevent.
+
+  Both replace the missing/revoked branches that `AUTH_REQUIRED` conflated. `AuthRequiredError` is now `@deprecated` but retained for sellers still emitting the unsplit code during the 3.x deprecation window — `AUTH_REQUIRED` continues to escalate as `auth` in the default `BuyerRetryPolicy`.
+
+  ## What changes in `BuyerRetryPolicy`
+
+  The default per-code policy table gains two entries:
+  - `AUTH_MISSING` → `escalate(auth)` — the agent typically can't re-handshake without an operator-supplied refresh path. Adopters with a refresh-token resolver wire `AUTH_MISSING` to `mutate-and-retry` via the override hook.
+  - `AUTH_INVALID` → `escalate(terminal)` — credentials were rejected; do NOT auto-retry. Adopters with an OAuth 2.1 refresh grant can override to a one-shot refresh-and-retry per the spec exception.
+
+  ## What changes server-side
+
+  The mid-request token refresh hook in `from-platform.ts` (`runWithTokenRefresh`) now triggers on `AUTH_MISSING` in addition to `AUTH_REQUIRED`. It deliberately does **not** trigger on `AUTH_INVALID` — refreshing a credential the seller just rejected is the exact SSO retry-storm pattern this split exists to prevent.
+
+  The legacy `AdcpError('AUTH_REQUIRED', …)` emission sites inside the SDK (e.g. `derived-account-store.ts`) are unchanged for backward compatibility with 3.0-pinned consumers; they migrate to `AUTH_MISSING` when the primary `ADCP_VERSION` pin advances.
+
+  ## Architecture: the forward-compat overlay
+
+  The `error.code` field is wire-typed as open `string` by the AdCP spec; the canonical `enums/error-code.json` is documentary. Receivers MUST handle unknown codes via the `recovery` fallback. In a dual-mode line (primary pin at 3.0.x while 3.1 ships as opt-in types under `src/lib/types/v3-1-beta/`), buyer agents receive 3.1-introduced codes from forward-rolled sellers before the SDK's primary pin moves.
+
+  `src/lib/types/forward-compat-error-codes.ts` names those codes so the SDK has a defined retry policy and typed-error class for each, regardless of which wire version the peer speaks:
+  - `STANDARD_ERROR_CODES` runtime table = manifest-derived ∪ overlay.
+  - `StandardErrorCode` union widens to include overlay codes.
+  - `BuyerRetryPolicy.DEFAULT_CODE_POLICY: Record<ErrorCode, …>` gets entries for the overlay so the table stays provably total.
+  - Drift-guard test asserts manifest ∩ overlay = ∅ — when the primary pin advances to include a code, the overlay entry is deleted in the same PR.
+
+  This is the foundation for adopting other 3.1 codes (`AGENT_SUSPENDED`, `AGENT_BLOCKED`, the new billing codes from adcp#3831) as separate follow-up PRs.
+
+  ## Closes
+  - [adcp-client#1193](https://github.com/adcontextprotocol/adcp-client/issues/1193) — Adopt `AUTH_MISSING` / `AUTH_INVALID` once adcp#3730 lands.
+
+  ## Refs
+  - [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) — Split `AUTH_REQUIRED` into `AUTH_MISSING` (correctable) + `AUTH_INVALID` (terminal). Shipped in AdCP 3.1.0-beta.0.
+
+- 1e0090a: feat(discovery): inline-resolution path for `publisher_properties` selectors (#1885 part 1)
+
+  Adopts AdCP spec PR [adcontextprotocol/adcp#4827](https://github.com/adcontextprotocol/adcp/pull/4827) ([issue #4825](https://github.com/adcontextprotocol/adcp/issues/4825)). When a parent `adagents.json`'s top-level `properties[]` carry entries with `publisher_domain` matching a `publisher_properties` selector's target domain, the SDK now satisfies the selector inline — no per-child federated fetch required for that domain.
+
+  **Resolution model:**
+  - `resolveAgentProperties` now fills `properties` directly for `publisher_properties` selectors that match inline.
+  - `cross_publisher_expanded` shrinks to only the selectors that still need a federated fetch (no inline match AND not revoked).
+  - `cross_publisher` preserves the raw wire shape unchanged.
+
+  **Revocation:** new optional `AdAgentsJson.revoked_publisher_domains?: string[]` field. Selectors targeting a revoked domain are dropped from BOTH inline and federated paths — federated fallback MUST NOT fire for revoked domains.
+
+  **Divergence detection:** `detectInlineFederatedDivergence(inline, federated)` reports `(publisher_domain, property_id)` pairs that resolved differently across the two paths. Per spec, federated wins; this utility produces the report for the SDK / adopter to log.
+
+  **New public exports** (from the package root):
+  - `resolveInlinePublisherProperties(adAgents, selectors)` — high-level helper.
+  - `resolveSingularInline(properties, singularSelector)` — per-selector helper for adopters wanting fine-grained federated-fallback control.
+  - `detectInlineFederatedDivergence(inline, federated)` — produce divergence report.
+  - `InlineResolutionResult`, `InlineFederatedDivergence` types.
+
+  **Backwards compatibility:** purely additive at the wire and type levels. Files that don't carry inline matches behave exactly as before — `cross_publisher_expanded` still contains the unmatched selectors. Files that don't carry `revoked_publisher_domains` behave as before. Adopters using `resolveAgentProperties` get inline resolution automatically; no caller code changes required.
+
+  **References:**
+  - Spec PR (inline resolution rule): [adcontextprotocol/adcp#4827](https://github.com/adcontextprotocol/adcp/pull/4827)
+  - Spec issue: [adcontextprotocol/adcp#4825](https://github.com/adcontextprotocol/adcp/issues/4825)
+  - Part 2 (`fetchAgentAuthorizationsFromDirectory`) ships separately.
+
+- 272d225: feat(v2): sync to 3.1.0-beta.2 + native `capability_ids` write path
+
+  The 3.1.0-beta.2 release closed two upstream issues the SDK had filed
+  during 7.10 development:
+  - **adcontextprotocol/adcp#4842 → #4844** added `capability_ids?: string[]`
+    to `PackageRequest` (and an echo on `Package`). Buyers reading the V2
+    mental model from `getProducts()` can now write `create_media_buy`
+    packages V2-natively, with full normative resolution + `UNSUPPORTED_FEATURE`
+    failure modes documented on the spec field.
+  - **adcontextprotocol/adcp#4862 → #4866** deprecated the never-provisioned
+    `mirror.adcontextprotocol.org` host. `creative.adcontextprotocol.org`
+    is now the single AAO trust anchor for `format_schema` `$ref` resolution.
+
+  ### What's new in the SDK
+  - **`packageRefsForCapabilities(product, capabilityIds[])` — preferred V2
+    write path.** Returns `{ capability_ids, format_ids? }` ready to spread
+    into a `PackageRequest`. Implements the spec's dual-emission convention
+    (V2 buyers emit both so v2-capable sellers route by `capability_ids` and
+    v1-only sellers — which ignore unknown fields via
+    `additionalProperties: true` — fall back to `format_ids`).
+
+    ```ts
+    import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+
+    const {
+      data: { products },
+    } = await agent.getProducts({ brief: '...' });
+    const product = products[0];
+
+    await agent.createMediaBuy({
+      packages: [
+        {
+          package_id: 'pkg-1',
+          product_id: product.product_id,
+          pricing_option_id: product.pricing_options[0].pricing_option_id,
+          ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+          budget: { currency: 'USD', total: 5000 },
+        },
+      ],
+    });
+    ```
+
+    Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+    in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+'empty_input' | 'invalid_product' }`) so adopters can branch on
+    "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+    De-duplicates `format_ids` by full identity (`{agent_url, id,
+width, height, duration_ms}`) — multi-size declarations sharing
+    `{agent_url, id}` survive de-dup. When every chosen capability is
+    V2-only (no `v1_format_ref`), `format_ids` is **omitted entirely**
+    from the result rather than emitted as `[]` (which would violate the
+    wire schema's `minItems: 1` constraint).
+
+  - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
+    `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
+    `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
+    `legacyFormatIdsForCapability`. The `legacy*` prefix is **semantic
+    narrowing**, not deprecation — these helpers solve a different problem
+    than `packageRefsForCapabilities` (single-target v1 payload vs
+    dual-emission V2 payload) and are supported indefinitely. We avoided
+    `@deprecated` because it strips through to adopter ESLint rules and
+    creates noise for legitimate v1-only callers.
+
+    **Migration:** existing callers from 7.10's PR #1890 should rename
+    their imports (`formatIdsFromOptions` → `legacyFormatIdsFromOptions`,
+    etc.). The previous-name exports are NOT preserved; the rename
+    predates the first 7.10 npm release.
+
+  - **`DEFAULT_MIRROR_HOSTS` collapsed to a single anchor**
+    (`creative.adcontextprotocol.org`). The legacy
+    `mirror.adcontextprotocol.org` is no longer accepted as a `$ref` host
+    — per adcp#4866 it was never provisioned and authorizing a ghost
+    hostname is liability with no upside.
+  - **3.1.0-beta.2 schemas + types.** Sync scripts (`sync-schemas:3.1-beta`,
+    `generate-types:3.1-beta`) bumped from beta.1 to beta.2. The opt-in
+    type surface at `@adcp/sdk/types/v3-1-beta` now reflects beta.2
+    (including the new `capability_ids` field on `PackageRequest` /
+    `Package` plus all other beta.2 schema additions).
+  - **Projection loaders** (`canonical-properties.ts`, `registry.ts`) prefer
+    `3.1.0-beta.2` over `3.1.0-beta.1` when both are present.
+  - **`COMPATIBLE_ADCP_VERSIONS`** list extended with `3.1.0-beta.2`.
+
+  ### How to migrate
+
+  If you adopted the bridge helpers from a pre-release 7.10 build of
+  PR #1890, rename your imports — the previous names were never published
+  to npm, so this isn't a runtime break:
+
+  ```diff
+  - import { formatIdsFromOptions } from '@adcp/sdk/v2/projection';
+  + import { legacyFormatIdsFromOptions } from '@adcp/sdk/v2/projection';
+  ```
+
+  For new V2 code, prefer `packageRefsForCapabilities`:
+
+  ```diff
+  - format_ids: legacyFormatIdsFromOptions(chosen),
+  + ...packageRefsForCapabilities(product, [chosen.capability_id]),
+  ```
+
+  The diff produces a richer request shape (v2 sellers route by
+  `capability_ids`; v1 sellers still get `format_ids` via dual emission)
+  without changing seller-side behavior.
+
+  ### Tests
+  - 6 new `packageRefsForCapabilities` cases (dual emission, v2-only
+    declaration, missing capability throw, de-dup, empty input,
+    spreadable into PackageRequest).
+  - Updated mirror-host test to reflect single-anchor default.
+  - 123/123 v2+projection+format-schema tests passing locally.
+
+- af0daeb: feat(v2): v1↔v2 Product projection layer + auto-wired `getProducts()` + publisher-catalog helpers + format_schema fetcher
+
+  Adopters get the AdCP 3.1 V2 mental model (`Product.format_options[]`) automatically — `AgentClient.getProducts()` now projects v1 `format_ids[]` to v2 `format_options[]` on the way out, so buyers read the V2 shape regardless of whether the seller emitted v1 or v2 on the wire. Additive — `format_ids[]` is preserved alongside `format_options[]`; 7.x callers reading `format_ids` keep working unchanged.
+
+  ### The default reading experience
+
+  ```ts
+  const result = await agent.getProducts({ brief: 'Premium coffee brands' });
+  const product = result.data.products[0];
+
+  product.format_options[0].format_kind; // 'image' — always populated
+  product.format_ids[0].id; // 'display_300x250_image' — still here
+  result.data.projection.diagnostics; // SDK projection diagnostics, if any
+  ```
+
+  When the seller emits v2 natively, the projection step is idempotent (no double-augmentation). When the seller emits v1, the SDK projects via the AAO canonical-formats catalog. When a `format_id` has no v2 mapping (catalog coverage gap), the failing product surfaces a structured `FORMAT_PROJECTION_FAILED` diagnostic on `result.data.projection.diagnostics[]` with `source: 'sdk'` + the SDK identity for multi-hop deduplication.
+
+  Opt out for storyboard / compliance harnesses asserting exact seller emission:
+
+  ```ts
+  const result = await agent.getProducts({ brief: '...' }, undefined, { project: false });
+  // result.data is the raw GetProductsResponse — no projection envelope, no format_options
+  ```
+
+  ### What else ships
+  - **`@adcp/sdk/v2/projection`** — bidirectional v1↔v2 Product projection (4-step resolution order, canonical-projection-ref object shape, multi-size fan-out, 5 diagnostic codes) + the `withFormatOptions` helper for non-`AgentClient` callers (cached payloads, A2A passthrough, fixtures).
+  - **`@adcp/sdk/v2/publisher-catalog`** — `extractPublisherFormats` / `scopePublisherFormats` / `resolveCapabilityId` on top of the existing `validateAdAgents()` discovery layer. Consumes `adagents.json#/formats[]` (AdCP 3.1 publisher-published format catalog) and the AAO community-mirror catalogs for unadopted platforms.
+
+    ```ts
+    import { validateAdAgents } from '@adcp/sdk/discovery';
+    import {
+      extractPublisherFormats,
+      scopePublisherFormats,
+      resolveCapabilityId,
+    } from '@adcp/sdk/v2/publisher-catalog';
+
+    const { adagents } = await validateAdAgents('nytimes.com');
+    const homepageFormats = scopePublisherFormats(extractPublisherFormats(adagents), {
+      propertyId: 'homepage',
+    });
+    const placementFormat = resolveCapabilityId(homepageFormats, 'nytimes_homepage_takeover_premium');
+    ```
+
+  - **`@adcp/sdk/v2/format-schema`** — `fetchFormatSchema({ uri, digest })` implements the spec's normative fetch contract for `ProductFormatDeclaration.format_schema`: HTTPS-only via `ssrfSafeFetch`, 1 MiB body cap, 5 s timeout, SHA-256 digest verification, manual redirect handling (no auto-follow), immutable `uri@digest` caching. Reuses the existing SSRF guards + DNS pinning from the discovery layer.
+  - **`AdAgentsJson.formats?`** extension on the discovery types so `validateAdAgents()` returns the publisher-published format catalog where present. Optional and backward-compatible with 3.0.x adagents.json files.
+  - **`v1_format_ref` is now `V1FormatId[]`** in projection types — mirrors the 3.1-beta normative schema (`minItems: 1`). Single-ref is `[{...}]`; multi-size carries one entry per size with the projection layer auto-fanning when the seller asserts < `sizes.length` refs.
+
+  ### Tests
+
+  84 new tests:
+  - Projection layer (v1→v2, v2→v1, every AAO catalog entry projects).
+  - Publisher catalog (extract/scope/resolve against the Meta community-mirror fixture).
+  - `format_schema` fetcher (invalid_ref / digest_mismatch / redirect_blocked / cache hits).
+  - V1↔V2 round-trip matrix — every canonical-annotated catalog entry survives v1→v2→v1; inherently-v2 canonicals emit `CANONICAL_NOT_V1_TRANSLATABLE`.
+  - Cross-version smoke (mixed v1/v2 seller responses).
+  - **End-to-end auto-wiring test** — mocks a v1 seller via in-process MCP, calls `agent.getProducts()`, verifies the buyer reads `format_options[]` without explicit projection plumbing.
+
+  ### Out of scope (deferred to a future release)
+  - **Outbound projection (v2→v1)** on `createMediaBuy` / `updateMediaBuy` request payloads when talking to v1 sellers. 7.10 covers the read direction; the write direction lands when the spec firms up which `format_options` fields belong on the request shape.
+  - **Manifest-layer `pixel_tracker` v1↔v2 translation** (with the `sync_creatives` wiring).
+  - **`format_schema` `$ref` sandboxing** (depth / count bounds) — Ajv loader-hook concern at validation time, not fetch time.
+  - **Schema-compile DoS bounds** (re2 pattern engine, allOf expansion) — applied at the Ajv compile step in the manifest validator.
+
+  ### Why we made this auto-wired
+
+  Earlier versions of this PR shipped the projection layer as opt-in (buyer calls `withFormatOptions` explicitly). DX review pushed back: making buyers call a helper every read makes the V2 pitch land as "the engine without the steering wheel," and LLM-driven buyer agents reading docs would skip the helper half the time and crash on `format_options: undefined`. The auto-wiring keeps the contract additive (no silent drops, no broken 7.x callers) and lets 8.0 narrow only the typed surface — adopters already have the V2 reading experience at 7.10.
+
+- 21b76fb: feat(v2): write-side helpers + format_schema `$ref` sandboxing
+
+  Two adopter-facing pieces on top of the 7.10 V2 projection layer:
+
+  ### `formatIdsFromOptions` / `formatIdsForCapability` — write-side ergonomics
+
+  After `agent.getProducts()` returns the V2-mental-model response
+  (`format_options[]` auto-populated), V2 buyers need to construct
+  `format_ids[]` for `create_media_buy` packages. The spec at 3.1-beta
+  still carries only `format_ids[]` on `PackageRequest` (see
+  [adcontextprotocol/adcp#4842](https://github.com/adcontextprotocol/adcp/issues/4842)
+  for the upstream proposal to add `capability_id` on the create side).
+  Until that lands, buyers bridge through the read-projection layer's
+  `v1_format_ref[]` annotation.
+
+  ```ts
+  import { formatIdsFromOptions, formatIdsForCapability } from '@adcp/sdk/v2/projection';
+
+  // After getProducts auto-augmented the response with format_options[]:
+  const chosen = product.format_options.find(o => o.format_kind === 'image');
+  await agent.createMediaBuy({
+    packages: [
+      {
+        package_id: 'pkg-1',
+        product_id: product.product_id,
+        pricing_option_id: product.pricing_options[0].pricing_option_id,
+        format_ids: formatIdsFromOptions(chosen),
+        budget: { currency: 'USD', total: 5000 },
+      },
+    ],
+    // ...
+  });
+
+  // Or: round-trip a stored capability_id back to format_ids[]:
+  const ids = formatIdsForCapability(product, 'iab_mrec_homepage');
+  ```
+
+  `formatIdsFromOptions` returns `[]` when the declaration has no v1
+  form (`canonical_formats_only: true`, or an inherently-v2 canonical
+  like `sponsored_placement`). Callers treat empty as "this declaration
+  cannot be purchased from a v1 seller via `create_media_buy`."
+
+  These helpers are deprecated once adcontextprotocol/adcp#4842 lands and
+  the SDK ships a V2-native write path.
+
+  ### `resolveSchemaRefs` — `$ref` sandboxing + DoS bounds for format_schema
+
+  Layered on top of `fetchFormatSchema` from the previous release.
+  Implements the spec's normative `$ref` sandboxing rules from
+  `product-format-declaration.json#format_schema`:
+  - **Intra-document `#/...` pointers**: resolved against the parent
+    document's parsed tree (RFC 6901). Cycles trip the depth limit.
+  - **Same-origin external refs**: allowed; fetched and inlined.
+    RFC 3986 §6 normalization (lowercase scheme + host, strip default
+    port, no userinfo).
+  - **AAO mirror host**: allowed (default `mirror.adcontextprotocol.org`;
+    override via `mirrorHost` option for testing).
+  - **`file://` scheme**: rejected unconditionally.
+  - **Cross-origin refs**: rejected with `cross_origin_rejected` and a
+    diagnostic naming both the parent and the offending target.
+
+  Bounds default to the spec ceilings:
+  - `maxDepth: 8` — transitive `$ref` chain depth.
+  - `maxRefCount: 256` — total `$ref` occurrences across the resolved tree.
+
+  External fetches use `ssrfSafeFetch` (HTTPS-only + SSRF guards + 1 MiB
+  body cap + 5 s timeout). Per-`$ref` digest verification is NOT enforced
+  by default — the parent `format_schema.uri@digest` is the trust anchor
+  and same-origin / mirror refs inherit trust. Callers wanting per-`$ref`
+  digests pass a custom `fetchExternal`.
+
+  ```ts
+  import { fetchFormatSchema, resolveSchemaRefs } from '@adcp/sdk/v2/format-schema';
+
+  const { schema, ref } = await fetchFormatSchema(formatSchemaRef);
+  const { schema: resolved, refCount, maxDepthSeen } = await resolveSchemaRefs(schema, ref.uri);
+  // Feed `resolved` to Ajv. Every `$ref` is already inlined; Ajv won't
+  // fetch anything at compile time.
+  ```
+
+  ### Schema-compile DoS bounds — constants exported
+
+  `DEFAULT_MAX_KEYWORDS` (10_000) and `DEFAULT_VALIDATION_BUDGET_MS` (250)
+  are exported from `@adcp/sdk/v2/format-schema` so the eventual
+  Ajv-wiring layer has a single source of truth for the spec-recommended
+  bounds. The bounds themselves are applied at the Ajv compile step (not
+  in the sandboxer), so this PR ships the constants but not the
+  enforcement — that lands with the manifest validator.
+
+  ### Tests
+
+  22 new tests:
+  - `formatIdsFromOptions` / `formatIdsForCapability` — 8 cases covering
+    single-size, multi-size, canonical_formats_only opt-out, inherently-v2
+    canonicals, defensive copy, missing-capability throw.
+  - `resolveSchemaRefs` — 14 cases covering intra-doc pointers,
+    cross-origin rejection, mirror-host allowance, depth/count bounds,
+    cyclic intra-doc loops tripping the depth cap, custom-fetcher
+    injection + per-call caching.
+
+### Patch Changes
+
+- e2929e8: chore(deps): bump brace-expansion from 5.0.5 to 5.0.6
+
+  Transitive dependency security update (indirect). No SDK API or wire-level change.
+
+- ef59a23: fix(server): stamp v3 envelope `status: "completed"` on every sync wire response at the dispatch chokepoint
+
+  `createAdcpServer`'s handler dispatcher now stamps the v3 protocol envelope's required `status: "completed"` field at the `finalize()` chokepoint, immediately before context/version injection. Closes the SDK-wide gap audit-missed in #1895 (which fixed only `get_adcp_capabilities`): `projectSync` returns `mapResult(result)` verbatim and 19 `*Response` helpers (`productsResponse`, `listAccountsResponse`, `listCreativeFormatsResponse`, `performanceFeedbackResponse`, `buildCreativeResponse`, `deliveryResponse`, `getMediaBuysResponse`, `listCreativesResponse`, `previewCreativeResponse`, `creativeDeliveryResponse`, `syncCreativesResponse`, `getSignalsResponse`, `activateSignalResponse`, `listPropertyListsResponse`, `listCollectionListsResponse`, `listContentStandardsResponse`, `getPlanAuditLogsResponse`, `reportUsageResponse`, plus `genericResponse` for the ~30 governance / SI / brand tools without a dedicated builder) all built `structuredContent: toStructuredContent(data)` with no envelope status. The storyboard step `v3_envelope_integrity/no_legacy_status_fields` only asserts on `get_adcp_capabilities` today; @kapoost's one-tool failure masked a SDK-wide gap that would have lit up the moment the assertion generalised.
+
+  Centralised at `finalize()` rather than per-helper so:
+  - The seam is single — every framework-registered tool inherits envelope conformance whether wrapped through `productsResponse`, `mediaBuyResponse`, `genericResponse`, the test-controller bridge's `wrap(merged)` rewrites, or future helpers added without remembering to stamp.
+  - The MediaBuyStatus/TaskStatus collision on `CreateMediaBuySuccess.status` / `UpdateMediaBuySuccess.status` / `cancelMediaBuyResponse`'s hard-coded `status: 'canceled'` is preserved verbatim: the chokepoint only stamps when `structuredContent.status` is missing, so a buy returning `status: 'active'` (valid `MediaBuyStatus`, not a valid `TaskStatus`) ships unchanged. The spec-level ambiguity at the same top-level key is filed for adcp.
+  - Error envelopes (`isError: true`) are skipped — their status semantics (`failed` / `rejected`) belong to the adcp_error path, not this seam.
+
+  Submitted envelopes (HITL handoff) keep their handler-set `status: 'submitted'`. Auto-registered `get_adcp_capabilities` continues to stamp via `capabilitiesResponse` directly (it bypasses `finalize()`); both layers reinforce.
+
+  Tracks adcp-client#1897. Sibling to adcontextprotocol/adcp#4877 (spec contract) and #1895 (narrow `get_adcp_capabilities` fix).
+
+- 17fed39: fix(server): emit envelope `status: "completed"` on `get_adcp_capabilities` responses
+
+  `capabilitiesResponse` (and the framework's auto-registered `get_adcp_capabilities` handler that uses it) now stamps the v3 protocol envelope's required `status: "completed"` field at the top level of `structuredContent`. Synchronous task responses MUST carry `status` per `protocol-envelope.json` (AdCP #4876); the helper previously built `structuredContent` from the typed `GetAdCPCapabilitiesResponse` payload alone, never threading the envelope-level status. Adopters who didn't override the helper hit `v3_envelope_integrity/no_legacy_status_fields` conformance failure.
+
+  The auto-registered handler in `createAdcpServer` inherits the fix because it calls `capabilitiesResponse` for its wire output. v5 raw-handler adopters still calling `capabilitiesResponse` directly also get the fix for free. Adopters who hand-rolled their own `get_adcp_capabilities` MCP tool (not using the helper) must add `status: "completed"` to their structuredContent themselves.
+
+  Fixes adcontextprotocol/adcp#4877. Reported by @kapoost (`@adcp/sdk@7.7.0`, 117/121 storyboards passing; this was the remaining `v3_envelope_integrity` failure surfaced in adcontextprotocol/adcp#4832).
+
+- db68763: fix(server): forward `platform.capabilities.specialisms` and synthesize `request_signing` in `createAdcpServerFromPlatform`
+
+  `createAdcpServerFromPlatform` now correctly forwards `platform.capabilities.specialisms` into the inner `createAdcpServer` config. Previously, `projectedCapabilitiesConfig` only forwarded domain overrides (media_buy, brand, account, compliance_testing) and never included `specialisms`, so `createAdcpServer`'s boot-time guard always saw an empty specialisms list and threw when `signedRequests` was configured — even when `'signed-requests'` was declared in `platform.capabilities.specialisms`.
+
+  The fix also synthesizes `request_signing: { supported: true }` when `signed-requests` is in the specialism list, satisfying the parallel guard that requires both fields to be present together. `DecisioningCapabilities` has no `request_signing` field (it is implied by the specialism claim), so the synthesis happens at the projection layer.
+
+  Fixes #1886. Reported by @kapoost on behalf of Purrsonality (119/124 storyboards passing; this was the only remaining blocker for the `signed-requests` specialism claim).
+
 ## 7.9.0
 
 ### Minor Changes
