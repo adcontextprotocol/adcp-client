@@ -162,6 +162,7 @@ export const CONTROLLER_SCENARIOS = {
   FORCE_TASK_COMPLETION: 'force_task_completion',
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
+  QUERY_UPSTREAM_TRAFFIC: 'query_upstream_traffic',
 } as const satisfies Record<string, ControllerScenario>;
 
 /**
@@ -369,12 +370,9 @@ export interface TestControllerStore {
    * implementing this from scratch.
    *
    * Adopters opt in by implementing this method (advertised as
-   * `query_upstream_traffic` via `list_scenarios`). NOT yet a member of
-   * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
-   * — the dispatcher accepts the literal `'query_upstream_traffic'`
-   * string under the `TOOL_INPUT_SHAPE.scenario: z.string()` open-extension
-   * pattern. Once a 3.0.5+ release ships the schema, this scenario will
-   * be promoted to a first-class constant.
+   * `query_upstream_traffic` via `list_scenarios`). First-class member of
+   * `CONTROLLER_SCENARIOS` as of AdCP 3.1.0-beta.2 — spec PR adcp#3816
+   * landed the scenario in `ListScenariosSuccess['scenarios']`.
    */
   queryUpstreamTraffic?(params: {
     since_timestamp?: string;
@@ -386,9 +384,9 @@ export interface TestControllerStore {
 /**
  * Wire shape returned by `queryUpstreamTraffic` — mirrors
  * `UpstreamTrafficSuccess` in `comply-test-controller-response.json`
- * (spec PR adcontextprotocol/adcp#3816). Defined locally rather than
- * imported from the generated types because the schema cache predates
- * the spec PR; switch to the generated type once 3.0.5+ ships.
+ * (spec PR adcontextprotocol/adcp#3816). Now available in the generated
+ * types as of 3.1.0-beta.2; the local shape is preserved for adopters
+ * mid-migration and for the SDK's typed `recorded_calls` widening.
  *
  * `recorded_calls` is typed as an opaque array — the spec's per-item
  * shape (method / endpoint / url / content_type / payload / timestamp
@@ -535,9 +533,8 @@ export function enforceMapCap<V>(
  * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
  * that introduced them. Auto-advertised when the matching store method
  * is present. Promoted to first-class constants once a release ships the
- * schema (currently `query_upstream_traffic` from spec PR adcp#3816).
+ * schema. (Empty at 3.1.0-beta.2 — `query_upstream_traffic` was promoted.)
  */
-const QUERY_UPSTREAM_TRAFFIC_SCENARIO = 'query_upstream_traffic';
 
 /**
  * Force-transition extension scenarios for resource families whose status
@@ -560,6 +557,7 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceTaskCompletion', CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION],
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
+  ['queryUpstreamTraffic', CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC],
 ];
 
 /**
@@ -584,7 +582,6 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   const out: string[] = scenariosFromStore(store);
   if (typeof store.forceAudienceStatus === 'function') out.push(FORCE_AUDIENCE_STATUS_SCENARIO);
   if (typeof store.forceCatalogItemStatus === 'function') out.push(FORCE_CATALOG_ITEM_STATUS_SCENARIO);
-  if (typeof store.queryUpstreamTraffic === 'function') out.push(QUERY_UPSTREAM_TRAFFIC_SCENARIO);
   return out;
 }
 
@@ -1114,7 +1111,7 @@ async function handleTestControllerRequestImpl(
         );
       }
 
-      case QUERY_UPSTREAM_TRAFFIC_SCENARIO: {
+      case CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC: {
         if (!store.queryUpstreamTraffic) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
@@ -1123,10 +1120,7 @@ async function handleTestControllerRequestImpl(
           endpoint_pattern?: string;
           limit?: number;
         };
-        // Cast through ComplyTestControllerResponse — UpstreamTrafficSuccess
-        // isn't in the generated union yet (3.0.4 cache predates spec PR
-        // #3816). The runtime value matches `UpstreamTrafficSuccess`.
-        return (await store.queryUpstreamTraffic(queryParams)) as unknown as ComplyTestControllerResponse;
+        return await store.queryUpstreamTraffic(queryParams);
       }
 
       default:
