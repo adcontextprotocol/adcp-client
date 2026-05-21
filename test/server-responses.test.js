@@ -44,6 +44,18 @@ describe('capabilitiesResponse', () => {
     const result = capabilitiesResponse({ supported_protocols: [] }, 'Custom summary');
     assert.strictEqual(result.content[0].text, 'Custom summary');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    // Per AdCP #4876, the v3 protocol envelope requires `status` on every
+    // task response — including synchronous metadata calls like
+    // get_adcp_capabilities. The `v3_envelope_integrity/no_legacy_status_fields`
+    // storyboard step fails without it (#4877).
+    const result = capabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+    });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('productsResponse', () => {

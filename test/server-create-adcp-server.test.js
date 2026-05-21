@@ -347,6 +347,19 @@ describe('createAdcpServer', () => {
       assert.ok(caps.supported_protocols.includes('media_buy'));
     });
 
+    it('emits envelope status: "completed" on the auto-registered handler', async () => {
+      // AdCP #4876 made envelope `status` required on every task response;
+      // the auto-registered get_adcp_capabilities handler must satisfy it
+      // for sync wire conformance. Tracks #4877.
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const caps = await callTool(server, 'get_adcp_capabilities', {});
+      assert.strictEqual(caps.status, 'completed');
+    });
+
     it('detects multiple protocols', async () => {
       const server = createAdcpServer({
         name: 'Test',
