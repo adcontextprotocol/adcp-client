@@ -545,7 +545,11 @@ export type {
   OptimizationGoal,
   ReachUnit,
   TargetingOverlay,
-  OutcomeMeasurement,
+  // 3.1.0-beta.2 renamed `OutcomeMeasurement` → `OutcomeMeasurementDeprecated`
+  // to signal the surface is on the 4.0 removal track. Re-export under both
+  // names so adopters' existing `import { OutcomeMeasurement }` keeps working.
+  OutcomeMeasurementDeprecated,
+  OutcomeMeasurementDeprecated as OutcomeMeasurement,
   Duration,
   DeviceType,
   DigitalSourceType,
