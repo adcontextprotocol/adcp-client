@@ -1349,6 +1349,9 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
       async forceTaskCompletion() {},
       async simulateDelivery() {},
       async simulateBudgetSpend() {},
+      async queryUpstreamTraffic() {
+        return { success: true, recorded_calls: [], total_count: 0, truncated: false };
+      },
     };
     const result = await handleTestControllerRequest(store, { scenario: 'list_scenarios' });
     const expected = Object.values(CONTROLLER_SCENARIOS).sort();
