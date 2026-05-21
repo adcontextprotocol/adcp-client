@@ -23,6 +23,10 @@ const {
   getSignalsResponse,
   activateSignalResponse,
   cancelMediaBuyResponse,
+  updateRightsResponse,
+  syncAccountsResponse,
+  syncGovernanceResponse,
+  reportUsageResponse,
 } = require('../dist/lib/server/responses');
 const { validActionsForStatus } = require('../dist/lib/server/media-buy-helpers');
 
@@ -177,6 +181,11 @@ describe('deliveryResponse', () => {
     const result = deliveryResponse(data);
     assert.strictEqual(result.content[0].text, 'Delivery data for 0 media buys');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = deliveryResponse({ reporting_period: { start: '2026-01-01', end: '2026-01-02' }, media_buy_deliveries: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('listAccountsResponse', () => {
@@ -185,12 +194,22 @@ describe('listAccountsResponse', () => {
     assert.strictEqual(result.content[0].text, 'Found 2 accounts');
     assert.strictEqual(result.structuredContent.accounts.length, 2);
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listAccountsResponse({ accounts: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('listCreativeFormatsResponse', () => {
   it('returns format count in default summary', () => {
     const result = listCreativeFormatsResponse({ formats: [{ format_id: 'f1' }, { format_id: 'f2' }] });
     assert.strictEqual(result.content[0].text, 'Found 2 creative formats');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listCreativeFormatsResponse({ formats: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -257,12 +276,22 @@ describe('getMediaBuysResponse', () => {
       /getMediaBuysResponse.*`setup` is not a field on the media buy/
     );
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = getMediaBuysResponse({ media_buys: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('performanceFeedbackResponse', () => {
   it('returns default summary', () => {
     const result = performanceFeedbackResponse({ success: true });
     assert.strictEqual(result.content[0].text, 'Performance feedback accepted');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = performanceFeedbackResponse({ success: true });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -289,6 +318,11 @@ describe('buildCreativeResponse', () => {
     const result = buildCreativeResponse({});
     assert.strictEqual(result.content[0].text, 'Creative built');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = buildCreativeResponse({});
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('buildCreativeMultiResponse', () => {
@@ -305,6 +339,11 @@ describe('buildCreativeMultiResponse', () => {
   it('falls back to count=0 when creative_manifests is missing', () => {
     const result = buildCreativeMultiResponse({});
     assert.strictEqual(result.content[0].text, 'Built 0 creative formats');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = buildCreativeMultiResponse({});
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -329,12 +368,22 @@ describe('previewCreativeResponse', () => {
     const result = previewCreativeResponse({ response_type: 'variant' });
     assert.strictEqual(result.content[0].text, 'Variant preview generated');
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = previewCreativeResponse({ response_type: 'variant' });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('creativeDeliveryResponse', () => {
   it('returns currency in default summary', () => {
     const result = creativeDeliveryResponse({ currency: 'USD' });
     assert.strictEqual(result.content[0].text, 'Creative delivery data for USD report');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = creativeDeliveryResponse({ currency: 'USD' });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -344,6 +393,11 @@ describe('listCreativesResponse', () => {
       query_summary: { total_matching: 50, returned: 10, filters: [] },
     });
     assert.strictEqual(result.content[0].text, 'Found 50 creatives (10 returned)');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listCreativesResponse({ query_summary: { total_matching: 0, returned: 0, filters: [] } });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -386,6 +440,11 @@ describe('activateSignalResponse', () => {
   it('uses custom summary when provided', () => {
     const result = activateSignalResponse({ deployments: [] }, 'Custom');
     assert.strictEqual(result.content[0].text, 'Custom');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = activateSignalResponse({ deployments: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -563,6 +622,11 @@ describe('listPropertyListsResponse', () => {
     const result = listPropertyListsResponse({ lists: [] });
     assert.match(result.content[0].text, /Found 0 property lists/);
   });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listPropertyListsResponse({ lists: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
 });
 
 describe('listCollectionListsResponse', () => {
@@ -577,6 +641,11 @@ describe('listCollectionListsResponse', () => {
     const result = listCollectionListsResponse(data);
     assert.match(result.content[0].text, /Found 3 collection lists/);
     assert.deepStrictEqual(result.structuredContent.lists, data.lists);
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listCollectionListsResponse({ lists: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -612,6 +681,11 @@ describe('listContentStandardsResponse', () => {
     const result = listContentStandardsResponse(data);
     assert.match(result.content[0].text, /Found 1 content standard\b/);
     assert.doesNotMatch(result.content[0].text, /error/i);
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = listContentStandardsResponse({ standards: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });
 
@@ -661,5 +735,38 @@ describe('getPlanAuditLogsResponse', () => {
   it('honours an explicit summary override', () => {
     const result = getPlanAuditLogsResponse({ plans: [] }, 'Audit pulled');
     assert.strictEqual(result.content[0].text, 'Audit pulled');
+  });
+
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = getPlanAuditLogsResponse({ plans: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
+});
+
+describe('updateRightsResponse', () => {
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = updateRightsResponse({ rights_id: 'r1', terms: {} });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
+});
+
+describe('syncAccountsResponse', () => {
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = syncAccountsResponse({ accounts: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
+});
+
+describe('syncGovernanceResponse', () => {
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = syncGovernanceResponse({ accounts: [] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+  });
+});
+
+describe('reportUsageResponse', () => {
+  it('stamps envelope status: "completed" on structuredContent', () => {
+    const result = reportUsageResponse({ accepted: 0 });
+    assert.strictEqual(result.structuredContent.status, 'completed');
   });
 });

@@ -1768,8 +1768,10 @@ export async function testMediaBuyLifecycle(
       2
     );
     cancelStep.observation_data = { status, canceled_by: canceledBy, canceled_at: canceledAt };
-    if (status && status !== 'canceled') {
-      cancelStep.warnings = [`Expected status 'canceled', got '${status}'`];
+    // v3 agents stamp status: 'completed' (envelope task status) + cancellation object;
+    // legacy agents return status: 'canceled' (payload media-buy status). Both are valid.
+    if (status && status !== 'canceled' && status !== 'completed') {
+      cancelStep.warnings = [`Expected status 'canceled' (legacy) or 'completed' (v3 envelope), got '${status}'`];
     }
   } else if (cancelResult && !cancelResult.success) {
     // NOT_CANCELLABLE is a valid response — agent may not support cancellation

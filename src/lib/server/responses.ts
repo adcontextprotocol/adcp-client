@@ -302,7 +302,7 @@ export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summ
   const count = data.creative_manifests?.length ?? 0;
   return {
     content: [{ type: 'text', text: summary ?? `Built ${count} creative formats` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -490,7 +490,15 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
  * Build a cancel response for update_media_buy with action: 'cancel'.
  *
  * Eliminates the cancellation metadata trap by requiring `canceled_by`
- * and auto-setting `canceled_at`, `status: 'canceled'`, and `valid_actions: []`.
+ * and auto-setting `canceled_at` and `valid_actions: []`.
+ *
+ * The wire response emits `status: 'completed'` at the top level — this is
+ * the v3 protocol envelope's task status (the tool call completed). The
+ * media buy's canceled state is signaled by `valid_actions: []` (no further
+ * lifecycle transitions) and the `cancellation` object (`canceled_at`,
+ * `canceled_by`, optional `reason`). Buyers should NOT read
+ * `structuredContent.status` to determine the media buy's business state;
+ * use `valid_actions` and `cancellation` instead.
  *
  * Note: `cancellation` is not yet on the `UpdateMediaBuySuccess` generated type
  * (it exists on the full `MediaBuy` entity). This builder constructs the response
@@ -618,7 +626,7 @@ export function updateRightsResponse(data: UpdateRightsResponse, summary?: strin
         : `Rights ${data.rights_id} updated`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -688,7 +696,7 @@ export function syncAccountsResponse(data: SyncAccountsResponse, summary?: strin
       : `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: { ...toStructuredContent(data), status: 'completed' },
   };
 }
 
@@ -712,7 +720,7 @@ export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: s
   const stripped = stripGovernanceAgentSecrets(data);
   return {
     content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
-    structuredContent: toStructuredContent(stripped),
+    structuredContent: { ...toStructuredContent(stripped), status: 'completed' },
   };
 }
 
