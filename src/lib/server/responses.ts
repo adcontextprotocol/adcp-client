@@ -727,11 +727,11 @@ function stripGovernanceAgentSecrets(data: SyncGovernanceResponse): SyncGovernan
       if (!row.governance_agents) return row;
       return {
         ...row,
-        governance_agents: row.governance_agents.map(a => {
-          const stripped: { url: string; categories?: string[] } = { url: a.url };
-          if (a.categories !== undefined) stripped.categories = a.categories;
-          return stripped;
-        }),
+        // AdCP 3.1.0-beta.2 narrowed the wire shape to `{ url }` only;
+        // `categories` was removed (per-agent category signaling moved
+        // out of band) and `authentication` remains write-only. Project
+        // explicitly to defeat JS / `as any` smuggling of either field.
+        governance_agents: row.governance_agents.map(a => ({ url: a.url })),
       };
     }),
   };

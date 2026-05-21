@@ -3,12 +3,23 @@
  */
 
 import type { BrandReference, Catalog } from './tools.generated';
-import type { OutcomeMeasurement } from './core.generated';
+import type { OutcomeMeasurementDeprecated } from './core.generated';
 
-// ===== Measurement → OutcomeMeasurement rename =====
+// ===== Measurement → OutcomeMeasurement rename (3.1.0-beta.2: OutcomeMeasurement renamed to OutcomeMeasurementDeprecated) =====
 
-/** @deprecated Use OutcomeMeasurement instead. */
-export type Measurement = OutcomeMeasurement;
+/**
+ * @deprecated Use `OutcomeMeasurementDeprecated` (renamed by AdCP 3.1.0-beta.2;
+ * the measurement surface itself is being phased out in favor of explicit
+ * post-buy reporting flows).
+ */
+export type Measurement = OutcomeMeasurementDeprecated;
+
+/**
+ * @deprecated AdCP 3.1.0-beta.2 renamed this type to `OutcomeMeasurementDeprecated`
+ * to signal that the measurement surface is on the 4.0 removal track. The alias
+ * is preserved so 7.x adopters' imports still resolve through the 8.0-beta cycle.
+ */
+export type OutcomeMeasurement = OutcomeMeasurementDeprecated;
 
 // ===== PromotedOfferings / PromotedProducts migration =====
 // promoted_offerings was replaced by a top-level brand field + per-package catalog field.
