@@ -69,9 +69,10 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   if (cached) return cached;
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
-    : BETA_VERSIONS_TO_TRY.map(v =>
-        path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
-      );
+    : BETA_VERSIONS_TO_TRY.flatMap(v => [
+        path.join(__dirname, '..', '..', 'schemas-data', v, 'registries', 'v1-canonical-mapping.json'),
+        path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json'),
+      ]);
   for (const file of candidates) {
     if (existsSync(file)) {
       cached = JSON.parse(readFileSync(file, 'utf-8')) as CanonicalMappingRegistry;
