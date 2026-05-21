@@ -4,7 +4,7 @@ process.env.NODE_ENV = 'test';
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
-const { getAsset, requireAsset } = require('../dist/lib/server/decisioning/manifest-helpers');
+const { getAsset, getAssetSlot, requireAsset } = require('../dist/lib/server/decisioning/manifest-helpers');
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 
 const sampleManifest = {
@@ -90,5 +90,78 @@ describe('requireAsset', () => {
 
   it('throws when manifest is undefined', () => {
     assert.throws(() => requireAsset(undefined, 'script', 'text'), AdcpError);
+  });
+});
+
+// AdCP 3.1.0-beta.2 widened each slot from `AssetVariant` to
+// `AssetVariant | AssetVariant[]` (carousel cards, responsive_creative
+// headlines, etc.). Pin both the single-asset back-compat path and the
+// new multi-asset slot accessor.
+const carouselManifest = {
+  format_id: { id: 'carousel_3x', agent_url: 'x' },
+  assets: {
+    cards: [
+      { asset_type: 'image', url: 'https://cdn/card1.png' },
+      { asset_type: 'image', url: 'https://cdn/card2.png' },
+      { asset_type: 'image', url: 'https://cdn/card3.png' },
+    ],
+    cta: { asset_type: 'text', content: 'Shop now' },
+  },
+};
+
+describe('getAsset — array slot unwrap (3.1.0-beta.2 widening)', () => {
+  it('returns the first element when slot is an array', () => {
+    const card = getAsset(carouselManifest, 'cards', 'image');
+    assert.ok(card);
+    assert.strictEqual(card.asset_type, 'image');
+    assert.strictEqual(card.url, 'https://cdn/card1.png');
+  });
+
+  it('returns undefined when array slot is empty', () => {
+    const m = { ...carouselManifest, assets: { ...carouselManifest.assets, cards: [] } };
+    assert.strictEqual(getAsset(m, 'cards', 'image'), undefined);
+  });
+
+  it('single-asset slot behavior unchanged', () => {
+    const cta = getAsset(carouselManifest, 'cta', 'text');
+    assert.ok(cta);
+    assert.strictEqual(cta.content, 'Shop now');
+  });
+});
+
+describe('getAssetSlot', () => {
+  it('returns the full array for multi-element slots', () => {
+    const cards = getAssetSlot(carouselManifest, 'cards', 'image');
+    assert.ok(cards);
+    assert.strictEqual(cards.length, 3);
+    assert.strictEqual(cards[2].url, 'https://cdn/card3.png');
+  });
+
+  it('wraps single-asset slots in a one-element array', () => {
+    const cta = getAssetSlot(carouselManifest, 'cta', 'text');
+    assert.ok(cta);
+    assert.strictEqual(cta.length, 1);
+    assert.strictEqual(cta[0].content, 'Shop now');
+  });
+
+  it('returns undefined when slot is missing', () => {
+    assert.strictEqual(getAssetSlot(carouselManifest, 'nonexistent', 'image'), undefined);
+  });
+
+  it('filters by asset_type within the slot', () => {
+    const mixed = {
+      ...carouselManifest,
+      assets: {
+        ...carouselManifest.assets,
+        mixed_slot: [
+          { asset_type: 'image', url: 'https://cdn/i.png' },
+          { asset_type: 'text', content: 'caption' },
+        ],
+      },
+    };
+    const images = getAssetSlot(mixed, 'mixed_slot', 'image');
+    assert.ok(images);
+    assert.strictEqual(images.length, 1);
+    assert.strictEqual(images[0].url, 'https://cdn/i.png');
   });
 });
