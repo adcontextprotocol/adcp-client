@@ -39,8 +39,10 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${port}`;
   // For tests, the "mirror" is the same loopback server with a custom
   // host header. We exercise the mirror-host allowlist by overriding
-  // `mirrorHost` on the resolve call to '127.0.0.1' (the test rig's
-  // hostname). Production mirrorHost is `mirror.adcontextprotocol.org`.
+  // `mirrorHosts` on the resolve call to a stand-in host. Production
+  // default is `creative.adcontextprotocol.org` (single anchor at
+  // 3.1.0-beta.2+; the legacy `mirror.adcontextprotocol.org` was
+  // deprecated in adcp#4866 because it was never provisioned).
   mirrorBaseUrl = baseUrl;
 });
 

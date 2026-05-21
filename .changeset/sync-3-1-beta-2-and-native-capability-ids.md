@@ -19,7 +19,7 @@ during 7.10 development:
 ### What's new in the SDK
 
 - **`packageRefsForCapabilities(product, capabilityIds[])` — preferred V2
-  write path.** Returns `{ capability_ids, format_ids }` ready to spread
+  write path.** Returns `{ capability_ids, format_ids? }` ready to spread
   into a `PackageRequest`. Implements the spec's dual-emission convention
   (V2 buyers emit both so v2-capable sellers route by `capability_ids` and
   v1-only sellers — which ignore unknown fields via
@@ -42,16 +42,31 @@ during 7.10 development:
   });
   ```
 
-  Throws when any requested `capability_id` is missing on the product
-  (matches the seller-side `UNSUPPORTED_FEATURE` rejection — we fail at
-  compose-time rather than waiting for the seller). De-duplicates v1
-  `format_ids` across declarations that share a ref.
+  Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+  in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+  'empty_input' | 'invalid_product' }`) so adopters can branch on
+  "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+  De-duplicates `format_ids` by full identity (`{agent_url, id,
+  width, height, duration_ms}`) — multi-size declarations sharing
+  `{agent_url, id}` survive de-dup. When every chosen capability is
+  V2-only (no `v1_format_ref`), `format_ids` is **omitted entirely**
+  from the result rather than emitted as `[]` (which would violate the
+  wire schema's `minItems: 1` constraint).
 
-- **Bridge helpers `@deprecated`.** `formatIdsFromOptions` /
-  `tryFormatIdsFromOptions` / `formatIdsForCapability` remain exported
-  indefinitely for callers writing strictly to v1 sellers or maintaining
-  existing code, but new V2 work should use `packageRefsForCapabilities`
-  for the dual-emission shape.
+- **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
+  `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
+  `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
+  `legacyFormatIdsForCapability`. The `legacy*` prefix is **semantic
+  narrowing**, not deprecation — these helpers solve a different problem
+  than `packageRefsForCapabilities` (single-target v1 payload vs
+  dual-emission V2 payload) and are supported indefinitely. We avoided
+  `@deprecated` because it strips through to adopter ESLint rules and
+  creates noise for legitimate v1-only callers.
+
+  **Migration:** existing callers from 7.10's PR #1890 should rename
+  their imports (`formatIdsFromOptions` → `legacyFormatIdsFromOptions`,
+  etc.). The previous-name exports are NOT preserved; the rename
+  predates the first 7.10 npm release.
 
 - **`DEFAULT_MIRROR_HOSTS` collapsed to a single anchor**
   (`creative.adcontextprotocol.org`). The legacy
@@ -72,17 +87,25 @@ during 7.10 development:
 
 ### How to migrate
 
-Existing 7.10 callers using `formatIdsFromOptions` keep working — the
-helpers stay exported. The migration is opt-in:
+If you adopted the bridge helpers from a pre-release 7.10 build of
+PR #1890, rename your imports — the previous names were never published
+to npm, so this isn't a runtime break:
 
 ```diff
-- format_ids: formatIdsFromOptions(chosen),
+- import { formatIdsFromOptions } from '@adcp/sdk/v2/projection';
++ import { legacyFormatIdsFromOptions } from '@adcp/sdk/v2/projection';
+```
+
+For new V2 code, prefer `packageRefsForCapabilities`:
+
+```diff
+- format_ids: legacyFormatIdsFromOptions(chosen),
 + ...packageRefsForCapabilities(product, [chosen.capability_id]),
 ```
 
-The diff produces a richer request shape (v2 sellers prefer
-`capability_ids`; v1 sellers still get `format_ids`) without changing
-the seller-side behavior.
+The diff produces a richer request shape (v2 sellers route by
+`capability_ids`; v1 sellers still get `format_ids` via dual emission)
+without changing seller-side behavior.
 
 ### Tests
 

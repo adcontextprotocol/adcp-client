@@ -26,6 +26,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import { BETA_VERSIONS_TO_TRY } from './cache-versions';
 
 interface RegistryEntryV1Pattern {
   format_id_glob?: string;
@@ -66,10 +67,9 @@ let cached: CanonicalMappingRegistry | null = null;
  */
 export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   if (cached) return cached;
-  const versionsToTry = ['3.1.0-beta.2', '3.1.0-beta.1', '3.1.0-beta.0', 'latest'];
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
-    : versionsToTry.map(v =>
+    : BETA_VERSIONS_TO_TRY.map(v =>
         path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
       );
   for (const file of candidates) {

@@ -34,10 +34,12 @@ export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedPro
 
 export {
   packageRefsForCapabilities,
-  formatIdsFromOptions,
-  tryFormatIdsFromOptions,
-  formatIdsForCapability,
+  legacyFormatIdsFromOptions,
+  tryLegacyFormatIdsFromOptions,
+  legacyFormatIdsForCapability,
+  CapabilityIdsLookupError,
   type PackageFormatRefs,
+  type CapabilityIdsLookupErrorCode,
 } from './write-side';
 
 export type {

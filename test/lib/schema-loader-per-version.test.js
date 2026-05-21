@@ -67,7 +67,7 @@ describe('schema-loader per-version state', () => {
   });
 
   test('resolveBundleKey keeps prereleases exact', () => {
-    assert.strictEqual(resolveBundleKey('3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.2'), '3.1.0-beta.2');
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
   });
 
@@ -176,7 +176,7 @@ describe('schema-loader per-version state', () => {
     );
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
     // Valid SemVer prereleases still pass through.
-    assert.strictEqual(resolveBundleKey('3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.2'), '3.1.0-beta.2');
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
@@ -198,17 +198,17 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 
-  test('3.1.0-beta.1 opt-in bundle compiles and accepts catalog-sync request fields', () => {
+  test('3.1.0-beta.2 opt-in bundle compiles and accepts catalog-sync request fields', () => {
     // Runtime guard for the 3.1-beta opt-in: a consumer pinning the beta
     // version gets a compiled validator that accepts the new catalog-sync
     // request fields (if_catalog_version / if_pricing_version) the type
     // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
     // type-side worked but the wire-side could regress silently.
-    _resetValidationLoader('3.1.0-beta.1');
-    const v = getValidator('get_products', 'request', '3.1.0-beta.1');
+    _resetValidationLoader('3.1.0-beta.2');
+    const v = getValidator('get_products', 'request', '3.1.0-beta.2');
     assert.ok(v, '3.1-beta get_products::request must compile from the opt-in bundle');
     const ok = v({
-      adcp_version: '3.1-beta.1',
+      adcp_version: '3.1-beta.2',
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
       if_catalog_version: 'v2026-05-18T08:00:00Z-acme-rev412',
@@ -217,7 +217,7 @@ describe('schema-loader per-version state', () => {
     // The dependencies constraint (if_pricing_version requires if_catalog_version)
     // must still be enforced at runtime by Ajv after stripIfThenElse in codegen.
     const dependenciesViolation = v({
-      adcp_version: '3.1-beta.1',
+      adcp_version: '3.1-beta.2',
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
       if_pricing_version: 'v-pricing-only',
@@ -234,13 +234,13 @@ describe('schema-loader per-version state', () => {
     assert.ok(vRP, "release-precision '3.1-beta' must compile from the cached prerelease bundle");
     assert.strictEqual(
       vRP({
-        adcp_version: '3.1-beta.1',
+        adcp_version: '3.1-beta.2',
         brief: 'wholesale catalog mirror probe',
         buying_mode: 'wholesale',
         if_catalog_version: 'v2026-05-18T08:00:00Z-acme-rev412',
       }),
       true,
-      "'3.1-beta' validator must accept the same catalog-sync payload as '3.1.0-beta.1'"
+      "'3.1-beta' validator must accept the same catalog-sync payload as '3.1.0-beta.2'"
     );
   });
 

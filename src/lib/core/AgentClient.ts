@@ -576,18 +576,43 @@ export class AgentClient {
    *     product_id: product.product_id,
    *     pricing_option_id: product.pricing_options[0].pricing_option_id,
    *     ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-   *     // ↑ spreads `{ capability_ids, format_ids }`
+   *     // ↑ spreads `{ capability_ids, format_ids? }`
    *     budget: { currency: 'USD', total: 5000 },
    *   }],
    *   // ...
    * });
    * ```
    *
-   * The bridge helpers (`formatIdsFromOptions` /
-   * `tryFormatIdsFromOptions` / `formatIdsForCapability`) remain
-   * exported as `@deprecated` for callers writing strictly to v1 sellers
-   * or maintaining existing code. New V2 code should use
-   * `packageRefsForCapabilities` to get clean dual emission.
+   * The resulting wire payload for the package looks like:
+   *
+   * ```json
+   * {
+   *   "package_id": "pkg-1",
+   *   "product_id": "...",
+   *   "pricing_option_id": "...",
+   *   "capability_ids": ["nytimes_mrec", "nytimes_video_30s"],
+   *   "format_ids": [
+   *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "display_300x250_image"},
+   *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "video_standard_30s"}
+   *   ],
+   *   "budget": {"currency": "USD", "total": 5000}
+   * }
+   * ```
+   *
+   * `format_ids` is omitted entirely when every chosen capability is V2-only
+   * (the spec's "neither present" fallback fires for v1 sellers in that case).
+   *
+   * For adopters writing strictly to v1 sellers — or for products whose
+   * `format_options[]` entries don't publish `capability_id` — see the
+   * `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
+   * `legacyFormatIdsForCapability` helpers in `@adcp/sdk/v2/projection`.
+   *
+   * `packageRefsForCapabilities` throws `CapabilityIdsLookupError` with
+   * a normalized `.code` in `{ 'unknown_capability_id' |
+   * 'capability_ids_not_published' | 'empty_input' | 'invalid_product' }`
+   * — branch on `.code` to fall back to the `legacy*` helpers when the
+   * product is V1-shape only. See the helper JSDoc for the full
+   * recovery example.
    */
   async createMediaBuy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
