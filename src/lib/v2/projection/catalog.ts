@@ -100,10 +100,19 @@ function indexKey(agentUrl: string, id: string): string {
 }
 
 /**
- * Load the catalog from a known path. Tries the test-fixture location
- * (vendored copy) first, then the workspace `.context/adcp-3307/`
- * checkout if present. Memoized — catalog is small and immutable per
- * spec version.
+ * Load the catalog from a known path. Resolution order:
+ *
+ *   1. Caller-supplied `explicitPath` (test hook).
+ *   2. Adjacent to the compiled loader — `dist/lib/v2/projection/
+ *      aao-reference-formats.json`. This is the path that ships in the
+ *      published npm tarball; `scripts/copy-v2-projection-catalog.ts`
+ *      vendors the file here during `build:lib`.
+ *   3. Source-tree test fixture at
+ *      `test/lib/v2-projection-fixtures/aao-reference-formats.json`,
+ *      relative to the loader's source location. Used when running from
+ *      a source checkout (e.g., `tsx` / vitest) before `build:lib`.
+ *
+ * Memoized — catalog is small and immutable per spec version.
  *
  * @param explicitPath caller-supplied path; takes precedence over
  *                     fallback resolution.
@@ -114,6 +123,7 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
   const candidates = explicitPath
     ? [explicitPath]
     : [
+        path.join(__dirname, 'aao-reference-formats.json'),
         path.join(
           __dirname,
           '..',
@@ -124,19 +134,6 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
           'lib',
           'v2-projection-fixtures',
           'aao-reference-formats.json'
-        ),
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          '..',
-          '..',
-          '.context',
-          'adcp-3307',
-          'server',
-          'src',
-          'creative-agent',
-          'reference-formats.json'
         ),
       ];
 
