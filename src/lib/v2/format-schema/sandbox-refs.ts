@@ -10,7 +10,9 @@
  *           RFC 3986 §6 normalization (lowercase scheme + host, strip
  *           default port, normalize path dot-segments, no userinfo),
  *       (b) under the AAO mirror namespace
- *           (`https://mirror.adcontextprotocol.org/...`),
+ *           (`https://creative.adcontextprotocol.org/...` —
+ *           legacy `mirror.adcontextprotocol.org` deprecated in
+ *           adcontextprotocol/adcp#4866 / 3.1.0-beta.2),
  *       (c) intra-document JSON Pointer refs (`#/...`) bounded to the
  *           parent document's parsed tree.
  *     `$ref: "file://..."` rejected unconditionally. Cross-origin refs
@@ -89,16 +91,19 @@ export interface ResolveSchemaRefsOptions {
   /**
    * Single AAO mirror host that `$ref` targets are allowed to live under.
    * Convenience for `mirrorHosts: [host]`; ignored when `mirrorHosts`
-   * is also set.
-   * @deprecated Use {@link mirrorHosts} (array form) for transitional
-   * dual-host support — see {@link DEFAULT_MIRROR_HOSTS}.
+   * is also set. Not deprecated — it's a narrowing of the array form,
+   * useful for callers who genuinely have a single-host allowlist (the
+   * common case during the transitional period). Pick `mirrorHost` for
+   * single-host, `mirrorHosts` for multi-host or future-proofing.
    */
   mirrorHost?: string;
   /**
    * AAO mirror hosts that `$ref` targets are allowed to live under.
-   * Defaults to {@link DEFAULT_MIRROR_HOSTS} (both `mirror.adcontextprotocol.org`
-   * and `creative.adcontextprotocol.org` during the spec's transitional
-   * period). Override when running against a stand-in mirror in tests.
+   * Defaults to {@link DEFAULT_MIRROR_HOSTS} —
+   * `['creative.adcontextprotocol.org']` at 3.1.0-beta.2+. The legacy
+   * `mirror.adcontextprotocol.org` anchor was deprecated in
+   * adcontextprotocol/adcp#4866 (never provisioned). Override when
+   * running against a stand-in mirror in tests.
    */
   mirrorHosts?: readonly string[];
   /**
@@ -138,24 +143,22 @@ export const DEFAULT_MAX_REF_DEPTH = 8;
 /** Spec ceiling for total `$ref` count across the resolved tree. */
 export const DEFAULT_MAX_REF_COUNT = 256;
 /**
- * Spec-normative AAO mirror trust anchors for `$ref` resolution. The
- * `$ref` sandboxing section in `product-format-declaration.json`
- * references the legacy `mirror.adcontextprotocol.org` host, while the
- * surrounding 3.1 spec text migrated the AAO catalog mirror to
- * `creative.adcontextprotocol.org/translated/`. Both are accepted
- * during the transitional period — adcontextprotocol/adcp issue
- * tracking the inconsistency to be filed; once the spec PR lands and
- * picks one anchor, drop the unused host from this list.
+ * Spec-normative AAO mirror trust anchor for `$ref` resolution
+ * (`product-format-declaration.json#format_schema`, post-beta.2). The
+ * legacy `mirror.adcontextprotocol.org` host was deprecated in
+ * adcontextprotocol/adcp#4866 (3.1.0-beta.2) — it was never
+ * provisioned and authorizing a ghost hostname is liability with no
+ * upside. `creative.adcontextprotocol.org` is the single trust anchor
+ * going forward.
  */
-export const DEFAULT_MIRROR_HOSTS: readonly string[] = [
-  'mirror.adcontextprotocol.org',
-  'creative.adcontextprotocol.org',
-];
+export const DEFAULT_MIRROR_HOSTS: readonly string[] = ['creative.adcontextprotocol.org'];
 
 /**
- * Single-host alias kept for backward compatibility with the 7.10
- * shipping API. Resolves to the first host in {@link DEFAULT_MIRROR_HOSTS}.
- * @deprecated Use {@link DEFAULT_MIRROR_HOSTS} (array) instead.
+ * Single-host narrowing of {@link DEFAULT_MIRROR_HOSTS} for callers
+ * that have a single-host allowlist (the common case at 3.1.0-beta.2+).
+ * Resolves to the first host. Not deprecated — same posture as
+ * {@link ResolveSchemaRefsOptions.mirrorHost}: narrowing of the array
+ * form, not a removal target.
  */
 export const DEFAULT_MIRROR_HOST = DEFAULT_MIRROR_HOSTS[0]!;
 

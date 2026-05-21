@@ -32,6 +32,7 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.0.0-beta.1',
   '3.0.0-beta.3',
   '3.1.0-beta.1',
+  '3.1.0-beta.2',
   '3.0.0',
   '3.0.1',
   '3.0.2',
@@ -64,7 +65,7 @@ export const VERSION_INFO = {
   library: '7.9.0',
   adcp: '3.0.12',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-05-19T22:10:26.331Z',
+  generatedAt: '2026-05-21T11:54:25.006Z',
 } as const;
 
 /**

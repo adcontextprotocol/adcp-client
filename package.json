@@ -50,6 +50,21 @@
       "require": "./dist/lib/catalog-sync/index.js",
       "types": "./dist/lib/catalog-sync/index.d.ts"
     },
+    "./v2/projection": {
+      "import": "./dist/lib/v2/projection/index.js",
+      "require": "./dist/lib/v2/projection/index.js",
+      "types": "./dist/lib/v2/projection/index.d.ts"
+    },
+    "./v2/format-schema": {
+      "import": "./dist/lib/v2/format-schema/index.js",
+      "require": "./dist/lib/v2/format-schema/index.js",
+      "types": "./dist/lib/v2/format-schema/index.d.ts"
+    },
+    "./v2/publisher-catalog": {
+      "import": "./dist/lib/v2/publisher-catalog/index.js",
+      "require": "./dist/lib/v2/publisher-catalog/index.js",
+      "types": "./dist/lib/v2/publisher-catalog/index.d.ts"
+    },
     "./testing": {
       "import": "./dist/lib/testing/index.js",
       "require": "./dist/lib/testing/index.js",
@@ -154,6 +169,15 @@
       ],
       "catalog-sync": [
         "dist/lib/catalog-sync/index.d.ts"
+      ],
+      "v2/projection": [
+        "dist/lib/v2/projection/index.d.ts"
+      ],
+      "v2/format-schema": [
+        "dist/lib/v2/format-schema/index.d.ts"
+      ],
+      "v2/publisher-catalog": [
+        "dist/lib/v2/publisher-catalog/index.d.ts"
       ],
       "testing": [
         "dist/lib/testing/index.d.ts"

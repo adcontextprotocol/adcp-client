@@ -32,7 +32,15 @@ export type { V2ToV1Result } from './v2-to-v1';
 
 export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedProduct } from './augment-response';
 
-export { formatIdsFromOptions, tryFormatIdsFromOptions, formatIdsForCapability } from './write-side';
+export {
+  packageRefsForCapabilities,
+  legacyFormatIdsFromOptions,
+  tryLegacyFormatIdsFromOptions,
+  legacyFormatIdsForCapability,
+  CapabilityIdsLookupError,
+  type PackageFormatRefs,
+  type CapabilityIdsLookupErrorCode,
+} from './write-side';
 
 export type {
   V1FormatId,
