@@ -123,22 +123,29 @@ interface ToolDefinition {
 }
 
 /**
- * Rewrite a discriminated `oneOf` whose branches are bare `required` + `not.required`
- * mutual-exclusion clauses into explicit closed shapes. Without this, json-schema-to-typescript
- * sees a branch with no own `properties`/`type` and falls back to
+ * Rewrite a discriminated `oneOf` whose branches are mutual-exclusion clauses
+ * into explicit closed shapes. Without this, json-schema-to-typescript sees a
+ * branch with no own `properties`/`type` and falls back to
  * `{ [k: string]: unknown | undefined }`, which is incompatible with closed-shape values
  * returned by typed builders (e.g. `displayRender({...})` cannot satisfy
- * `Format.renders[number]`'s loose first variant). See adcp-client#1325.
+ * `Format.renders[number]`'s loose first variant). See adcp-client#1325 and
+ * adcp-client#1940 (sync_accounts ProvisioningMode/SettingsUpdateMode).
  *
- * Applies only when the parent `items`-style schema has:
- *   - a sibling `properties` map declaring the candidate fields
- *   - every `oneOf` branch shaped as `{ required: [X], not: { required: [Y] } }`
- *     with no own `properties`/`type`/`$ref`
+ * Applies when the parent `items`-style schema has a sibling `properties` map
+ * and every `oneOf` branch expresses its forbidden-field set in one of two
+ * authorial idioms upstream uses:
+ *
+ *   1. `not: { required: [X, ...] }` — used by `Format.renders[]` etc.
+ *   2. `allOf: [{ not: { required: [X] } }, ...]` — used by
+ *      `SyncAccountsRequest.accounts[].oneOf[SettingsUpdateMode]` because
+ *      `{required:[X,Y,Z]}` matches only when ALL three are present, while
+ *      the authorial intent is "none of them may be present" (each field
+ *      independently forbidden). The two forms aren't semantically equivalent.
  *
  * Each branch is rewritten to inline the parent's properties (minus those the
- * branch's `not.required` excludes), with the branch's own `required` items
- * added to the parent's `required`. The original `oneOf` is retained but each
- * branch is now a complete closed shape — jsts emits a clean union.
+ * branch's forbidden-name set excludes), with the branch's own `required`
+ * items added to the parent's `required`. The original `oneOf` is retained
+ * but each branch is now a complete closed shape — jsts emits a clean union.
  *
  * Idempotent: a second pass over a transformed branch (which now has its own
  * `properties`) is a no-op because the predicate above no longer matches.
@@ -151,24 +158,54 @@ function tightenMutualExclusionOneOf(schema: any): any {
   const parentProps = schema.properties as Record<string, any>;
   const parentRequired: string[] = Array.isArray(schema.required) ? [...schema.required] : [];
 
+  // Returns the union of forbidden field names a branch declares — collected
+  // from either `not.required` (idiom 1) or every entry of an `allOf` of
+  // `{not:{required:[X]}}` clauses (idiom 2). Returns null when the branch
+  // carries any other not/allOf shape — preserving the existing strict-bail
+  // behavior so Ajv stays the source of truth at runtime.
+  const extractBranchForbidden = (branch: any): string[] | null => {
+    const forbidden = new Set<string>();
+    let sawForbid = false;
+
+    if (branch.not !== undefined) {
+      if (!branch.not || typeof branch.not !== 'object') return null;
+      if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
+      if (Object.keys(branch.not).some(k => k !== 'required')) return null;
+      for (const name of branch.not.required) forbidden.add(name);
+      sawForbid = true;
+    }
+
+    if (branch.allOf !== undefined) {
+      if (!Array.isArray(branch.allOf) || branch.allOf.length === 0) return null;
+      for (const entry of branch.allOf) {
+        if (!entry || typeof entry !== 'object') return null;
+        const entryKeys = Object.keys(entry);
+        if (entryKeys.length !== 1 || entryKeys[0] !== 'not') return null;
+        if (!entry.not || typeof entry.not !== 'object') return null;
+        if (!Array.isArray(entry.not.required) || entry.not.required.length === 0) return null;
+        if (Object.keys(entry.not).some(k => k !== 'required')) return null;
+        for (const name of entry.not.required) forbidden.add(name);
+      }
+      sawForbid = true;
+    }
+
+    return sawForbid && forbidden.size > 0 ? Array.from(forbidden) : null;
+  };
+
   const isMutualExclusionBranch = (branch: any): boolean => {
     if (!branch || typeof branch !== 'object') return false;
-    if (branch.type || branch.$ref || branch.oneOf || branch.anyOf || branch.allOf) {
-      return false;
-    }
+    // Branches that already declare their own type/ref/combinator have a
+    // closed shape; nothing to tighten.
+    if (branch.type || branch.$ref || branch.oneOf || branch.anyOf) return false;
     if (!Array.isArray(branch.required) || branch.required.length === 0) return false;
-    if (!branch.not || typeof branch.not !== 'object') return false;
-    if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return false;
-    // Branch may declare its own `properties` (typically to assert `const` on
-    // the discriminator field) — we'll merge those in.
-    return true;
+    return extractBranchForbidden(branch) !== null;
   };
 
   if (!schema.oneOf.every(isMutualExclusionBranch)) return schema;
 
   const rewritten = schema.oneOf.map((branch: any) => {
     const branchRequired: string[] = branch.required;
-    const forbidden: string[] = branch.not.required;
+    const forbidden = extractBranchForbidden(branch) as string[];
     const branchOwnProps: Record<string, any> =
       branch.properties && typeof branch.properties === 'object' ? branch.properties : {};
     const newProperties: Record<string, any> = {};
@@ -181,11 +218,17 @@ function tightenMutualExclusionOneOf(schema: any): any {
     for (const [key, prop] of Object.entries(branchOwnProps)) {
       if (!(key in newProperties)) newProperties[key] = prop;
     }
-    return {
+    const out: Record<string, unknown> = {
       type: 'object',
       properties: newProperties,
       required: Array.from(new Set([...parentRequired, ...branchRequired])),
     };
+    // Preserve titled-branch metadata so the emitted TS keeps named
+    // interfaces (`ProvisioningMode`, `SettingsUpdateMode`) instead of
+    // anonymous union arms.
+    if (branch.title) out.title = branch.title;
+    if (branch.description) out.description = branch.description;
+    return out;
   });
 
   return { ...schema, oneOf: rewritten };
@@ -507,29 +550,82 @@ export function enforceStrictSchema(schema: any): any {
  * Schemas this affects today: `Format.renders[]`, `sync_plans` plan budget.
  * Both share the same authorial idiom upstream (adcontextprotocol/adcp).
  */
+/**
+ * Pull a branch's forbidden-field set out of either authorial idiom upstream
+ * uses:
+ *
+ *   1. `not: { required: [X, ...] }` — single not-required clause.
+ *   2. `allOf: [{ not: { required: [X] } }, { not: { required: [Y] } }, ...]`
+ *      — an allOf of single-key not-required clauses.
+ *
+ * Returns the union of forbidden names, or `null` if the branch carries any
+ * other not/allOf shape we don't recognize (in which case the flattener bails
+ * to preserve runtime behavior under Ajv).
+ *
+ * Idiom (2) appears on `SyncAccountsRequest.accounts[].oneOf[SettingsUpdateMode]`
+ * (adcp 3.1.0-beta.3) — its three forbidden fields can't compress into a
+ * single `not: {required: [X, Y, Z]}` because `{required:[X,Y,Z]}` matches
+ * only when ALL three are present, while the authorial intent is "none of
+ * them may be present" (each field independently forbidden).
+ */
+function extractBranchExcludedNames(branch: any): Set<string> | null {
+  const excluded = new Set<string>();
+  let sawForbid = false;
+
+  // Form 1: top-level `not: { required: [...] }`
+  if (branch.not !== undefined) {
+    if (!branch.not || typeof branch.not !== 'object') return null;
+    if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
+    if (Object.keys(branch.not).some(k => k !== 'required')) return null;
+    for (const name of branch.not.required) excluded.add(name);
+    sawForbid = true;
+  }
+
+  // Form 2: `allOf: [{ not: { required: [...] } }, ...]`
+  if (branch.allOf !== undefined) {
+    if (!Array.isArray(branch.allOf) || branch.allOf.length === 0) return null;
+    for (const entry of branch.allOf) {
+      if (!entry || typeof entry !== 'object') return null;
+      if (Object.keys(entry).length !== 1 || !entry.not) return null;
+      if (typeof entry.not !== 'object') return null;
+      if (!Array.isArray(entry.not.required) || entry.not.required.length === 0) return null;
+      if (Object.keys(entry.not).some(k => k !== 'required')) return null;
+      for (const name of entry.not.required) excluded.add(name);
+    }
+    sawForbid = true;
+  }
+
+  return sawForbid && excluded.size > 0 ? excluded : null;
+}
+
 function flattenMutualExclusiveOneOf(schema: any): any {
   if (!schema || typeof schema !== 'object') return schema;
   if (!schema.properties || !schema.oneOf || !Array.isArray(schema.oneOf)) return schema;
   const branches = schema.oneOf;
   if (branches.length < 2) return schema;
 
-  const ALLOWED_BRANCH_KEYS = new Set(['required', 'not', 'properties', 'title', 'description']);
-  const allBranchesAreMutex = branches.every((b: any) => {
-    if (!b || typeof b !== 'object') return false;
-    if (!Array.isArray(b.required) || b.required.length === 0) return false;
-    if (!b.not || typeof b.not !== 'object') return false;
-    if (!Array.isArray(b.not.required) || b.not.required.length === 0) return false;
-    if (Object.keys(b).some(k => !ALLOWED_BRANCH_KEYS.has(k))) return false;
-    if (Object.keys(b.not).some(k => k !== 'required')) return false;
-    return true;
+  const ALLOWED_BRANCH_KEYS = new Set(['required', 'not', 'allOf', 'properties', 'title', 'description']);
+  const excludedByBranch: Array<Set<string> | null> = branches.map((b: any) => {
+    if (!b || typeof b !== 'object') return null;
+    if (!Array.isArray(b.required) || b.required.length === 0) return null;
+    if (Object.keys(b).some(k => !ALLOWED_BRANCH_KEYS.has(k))) return null;
+    return extractBranchExcludedNames(b);
   });
-  if (!allBranchesAreMutex) return schema;
+  if (excludedByBranch.some(s => s === null)) return schema;
 
   const outerProps = schema.properties as Record<string, any>;
   const outerRequired: string[] = Array.isArray(schema.required) ? schema.required : [];
+  // Preserve openness when the parent items schema is intentionally open.
+  // SyncAccountsRequest's accounts entries set `additionalProperties: true`
+  // because future per-account fields land in the parent properties bag,
+  // not in branch-specific shapes. Forcing `additionalProperties: false`
+  // on flattened branches would reject any future field until the SDK
+  // regenerates — runtime Ajv would still accept it on the unstripped
+  // schema, creating wire-vs-type drift.
+  const parentAdditional = schema.additionalProperties;
 
-  const newOneOf = branches.map((branch: any) => {
-    const excluded = new Set<string>(branch.not.required);
+  const newOneOf = branches.map((branch: any, i: number) => {
+    const excluded = excludedByBranch[i] as Set<string>;
     const branchOwnProps: Record<string, any> = branch.properties ?? {};
     const branchProps: Record<string, any> = {};
     for (const [name, prop] of Object.entries(outerProps)) {
@@ -547,11 +643,7 @@ function flattenMutualExclusiveOneOf(schema: any): any {
     if (branch.description) out.description = branch.description;
     out.properties = branchProps;
     if (required.length > 0) out.required = required;
-    // Closed shape — branches must enumerate their fields. If a future
-    // upstream schema needs an open branch, file an issue and either widen
-    // detection (require explicit `additionalProperties: true` on the branch)
-    // or skip flattening.
-    out.additionalProperties = false;
+    out.additionalProperties = parentAdditional === true ? true : false;
     return out;
   });
 

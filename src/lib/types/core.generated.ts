@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.0-beta.3
-// Generated at: 2026-05-22T14:22:05.693Z
+// Generated at: 2026-05-22T16:27:18.517Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1877,136 +1877,7 @@ export type CreativeAsset = {
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
-} & (
-  | {
-      /**
-       * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
-       */
-      creative_id: string;
-      /**
-       * Human-readable creative name
-       */
-      name: string;
-      format_id: FormatReferenceStructuredObject;
-      /**
-       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
-       */
-      capability_id?: string;
-      /**
-       * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
-       */
-      assets: {
-        /**
-         * This interface was referenced by `undefined`'s JSON-Schema definition
-         * via the `patternProperty` "^[a-z0-9_]+$".
-         */
-        [k: string]: AssetVariant | AssetVariant[];
-      };
-      /**
-       * Preview contexts for generative formats - defines what scenarios to generate previews for
-       */
-      inputs?: {
-        /**
-         * Human-readable name for this preview variant
-         */
-        name: string;
-        /**
-         * Macro values to apply for this preview
-         */
-        macros?: {
-          [k: string]: string | undefined;
-        };
-        /**
-         * Natural language description of the context for AI-generated content
-         */
-        context_description?: string;
-      }[];
-      /**
-       * User-defined tags for organization and searchability
-       */
-      tags?: string[];
-      status?: CreativeStatus;
-      /**
-       * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
-       * @minimum 0
-       * @maximum 100
-       */
-      weight?: number;
-      /**
-       * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-       */
-      placement_ids?: string[];
-      /**
-       * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
-       */
-      industry_identifiers?: IndustryIdentifier[];
-      provenance?: Provenance;
-    }
-  | {
-      /**
-       * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
-       */
-      creative_id: string;
-      /**
-       * Human-readable creative name
-       */
-      name: string;
-      format_kind: CanonicalFormatKind;
-      /**
-       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
-       */
-      capability_id?: string;
-      /**
-       * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
-       */
-      assets: {
-        /**
-         * This interface was referenced by `undefined`'s JSON-Schema definition
-         * via the `patternProperty` "^[a-z0-9_]+$".
-         */
-        [k: string]: AssetVariant | AssetVariant[];
-      };
-      /**
-       * Preview contexts for generative formats - defines what scenarios to generate previews for
-       */
-      inputs?: {
-        /**
-         * Human-readable name for this preview variant
-         */
-        name: string;
-        /**
-         * Macro values to apply for this preview
-         */
-        macros?: {
-          [k: string]: string | undefined;
-        };
-        /**
-         * Natural language description of the context for AI-generated content
-         */
-        context_description?: string;
-      }[];
-      /**
-       * User-defined tags for organization and searchability
-       */
-      tags?: string[];
-      status?: CreativeStatus;
-      /**
-       * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
-       * @minimum 0
-       * @maximum 100
-       */
-      weight?: number;
-      /**
-       * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-       */
-      placement_ids?: string[];
-      /**
-       * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
-       */
-      industry_identifiers?: IndustryIdentifier[];
-      provenance?: Provenance;
-    }
-);
+} & (V1CreativeNamedFormatReference | V2CreativeCanonicalFormatKind);
 /**
  * v2 path. The canonical format name this creative targets (e.g., `image`, `video_hosted`). Mutually exclusive with `format_id`.
  */
@@ -3000,6 +2871,140 @@ export interface IndustryIdentifier {
    * @maxLength 64
    */
   value: string;
+}
+/**
+ * Creative references a named format via the structured `format_id` object. The v1 path; remains supported through 4.x.
+ */
+export interface V1CreativeNamedFormatReference {
+  /**
+   * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
+   */
+  creative_id: string;
+  /**
+   * Human-readable creative name
+   */
+  name: string;
+  format_id: FormatReferenceStructuredObject;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
+   */
+  capability_id?: string;
+  /**
+   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  /**
+   * Preview contexts for generative formats - defines what scenarios to generate previews for
+   */
+  inputs?: {
+    /**
+     * Human-readable name for this preview variant
+     */
+    name: string;
+    /**
+     * Macro values to apply for this preview
+     */
+    macros?: {
+      [k: string]: string | undefined;
+    };
+    /**
+     * Natural language description of the context for AI-generated content
+     */
+    context_description?: string;
+  }[];
+  /**
+   * User-defined tags for organization and searchability
+   */
+  tags?: string[];
+  status?: CreativeStatus;
+  /**
+   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   * @minimum 0
+   * @maximum 100
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+   */
+  placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+}
+/**
+ * Creative declares which canonical format it targets via `format_kind` (e.g., `image`). The v2 path introduced by RFC #3305.
+ */
+export interface V2CreativeCanonicalFormatKind {
+  /**
+   * Unique identifier for the creative. Stable across v1 and v2 paths — a creative registered against v1 `format_id` retains the same `creative_id` when later viewed via v2 flatten.
+   */
+  creative_id: string;
+  /**
+   * Human-readable creative name
+   */
+  name: string;
+  format_kind: CanonicalFormatKind;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED only when the target product has multiple `format_options` entries sharing the same `format_kind`.
+   */
+  capability_id?: string;
+  /**
+   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  /**
+   * Preview contexts for generative formats - defines what scenarios to generate previews for
+   */
+  inputs?: {
+    /**
+     * Human-readable name for this preview variant
+     */
+    name: string;
+    /**
+     * Macro values to apply for this preview
+     */
+    macros?: {
+      [k: string]: string | undefined;
+    };
+    /**
+     * Natural language description of the context for AI-generated content
+     */
+    context_description?: string;
+  }[];
+  /**
+   * User-defined tags for organization and searchability
+   */
+  tags?: string[];
+  status?: CreativeStatus;
+  /**
+   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   * @minimum 0
+   * @maximum 100
+   */
+  weight?: number;
+  /**
+   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
+   */
+  placement_ids?: string[];
+  /**
+   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
 }
 /**
  * Represents available advertising inventory
@@ -6866,68 +6871,7 @@ export type CreativeManifest = {
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
   ext?: ExtensionObject;
-} & (
-  | {
-      format_id: FormatReferenceStructuredObject;
-      /**
-       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
-       */
-      capability_id?: string;
-      /**
-       * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
-       *
-       * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
-       */
-      assets: {
-        /**
-         * This interface was referenced by `undefined`'s JSON-Schema definition
-         * via the `patternProperty` "^[a-z0-9_]+$".
-         */
-        [k: string]: AssetVariant | AssetVariant[];
-      };
-      brand?: BrandReference;
-      /**
-       * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
-       */
-      rights?: RightsConstraint[];
-      /**
-       * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
-       */
-      industry_identifiers?: IndustryIdentifier[];
-      provenance?: Provenance;
-      ext?: ExtensionObject;
-    }
-  | {
-      format_kind: CanonicalFormatKind;
-      /**
-       * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
-       */
-      capability_id?: string;
-      /**
-       * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
-       *
-       * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
-       */
-      assets: {
-        /**
-         * This interface was referenced by `undefined`'s JSON-Schema definition
-         * via the `patternProperty` "^[a-z0-9_]+$".
-         */
-        [k: string]: AssetVariant | AssetVariant[];
-      };
-      brand?: BrandReference;
-      /**
-       * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
-       */
-      rights?: RightsConstraint[];
-      /**
-       * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
-       */
-      industry_identifiers?: IndustryIdentifier[];
-      provenance?: Provenance;
-      ext?: ExtensionObject;
-    }
-);
+} & (V1ManifestNamedFormatReference | V2ManifestCanonicalFormatKind);
 /**
  * Types of rights usage that can be licensed through the brand protocol. Aligned with DDEX UseType direction for interoperability with music and media rights systems.
  */
@@ -8414,6 +8358,72 @@ export interface RightsConstraint {
    * URL where downstream supply chain participants can verify this rights grant is active. Returns HTTP 200 with the current grant status, or 404 if revoked. Enables SSPs and verification vendors to confirm rights before serving.
    */
   verification_url?: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Manifest references a named format via the structured `format_id` object. The v1 path; remains supported through 4.x.
+ */
+export interface V1ManifestNamedFormatReference {
+  format_id: FormatReferenceStructuredObject;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+   */
+  capability_id?: string;
+  /**
+   * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   *
+   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  brand?: BrandReference;
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+  ext?: ExtensionObject;
+}
+/**
+ * Manifest declares which canonical format it targets via `format_kind` (e.g., `image`). The v2 path introduced by RFC #3305.
+ */
+export interface V2ManifestCanonicalFormatKind {
+  format_kind: CanonicalFormatKind;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+   */
+  capability_id?: string;
+  /**
+   * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   *
+   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant[];
+  };
+  brand?: BrandReference;
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
   ext?: ExtensionObject;
 }
 /**
@@ -13189,6 +13199,72 @@ export interface CreativeBrief {
      */
     prohibited_claims?: string[];
   };
+}
+/**
+ * Manifest references a named format via the structured `format_id` object. The v1 path; remains supported through 4.x.
+ */
+export interface V1ManifestNamedFormatReference1 {
+  format_id: FormatReferenceStructuredObject;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+   */
+  capability_id?: string;
+  /**
+   * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   *
+   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant4 | AssetVariant5[];
+  };
+  brand?: BrandReference;
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+  ext?: ExtensionObject;
+}
+/**
+ * Manifest declares which canonical format it targets via `format_kind` (e.g., `image`). The v2 path introduced by RFC #3305.
+ */
+export interface V2ManifestCanonicalFormatKind1 {
+  format_kind: CanonicalFormatKind;
+  /**
+   * v2 path, optional. Stable identifier matching one of the seller's product `format_options[i].capability_id` values. REQUIRED when the target product carries multiple `format_options` entries sharing the same `format_kind` (the buyer must disambiguate which option this manifest matches). When the product's `format_options` has a single entry — or multiple entries with distinct `format_kind` values — `capability_id` is OPTIONAL because `format_kind` alone routes the manifest to the right declaration.
+   */
+  capability_id?: string;
+  /**
+   * Map of slot keys to actual asset content. v1 path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). v2 path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   *
+   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   */
+  assets: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant6 | AssetVariant7[];
+  };
+  brand?: BrandReference;
+  /**
+   * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
+   */
+  rights?: RightsConstraint[];
+  /**
+   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   */
+  industry_identifiers?: IndustryIdentifier[];
+  provenance?: Provenance;
+  ext?: ExtensionObject;
 }
 /**
  * Progress payload for active build_creative task. Returned during AI generation, format transformation, or complex library retrieval with macro resolution.
