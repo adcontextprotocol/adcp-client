@@ -325,6 +325,52 @@ function widenIndexSignaturesOnAnonymousObjects(src: string): string {
   return src.replace(/(\[k: string\]:\s+)([A-Z][\w.]*(?:\[\])?);/g, '$1$2 | undefined;');
 }
 
+/**
+ * `json-schema-to-typescript` collapses the `sync_accounts.accounts[]` oneOf
+ * mode arms to `{ [k: string]: unknown | undefined }` because the beta schema
+ * uses conditional constraints to distinguish provisioning vs settings-update
+ * mode. AJV still enforces those conditionals at runtime; this restores the
+ * opt-in TS surface so beta adopters can type account notification updates.
+ */
+function tightenSyncAccountsModeTypes(src: string): string {
+  const provisioning = `export interface ProvisioningMode {
+  brand: BrandReference;
+  operator: string;
+  billing: BillingParty;
+  account?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  sandbox?: boolean;
+  preferred_reporting_protocol?: CloudStorageProtocol;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
+}`;
+  const settingsUpdate = `export interface SettingsUpdateMode {
+  account: AccountReference;
+  brand?: never;
+  operator?: never;
+  billing?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
+}`;
+
+  let replacements = 0;
+  let next = src.replace(/export interface ProvisioningMode \{\n\s+\[k: string\]: unknown \| undefined;\n\}/, () => {
+    replacements += 1;
+    return provisioning;
+  });
+  next = next.replace(/export interface SettingsUpdateMode \{\n\s+\[k: string\]: unknown \| undefined;\n\}/, () => {
+    replacements += 1;
+    return settingsUpdate;
+  });
+  if (replacements !== 2) {
+    throw new Error(`Expected to rewrite sync_accounts mode interfaces exactly twice, rewrote ${replacements} times.`);
+  }
+  return next;
+}
+
 async function main(): Promise<void> {
   console.log('🔧 Generating AdCP 3.1-beta TypeScript types...');
   const tools = loadTools();
@@ -372,6 +418,7 @@ async function main(): Promise<void> {
   let body = compiled.replace(wrapperPattern, '').trim();
   body = removeNumberedTypeDuplicates(body);
   body = widenIndexSignaturesOnAnonymousObjects(body);
+  body = tightenSyncAccountsModeTypes(body);
 
   const banner = `// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
 // Generated from schemas/cache/${BETA_VERSION}/ via scripts/generate-3-1-beta-types.ts

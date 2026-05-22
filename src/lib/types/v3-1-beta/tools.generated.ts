@@ -11037,13 +11037,29 @@ export interface PaginationResponse {
  * Provisioning-mode entry — natural-key trio is required, `account` is forbidden.
  */
 export interface ProvisioningMode {
-  [k: string]: unknown | undefined;
+  brand: BrandReference;
+  operator: string;
+  billing: BillingParty;
+  account?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  sandbox?: boolean;
+  preferred_reporting_protocol?: CloudStorageProtocol;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
 }
 /**
  * Settings-update entry — `account` (AccountRef) is required, provisioning trio fields are forbidden.
  */
 export interface SettingsUpdateMode {
-  [k: string]: unknown | undefined;
+  account: AccountReference;
+  brand?: never;
+  operator?: never;
+  billing?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
 }
 /**
  * Webhook for async notifications when account status changes (e.g., pending_approval transitions to active).
