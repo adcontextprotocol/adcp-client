@@ -1,5 +1,46 @@
 # Changelog
 
+## 7.11.0
+
+### Minor Changes
+
+- e324942: Add `getSignalId` and `getSignalIssuer` read helpers for `SignalID`
+
+  `SignalID` is a discriminated union (`source: 'catalog' | 'agent'`). Callers that need just the segment identifier or the issuer domain/URL previously had to narrow the union manually or risk reaching for non-existent fields like `sid.catalog_id`.
+
+  Two new exports from `@adcp/sdk`:
+  - `getSignalId(sid)` — returns `sid.id` (the canonical segment identifier, present on both variants)
+  - `getSignalIssuer(sid)` — returns `sid.data_provider_domain` (catalog) or `sid.agent_url` (agent), with an exhaustiveness guard for future union variants
+
+  Complements the existing `signalId.catalog()` / `signalId.agent()` write-path factories.
+
+### Patch Changes
+
+- 9ad3c36: fix(testing): read `media_buy_status` before legacy `status` when storyboard invariants extract media-buy lifecycle observations.
+- 69bf3c7: refactor(v2): centralize AAO canonical agent URL into a shared constant
+
+  Extract `'https://creative.adcontextprotocol.org/'` from
+  `synthesizeFormatIdFromGlob` (registry.ts) into
+  `AAO_CANONICAL_AGENT_URL` in a new `src/lib/v2/projection/constants.ts`.
+  No behavior change — the synthesized `agent_url` value is byte-identical.
+  The JSDoc on the constant documents the distinction from
+  `DEFAULT_MIRROR_HOSTS` (an allowlist of hostnames for `$ref` sandboxing,
+  not an `agent_url` base). Also clarifies the JSDoc on
+  `synthesizeFormatIdFromGlob` to note the `agent_url` is non-normative
+  (registry synthesis is implementation-defined per spec).
+
+- db06bd4: fix(codegen): extend TS7056 post-processor to emit typed `z.ZodType<T, T>` annotations
+
+  The Zod-from-TS post-processor in `scripts/generate-zod-from-ts.ts` annotates schemas that hit TypeScript's `.d.ts` serialization limit (TS7056) with `z.ZodType` so the compiler stops trying to serialize the inferred shape. The previous annotation used the bare `z.ZodType` form, which makes `z.input<typeof X>` resolve to `unknown` — breaking `AdcpToolMap[K]['params']` narrowing for any annotated request schema.
+
+  **Changes:**
+  - `TS7056_SCHEMAS` entries now carry an optional `tsType` field. When present, the annotation uses the 2-type-param Zod v4 form `z.ZodType<T, T>` with `& Record<string, unknown>` widening to reflect runtime `.passthrough()` semantics. Callers' `z.input<...>` reads resolve to the typed shape; downstream destructures keep their field types.
+  - Auto-inject `import type { ... } from './tools.generated'` for the typed annotations.
+  - Pre-emptively annotate five additional schemas (`PreviewCreativeRequestSchema`, `UpdateMediaBuyRequestSchema`, `UpdateMediaBuyResponseSchema`, `BuildCreativeResponseSchema`, `SyncEventSourcesResponseSchema`) — they hit TS7056 on 3.1.0-beta.2 and the annotation is harmless on the current 3.0.12 pin.
+  - One-line cast at the `withOptionalAccount(UpdateMediaBuyRequestSchema)` call site so the framework helper's `z.ZodObject<...>` constraint is satisfied after the annotation widening. Runtime shape unchanged.
+
+  **Why pre-emptive:** the 8.0-beta cut (#1902) needs this codegen behavior to compile its `dist/`. Landing the codegen-tooling fix on `main` decouples it from the 8.0-beta foundation stack and gives any future 3.0.x patch that introduces compound-schema complexity the same treatment for free.
+
 ## 7.10.2
 
 ### Patch Changes
@@ -318,38 +359,39 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-        ```ts
-        import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+            ```ts
+            import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-        const {
-          data: { products },
-        } = await agent.getProducts({ brief: '...' });
-        const product = products[0];
+            const {
+              data: { products },
+            } = await agent.getProducts({ brief: '...' });
+            const product = products[0];
 
-        await agent.createMediaBuy({
-          packages: [
-            {
-              package_id: 'pkg-1',
-              product_id: product.product_id,
-              pricing_option_id: product.pricing_options[0].pricing_option_id,
-              ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-              budget: { currency: 'USD', total: 5000 },
-            },
-          ],
-        });
-        ```
+            await agent.createMediaBuy({
+              packages: [
+                {
+                  package_id: 'pkg-1',
+                  product_id: product.product_id,
+                  pricing_option_id: product.pricing_options[0].pricing_option_id,
+                  ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                  budget: { currency: 'USD', total: 5000 },
+                },
+              ],
+            });
+            ```
 
-        Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-        in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+            Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+            in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
 
-    'empty_input' | 'invalid_product' }`) so adopters can branch on
-"fall back to v1 helpers" vs "this capability genuinely doesn't exist."
-De-duplicates `format_ids` by full identity (`{agent_url, id,
+        'empty_input' | 'invalid_product' }`) so adopters can branch on
+
+    "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+    De-duplicates `format_ids` by full identity (`{agent_url, id,
     width, height, duration_ms}`) — multi-size declarations sharing
-`{agent_url, id}`survive de-dup. When every chosen capability is
-V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
-from the result rather than emitted as`[]`(which would violate the
-wire schema's`minItems: 1` constraint).
+    `{agent_url, id}`survive de-dup. When every chosen capability is
+    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+    from the result rather than emitted as`[]`(which would violate the
+    wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
