@@ -282,7 +282,7 @@ validator's job and lands in a future release.
 
 ## 5. AdCP 3.1.0-beta.2 opt-in
 
-Pin to the beta to validate against its schemas (catalog-sync cluster,
+Pin to the beta to validate against its schemas (wholesale feed surfaces,
 `capability_ids` on PackageRequest, etc.):
 
 ```ts
