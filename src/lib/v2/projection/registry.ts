@@ -28,6 +28,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { BETA_VERSIONS_TO_TRY } from './cache-versions';
 
 interface RegistryEntryV1Pattern {
@@ -270,13 +271,17 @@ export function reverseLookup(canonical: CanonicalFormatKind, params: Record<str
 
 /**
  * Synthesize a v1 format_id from a literal glob and the registry's recorded params.
- * Uses the AAO canonical agent_url base form with trailing slash, matching the
- * seller-asserted fixtures in the spec's reference set
- * (`creative.adcontextprotocol.org/`).
+ *
+ * Uses {@link AAO_CANONICAL_AGENT_URL} as the `agent_url` base. Note that this
+ * value is **non-normative**: the AdCP spec treats registry synthesis as
+ * implementation-defined, so the resulting `agent_url` is a best-effort
+ * fallback that mirrors the AAO reference agent, not a wire-truth value.
+ * Callers that require a seller-authoritative `agent_url` must use the
+ * `v1_format_ref` from the seller's response directly.
  */
 function synthesizeFormatIdFromGlob(glob: string, registryParams: Record<string, unknown>): V1FormatId {
   const out: V1FormatId = {
-    agent_url: 'https://creative.adcontextprotocol.org/',
+    agent_url: AAO_CANONICAL_AGENT_URL,
     id: glob,
   };
   if (typeof registryParams.width === 'number') out.width = registryParams.width;
