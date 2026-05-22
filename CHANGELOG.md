@@ -1,5 +1,113 @@
 # Changelog
 
+## 8.1.0-beta.0
+
+### Minor Changes
+
+- fa99cfc: feat(manifest-helpers): handle `AssetVariant | AssetVariant[]` slot widening (3.1.0-beta.2)
+
+  AdCP 3.1.0-beta.2 widened each `creative_manifest.assets[asset_id]` slot from `AssetVariant` to `AssetVariant | AssetVariant[]` so carousel `cards`, responsive_creative `headlines`, and other multi-element slots can carry multiple assets per asset_id.
+
+  **Changes:**
+  - **`getAsset` / `requireAsset`**: when the slot is an array, return the first element. Preserves pre-3.1 behavior for single-asset callers without breaking the type signature.
+  - **New `getAssetSlot(manifest, assetId, assetType)`**: returns the full array (or single-element array if the slot is scalar), filtered by `asset_type`. Use when authoring carousel / responsive_creative platforms that need every asset in the slot.
+
+  **Adopter migration:**
+  - Single-asset callers: no code change required. `getAsset(m, 'cover_image', 'image')` keeps working whether `cover_image` is a single asset or a one-element array.
+  - Multi-asset callers: switch to `getAssetSlot(m, 'cards', 'image')` to receive the full array.
+
+  Part of the #1902 8.0-beta sweep (4/5 structural breaks closed).
+
+- fa99cfc: feat!: cut 8.0-beta line — flip primary `ADCP_VERSION` pin to `3.1.0-beta.2`
+
+  The SDK's primary AdCP pin moves from `3.0.12` to `3.1.0-beta.2`. Pre-mode is entered with tag `beta`; subsequent changesets accumulate until upstream AdCP 3.1 goes GA and we `changeset pre exit`. Releases publish as `8.0.0-beta.N` under the `@beta` npm dist-tag.
+
+  Per [v8.0-beta plan](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/v8.0-beta-plan.md):
+
+  **Wire compat retained** — `COMPATIBLE_ADCP_VERSIONS` keeps every `3.0.x` GA through `3.0.12` enumerated. An 8.0-beta SDK still talks to a 3.0-pinned seller because the wire is open per spec.
+
+  **Overlay emptied** — `FORWARD_COMPAT_ERROR_CODES` no longer needs `AUTH_MISSING`, `AUTH_INVALID`, `AGENT_SUSPENDED`, `AGENT_BLOCKED`; all four codes are now in the primary manifest-driven `ErrorCodeValues`. The compile-time disjointness check would fail if a code returned to the overlay after manifest adoption.
+
+  **Prerelease pin support added to `scripts/sync-version.ts`** — `3.1.0-beta.x` pins now build a `COMPATIBLE_ADCP_VERSIONS` enumeration that retains 3.0.x compat through the configured `LAST_3_0_GA_PATCH`.
+
+  **Breaking changes** — adopters moving to `8.0.0-beta.N` get the 3.1 typed surface across all schemas (`format_options`, `capability_ids`, `OutcomeMeasurement` reshape, asset shape changes, etc.). Migration story tracked in subsequent `needs:adcp-3.1` PRs.
+
+  **Spec changes folded in this cut:**
+  - AdCP 3.1.0-beta.2 schemas (catalog-sync cluster, V2 projection, write-side helpers, `capability_ids[]` on `PackageRequest`)
+  - Mock-server normative anchor
+
+  **Open follow-ups (separate PRs):**
+  - Envelope `status` REQUIRED on auto-registered `get_adcp_capabilities` handler (adcp release-note explicitly calls SDK out as the gap)
+  - `OutcomeMeasurement` type-import migration
+  - Brand `categories` field shape migration
+  - `AssetVariant` union handling
+  - `creative-asset` `format_id`/`manifest` shape migration
+  - Auto-derive `list_accounts`/`sync_accounts` from `AccountStore` (#1887 hinted)
+  - Drop legacy `mirror.adcontextprotocol.org` from `DEFAULT_MIRROR_HOSTS`
+
+  Closes the foundation work in #1580 (umbrella `needs:adcp-3.1`).
+
+- fa99cfc: fix(governance): drop `categories` from `governance_agents[]` wire emission (3.1.0-beta.2)
+
+  AdCP 3.1.0-beta.2 narrowed the `governance_agents[]` wire shape from `{url, categories?}` to `{url}` only. Per-agent category signaling moved out of band; the spec no longer carries `categories` on the wire.
+
+  **Changes:**
+  - `projectGovernanceAgent` in `src/lib/server/decisioning/account.ts` — emits `{url}` only.
+  - `stripGovernanceAgentSecrets` in `src/lib/server/responses.ts` — drops the `categories` preservation branch.
+  - The inline projection in `syncGovernanceRowToWire` — same.
+  - Tests in `test/lib/sync-governance-credential-strip.test.js` — assert `categories` is now stripped (defense-in-depth alongside the existing `authentication.credentials` strip).
+
+  **Adopter migration:** the SDK no longer emits `categories` on `governance_agents[]`. If your code was reading the field off the wire, it'll see `undefined` — switch to whatever out-of-band channel the seller now uses for per-agent category metadata.
+
+  Part of the #1902 8.0-beta sweep (3/5 structural breaks closed).
+
+- fa99cfc: fix(types): handle `OutcomeMeasurement` → `OutcomeMeasurementDeprecated` rename (AdCP 3.1.0-beta.2)
+
+  3.1.0-beta.2 renamed the `OutcomeMeasurement` interface to `OutcomeMeasurementDeprecated` to signal the surface is on the 4.0 removal track. The rename broke the index.ts re-export and the compat.ts `Measurement` alias.
+
+  **Adopter-facing:** purely additive. The original `OutcomeMeasurement` name continues to resolve (re-exported from `OutcomeMeasurementDeprecated`); adopters who imported the old name keep working unchanged. New code SHOULD import `OutcomeMeasurementDeprecated` to make the deprecation visible at the call site.
+
+  Part of the #1902 8.0-beta sweep (closes one of the 5 structural breaks listed in the foundation PR).
+
+- fa99cfc: feat(preview-utils): adopt 3.1.0-beta.2 self-rendering `product_card` shape
+
+  AdCP 3.1.0-beta.2 changed `product_card` from a creative-agent-rendered shape (`{ format_id, manifest }`) to a self-contained visual card (`{ image, title, description, price_label, cta_label }`). The card IS the preview — no creative-agent round-trip required. (Schema note: "Receivers render the card directly from these fields.")
+
+  **Changes:**
+  - `batchPreviewProducts` rewritten: extracts `product_card.image?.url` directly from the inline card instead of round-tripping through `creativeAgent.previewCreative()`.
+  - `creativeAgentClient` and `options` parameters retained for signature compatibility (renamed to `_creativeAgentClient` / `_options` with the unused-args eslint pragma). Will be removed in 8.0 final or 9.0.
+  - `format_card` and `batchPreviewFormats` are **unchanged** — only `product_card` had this spec migration in 3.1.0-beta.2.
+
+  **Adopter migration:**
+  - Calls to `batchPreviewProducts(products, creativeAgent)` keep returning `PreviewResult[]` with `previewUrl` populated from the new inline `image.url`. No code change required.
+  - Direct field access (`product.product_card?.image?.url`) is now the recommended path; `batchPreviewProducts` is `@deprecated`.
+
+  Part of the #1902 8.0-beta sweep (5/5 structural breaks closed — **CI should now be green** on the foundation stack).
+
+- fa99cfc: feat(test-controller): promote `query_upstream_traffic` to first-class `CONTROLLER_SCENARIOS` member
+
+  AdCP 3.1.0-beta.2 added `query_upstream_traffic` to `ListScenariosSuccess['scenarios']` (spec PR adcp#3816 landed). The SDK previously carried it as an open-extension literal because the schema cache predated the spec PR.
+
+  **Changes:**
+  - `CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC = 'query_upstream_traffic'` — added as a first-class constant.
+  - `SCENARIO_MAP` extended with the `queryUpstreamTraffic` → `QUERY_UPSTREAM_TRAFFIC` mapping; auto-advertised via `scenariosFromStore` (canonical typed path) rather than the open-extension `allScenariosFromStore` path.
+  - Removed the local `QUERY_UPSTREAM_TRAFFIC_SCENARIO` literal and the `as unknown as ComplyTestControllerResponse` cast — `UpstreamTrafficSuccess` is now in the generated `ComplyTestControllerResponse` union.
+  - Exhaustive-scenario test fixture extended with `queryUpstreamTraffic` so the `CONTROLLER_SCENARIOS / SCENARIO_MAP coverage` invariant holds.
+
+  **Adopter migration:** purely additive. Adopters who implement the `queryUpstreamTraffic` store method now get type-safe advertisement; existing code unchanged.
+
+  Part of the #1902 8.0-beta sweep (2/5 structural breaks closed).
+
+### Patch Changes
+
+- 54afaaf: chore: enter changesets pre-mode (tag `beta`) on `main`
+
+  Following the accidental GA publish of `8.0.0`, the 8.x line moves into a beta cycle. From this commit forward, every changeset on `main` accumulates into a prerelease (`8.0.1-beta.N` for patch, `8.1.0-beta.N` for minor, `9.0.0-beta.N` for major) and ships under the `@beta` npm dist-tag.
+
+  The `latest` dist-tag is moved back to `7.11.0` separately via `npm dist-tag add @adcp/sdk@7.11.0 latest`, so `npm install @adcp/sdk` continues to resolve to the stable `7.x` line.
+
+  To exit pre-mode and ship a real GA, run `npx changeset pre exit` on `main` and merge the resulting Release PR.
+
 ## 8.0.0
 
 ### Major Changes
@@ -375,35 +483,36 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-            ```ts
-            import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+                ```ts
+                import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-            const {
-              data: { products },
-            } = await agent.getProducts({ brief: '...' });
-            const product = products[0];
+                const {
+                  data: { products },
+                } = await agent.getProducts({ brief: '...' });
+                const product = products[0];
 
-            await agent.createMediaBuy({
-              packages: [
-                {
-                  package_id: 'pkg-1',
-                  product_id: product.product_id,
-                  pricing_option_id: product.pricing_options[0].pricing_option_id,
-                  ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-                  budget: { currency: 'USD', total: 5000 },
-                },
-              ],
-            });
-            ```
+                await agent.createMediaBuy({
+                  packages: [
+                    {
+                      package_id: 'pkg-1',
+                      product_id: product.product_id,
+                      pricing_option_id: product.pricing_options[0].pricing_option_id,
+                      ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                      budget: { currency: 'USD', total: 5000 },
+                    },
+                  ],
+                });
+                ```
 
-            Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-            in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+                Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+                in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
 
-        'empty_input' | 'invalid_product' }`) so adopters can branch on
+            'empty_input' | 'invalid_product' }`) so adopters can branch on
 
-    "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
-    De-duplicates `format_ids` by full identity (`{agent_url, id,
-width, height, duration_ms}`) — multi-size declarations sharing
+        "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+        De-duplicates `format_ids` by full identity (`{agent_url, id,
+
+    width, height, duration_ms}`) — multi-size declarations sharing
     `{agent_url, id}`survive de-dup. When every chosen capability is
     V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
     from the result rather than emitted as`[]`(which would violate the

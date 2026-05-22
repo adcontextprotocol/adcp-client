@@ -6,5 +6,13 @@
     "@adcp/client": "6.0.0",
     "@adcp/eslint-plugin": "0.1.2"
   },
-  "changesets": []
+  "changesets": [
+    "asset-variant-array-slots",
+    "cut-8-0-beta",
+    "enter-pre-mode-beta",
+    "governance-agents-categories-removed",
+    "outcome-measurement-rename",
+    "product-card-self-rendering",
+    "promote-query-upstream-traffic"
+  ]
 }
