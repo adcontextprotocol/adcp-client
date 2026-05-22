@@ -56,6 +56,7 @@ const platform = {
 
   sales: {
     getProducts: async (req, ctx) => ({
+      status: 'completed',
       products: [
         {
           product_id: 'p_homepage',
@@ -88,6 +89,7 @@ const platform = {
     }),
     syncCreatives: async (creatives, ctx) => creatives.map(c => ({ creative_id: c.creative_id, action: 'created' })),
     getMediaBuyDelivery: async (filter, ctx) => ({
+      status: 'completed',
       currency: 'USD',
       reporting_period: { start: filter.start_date ?? '2026-04-01', end: filter.end_date ?? '2026-04-30' },
       media_buy_deliveries: [],

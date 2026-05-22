@@ -561,22 +561,25 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       const rendered = await upstream.renderCreative(networkCode, creativeId, {});
       // `previewCreative.single({...})` injects
       // `response_type: 'single'`. SHAPE-GOTCHAS §4.
-      return previewCreative.single({
-        previews: [
-          {
-            preview_id: `prv_${creative.creative_id}`,
-            renders: [
-              urlRender({
-                render_id: `rnd_${creative.creative_id}`,
-                preview_url: rendered.preview_url,
-                role: 'primary',
-              }),
-            ],
-            input: { name: 'default' },
-          },
-        ],
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
+      return {
+        status: 'completed' as const,
+        ...previewCreative.single({
+          previews: [
+            {
+              preview_id: `prv_${creative.creative_id}`,
+              renders: [
+                urlRender({
+                  render_id: `rnd_${creative.creative_id}`,
+                  preview_url: rendered.preview_url,
+                  role: 'primary',
+                }),
+              ],
+              input: { name: 'default' },
+            },
+          ],
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }),
+      };
     },
 
     listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {
@@ -585,7 +588,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       // the API key's principal.
       const networkCode = NETWORK_DEFAULT_CODE;
       const upstreamFormats = await upstream.listFormats(networkCode);
-      return { formats: upstreamFormats.map(projectFormat) };
+      return { status: 'completed' as const, formats: upstreamFormats.map(projectFormat) };
     },
 
     syncCreatives: async (creatives: CreativeAsset[], ctx): Promise<SyncCreativesRow[]> => {

@@ -32,8 +32,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.0.0' });
-      assert.strictEqual(client.getAdcpVersion(), '3.0.0');
+      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.3' });
+      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.3');
     });
   });
 
@@ -44,8 +44,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new AgentClient(TEST_AGENT, { adcpVersion: '3.0.0' });
-      assert.strictEqual(client.getAdcpVersion(), '3.0.0');
+      const client = new AgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.3' });
+      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.3');
     });
   });
 
@@ -56,8 +56,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: '3.0.0' });
-      assert.strictEqual(client.getAdcpVersion(), '3.0.0');
+      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: '3.1.0-beta.3' });
+      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.3');
     });
   });
 
@@ -71,24 +71,24 @@ describe('adcpVersion constructor option', () => {
       const server = createAdcpServer({
         name: 'test-server',
         version: '1.0.0',
-        adcpVersion: '3.0.0',
+        adcpVersion: '3.1.0-beta.3',
       });
-      assert.strictEqual(server.getAdcpVersion(), '3.0.0');
+      assert.strictEqual(server.getAdcpVersion(), '3.1.0-beta.3');
     });
 
     test('config.version (app version) and adcpVersion are independent', () => {
       const server = createAdcpServer({
         name: 'test-server',
         version: '7.4.2', // publisher app version
-        adcpVersion: '3.0.0', // protocol version
+        adcpVersion: '3.1.0-beta.3', // protocol version
       });
-      assert.strictEqual(server.getAdcpVersion(), '3.0.0');
+      assert.strictEqual(server.getAdcpVersion(), '3.1.0-beta.3');
     });
   });
 
   describe('parseAdcpMajorVersion', () => {
     test('extracts major from semver', () => {
-      assert.strictEqual(parseAdcpMajorVersion('3.0.1'), 3);
+      assert.strictEqual(parseAdcpMajorVersion('3.1.0-beta.3'), 3);
       assert.strictEqual(parseAdcpMajorVersion('3.0.0'), 3);
       assert.strictEqual(parseAdcpMajorVersion('4.0.0'), 4);
     });
@@ -110,11 +110,12 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('accepts pins that resolve to a bundled version', () => {
-      // SDK ships bundle for ADCP_VERSION's minor; '3.0.0' / '3.0.1' / '3.0'
-      // all collapse to that bundle and accept.
-      assert.strictEqual(resolveAdcpVersion('3.0.0'), '3.0.0');
-      assert.strictEqual(resolveAdcpVersion('3.0.1'), '3.0.1');
-      assert.strictEqual(resolveAdcpVersion('3.0'), '3.0');
+      // SDK bundles the current ADCP_VERSION ('3.1.0-beta.3'). The full-semver
+      // pin, the release-precision prerelease pin, and the release-precision
+      // pin without a numeric tag all resolve to the same bundle.
+      assert.strictEqual(resolveAdcpVersion('3.1.0-beta.3'), '3.1.0-beta.3');
+      assert.strictEqual(resolveAdcpVersion('3.1-beta.3'), '3.1-beta.3');
+      assert.strictEqual(resolveAdcpVersion('3.1-beta'), '3.1-beta');
     });
 
     test('rejects pins for which no schema bundle ships', () => {

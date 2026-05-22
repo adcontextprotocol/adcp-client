@@ -289,7 +289,7 @@ interface OperatorMeta {
   [key: string]: unknown;
 }
 
-function toAdcpSignal(c: UpstreamCohort): GetSignalsResponse['signals'][number] {
+function toAdcpSignal(c: UpstreamCohort): NonNullable<GetSignalsResponse['signals']>[number] {
   const coverage = c.total_universe > 0 ? Math.round((c.member_count / c.total_universe) * 100) : 0;
   return {
     signal_agent_segment_id: c.cohort_id,
@@ -405,7 +405,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
               sid.id === c.data_provider_id
           );
         });
-        return { signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
+        return { status: 'completed', signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
       }),
 
     activateSignal: (req: ActivateSignalRequest, ctx): Promise<ActivateSignalSuccess> =>

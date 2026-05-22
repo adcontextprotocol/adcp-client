@@ -17,6 +17,16 @@ import { mkdtempSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Heap ceiling for the adopter tsc pass. The published `.d.ts` surface
+// across `@adcp/sdk` + `@adcp/sdk/server` pulls in the full 3.1 codegen
+// graph (~25K lines of generated types) without the monorepo's
+// project-wide tsconfig optimizations. On Node's default 4 GiB heap, tsc
+// OOMs during type instantiation before it can emit diagnostics — so
+// adopters debugging the published types get a heap-exhaustion stack
+// trace, not a useful tsc error. 8 GiB clears the current surface with
+// headroom; revisit if the schema cache grows substantially further.
+const TSC_HEAP_MB = 8192;
+
 const REPO_ROOT = join(__dirname, '..');
 
 const ADOPTER_TSCONFIG = {
@@ -51,8 +61,8 @@ void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
 `;
 
-function run(cmd: string, args: string[], cwd: string): void {
-  execFileSync(cmd, args, { cwd, stdio: 'inherit' });
+function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): void {
+  execFileSync(cmd, args, { cwd, stdio: 'inherit', env: env ?? process.env });
 }
 
 function main(): void {
@@ -110,8 +120,12 @@ function main(): void {
   );
 
   console.log('[adopter-types] running tsc --noEmit against published types...');
+  const tscEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--max-old-space-size=${TSC_HEAP_MB}`].filter(Boolean).join(' '),
+  };
   try {
-    run('npx', ['--no-install', 'tsc', '--noEmit'], adopterDir);
+    run('npx', ['--no-install', 'tsc', '--noEmit'], adopterDir, tscEnv);
     console.log('[adopter-types] PASS — published .d.ts files type-check cleanly for an adopter.');
   } catch {
     console.error('[adopter-types] FAIL — published .d.ts files do not type-check on a clean adopter project.');

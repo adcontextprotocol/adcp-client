@@ -140,6 +140,7 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
       // Use `'single'` for one preview-per-request (the common case for
       // stateless template platforms).
       return {
+        status: 'completed',
         response_type: 'single',
         previews: [
           {

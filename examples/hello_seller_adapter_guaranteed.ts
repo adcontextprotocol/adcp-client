@@ -93,7 +93,7 @@ import type {
 
 // `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
 // derive the shape from the response array.
-type Product = GetProductsResponse['products'][number];
+type Product = NonNullable<GetProductsResponse['products']>[number];
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
@@ -751,7 +751,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
+      return { status: 'completed', products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
     },
 
     /**
@@ -1044,7 +1044,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           };
         })
       );
-      return { media_buys: buys };
+      return { status: 'completed', media_buys: buys };
     },
 
     syncCreatives: async (creatives, ctx): Promise<SyncCreativesRow[]> => {
@@ -1052,6 +1052,12 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const rows: SyncCreativesRow[] = [];
       for (const c of creatives) {
         try {
+          if (!c.format_id) {
+            throw new AdcpError('INVALID_REQUEST', {
+              message: 'format_id required on creative manifest',
+              field: 'format_id',
+            });
+          }
           const created = await upstream.createCreative(networkCode, {
             name: c.name,
             format_id: c.format_id.id,
@@ -1100,6 +1106,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const aggregateClicks = present.reduce((s, d) => s + d.totals.clicks, 0);
 
       return {
+        status: 'completed',
         reporting_period: { start: earliest, end: latest },
         currency,
         aggregated_totals: {

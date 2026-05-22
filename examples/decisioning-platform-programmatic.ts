@@ -98,6 +98,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
   sales: SalesCorePlatform<ProgrammaticMeta> & SalesIngestionPlatform<ProgrammaticMeta> = {
     /** Sync discovery: catalog read; no async ceremony. */
     getProducts: async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
+      status: 'completed' as const,
       products: [
         {
           product_id: 'prod_run_of_network_display',
@@ -227,6 +228,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
     },
 
     getMediaBuyDelivery: async (filter: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> => ({
+      status: 'completed' as const,
       currency: 'USD',
       reporting_period: {
         start: filter.start_date ?? '2026-04-01',
@@ -237,6 +239,6 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
 
     // Required on SalesPlatform — the example doesn't model persistent buys,
     // so return empty array. Production adopters would query their store.
-    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
   };
 }

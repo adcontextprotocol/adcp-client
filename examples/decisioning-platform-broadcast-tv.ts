@@ -129,6 +129,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       }
 
       return {
+        status: 'completed' as const,
         products: [
           {
             product_id: 'prod_primetime_30s',
@@ -261,6 +262,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
 
     getMediaBuyDelivery: async (filter: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> => {
       return {
+        status: 'completed' as const,
         currency: 'USD',
         reporting_period: {
           start: filter.start_date ?? '2026-04-01',
@@ -273,7 +275,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
     // Required on SalesPlatform — write-only adopters return an empty array.
     // This affiliate doesn't enumerate buys via this surface (push-channel
     // delivery via webhooks); the empty array is truthful.
-    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
   };
 
   private preflight(req: CreateMediaBuyRequest): { code: string; recovery: string; message: string; field: string }[] {

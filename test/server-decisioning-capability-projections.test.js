@@ -326,7 +326,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(account.supported_billing, ['agent']);
   });
 
-  it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
+  it('omitting all five leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',
       version: '0.0.1',
@@ -335,9 +335,65 @@ describe('Capability projections — declarative capability blocks on Decisionin
     const result = await dispatchCapabilities(server);
     const mb = result.structuredContent?.media_buy;
     // media_buy may exist with framework-derived defaults — what we want is
-    // that the three projection blocks are absent when not declared.
+    // that the projection blocks are absent when not declared.
     assert.strictEqual(mb?.audience_targeting, undefined);
     assert.strictEqual(mb?.conversion_tracking, undefined);
     assert.strictEqual(mb?.content_standards, undefined);
+    assert.strictEqual(mb?.supported_optimization_metrics, undefined);
+    assert.strictEqual(mb?.frequency_capping, undefined);
+  });
+
+  // AdCP 3.1 additions — adcp#4669 (supported_optimization_metrics) +
+  // adcp#4670 (frequency_capping). Closes adcp-client#1853 projection gap.
+
+  it('supported_optimization_metrics projects onto get_adcp_capabilities.media_buy', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        supported_optimization_metrics: ['clicks', 'completed_views', 'views'],
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const som = result.structuredContent?.media_buy?.supported_optimization_metrics;
+    assert.ok(som, `supported_optimization_metrics missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.deepStrictEqual(som, ['clicks', 'completed_views', 'views']);
+  });
+
+  it('frequency_capping projects onto get_adcp_capabilities.media_buy', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        frequency_capping: {
+          supported_per_units: ['impression'],
+          supported_window_units: ['day', 'week'],
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const fc = result.structuredContent?.media_buy?.frequency_capping;
+    assert.ok(fc, `frequency_capping missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.deepStrictEqual(fc.supported_per_units, ['impression']);
+    assert.deepStrictEqual(fc.supported_window_units, ['day', 'week']);
+  });
+
+  it('the 3.1 additions do NOT flip features.* booleans (presence-of-block is the gate)', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        supported_optimization_metrics: ['clicks'],
+        frequency_capping: {
+          supported_per_units: ['impression'],
+          supported_window_units: ['day'],
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const features = result.structuredContent?.media_buy?.features ?? {};
+    // Framework auto-derives the existing flags as `false` when no rich
+    // block is declared. The 3.1 additions must NOT flip them to `true` —
+    // their gate is presence-of-block, not a features.* mirror.
+    assert.notStrictEqual(features.audience_targeting, true);
+    assert.notStrictEqual(features.conversion_tracking, true);
+    assert.notStrictEqual(features.content_standards, true);
   });
 });

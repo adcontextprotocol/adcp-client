@@ -964,23 +964,31 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // Project per-domain capability blocks declared on the platform onto
   // get_adcp_capabilities via createAdcpServer's `overrides.media_buy`
   // deep-merge seam. Adopters declare audience_targeting /
-  // conversion_tracking / content_standards on `platform.capabilities`;
-  // the framework wires the deep-merge so buyers see the discovery
-  // fields without an opaque custom get_adcp_capabilities tool (which
-  // the framework refuses anyway).
+  // conversion_tracking / content_standards / supported_optimization_metrics
+  // / frequency_capping on `platform.capabilities`; the framework wires
+  // the deep-merge so buyers see the discovery fields without an opaque
+  // custom get_adcp_capabilities tool (which the framework refuses anyway).
   //
   // Each rich block also forces the corresponding `media_buy.features.*`
   // boolean to `true`. Buyers gating on `features.audience_targeting`
   // (which the framework auto-derives as `false` by default) would
   // otherwise skip the rich block sitting next to it.
+  //
+  // `supported_optimization_metrics` (adcp#4669) and `frequency_capping`
+  // (adcp#4670) are AdCP 3.1 additions. They have no corresponding
+  // `features.*` boolean — buyers gate on presence of the block itself.
   const at = platform.capabilities.audience_targeting;
   const ct = platform.capabilities.conversion_tracking;
   const cs = platform.capabilities.content_standards;
-  const hasMediaBuyProjection = at != null || ct != null || cs != null;
+  const som = platform.capabilities.supported_optimization_metrics;
+  const fc = platform.capabilities.frequency_capping;
+  const hasMediaBuyProjection = at != null || ct != null || cs != null || som != null || fc != null;
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
     ...(at != null && { audience_targeting: at }),
     ...(ct != null && { conversion_tracking: ct }),
     ...(cs != null && { content_standards: cs }),
+    ...(som != null && { supported_optimization_metrics: som }),
+    ...(fc != null && { frequency_capping: fc }),
     ...(hasMediaBuyProjection && {
       features: {
         ...(at != null && { audience_targeting: true }),
