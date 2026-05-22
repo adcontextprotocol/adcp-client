@@ -979,6 +979,47 @@ describe('default-invariants: status.monotonic', () => {
     assert.ok(out.every(r => r.output.every(o => o.passed)));
   });
 
+  test('reads media_buy_status (3.1 canonical) on create_media_buy responses', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'create',
+        task: 'create_media_buy',
+        response: {
+          status: 'completed',
+          media_buy_id: 'mb-test',
+          media_buy_status: 'pending_creatives',
+          packages: [],
+        },
+      })
+    );
+
+    assert.deepStrictEqual(ctx.state.history.get('media_buy:mb-test'), {
+      stepId: 'create',
+      status: 'pending_creatives',
+    });
+  });
+
+  test('falls back to legacy media_buy status when media_buy_status is absent', () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'create',
+        task: 'create_media_buy',
+        response: { media_buy_id: 'mb-test', status: 'active', packages: [] },
+      })
+    );
+
+    assert.deepStrictEqual(ctx.state.history.get('media_buy:mb-test'), {
+      stepId: 'create',
+      status: 'active',
+    });
+  });
+
   test('media_buy backward transition fails with actionable error (legal targets + enum URL)', () => {
     const out = run([
       step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'active') }),
