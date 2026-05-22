@@ -96,7 +96,8 @@ function createAgent({ taskStore }: ServeContext) {
     accounts: {
       syncAccounts: async (params, ctx) => {
         const results = [];
-        for (const acct of params.accounts) {
+        for (const acctRaw of params.accounts) {
+          const acct = acctRaw as { brand: { domain: string }; operator: string };
           const accountId = `acct_${acct.brand.domain}_${acct.operator}`;
           const existing = await ctx.store.get('accounts', accountId);
           await ctx.store.put('accounts', accountId, {
@@ -113,7 +114,7 @@ function createAgent({ taskStore }: ServeContext) {
             status: 'active' as const,
           });
         }
-        return { accounts: results, context: params.context ?? undefined };
+        return { status: 'completed' as const, accounts: results, context: params.context ?? undefined };
       },
 
       syncGovernance: async (params, ctx) => {
@@ -131,7 +132,12 @@ function createAgent({ taskStore }: ServeContext) {
 
     mediaBuy: {
       getProducts: async (params, ctx) => {
-        return { products: PRODUCTS, sandbox: true, context: params.context ?? undefined };
+        return {
+          status: 'completed' as const,
+          products: PRODUCTS,
+          sandbox: true,
+          context: params.context ?? undefined,
+        };
       },
 
       createMediaBuy: async (params, ctx) => {
@@ -204,6 +210,7 @@ function createAgent({ taskStore }: ServeContext) {
           buys = result.items;
         }
         return {
+          status: 'completed' as const,
           media_buys: buys.map(b => ({
             media_buy_id: b.media_buy_id as string,
             status: b.status as any,
@@ -215,7 +222,7 @@ function createAgent({ taskStore }: ServeContext) {
       },
 
       listCreativeFormats: async (params, ctx) => {
-        return { formats: FORMATS, context: params.context ?? undefined };
+        return { status: 'completed' as const, formats: FORMATS, context: params.context ?? undefined };
       },
 
       syncCreatives: async (params, ctx) => {
@@ -239,6 +246,7 @@ function createAgent({ taskStore }: ServeContext) {
         const now = new Date();
         const yesterday = new Date(now.getTime() - 86400000);
         return {
+          status: 'completed' as const,
           reporting_period: { start: yesterday.toISOString(), end: now.toISOString() },
           media_buy_deliveries: ids.map(id => ({
             media_buy_id: id,

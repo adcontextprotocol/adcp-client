@@ -121,7 +121,7 @@ function createAgent({ taskStore }: ServeContext) {
       return result.items[0] ?? null;
     },
     mediaBuy: {
-      getProducts: async () => ({ products: [], context: {} }),
+      getProducts: async () => ({ status: 'completed' as const, products: [], context: {} }),
       createMediaBuy: async params => ({
         media_buy_id: `mb-${Date.now()}`,
         status: 'active' as const,
