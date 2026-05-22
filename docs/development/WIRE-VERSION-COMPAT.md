@@ -498,7 +498,7 @@ And the matching `typesVersions` entry.
 
 ### 6. Test the runtime path
 
-Add a test to `test/lib/schema-loader-per-version.test.js` that compiles `getValidator('<some_tool>', 'request', '<your_version>')` and validates a payload exercising at least one new field. The 3.1-beta test (test name `'3.1.0-beta.1 opt-in bundle compiles and accepts catalog-sync request fields'`) is the precedent. Without this, the type surface ships green but a runtime-validator regression can slip in.
+Add a test to `test/lib/schema-loader-per-version.test.js` that compiles `getValidator('<some_tool>', 'request', '<your_version>')` and validates a payload exercising at least one new field. The 3.1-beta test (test name `'3.1.0-beta.1 opt-in bundle compiles and accepts wholesale feed request fields'`) is the precedent. Without this, the type surface ships green but a runtime-validator regression can slip in.
 
 ### 7. Changeset + PR
 

@@ -1,7 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { CatalogSync } = require('../../dist/lib/catalog-sync/index.js');
+const { WholesaleFeedSync } = require('../../dist/lib/wholesale-feed-sync/index.js');
 
 function makeCapabilitiesResult(stanza) {
   return { data: stanza };
@@ -84,7 +84,7 @@ function makeWebhook(event, { version = 'v2', previous = 'v1', cache_scope = 'pu
     notification_id: event.event_id,
     notification_type: event.event_type,
     fired_at: '2026-05-22T12:00:00Z',
-    subscriber_id: 'catalog-sync',
+    subscriber_id: 'wholesale-feed-sync',
     account_id: 'acc_acme',
     wholesale_feed_version: version,
     previous_wholesale_feed_version: previous,
@@ -125,7 +125,7 @@ function makeStubClient(opts = {}) {
   return { client, calls };
 }
 
-describe('CatalogSync beta 3 wholesale feed flow', () => {
+describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
   const account = { account_id: 'acc_acme' };
 
   test('resolves auto-poll from wholesale_feed_versioning and records webhook event types', async () => {
@@ -135,13 +135,12 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
         wholesale_feed_webhooks: { supported: true, event_types: ['product.updated', 'wholesale_feed.bulk_change'] },
       },
     });
-    const sync = new CatalogSync({ client });
+    const sync = new WholesaleFeedSync({ client });
 
     await sync.start();
 
     assert.strictEqual(sync.mode, 'auto-poll');
     assert.strictEqual(sync.capabilities.wholesaleFeedVersioning, true);
-    assert.strictEqual(sync.capabilities.catalogVersioning, true, 'legacy alias remains true');
     assert.strictEqual(sync.capabilities.webhooks, true);
     assert.deepStrictEqual([...sync.capabilities.eventTypes], ['product.updated', 'wholesale_feed.bulk_change']);
     sync.stop();
@@ -186,7 +185,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
         });
       },
     });
-    const sync = new CatalogSync({ client, account });
+    const sync = new WholesaleFeedSync({ client, account });
 
     await sync.start();
     await sync.refresh();
@@ -210,10 +209,10 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
       getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
       getSignals: () => makeSignalsResult([makeSignal('s1')], { wholesale_feed_version: 'sv1' }),
     });
-    const sync = new CatalogSync({
+    const sync = new WholesaleFeedSync({
       client,
       account,
-      webhookScope: { accountId: 'acc_acme', subscriberId: 'catalog-sync' },
+      webhookScope: { accountId: 'acc_acme', subscriberId: 'wholesale-feed-sync' },
     });
     const typed = [];
     const wildcard = [];
@@ -252,6 +251,66 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     sync.stop();
   });
 
+  test('applyWebhook applies signal created, updated, and removed deltas', async () => {
+    const { client } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: {
+          supported: true,
+          event_types: ['signal.created', 'signal.updated', 'signal.removed'],
+        },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: () => makeProductsResult([], { wholesale_feed_version: 'products-v1' }),
+      getSignals: () => makeSignalsResult([makeSignal('s1')], { wholesale_feed_version: 'sv1' }),
+    });
+    const sync = new WholesaleFeedSync({
+      client,
+      account,
+      webhookScope: { accountId: 'acc_acme', subscriberId: 'wholesale-feed-sync' },
+    });
+    const typed = [];
+    sync.on('signal.created', ({ event }) => typed.push(event.event_type));
+    sync.on('signal.updated', ({ event }) => typed.push(event.event_type));
+    sync.on('signal.removed', ({ event }) => typed.push(event.event_type));
+
+    await sync.start();
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('signal.created', 'signal', 's2', {
+          signal_agent_segment_id: 's2',
+          signal: makeSignal('s2'),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'sv2', previous: 'sv1' }
+      )
+    );
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('signal.updated', 'signal', 's2', {
+          signal_agent_segment_id: 's2',
+          signal: makeSignal('s2', { name: 'Updated Signal' }),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'sv3', previous: 'sv2' }
+      )
+    );
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('signal.removed', 'signal', 's1', {
+          signal_agent_segment_id: 's1',
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'sv4', previous: 'sv3' }
+      )
+    );
+
+    assert.strictEqual(sync.signals.get('s2').name, 'Updated Signal');
+    assert.strictEqual(sync.signals.get('s1'), undefined);
+    assert.deepStrictEqual(typed, ['signal.created', 'signal.updated', 'signal.removed']);
+    sync.stop();
+  });
+
   test('wholesale_feed.bulk_change repairs by re-reading the affected wholesale mirror', async () => {
     let phase = 'initial';
     const { client, calls } = makeStubClient({
@@ -264,7 +323,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
         return makeProductsResult([makeProduct('p1'), makeProduct('p2')], { wholesale_feed_version: 'v2' });
       },
     });
-    const sync = new CatalogSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
     const reasons = [];
     sync.on('resyncing', ({ reason }) => reasons.push(reason));
 
@@ -289,6 +348,78 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     sync.stop();
   });
 
+  test('signal wholesale_feed.bulk_change repairs only the signal mirror', async () => {
+    let phase = 'initial';
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['wholesale_feed.bulk_change'] },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'products-v1' }),
+      getSignals: () => {
+        if (phase === 'initial') return makeSignalsResult([makeSignal('s1')], { wholesale_feed_version: 'sv1' });
+        return makeSignalsResult([makeSignal('s1'), makeSignal('s2')], { wholesale_feed_version: 'sv2' });
+      },
+    });
+    const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const reasons = [];
+    const productEvents = [];
+    sync.on('resyncing', ({ reason }) => reasons.push(reason));
+    sync.on('event', ({ event }) => {
+      if (event.entity_type === 'product') productEvents.push(event);
+    });
+
+    await sync.start();
+    phase = 'bulk';
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-signals-1', {
+          summary: 'Signal taxonomy refresh',
+          affected_count: 2,
+          affected_entity_type: 'signal',
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'sv2', previous: 'sv1' }
+      )
+    );
+
+    assert.deepStrictEqual(reasons, ['bulk_change']);
+    assert.strictEqual(sync.products.count, 1);
+    assert.strictEqual(sync.signals.count, 2);
+    assert.ok(sync.signals.get('s2'));
+    assert.strictEqual(calls.getProducts.length, 1);
+    assert.strictEqual(calls.getSignals.length, 2);
+    assert.strictEqual(productEvents.length, 0);
+    sync.stop();
+  });
+
+  test('malformed bulk_change deliveries are deduped after terminal rejection', async () => {
+    const { client } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['wholesale_feed.bulk_change'] },
+      },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const webhook = makeWebhook(
+      makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-bad', {
+        summary: 'Malformed feed refresh',
+        affected_count: 1,
+        applies_to: { scope: 'public' },
+      }),
+      { version: 'v2', previous: 'v1' }
+    );
+
+    await sync.start();
+    await assert.rejects(() => sync.applyWebhook(webhook), /affected_entity_type/);
+    await sync.applyWebhook(webhook);
+
+    assert.strictEqual(sync.products.count, 1);
+    sync.stop();
+  });
+
   test('out-of-order webhook version repairs instead of applying stale delta', async () => {
     let phase = 'initial';
     const { client } = makeStubClient({
@@ -301,7 +432,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
         return makeProductsResult([makeProduct('p1', { name: 'Repaired Product' })], { wholesale_feed_version: 'v6' });
       },
     });
-    const sync = new CatalogSync({ client, account });
+    const sync = new WholesaleFeedSync({ client, account });
     const reasons = [];
     sync.on('resyncing', ({ reason }) => reasons.push(reason));
 
@@ -327,7 +458,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     const { client } = makeStubClient({
       getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
-    const sync = new CatalogSync({ client });
+    const sync = new WholesaleFeedSync({ client });
     await sync.start();
 
     await assert.rejects(
@@ -352,10 +483,10 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     const { client } = makeStubClient({
       getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
-    const sync = new CatalogSync({
+    const sync = new WholesaleFeedSync({
       client,
       account,
-      webhookScope: { accountId: 'acc_acme', subscriberId: 'catalog-sync' },
+      webhookScope: { accountId: 'acc_acme', subscriberId: 'wholesale-feed-sync' },
     });
     await sync.start();
 
@@ -398,7 +529,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     const { client } = makeStubClient({
       getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
-    const sync = new CatalogSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const sync = new WholesaleFeedSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
     const seen = [];
     sync.on('product.updated', ({ event }) => seen.push(event.event_id));
 
@@ -424,7 +555,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
     const { client } = makeStubClient({
       getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
-    const sync = new CatalogSync({ client, account });
+    const sync = new WholesaleFeedSync({ client, account });
     const observedNames = [];
     sync.on('event', () => observedNames.push(sync.products.get('p1').name));
 
@@ -464,7 +595,7 @@ describe('CatalogSync beta 3 wholesale feed flow', () => {
         });
       },
     });
-    const sync = new CatalogSync({ client, account });
+    const sync = new WholesaleFeedSync({ client, account });
 
     await sync.start();
     await sync.applyWebhook(
