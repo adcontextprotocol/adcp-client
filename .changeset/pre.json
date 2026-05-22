@@ -9,6 +9,7 @@
   "changesets": [
     "1853-1818-capability-projection",
     "asset-variant-array-slots",
+    "codegen-flatten-allof-not-branches",
     "cut-8-0-beta",
     "enter-pre-mode-beta",
     "fix-zod-schemas-test-envelope-status",
