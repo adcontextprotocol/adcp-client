@@ -1,16 +1,16 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-beta.2/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-beta.3/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-beta.2.
+ * Manifest-derived constants for AdCP 3.1.0-beta.3.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
  * mapping. Replaces the hand-curated tables that previously lived in
  * `src/lib/utils/capabilities.ts` and `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-beta.2/manifest.json` (adcp_version: 3.1.0-beta.2, generated_at:
- * 2026-05-20T19:48:22.093Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-beta.3/manifest.json` (adcp_version: 3.1.0-beta.3, generated_at:
+ * 2026-05-22T11:38:24.559Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -380,11 +380,6 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "re-negotiate via get_products in 'refine' mode against the existing proposal_id to obtain a fresh quote, then resubmit against the new proposal_id"
   },
-  RETENTION_EXPIRED: {
-    description: "Returned by the catalog change-feed `GET /catalog/events` endpoint for any well-formed `cursor` the agent cannot locate in its current event log — whether because (a) the cursor is older than the agent's declared `catalog_change_feed.retention_window_days` and the event has been pruned, (b) the cursor originates from a different agent and was never present here, or (c) some other operational reason for log absence (compaction, schema migration, replay-window reset). UUID v7 carries no agent identity, so the agent cannot distinguish these cases at lookup time and they share a single error code by design — the remediation is identical regardless. Distinct from `INVALID_REQUEST` (cursor is structurally malformed, e.g. not a UUID — the buyer can fix that locally) by being narrowly about state the agent no longer holds.",
-    recovery: "correctable",
-    suggestion: "do NOT retry against /catalog/events with the same cursor — the agent no longer holds events that old. Re-bootstrap the catalog mirror via get_products buying_mode: 'wholesale' and/or get_signals discovery_mode: 'wholesale', persist the new catalog_version, then resume feed polling from a fresh cursor"
-  },
   SCOPE_INSUFFICIENT: {
     description: "The authenticated caller is not authorized for the invoked task — the task is not in the caller's `allowed_tasks` for this account (discoverable via the `authorization` object on sync_accounts / list_accounts responses). Distinct from `PERMISSION_DENIED` (generic authz failure, often credential-shaped) by being narrowly about task-level scope. Sellers SHOULD populate `error.details.introspection_hint` pointing at where the caller can re-read its scope (strawman: `{ task: 'list_accounts', account: {...} }`).",
     recovery: "correctable",
@@ -409,6 +404,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "Referenced signal does not exist in the agent's catalog. Sellers MUST return this code uniformly for any signal_id not accessible to the calling account — never distinguish 'exists but unauthorized' from 'does not exist', which would enable cross-tenant enumeration.",
     recovery: "correctable",
     suggestion: "verify signal_id via get_signals, or confirm the signal is available from this agent"
+  },
+  STALE_RESPONSE: {
+    description: "Non-fatal advisory raised when the seller's live fetch to an upstream or sub-agent failed (timeout, connection error, downstream 5xx) and the response payload was satisfied from a cached prior result that is past the seller's freshness target for this surface. Emitted **alongside** a populated success payload — the caller's request still completes from a usable cache hit; this code tells downstream consumers that the data is older than the seller would normally serve. Distinct from `SERVICE_UNAVAILABLE` (seller's own service is down, no payload — transient, retry-with-backoff) by signalling **graceful degradation**: the seller's own service is fine, but one of its dependencies is currently unreachable and the seller chose to honor the request from cache rather than return empty. Sellers MUST emit `STALE_RESPONSE` ONLY when the response payload is non-empty AND derived from a cache entry whose `cache_age_seconds` exceeds the surface's freshness target. When no cached entry exists (or the cache hit is within freshness target), sellers MUST NOT emit this code — return the empty-or-fresh response with whatever upstream-failure code applies (e.g., `SERVICE_UNAVAILABLE`). **Wire placement (normative).** Transport-level success markers stay flipped to success (HTTP 200, MCP `isError: false`, A2A `succeeded`) — the task ran successfully and produced a response, even if from cache. The advisory rides in `errors[]` on the payload and MUST NOT be promoted to `adcp_error` on the envelope (envelope-level errors are reserved for the empty-payload failure case per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`). `error.field` SHOULD point at the affected payload path (e.g., `formats` for `list_creative_formats`, `products` for `get_products`). `error.details` SHOULD conform to `error-details/stale-response.json` — `served_from_cache` (required, always `true`), `cache_age_seconds` (required), and optionally `freshness_target_seconds`, `upstream` (the dependency that failed), and `original_error` (the underlying failure code/message). **Multiple stale upstreams.** When N sub-agents are stale (e.g., a `list_creative_formats` registry aggregating from multiple creative agents), the seller SHOULD emit **one `STALE_RESPONSE` entry per affected upstream** rather than aggregating — the per-upstream shape mirrors the existing precedent set by `PIXEL_TRACKER_LOSSY_DOWNGRADE` (one advisory per downgraded asset) and lets buyer agents reason about which sub-population of the payload is stale. Each entry's `error.field` SHOULD narrow to the affected slice (e.g., `formats` for formats sourced from the stale upstream).",
+    recovery: "transient",
+    suggestion: "advisory — emitted alongside a populated payload that was served from cache past the seller's freshness target because an upstream or sub-agent was unreachable. The response is usable; treat as non-fatal. Inspect `error.details.cache_age_seconds` to decide whether to immediately retry for fresh data or accept the cached value; the seller's own service is healthy, so retry is safe (it does not amplify the upstream failure)"
   },
   TERMS_REJECTED: {
     description: "Buyer-proposed measurement_terms were rejected by the seller. The error details SHOULD identify which specific term was rejected and the seller's acceptable range or supported vendors.",

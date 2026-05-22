@@ -1,5 +1,96 @@
 # Changelog
 
+## 8.0.0
+
+### Major Changes
+
+- 93d390d: Remove the beta `CatalogSync` surface and replace it with `WholesaleFeedSync` / `@adcp/sdk/wholesale-feed-sync`. This removes the old `@adcp/sdk/catalog-sync` subpath, the `catalogVersioning` capability alias, the beta direct-feed config keys (`feedOrigin`, `feedHeaders`, `maxFeedResponseBytes`, `pollIntervalMs`, `cursorStore`, `fetch`), and the cursor-store re-exports from that subpath.
+
+  Wholesale feed webhooks now repair only the affected product or signal feed on `wholesale_feed.bulk_change`, fail closed on missing or invalid `affected_entity_type`, and record terminally rejected bulk-change deliveries in the webhook dedupe store before rethrowing.
+
+### Minor Changes
+
+- 2c3b589: Add `@adcp/sdk/webhooks` with `verifyWebhookRequest`, a standalone verifier for legacy HMAC-SHA256 webhook deliveries. The helper verifies exact raw body bytes, normalizes `x-adcp-*` header casing, enforces timestamp skew, uses constant-time comparison, and returns structured failure reasons for receiver endpoints that need diagnostic responses.
+
+### Patch Changes
+
+- 4cb1620: Pick up AdCP 3.1.0-beta.3 wholesale feed schemas, including account-level `sync_accounts` notification configs for product/signal feed webhooks. The wholesale feed mirror now uses `if_wholesale_feed_version` conditional reads and applies inbound `WholesaleFeedWebhook` payloads directly; the removed `/catalog/events` polling path is no longer used.
+
+## 7.11.0
+
+### Minor Changes
+
+- e324942: Add `getSignalId` and `getSignalIssuer` read helpers for `SignalID`
+
+  `SignalID` is a discriminated union (`source: 'catalog' | 'agent'`). Callers that need just the segment identifier or the issuer domain/URL previously had to narrow the union manually or risk reaching for non-existent fields like `sid.catalog_id`.
+
+  Two new exports from `@adcp/sdk`:
+  - `getSignalId(sid)` — returns `sid.id` (the canonical segment identifier, present on both variants)
+  - `getSignalIssuer(sid)` — returns `sid.data_provider_domain` (catalog) or `sid.agent_url` (agent), with an exhaustiveness guard for future union variants
+
+  Complements the existing `signalId.catalog()` / `signalId.agent()` write-path factories.
+
+### Patch Changes
+
+- 9ad3c36: fix(testing): read `media_buy_status` before legacy `status` when storyboard invariants extract media-buy lifecycle observations.
+- 69bf3c7: refactor(v2): centralize AAO canonical agent URL into a shared constant
+
+  Extract `'https://creative.adcontextprotocol.org/'` from
+  `synthesizeFormatIdFromGlob` (registry.ts) into
+  `AAO_CANONICAL_AGENT_URL` in a new `src/lib/v2/projection/constants.ts`.
+  No behavior change — the synthesized `agent_url` value is byte-identical.
+  The JSDoc on the constant documents the distinction from
+  `DEFAULT_MIRROR_HOSTS` (an allowlist of hostnames for `$ref` sandboxing,
+  not an `agent_url` base). Also clarifies the JSDoc on
+  `synthesizeFormatIdFromGlob` to note the `agent_url` is non-normative
+  (registry synthesis is implementation-defined per spec).
+
+- db06bd4: fix(codegen): extend TS7056 post-processor to emit typed `z.ZodType<T, T>` annotations
+
+  The Zod-from-TS post-processor in `scripts/generate-zod-from-ts.ts` annotates schemas that hit TypeScript's `.d.ts` serialization limit (TS7056) with `z.ZodType` so the compiler stops trying to serialize the inferred shape. The previous annotation used the bare `z.ZodType` form, which makes `z.input<typeof X>` resolve to `unknown` — breaking `AdcpToolMap[K]['params']` narrowing for any annotated request schema.
+
+  **Changes:**
+  - `TS7056_SCHEMAS` entries now carry an optional `tsType` field. When present, the annotation uses the 2-type-param Zod v4 form `z.ZodType<T, T>` with `& Record<string, unknown>` widening to reflect runtime `.passthrough()` semantics. Callers' `z.input<...>` reads resolve to the typed shape; downstream destructures keep their field types.
+  - Auto-inject `import type { ... } from './tools.generated'` for the typed annotations.
+  - Pre-emptively annotate five additional schemas (`PreviewCreativeRequestSchema`, `UpdateMediaBuyRequestSchema`, `UpdateMediaBuyResponseSchema`, `BuildCreativeResponseSchema`, `SyncEventSourcesResponseSchema`) — they hit TS7056 on 3.1.0-beta.2 and the annotation is harmless on the current 3.0.12 pin.
+  - One-line cast at the `withOptionalAccount(UpdateMediaBuyRequestSchema)` call site so the framework helper's `z.ZodObject<...>` constraint is satisfied after the annotation widening. Runtime shape unchanged.
+
+  **Why pre-emptive:** the 8.0-beta cut (#1902) needs this codegen behavior to compile its `dist/`. Landing the codegen-tooling fix on `main` decouples it from the 8.0-beta foundation stack and gives any future 3.0.x patch that introduces compound-schema complexity the same treatment for free.
+
+## 7.10.2
+
+### Patch Changes
+
+- 9d111a1: fix(v2/projection): resolve v1-canonical-mapping.json and canonical schemas from `dist/lib/schemas-data/` in published tarballs
+
+  The v1↔v2 projection loaders (`registry.ts`, `canonical-properties.ts`) walked `schemas/cache/<version>/registries/` and `schemas/cache/<version>/formats/canonical/` relative to their source location — paths that exist in the SDK author's worktree but NOT in the published npm tarball (the `files` glob ships `dist/lib/schemas-data/<version>/...` per `scripts/copy-schemas-to-dist.ts`). Same shape of bug as the AAO catalog regression fixed in 7.10.1; this is the sibling.
+
+  After `npm install @adcp/sdk@7.10.1` and exercising `get_products`-class augmentation on a 3.1.0-beta.2-aware product, both loaders threw at first call — manifested in compliance matrices as cascading failures off the first product-discovery step (45/280 on `/sales` vs the 74/380 floor regardless of which fixture was missing, because the failure cascades the same way).
+
+  Both loaders now try the published-tarball path (`dist/lib/schemas-data/<version>/...`) first and fall through to the source-tree path (`schemas/cache/<version>/...`) only when running from a checkout pre-`build:lib`. Error messages updated to point at the issue tracker rather than asking adopters to vendor the SDK's packaging gap themselves.
+
+## 7.10.1
+
+### Patch Changes
+
+- 0b5f42e: fix(v2/projection): vendor `aao-reference-formats.json` into the published bundle
+
+  The v1↔v2 projection loader (`v2/projection/catalog.ts`, new in 7.10) requires
+  the AAO canonical-formats catalog at runtime. The previous build resolved it
+  from `test/lib/v2-projection-fixtures/aao-reference-formats.json` (not in the
+  published `files` glob) and `.context/adcp-3307/...` (a dev-machine path),
+  so any consumer that exercised `get_products`-class augmentation
+  (`augmentProductWithFormatOptions` / `withFormatOptions`) crashed with
+  `AAO catalog (reference-formats.json) not found`.
+
+  The build now copies the fixture to `dist/lib/v2/projection/aao-reference-formats.json`
+  via `scripts/copy-v2-projection-catalog.ts`, and the loader looks adjacent to
+  its compiled location first. The source-tree `test/` path is retained as a
+  dev fallback (tsx / vitest / source checkouts) but is not required for the
+  published bundle to function.
+
+  Reported as adcontextprotocol/adcp-client#1909.
+
 ## 7.10.0
 
 ### Minor Changes
@@ -284,37 +375,39 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-    ```ts
-    import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+            ```ts
+            import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-    const {
-      data: { products },
-    } = await agent.getProducts({ brief: '...' });
-    const product = products[0];
+            const {
+              data: { products },
+            } = await agent.getProducts({ brief: '...' });
+            const product = products[0];
 
-    await agent.createMediaBuy({
-      packages: [
-        {
-          package_id: 'pkg-1',
-          product_id: product.product_id,
-          pricing_option_id: product.pricing_options[0].pricing_option_id,
-          ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-          budget: { currency: 'USD', total: 5000 },
-        },
-      ],
-    });
-    ```
+            await agent.createMediaBuy({
+              packages: [
+                {
+                  package_id: 'pkg-1',
+                  product_id: product.product_id,
+                  pricing_option_id: product.pricing_options[0].pricing_option_id,
+                  ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                  budget: { currency: 'USD', total: 5000 },
+                },
+              ],
+            });
+            ```
 
-    Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-    in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
-'empty_input' | 'invalid_product' }`) so adopters can branch on
+            Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+            in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+
+        'empty_input' | 'invalid_product' }`) so adopters can branch on
+
     "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
     De-duplicates `format_ids` by full identity (`{agent_url, id,
 width, height, duration_ms}`) — multi-size declarations sharing
-    `{agent_url, id}` survive de-dup. When every chosen capability is
-    V2-only (no `v1_format_ref`), `format_ids` is **omitted entirely**
-    from the result rather than emitted as `[]` (which would violate the
-    wire schema's `minItems: 1` constraint).
+    `{agent_url, id}`survive de-dup. When every chosen capability is
+    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+    from the result rather than emitted as`[]`(which would violate the
+    wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to

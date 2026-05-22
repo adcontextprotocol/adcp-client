@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 feat!: cut 8.0-beta line — flip primary `ADCP_VERSION` pin to `3.1.0-beta.2`

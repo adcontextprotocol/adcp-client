@@ -9,6 +9,7 @@ import { ConfigurationManager } from './ConfigurationManager';
 import { CreativeAgentClient, STANDARD_CREATIVE_AGENTS } from './CreativeAgentClient';
 import type { CreativeFormat } from './CreativeAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo } from './ConversationTypes';
+import type { WebhookHeaderValue } from '../webhooks';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -956,12 +957,25 @@ export class ADCPMultiAgentClient {
    *
    * @example
    * ```typescript
-   * app.post('/webhook', async (req, res) => {
-   *   const signature = req.headers['x-adcp-signature'];
-   *   const timestamp = req.headers['x-adcp-timestamp'];
+   * import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
    *
+   * app.post('/webhook', async (req, res) => {
    *   try {
-   *     const handled = await client.handleWebhook(req.body, signature, timestamp);
+   *     const check = verifyWebhookRequest({
+   *       rawBody: req.rawBody,
+   *       headers: req.headers,
+   *       globalSecret: process.env.WEBHOOK_SECRET,
+   *     });
+   *     if (!check.ok) return res.status(401).json({ error: check.reason });
+   *
+   *     const handled = await client.handleWebhook(
+   *       req.body,
+   *       req.params.taskType,
+   *       req.params.operationId,
+   *       check.signature,
+   *       check.timestamp,
+   *       req.rawBody
+   *     );
    *     res.status(200).json({ received: handled });
    *   } catch (error) {
    *     res.status(401).json({ error: error.message });
@@ -973,9 +987,9 @@ export class ADCPMultiAgentClient {
     payload: any,
     taskType: string,
     operationId: string,
-    signature?: string,
-    timestamp?: string | number,
-    rawBody?: string
+    signature?: WebhookHeaderValue,
+    timestamp?: WebhookHeaderValue,
+    rawBody?: string | Buffer | Uint8Array
   ): Promise<boolean> {
     // Extract agent ID from payload
     // Webhook payloads include agent_id or we can infer from operation_id pattern

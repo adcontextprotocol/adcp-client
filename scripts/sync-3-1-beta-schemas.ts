@@ -1,10 +1,11 @@
 #!/usr/bin/env tsx
 /**
- * Opt-in sync of the AdCP 3.1.0-beta.2 schema bundle into
- * `schemas/cache/3.1.0-beta.2/`. The SDK's primary pin stays at the
+ * Opt-in sync of the AdCP 3.1.0-beta.3 schema bundle into
+ * `schemas/cache/3.1.0-beta.3/`. The SDK's primary pin stays at the
  * `ADCP_VERSION` file value (3.0.x GA); clients pinning `adcpVersion:
- * "3.1.0-beta.2"` or `"3.1-beta"` get strict validation against the beta
- * schemas (conditional fetch, wholesale signals, catalog change-feed).
+ * "3.1.0-beta.3"` or `"3.1-beta"` get strict validation against the beta
+ * schemas (conditional wholesale-feed fetch, wholesale signals, wholesale
+ * feed webhook registration).
  *
  * Wraps `syncSchemas()` so we inherit cosign verification, sha256 check,
  * and tarball extraction. The wrapper restores the `latest` symlink to
@@ -21,7 +22,8 @@ import { syncSchemas } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
-const BETA_VERSION = '3.1.0-beta.2';
+const BETA_VERSION = '3.1.0-beta.3';
+const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
 
 /**
  * Paths that `syncSchemas` overwrites as a side effect of any tarball
@@ -88,7 +90,8 @@ function restoreFromHead(paths: readonly string[]): void {
 async function main(): Promise<void> {
   const primary = getPrimaryAdcpVersion();
   console.log(`🔄 Opt-in sync: AdCP ${BETA_VERSION} (primary pin stays at ${primary})`);
-  await syncSchemas(BETA_VERSION);
+  const delegatedToFallback = await syncBetaSchemasWithFallback();
+  if (delegatedToFallback) return;
   // `syncSchemas` repointed `latest/` at the beta. Move it back so the
   // primary GA pin remains the default bundle for downstream consumers.
   restoreLatestSymlink(SCHEMA_CACHE_DIR, primary);
@@ -98,6 +101,31 @@ async function main(): Promise<void> {
   // opt-in beta — restore them from HEAD.
   restoreFromHead(RESTORE_PATHS);
   console.log(`✅ ${BETA_VERSION} schemas at schemas/cache/${BETA_VERSION}/`);
+}
+
+async function syncBetaSchemasWithFallback(): Promise<boolean> {
+  try {
+    await syncSchemas(BETA_VERSION);
+    return false;
+  } catch (err) {
+    if (process.env.ADCP_BASE_URL || process.env.ADCP_BETA_GITHUB_FALLBACK === '0') {
+      throw err;
+    }
+    console.warn(`⚠️  ${BETA_VERSION} was not reachable from adcontextprotocol.org; retrying against GitHub dist.`);
+    const result = spawnSync('npx', ['tsx', 'scripts/sync-3-1-beta-schemas.ts'], {
+      cwd: REPO_ROOT,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ADCP_BASE_URL: GITHUB_DIST_BASE_URL,
+        ADCP_BETA_GITHUB_FALLBACK: '0',
+      },
+    });
+    if (result.status !== 0) {
+      throw err;
+    }
+    return true;
+  }
 }
 
 if (require.main === module) {

@@ -55,11 +55,43 @@ function postProcessUndefinedImports(content: string): string {
  * after generation. If a new schema hits TS7056 in the future, add it to this list rather
  * than scattering annotations across the codebase.
  */
-const TS7056_SCHEMAS = ['AdCPAsyncResponseDataSchema', 'MCPWebhookPayloadSchema'];
+/**
+ * Schemas that hit TS7056. Each entry maps the schema name to the typed
+ * surface its `z.ZodType<TS>` annotation should carry — without the typed
+ * parameter, callers that destructure `params` get `unknown`, breaking
+ * downstream inference.
+ *
+ * Existing entries (`AdCPAsyncResponseDataSchema`, `MCPWebhookPayloadSchema`)
+ * use bare `z.ZodType` because they're validation-only — adopters consume
+ * the output through `.parse()`'s type-narrowing, not inference. Newer
+ * entries from the 3.1.0-beta.2 pin flip carry a TS type because internal
+ * call sites destructure their output.
+ */
+/**
+ * Schemas that hit TS7056. Entries can carry an optional `tsType` (the
+ * Output/Input TS type for `z.ZodType<T, T>`) and an optional `objectShape`
+ * flag — when true, the schema is annotated as `z.ZodObject<...>` instead
+ * of `z.ZodType<...>` so call sites that need ZodObject methods (like
+ * `withOptionalAccount(...)` which constrains to `z.ZodObject<any>`)
+ * keep working.
+ */
+const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boolean }> = [
+  { name: 'AdCPAsyncResponseDataSchema' },
+  { name: 'MCPWebhookPayloadSchema' },
+  // 3.1.0-beta.2 pin flip — `.and(z.union([...]))` compound patterns push
+  // inferred types past TS7056's .d.ts serialization limit. Carry the TS
+  // type so callers' `params` keep narrowing.
+  { name: 'PreviewCreativeRequestSchema', tsType: 'PreviewCreativeRequest' },
+  { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest' },
+  { name: 'UpdateMediaBuyResponseSchema', tsType: 'UpdateMediaBuyResponse' },
+  { name: 'BuildCreativeResponseSchema', tsType: 'BuildCreativeResponse' },
+  { name: 'SyncEventSourcesResponseSchema', tsType: 'SyncEventSourcesResponse' },
+];
 
 function postProcessTS7056Annotations(content: string): string {
   let result = content;
-  for (const name of TS7056_SCHEMAS) {
+  const typesToImport: string[] = [];
+  for (const { name, tsType, objectShape } of TS7056_SCHEMAS) {
     const pattern = new RegExp(`export const ${name} = `);
     if (!pattern.test(result)) {
       throw new Error(
@@ -67,7 +99,35 @@ function postProcessTS7056Annotations(content: string): string {
           'The schema may have been renamed or removed — update TS7056_SCHEMAS.'
       );
     }
-    result = result.replace(pattern, `export const ${name}: z.ZodType = `);
+    // Object-shaped schemas (pure `z.object({...}).passthrough()`) are
+    // annotated `z.ZodObject<any>` so call sites that constrain to
+    // ZodObject (e.g. `withOptionalAccount<T extends z.ZodObject<any>>`)
+    // keep working. The `any` shape parameter erases inner-field inference
+    // — that's the trade-off TS7056 forces on us, and it's what these call
+    // sites already accept for the in-bound `z.ZodObject<any>` constraint.
+    //
+    // Intersection-shaped schemas (`z.object().passthrough().and(z.union(...))`)
+    // use the 2-type-param `z.ZodType<Output, Input>` form. `z.input<typeof X>`
+    // resolves to the right shape, and `& Record<string, unknown>` reflects
+    // the runtime passthrough so callers expecting `Record<string, unknown>`
+    // keep their narrowing.
+    let annotation: string;
+    if (objectShape) {
+      annotation = 'z.ZodObject<any>';
+    } else if (tsType) {
+      const widened = `${tsType} & Record<string, unknown>`;
+      annotation = `z.ZodType<${widened}, ${widened}>`;
+      typesToImport.push(tsType);
+    } else {
+      annotation = 'z.ZodType';
+    }
+    result = result.replace(pattern, `export const ${name}: ${annotation} = `);
+  }
+  // Inject `import type { ... } from './tools.generated'` for the typed-zod
+  // entries. The compound schemas reference response types defined there.
+  if (typesToImport.length > 0) {
+    const importStatement = `import type { ${typesToImport.join(', ')} } from './tools.generated';\n`;
+    result = result.replace(/import { z } from "zod";\n/, `import { z } from "zod";\n${importStatement}`);
   }
   return result;
 }

@@ -321,8 +321,11 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // the call site before any further calls.
   CREDENTIAL_IN_ARGS: { action: 'escalate', escalateReason: 'terminal' },
 
-  // Retention expired — data is gone; no replay can recover it.
-  RETENTION_EXPIRED: { action: 'escalate', escalateReason: 'terminal' },
+  // 3.1.0-beta.3 added a stale-cache signal: server's representation
+  // changed since the cache anchor; consumer should refresh and retry.
+  // Treated as transient retry-after-mutate since the buyer agent can
+  // typically re-fetch with a fresh anchor and proceed.
+  STALE_RESPONSE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
 };
 
 // ---------------------------------------------------------------------------

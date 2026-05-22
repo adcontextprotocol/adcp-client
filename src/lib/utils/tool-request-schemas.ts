@@ -28,7 +28,10 @@ export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   get_products: schemas.GetProductsRequestSchema,
   create_media_buy: withOptionalAccount(schemas.CreateMediaBuyRequestSchema),
-  update_media_buy: withOptionalAccount(schemas.UpdateMediaBuyRequestSchema),
+  // UpdateMediaBuyRequestSchema is annotated `z.ZodType<...>` (TS7056 workaround
+  // in scripts/generate-zod-from-ts.ts) rather than `z.ZodObject`. Cast back to
+  // ZodObject at the one site that needs it; runtime shape is unchanged.
+  update_media_buy: withOptionalAccount(schemas.UpdateMediaBuyRequestSchema as unknown as z.ZodObject<z.ZodRawShape>),
   get_media_buys: schemas.GetMediaBuysRequestSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,

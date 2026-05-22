@@ -67,7 +67,7 @@ describe('schema-loader per-version state', () => {
   });
 
   test('resolveBundleKey keeps prereleases exact', () => {
-    assert.strictEqual(resolveBundleKey('3.1.0-beta.2'), '3.1.0-beta.2');
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.3'), '3.1.0-beta.3');
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
   });
 
@@ -176,7 +176,7 @@ describe('schema-loader per-version state', () => {
     );
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
     // Valid SemVer prereleases still pass through.
-    assert.strictEqual(resolveBundleKey('3.1.0-beta.2'), '3.1.0-beta.2');
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.3'), '3.1.0-beta.3');
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
@@ -198,26 +198,30 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 
-  test('3.1.0-beta.2 opt-in bundle compiles and accepts catalog-sync request fields', () => {
+  test('3.1.0-beta.3 opt-in bundle compiles and accepts wholesale-feed request fields', () => {
     // Runtime guard for the 3.1-beta opt-in: a consumer pinning the beta
-    // version gets a compiled validator that accepts the new catalog-sync
-    // request fields (if_catalog_version / if_pricing_version) the type
+    // version gets a compiled validator that accepts the new wholesale-feed
+    // request fields (if_wholesale_feed_version / if_pricing_version) the type
     // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
     // type-side worked but the wire-side could regress silently.
-    _resetValidationLoader('3.1.0-beta.2');
-    const v = getValidator('get_products', 'request', '3.1.0-beta.2');
+    _resetValidationLoader('3.1.0-beta.3');
+    const v = getValidator('get_products', 'request', '3.1.0-beta.3');
     assert.ok(v, '3.1-beta get_products::request must compile from the opt-in bundle');
     const ok = v({
-      adcp_version: '3.1-beta.2',
+      adcp_version: '3.1-beta.3',
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
-      if_catalog_version: 'v2026-05-18T08:00:00Z-acme-rev412',
+      if_wholesale_feed_version: 'v2026-05-18T08:00:00Z-acme-rev412',
     });
-    assert.strictEqual(ok, true, `if_catalog_version-bearing request must validate: ${JSON.stringify(v.errors)}`);
-    // The dependencies constraint (if_pricing_version requires if_catalog_version)
+    assert.strictEqual(
+      ok,
+      true,
+      `if_wholesale_feed_version-bearing request must validate: ${JSON.stringify(v.errors)}`
+    );
+    // The dependencies constraint (if_pricing_version requires if_wholesale_feed_version)
     // must still be enforced at runtime by Ajv after stripIfThenElse in codegen.
     const dependenciesViolation = v({
-      adcp_version: '3.1-beta.2',
+      adcp_version: '3.1-beta.3',
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
       if_pricing_version: 'v-pricing-only',
@@ -225,7 +229,7 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(
       dependenciesViolation,
       false,
-      'if_pricing_version without if_catalog_version must be rejected by Ajv'
+      'if_pricing_version without if_wholesale_feed_version must be rejected by Ajv'
     );
     // Release-precision pin ('3.1-beta') resolves to the same on-disk bundle
     // via resolveSchemaRoot's prerelease fuzzy-match (a distinct compiled
@@ -234,13 +238,47 @@ describe('schema-loader per-version state', () => {
     assert.ok(vRP, "release-precision '3.1-beta' must compile from the cached prerelease bundle");
     assert.strictEqual(
       vRP({
-        adcp_version: '3.1-beta.2',
+        adcp_version: '3.1-beta.3',
         brief: 'wholesale catalog mirror probe',
         buying_mode: 'wholesale',
-        if_catalog_version: 'v2026-05-18T08:00:00Z-acme-rev412',
+        if_wholesale_feed_version: 'v2026-05-18T08:00:00Z-acme-rev412',
       }),
       true,
-      "'3.1-beta' validator must accept the same catalog-sync payload as '3.1.0-beta.2'"
+      "'3.1-beta' validator must accept the same wholesale-feed payload as '3.1.0-beta.3'"
+    );
+
+    const syncAccounts = getValidator('sync_accounts', 'request', '3.1.0-beta.3');
+    assert.ok(syncAccounts, '3.1-beta sync_accounts::request must compile from the opt-in bundle');
+    assert.strictEqual(
+      syncAccounts({
+        adcp_version: '3.1-beta.3',
+        idempotency_key: 'settings-notification-config',
+        accounts: [
+          {
+            account: { account_id: 'acc_acme_pinnacle' },
+            notification_configs: [
+              {
+                subscriber_id: 'wholesale-feed-sync',
+                url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
+                event_types: [
+                  'product.created',
+                  'product.updated',
+                  'product.priced',
+                  'product.removed',
+                  'signal.created',
+                  'signal.updated',
+                  'signal.priced',
+                  'signal.removed',
+                  'wholesale_feed.bulk_change',
+                ],
+                active: true,
+              },
+            ],
+          },
+        ],
+      }),
+      true,
+      `sync_accounts notification_configs with wholesale feed events must validate: ${JSON.stringify(syncAccounts.errors)}`
     );
   });
 

@@ -1,15 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import type { CursorStore } from '../registry/cursor-store';
-import { InMemoryCursorStore } from '../registry/cursor-store';
 import type * as V31Beta from '../types/v3-1-beta';
 import type {
-  CatalogSyncClient,
-  CatalogSyncConfig,
-  CatalogSyncEvents,
-  CatalogSyncMode,
-  CatalogSyncState,
+  WholesaleFeedSyncClient,
+  WholesaleFeedSyncConfig,
+  WholesaleFeedSyncEvents,
+  WholesaleFeedSyncMode,
+  WholesaleFeedSyncState,
   ProductFilter,
   ResolvedCapabilities,
   SignalFilter,
@@ -21,63 +19,54 @@ type Product = V31Beta.Product;
 // the index map and search helpers stay strongly-typed.
 type Signal = NonNullable<V31Beta.GetSignalsResponse['signals']>[number];
 
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
-const DEFAULT_FEED_PAGE_LIMIT = 1000;
 const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
-const DEFAULT_MAX_FEED_RESPONSE_BYTES = 25 * 1024 * 1024; // 25 MB
 
 /**
- * In-memory replica of an AdCP agent's product and signal catalog.
+ * In-memory mirror of an AdCP agent's wholesale product and signal feeds.
  *
- * Discovers the agent's catalog-sync capabilities at `start()`, picks the
+ * Discovers the agent's wholesale-feed capabilities at `start()`, picks the
  * highest-capability sync strategy the agent supports, and maintains a
  * local index for zero-latency lookups. Falls back gracefully to manual
- * bootstrap when the agent advertises neither the change feed nor
- * conditional-fetch tokens.
+ * bootstrap when the agent does not advertise conditional-fetch tokens.
  *
  * @example
  * ```ts
  * import { AdCPClient } from '@adcp/sdk';
- * import { CatalogSync } from '@adcp/sdk/catalog-sync';
+ * import { WholesaleFeedSync } from '@adcp/sdk/wholesale-feed-sync';
  *
  * const client = new AdCPClient({ agentUrl, adcpVersion: '3.1-beta' });
- * const catalog = new CatalogSync({
- *   client,
- *   feedOrigin: agentUrl,
- *   feedHeaders: { Authorization: `Bearer ${token}` },
- * });
+ * const sync = new WholesaleFeedSync({ client });
  *
- * catalog.on('product.priced', ({ event }) => {
+ * sync.on('product.priced', ({ event }) => {
  *   const p = event.payload as { product_id: string; pricing_options: unknown[] };
  *   console.log('reprice:', p.product_id);
  * });
  *
- * await catalog.start();
- * // catalog.mode is 'live' / 'auto-poll' / 'manual' depending on the agent
- * console.log(`syncing ${catalog.products.count} products via ${catalog.mode} mode`);
+ * await sync.start();
+ * // sync.mode is 'auto-poll' / 'manual' depending on the agent
+ * console.log(`syncing ${sync.products.count} products via ${sync.mode} mode`);
  * ```
  */
-export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
-  private readonly client: CatalogSyncClient;
-  private readonly feedOrigin: string | undefined;
-  private readonly feedHeadersInput: CatalogSyncConfig['feedHeaders'];
-  private readonly pollIntervalMs: number;
+export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
+  private readonly client: WholesaleFeedSyncClient;
+  private readonly account: V31Beta.AccountReference | undefined;
+  private readonly webhookScope: NonNullable<WholesaleFeedSyncConfig['webhookScope']> | undefined;
+  private readonly webhookDedupStore: WholesaleFeedSyncConfig['webhookDedupStore'] | undefined;
   private readonly probeIntervalMs: number;
   private readonly capabilityRefreshIntervalMs: number;
-  private readonly maxFeedResponseBytes: number;
-  private readonly cursorStore: CursorStore;
   private readonly errorHandler: ((error: Error) => void) | undefined;
-  private readonly fetchImpl: typeof fetch;
   private startPromise: Promise<void> | null = null;
   private signalsQueryableWarned = false;
+  private readonly processedWebhookKeys = new Set<string>();
+  private readonly processedWebhookEventKeys = new Set<string>();
+  private lastWebhookEventId: string | undefined;
 
-  private _state: CatalogSyncState = 'idle';
-  private _mode: CatalogSyncMode = 'manual';
+  private _state: WholesaleFeedSyncState = 'idle';
+  private _mode: WholesaleFeedSyncMode = 'manual';
   private _capabilities: ResolvedCapabilities = {
-    changeFeed: false,
-    catalogVersioning: false,
+    wholesaleFeedVersioning: false,
     webhooks: false,
     eventTypes: [],
   };
@@ -87,12 +76,13 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   private productIndex = new Map<string, Product>();
   private signalIndex = new Map<string, Signal>();
 
-  private catalogVersion: string | undefined;
-  private pricingVersion: string | undefined;
-  private cursor: string | null = null;
-  private cacheScope: 'public' | 'account' = 'public';
+  private productWholesaleFeedVersion: string | undefined;
+  private productPricingVersion: string | undefined;
+  private productCacheScope: 'public' | 'account' = 'public';
+  private signalWholesaleFeedVersion: string | undefined;
+  private signalPricingVersion: string | undefined;
+  private signalCacheScope: 'public' | 'account' = 'public';
 
-  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private probeTimer: ReturnType<typeof setTimeout> | null = null;
   private capabilityTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,7 +99,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     get count(): number {
       return this.list().length;
     },
-    get mode(): CatalogSyncMode {
+    get mode(): WholesaleFeedSyncMode {
       // Per-entity mode is the lowest mode for which the agent declares
       // the entity's event family. Future extension: when capability vectors
       // diverge per entity, return the entity-specific resolution here. v1
@@ -118,7 +108,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     },
     // Allow the inline getter `mode` to reach private state without binding.
     // Assigned in the constructor below.
-    _mode: 'manual' as CatalogSyncMode,
+    _mode: 'manual' as WholesaleFeedSyncMode,
   };
 
   /** Read-only view of the in-memory signal index. */
@@ -135,13 +125,13 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     get count(): number {
       return this.list().length;
     },
-    get mode(): CatalogSyncMode {
+    get mode(): WholesaleFeedSyncMode {
       return this._mode;
     },
-    _mode: 'manual' as CatalogSyncMode,
+    _mode: 'manual' as WholesaleFeedSyncMode,
     /**
      * `true` when the agent supports `discovery_mode: 'wholesale'` on
-     * `get_signals` (i.e., catalogs are browsable). When `false`, the
+     * `get_signals` (i.e., signals are browsable). When `false`, the
      * agent only supports brief-mode discovery — `signals.list()` will
      * be empty until adopters call into the agent with their own briefs.
      */
@@ -160,67 +150,29 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     this.signalsQueryableWarned = true;
     // eslint-disable-next-line no-console
     console.warn(
-      `[CatalogSync] signals.list()/search() returned an empty replica because the agent does not declare ` +
+      `[WholesaleFeedSync] signals.list()/search() returned an empty replica because the agent does not declare ` +
         `signals.discovery_modes: ["wholesale"]. Brief-mode signal discovery isn't mirrored — call ` +
         `client.getSignals({ signal_spec, ... }) with your brief instead, or omit this surface for this agent.`
     );
   }
 
-  constructor(config: CatalogSyncConfig) {
+  constructor(config: WholesaleFeedSyncConfig) {
     super();
     this.client = config.client;
-    // Validate the change-feed origin scheme at construction so a
-    // misconfigured tenant config (or hostile injection) can't turn the
-    // poll loop into an SSRF primitive that forwards `feedHeaders` to a
-    // file:// / data:// / blob: target. Adopters loading `feedOrigin`
-    // from external config SHOULD additionally enforce an allowlist;
-    // HTTPS to internal/metadata addresses is the agent operator's
-    // responsibility to refuse, not the SDK's.
-    if (config.feedOrigin !== undefined) {
-      let parsed: URL;
-      try {
-        parsed = new URL(config.feedOrigin);
-      } catch {
-        throw new Error(`CatalogSync: feedOrigin is not a valid URL: ${JSON.stringify(config.feedOrigin)}`);
-      }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error(
-          `CatalogSync: feedOrigin protocol must be http: or https: (got ${parsed.protocol}). ` +
-            `Non-HTTP schemes (file:, data:, blob:, ...) are rejected as SSRF defense.`
-        );
-      }
-    }
-    this.feedOrigin = config.feedOrigin;
-    this.feedHeadersInput = config.feedHeaders;
-    this.pollIntervalMs = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.account = config.account;
+    this.webhookScope = config.webhookScope;
+    this.webhookDedupStore = config.webhookDedupStore;
     this.probeIntervalMs = config.probeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS;
     this.capabilityRefreshIntervalMs = config.capabilityRefreshIntervalMs ?? DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS;
-    this.maxFeedResponseBytes = config.maxFeedResponseBytes ?? DEFAULT_MAX_FEED_RESPONSE_BYTES;
-    this.cursorStore = config.cursorStore ?? new InMemoryCursorStore();
     this.errorHandler = config.onError;
-    this.fetchImpl = config.fetch ?? globalThis.fetch.bind(globalThis);
-  }
-
-  /**
-   * Resolve the headers to send with the next change-feed poll. Static
-   * records are returned verbatim; function forms are awaited so token
-   * rotation can land asynchronously.
-   */
-  private async resolveFeedHeaders(): Promise<Record<string, string>> {
-    if (this.feedHeadersInput === undefined) return {};
-    if (typeof this.feedHeadersInput === 'function') {
-      return await this.feedHeadersInput();
-    }
-    return this.feedHeadersInput;
   }
 
   // ====== Lifecycle ======
 
   /**
    * Probe the agent's capabilities, pick a sync mode, and bootstrap the
-   * in-memory replica via wholesale enumeration. In `'live'` mode also
-   * starts the change-feed poll; in `'auto-poll'` mode starts the version
-   * probe loop.
+   * in-memory replica via wholesale enumeration. In `'auto-poll'` mode
+   * starts the conditional wholesale-feed version probe loop.
    *
    * Safe to call repeatedly — concurrent calls await the in-flight
    * bootstrap and return when it completes (no duplicate bootstrap, no
@@ -239,10 +191,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     this.stop();
     await this.resolveMode();
     await this.bootstrap();
-    if (this._mode === 'live') {
-      this.cursor = (await this.cursorStore.getCursor()) ?? null;
-      this.schedulePoll();
-    } else if (this._mode === 'auto-poll') {
+    if (this._mode === 'auto-poll') {
       this.scheduleProbe();
     }
     if (this.capabilityRefreshIntervalMs > 0) {
@@ -250,28 +199,29 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     }
   }
 
-  /** Stop all background activity. Preserves in-memory state and cursor. */
+  /** Stop all background activity. Preserves in-memory state and version tokens. */
   stop(): void {
-    if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.probeTimer) clearTimeout(this.probeTimer);
     if (this.capabilityTimer) clearTimeout(this.capabilityTimer);
-    this.pollTimer = null;
     this.probeTimer = null;
     this.capabilityTimer = null;
     if (this._state === 'syncing') this.setState('idle');
   }
 
   /**
-   * Stop, clear all indexes and the cursor. Call `start()` again to
+   * Stop, clear all indexes and version tokens. Call `start()` again to
    * re-bootstrap from scratch.
    */
   async reset(): Promise<void> {
     this.stop();
     this.productIndex.clear();
     this.signalIndex.clear();
-    this.catalogVersion = undefined;
-    this.pricingVersion = undefined;
-    this.cursor = null;
+    this.productWholesaleFeedVersion = undefined;
+    this.productPricingVersion = undefined;
+    this.productCacheScope = 'public';
+    this.signalWholesaleFeedVersion = undefined;
+    this.signalPricingVersion = undefined;
+    this.signalCacheScope = 'public';
     this._lastSyncedAt = undefined;
     this._lastEventAt = undefined;
     this.setState('idle');
@@ -280,25 +230,111 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   /**
    * Force a manual re-bootstrap. Available in all modes. Fires diff events
    * for changes detected between the current replica and the freshly
-   * fetched catalog, then re-establishes the background sync (poll or
-   * probe) appropriate to the current mode.
+   * fetched wholesale feed.
    */
   async refresh(): Promise<void> {
     this.emit('resyncing', { reason: 'manual' });
     await this.bootstrap({ emitDiffs: true });
   }
 
+  /**
+   * Apply one beta-3 account-level wholesale feed webhook to the local mirror.
+   * Call this from your HTTP webhook receiver after signature/auth validation.
+   * Stale or out-of-order deliveries repair through conditional wholesale
+   * reads instead of applying a suspect delta.
+   */
+  async applyWebhook(webhook: V31Beta.WholesaleFeedWebhook): Promise<void> {
+    const event = webhook.event;
+    if (!event || webhook.notification_type !== event.event_type) {
+      throw new Error('WholesaleFeedSync: wholesale feed webhook notification_type does not match event.event_type.');
+    }
+    if (webhook.notification_id !== event.event_id) {
+      throw new Error('WholesaleFeedSync: wholesale feed webhook notification_id does not match event.event_id.');
+    }
+    this.assertWebhookScope(webhook);
+
+    const payloadScope = (event.payload as { applies_to?: { scope?: string } }).applies_to?.scope;
+    if (payloadScope && payloadScope !== webhook.cache_scope) {
+      throw new Error(
+        'WholesaleFeedSync: wholesale feed webhook cache_scope does not match event.payload.applies_to.scope.'
+      );
+    }
+    const payloadAccountIds = (event.payload as { applies_to?: { account_ids?: unknown } }).applies_to?.account_ids;
+    const expectedAccountId = this.expectedWebhookAccountId();
+    if (
+      webhook.cache_scope === 'account' &&
+      expectedAccountId &&
+      Array.isArray(payloadAccountIds) &&
+      !payloadAccountIds.includes(expectedAccountId)
+    ) {
+      throw new Error(
+        'WholesaleFeedSync: wholesale feed webhook account overlay does not include this mirror account.'
+      );
+    }
+    const dedupeKey = this.webhookDedupeKey(webhook);
+    const eventDedupeKey = this.webhookEventDedupeKey(webhook);
+    if (await this.hasProcessedWebhook(dedupeKey, eventDedupeKey)) return;
+
+    if (this.lastWebhookEventId && compareUuidV7(event.event_id, this.lastWebhookEventId) <= 0) {
+      await this.recoverFromVersionMismatch();
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      return;
+    }
+
+    let currentVersion: string | undefined;
+    try {
+      currentVersion = this.currentWholesaleFeedVersionForEvent(event);
+    } catch (err) {
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      this.rememberLastWebhookEventId(event.event_id);
+      throw err;
+    }
+    if (
+      webhook.previous_wholesale_feed_version &&
+      currentVersion &&
+      webhook.previous_wholesale_feed_version !== currentVersion
+    ) {
+      await this.recoverFromVersionMismatch();
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      return;
+    }
+
+    if (event.event_type === 'wholesale_feed.bulk_change') {
+      this.emit('wholesale_feed.bulk_change', { event });
+      try {
+        await this.recoverFromBulkChange(event);
+      } catch (err) {
+        await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+        this.rememberLastWebhookEventId(event.event_id);
+        throw err;
+      }
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      this.rememberLastWebhookEventId(event.event_id);
+      return;
+    }
+
+    this.applyEvent(event);
+    this.rememberWebhookVersion(webhook);
+    this.emit('event', { event });
+    this.emitTypedEvent(event);
+    await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+    this.rememberLastWebhookEventId(event.event_id);
+    this._lastEventAt = new Date();
+    this._lastSyncedAt = new Date();
+    this.emit('sync', { eventsApplied: 1 });
+  }
+
   // ====== Public state ======
 
-  get state(): CatalogSyncState {
+  get state(): WholesaleFeedSyncState {
     return this._state;
   }
-  get mode(): CatalogSyncMode {
+  get mode(): WholesaleFeedSyncMode {
     return this._mode;
   }
   get capabilities(): Readonly<ResolvedCapabilities> {
     // Return a fresh clone — `Readonly<T>` is shallow, and an adopter
-    // mutating `catalog.capabilities.eventTypes` (a JS array) would
+    // mutating `sync.capabilities.eventTypes` (a JS array) would
     // otherwise corrupt internal state. Deep-clone is cheap (a handful
     // of primitives + one string array).
     return structuredClone(this._capabilities);
@@ -317,15 +353,15 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     // TaskResult union — only `success` carries a typed `data` field.
     // Other task-arms (`deferred`, `input-required`, `error`) leave us
     // without enough info to pick a mode confidently. Spec says we MAY
-    // fall back to manual-mode wholesale polling against agents that
-    // don't declare the surfaces — but that masks real auth/config
+    // fall back to manual wholesale reads against agents that don't
+    // declare the surfaces — but that masks real auth/config
     // failures (e.g., a 401 returned via the `error` arm). Surface the
     // condition via an `error` event so adopters see it, then fall back.
     const status = (caps as { status?: string }).status;
     if (typeof status === 'string' && status !== 'success' && status !== 'completed') {
       const message =
         (caps as { error?: { message?: string } }).error?.message ?? `get_adcp_capabilities returned status=${status}`;
-      const err = new Error(`CatalogSync: capability probe returned non-success status: ${message}`);
+      const err = new Error(`WholesaleFeedSync: capability probe returned non-success status: ${message}`);
       this.errorHandler?.(err);
       this.emit('error', { error: err });
       // Fall through to the empty-stanza path below so the sync still
@@ -333,33 +369,27 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     }
     const data = (caps as { data?: unknown }).data;
     const stanza = (data ?? {}) as {
-      catalog_change_feed?: {
+      wholesale_feed_webhooks?: {
         supported?: boolean;
-        retention_window_days?: number;
-        webhooks_supported?: boolean;
         event_types?: string[];
       };
-      catalog_versioning?: { supported?: boolean };
+      wholesale_feed_versioning?: { supported?: boolean };
       signals?: { discovery_modes?: string[] };
     };
-    const changeFeed = stanza.catalog_change_feed?.supported === true;
-    const catalogVersioning = stanza.catalog_versioning?.supported === true;
-    const webhooks = stanza.catalog_change_feed?.webhooks_supported === true;
-    const eventTypes = Array.isArray(stanza.catalog_change_feed?.event_types)
-      ? [...stanza.catalog_change_feed!.event_types!]
+    const wholesaleFeedVersioning = stanza.wholesale_feed_versioning?.supported === true;
+    const webhooks = stanza.wholesale_feed_webhooks?.supported === true;
+    const eventTypes = Array.isArray(stanza.wholesale_feed_webhooks?.event_types)
+      ? [...stanza.wholesale_feed_webhooks!.event_types!]
       : [];
-    const retentionWindowDays = stanza.catalog_change_feed?.retention_window_days;
     const wholesaleSignals = stanza.signals?.discovery_modes?.includes('wholesale') ?? false;
 
     const resolved: ResolvedCapabilities = {
-      changeFeed,
-      catalogVersioning,
+      wholesaleFeedVersioning,
       webhooks,
       eventTypes,
-      ...(typeof retentionWindowDays === 'number' && { retentionWindowDays }),
     };
 
-    const mode: CatalogSyncMode = changeFeed ? 'live' : catalogVersioning ? 'auto-poll' : 'manual';
+    const mode: WholesaleFeedSyncMode = wholesaleFeedVersioning ? 'auto-poll' : 'manual';
     this._capabilities = resolved;
     this._mode = mode;
     this.products._mode = mode;
@@ -370,7 +400,9 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Private: bootstrap (wholesale enumeration) ======
 
-  private async bootstrap(options: { emitDiffs?: boolean } = {}): Promise<void> {
+  private async bootstrap(
+    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all' } = {}
+  ): Promise<void> {
     this.setState('bootstrapping');
     try {
       // Build into local maps and atomically swap on success. The previous
@@ -385,19 +417,25 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       const incomingProducts = new Map<string, Product>();
       const incomingSignals = new Map<string, Signal>();
       let productsUnchanged = false;
+      let signalsUnchanged = false;
+      const entities = options.entities ?? 'all';
+      const refreshProducts = entities !== 'signals';
+      const refreshSignals = entities !== 'products' && this.signals.queryable;
 
-      productsUnchanged = await this.bootstrapProducts(incomingProducts);
-      if (this.signals.queryable) {
-        await this.bootstrapSignals(incomingSignals);
+      if (refreshProducts) {
+        productsUnchanged = await this.bootstrapProducts(incomingProducts);
+      }
+      if (refreshSignals) {
+        signalsUnchanged = await this.bootstrapSignals(incomingSignals);
       }
 
-      if (productsUnchanged) {
+      if (refreshProducts && productsUnchanged) {
         // Seller confirmed our cached version is current. Keep the
         // existing index intact; don't swap with the empty incoming.
-      } else {
+      } else if (refreshProducts) {
         this.productIndex = incomingProducts;
       }
-      if (this.signals.queryable) {
+      if (refreshSignals && !signalsUnchanged) {
         this.signalIndex = incomingSignals;
       }
 
@@ -428,12 +466,14 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       const params: Record<string, unknown> = {
         buying_mode: 'wholesale',
         pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
+        ...(this.account && { account: this.account }),
       };
       // Conditional fetch on the page-0 call when we already have a cached
       // version. Per the spec, the seller short-circuits with
       // `unchanged: true` and no payload — caller keeps the previous index.
-      if (this.catalogVersion && this._capabilities.catalogVersioning) {
-        params.if_catalog_version = this.catalogVersion;
+      if (!cursor && this.productWholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
+        params.if_wholesale_feed_version = this.productWholesaleFeedVersion;
+        if (this.productPricingVersion) params.if_pricing_version = this.productPricingVersion;
       }
       const result = (await this.client.getProducts(params as never)) as {
         data?: V31Beta.GetProductsResponse;
@@ -444,8 +484,11 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
         // Echo any newer pricing_version / cache_scope the seller
         // returned alongside the unchanged signal, then tell the caller
         // to keep the existing index.
-        if (typeof body.pricing_version === 'string') this.pricingVersion = body.pricing_version;
-        if (body.cache_scope === 'public' || body.cache_scope === 'account') this.cacheScope = body.cache_scope;
+        if (typeof body.wholesale_feed_version === 'string') {
+          this.productWholesaleFeedVersion = body.wholesale_feed_version;
+        }
+        if (typeof body.pricing_version === 'string') this.productPricingVersion = body.pricing_version;
+        if (body.cache_scope === 'public' || body.cache_scope === 'account') this.productCacheScope = body.cache_scope;
         return true;
       }
       const products = Array.isArray(body.products) ? body.products : [];
@@ -453,180 +496,68 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
         const id = (product as { product_id?: string }).product_id;
         if (typeof id === 'string') into.set(id, product as Product);
       }
-      if (typeof body.catalog_version === 'string') this.catalogVersion = body.catalog_version;
-      if (typeof body.pricing_version === 'string') this.pricingVersion = body.pricing_version;
-      if (body.cache_scope === 'public' || body.cache_scope === 'account') this.cacheScope = body.cache_scope;
+      if (typeof body.wholesale_feed_version === 'string')
+        this.productWholesaleFeedVersion = body.wholesale_feed_version;
+      if (typeof body.pricing_version === 'string') this.productPricingVersion = body.pricing_version;
+      if (body.cache_scope === 'public' || body.cache_scope === 'account') this.productCacheScope = body.cache_scope;
       cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
     } while (cursor);
     return false;
   }
 
-  private async bootstrapSignals(into: Map<string, Signal>): Promise<void> {
+  private async bootstrapSignals(into: Map<string, Signal>): Promise<boolean> {
     let cursor: string | undefined;
     do {
       const params: Record<string, unknown> = {
         discovery_mode: 'wholesale',
         pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
+        ...(this.account && { account: this.account }),
       };
+      if (!cursor && this.signalWholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
+        params.if_wholesale_feed_version = this.signalWholesaleFeedVersion;
+        if (this.signalPricingVersion) params.if_pricing_version = this.signalPricingVersion;
+      }
       const result = (await this.client.getSignals(params as never)) as {
         data?: V31Beta.GetSignalsResponse;
       };
       const body = result.data;
-      if (!body) break;
-      if (body.unchanged) break;
+      if (!body) return false;
+      if (body.unchanged) {
+        if (typeof body.wholesale_feed_version === 'string') {
+          this.signalWholesaleFeedVersion = body.wholesale_feed_version;
+        }
+        if (typeof body.pricing_version === 'string') this.signalPricingVersion = body.pricing_version;
+        if (body.cache_scope === 'public' || body.cache_scope === 'account') this.signalCacheScope = body.cache_scope;
+        return true;
+      }
       const signals = Array.isArray(body.signals) ? body.signals : [];
       for (const signal of signals) {
         const id = (signal as { signal_agent_segment_id?: string }).signal_agent_segment_id;
         if (typeof id === 'string') into.set(id, signal as Signal);
       }
+      if (typeof body.wholesale_feed_version === 'string')
+        this.signalWholesaleFeedVersion = body.wholesale_feed_version;
+      if (typeof body.pricing_version === 'string') this.signalPricingVersion = body.pricing_version;
+      if (body.cache_scope === 'public' || body.cache_scope === 'account') this.signalCacheScope = body.cache_scope;
       cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
     } while (cursor);
+    return false;
   }
 
-  // ====== Private: live-mode change-feed poll ======
-
-  private schedulePoll(): void {
-    this.pollTimer = setTimeout(() => this.pollLoop(), this.pollIntervalMs);
-  }
-
-  private async pollLoop(): Promise<void> {
-    try {
-      await this.pollFeed();
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.emit('error', { error });
-      this.errorHandler?.(error);
-    }
-    if (this._state === 'syncing' && this._mode === 'live') {
-      this.schedulePoll();
-    }
-  }
-
-  private async pollFeed(): Promise<void> {
-    if (!this.feedOrigin) {
+  private async recoverFromBulkChange(event: V31Beta.WholesaleFeedEvent): Promise<void> {
+    this.emit('resyncing', { reason: 'bulk_change' });
+    const affected = this.bulkChangeAffectedEntityType(event);
+    if (affected === 'signal' && !this.signals.queryable) {
       throw new Error(
-        `CatalogSync: 'live' mode requires feedOrigin to be configured (target: GET <feedOrigin>/catalog/events).`
+        'WholesaleFeedSync: signal bulk_change cannot repair because the agent does not declare wholesale signal discovery.'
       );
     }
-    const headers = await this.resolveFeedHeaders();
-    let totalApplied = 0;
-    let hasMore = true;
-    while (hasMore) {
-      const url = new URL('/catalog/events', this.feedOrigin);
-      if (this.cursor) url.searchParams.set('cursor', this.cursor);
-      url.searchParams.set('limit', String(DEFAULT_FEED_PAGE_LIMIT));
-      const response = await this.fetchImpl(url.toString(), {
-        method: 'GET',
-        headers: { Accept: 'application/json', ...headers },
-      });
-      if (response.status === 410) {
-        await this.recoverFromRetentionExpired();
-        return;
-      }
-      if (!response.ok) {
-        throw new Error(`CatalogSync: GET ${url.pathname} → ${response.status} ${response.statusText}`);
-      }
-      // Read the body with a size cap so a hostile or runaway agent can't
-      // OOM the mirror by streaming an unbounded chunked response.
-      const body = await this.readFeedBody(response);
-      // Some agents prefer 200 + structured error envelope to a hard 410.
-      // Detect on the parsed body — no clone-then-parse double-buffer.
-      if (
-        body !== null &&
-        typeof body === 'object' &&
-        'error' in body &&
-        typeof (body as { error?: { code?: string } }).error?.code === 'string' &&
-        (body as { error: { code: string } }).error.code === 'RETENTION_EXPIRED'
-      ) {
-        await this.recoverFromRetentionExpired();
-        return;
-      }
-      const parsed = body as V31Beta.CatalogEventsResponse;
-      const events = Array.isArray(parsed.events) ? parsed.events : [];
-      // Advance the cursor BEFORE processing events. Required so that a
-      // bulk_change event on the page doesn't loop forever: the post-
-      // recovery re-bootstrap resumes polling from the cursor PAST the
-      // bulk_change, not from the cursor that delivered it.
-      if (typeof parsed.next_cursor === 'string') {
-        this.cursor = parsed.next_cursor;
-        await this.cursorStore.setCursor(this.cursor);
-      }
-      for (const event of events) {
-        if (event.event_type === 'catalog.bulk_change') {
-          this.emit('event', { event });
-          this.emit('catalog.bulk_change', { event });
-          await this.recoverFromBulkChange();
-          return;
-        }
-        this.applyEvent(event);
-        this.emit('event', { event });
-        this.emitTypedEvent(event);
-        totalApplied++;
-      }
-      hasMore = parsed.has_more === true && this.cursor != null;
-    }
-    if (totalApplied > 0) {
-      this._lastEventAt = new Date();
-      this._lastSyncedAt = new Date();
-      this.emit('sync', { eventsApplied: totalApplied, cursor: this.cursor ?? undefined });
-    }
+    const entities = affected === 'product' ? 'products' : 'signals';
+    await this.bootstrap({ emitDiffs: true, entities });
   }
 
-  /**
-   * Read the change-feed response body with a configurable byte cap.
-   * Avoids `response.clone()` + `response.json()` double-buffering by
-   * reading the underlying stream once and parsing the buffered bytes.
-   * Throws when `maxFeedResponseBytes > 0` and the body exceeds the cap
-   * before the parse — the partial buffer is discarded.
-   */
-  private async readFeedBody(response: Response): Promise<unknown> {
-    if (this.maxFeedResponseBytes <= 0) {
-      return await response.json();
-    }
-    const reader = response.body?.getReader();
-    if (!reader) {
-      // No stream (mock or non-streaming runtime). Fall back to .json()
-      // and rely on the test harness to keep bodies reasonable.
-      return await response.json();
-    }
-    const cap = this.maxFeedResponseBytes;
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > cap) {
-        // Cancel the reader to release the connection and surface a
-        // typed error that adopters can branch on.
-        try {
-          await reader.cancel();
-        } catch {
-          /* best-effort */
-        }
-        throw new Error(
-          `CatalogSync: change-feed response exceeded maxFeedResponseBytes (${cap}). ` +
-            `Increase the cap or investigate the agent (this is a DoS guard).`
-        );
-      }
-      chunks.push(value);
-    }
-    const buffer = Buffer.concat(chunks.map(c => Buffer.from(c)));
-    const text = buffer.toString('utf8');
-    if (text.length === 0) return null;
-    return JSON.parse(text);
-  }
-
-  private async recoverFromRetentionExpired(): Promise<void> {
-    this.emit('resyncing', { reason: 'retention_expired' });
-    this.cursor = null;
-    await this.cursorStore.clearCursor();
-    await this.bootstrap({ emitDiffs: true });
-  }
-
-  private async recoverFromBulkChange(): Promise<void> {
-    this.emit('resyncing', { reason: 'bulk_change' });
+  private async recoverFromVersionMismatch(): Promise<void> {
+    this.emit('resyncing', { reason: 'version_mismatch' });
     await this.bootstrap({ emitDiffs: true });
   }
 
@@ -650,24 +581,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   }
 
   private async probeVersion(): Promise<void> {
-    if (!this.catalogVersion) {
-      // No baseline to compare against; fall through to a refresh which
-      // bootstraps and captures the first version.
-      await this.refresh();
-      return;
-    }
-    const result = (await this.client.getProducts({
-      buying_mode: 'wholesale',
-      if_catalog_version: this.catalogVersion,
-      pagination: { max_results: 1 },
-    } as never)) as { data?: V31Beta.GetProductsResponse };
-    const body = result.data;
-    if (!body || body.unchanged) {
-      this._lastSyncedAt = new Date();
-      return; // catalog is current
-    }
-    // Version moved — diff-emit by re-bootstrapping.
-    await this.refresh();
+    await this.bootstrap({ emitDiffs: true });
   }
 
   // ====== Private: capability refresh ======
@@ -698,7 +612,88 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Private: event application ======
 
-  private applyEvent(event: V31Beta.CatalogEvent): void {
+  private currentWholesaleFeedVersionForEvent(event: V31Beta.WholesaleFeedEvent): string | undefined {
+    if (event.event_type.startsWith('product.')) return this.productWholesaleFeedVersion;
+    if (event.event_type.startsWith('signal.')) return this.signalWholesaleFeedVersion;
+    const affected = this.bulkChangeAffectedEntityType(event);
+    return affected === 'signal' ? this.signalWholesaleFeedVersion : this.productWholesaleFeedVersion;
+  }
+
+  private bulkChangeAffectedEntityType(event: V31Beta.WholesaleFeedEvent): 'product' | 'signal' {
+    const affected = (event.payload as { affected_entity_type?: string }).affected_entity_type;
+    if (affected === 'product' || affected === 'signal') return affected;
+    throw new Error(
+      'WholesaleFeedSync: wholesale_feed.bulk_change payload missing or invalid required affected_entity_type.'
+    );
+  }
+
+  private rememberWebhookVersion(webhook: V31Beta.WholesaleFeedWebhook): void {
+    const event = webhook.event;
+    if (event.event_type.startsWith('product.')) {
+      this.productWholesaleFeedVersion = webhook.wholesale_feed_version;
+      this.productCacheScope = webhook.cache_scope;
+      return;
+    }
+    if (event.event_type.startsWith('signal.')) {
+      this.signalWholesaleFeedVersion = webhook.wholesale_feed_version;
+      this.signalCacheScope = webhook.cache_scope;
+    }
+  }
+
+  private assertWebhookScope(webhook: V31Beta.WholesaleFeedWebhook): void {
+    const expectedAccountId = this.expectedWebhookAccountId();
+    if (expectedAccountId && webhook.account_id !== expectedAccountId) {
+      throw new Error('WholesaleFeedSync: wholesale feed webhook account_id does not match this mirror.');
+    }
+    if (this.webhookScope?.subscriberId && webhook.subscriber_id !== this.webhookScope.subscriberId) {
+      throw new Error('WholesaleFeedSync: wholesale feed webhook subscriber_id does not match this mirror.');
+    }
+  }
+
+  private expectedWebhookAccountId(): string | undefined {
+    if (this.webhookScope?.accountId) return this.webhookScope.accountId;
+    return this.account && 'account_id' in this.account ? this.account.account_id : undefined;
+  }
+
+  private webhookDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+    return [
+      this.webhookScope?.senderId ?? 'default',
+      webhook.account_id,
+      webhook.subscriber_id,
+      webhook.idempotency_key,
+    ].join(':');
+  }
+
+  private webhookEventDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+    return [
+      this.webhookScope?.senderId ?? 'default',
+      webhook.account_id,
+      webhook.subscriber_id,
+      webhook.notification_id,
+    ].join(':');
+  }
+
+  private async hasProcessedWebhook(dedupeKey: string, eventDedupeKey: string): Promise<boolean> {
+    if (this.processedWebhookKeys.has(dedupeKey) || this.processedWebhookEventKeys.has(eventDedupeKey)) return true;
+    if (!this.webhookDedupStore) return false;
+    return (await this.webhookDedupStore.has(dedupeKey)) || (await this.webhookDedupStore.has(eventDedupeKey));
+  }
+
+  private async markWebhookProcessed(dedupeKey: string, eventDedupeKey: string): Promise<void> {
+    this.processedWebhookKeys.add(dedupeKey);
+    this.processedWebhookEventKeys.add(eventDedupeKey);
+    await this.webhookDedupStore?.add(dedupeKey);
+    await this.webhookDedupStore?.add(eventDedupeKey);
+  }
+
+  private rememberLastWebhookEventId(eventId: string): void {
+    if (!isUuidV7(eventId)) return;
+    if (!this.lastWebhookEventId || compareUuidV7(eventId, this.lastWebhookEventId) > 0) {
+      this.lastWebhookEventId = eventId;
+    }
+  }
+
+  private applyEvent(event: V31Beta.WholesaleFeedEvent): void {
     switch (event.event_type) {
       case 'product.created':
       case 'product.updated': {
@@ -714,29 +709,6 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           this.productIndex.set(payload.product_id, payload.product);
           return;
         }
-        // Partial update without a denormalized `product`. Spec
-        // (`core/catalog-event.json`) declares `payload.additionalProperties:
-        // true` and treats `changed_fields` as advisory. Merge any
-        // top-level fields the agent sent on the payload (beyond the
-        // protocol-defined `product_id` / `changed_fields` / `applies_to`)
-        // into the existing entry rather than silently dropping the
-        // delta. Without this merge, an agent emitting a sparse update
-        // (e.g., `{ product_id, changed_fields: ['name'], name: 'New' }`)
-        // would have its change discarded.
-        const existing = this.productIndex.get(payload.product_id);
-        if (!existing) return;
-        const RESERVED_KEYS = new Set(['product_id', 'product', 'changed_fields', 'applies_to']);
-        const overlay: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(payload)) {
-          if (RESERVED_KEYS.has(key)) continue;
-          overlay[key] = value;
-        }
-        if (Object.keys(overlay).length === 0) {
-          // Truly empty update — no `product`, no overlay fields. Keep
-          // existing intact; adopters needing full state can `refresh()`.
-          return;
-        }
-        this.productIndex.set(payload.product_id, { ...existing, ...overlay } as Product);
         return;
       }
       case 'product.priced': {
@@ -762,19 +734,11 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       case 'signal.updated': {
         const payload = event.payload as {
           signal_agent_segment_id: string;
-          signal_id?: unknown;
+          signal?: Signal;
         };
         if (typeof payload.signal_agent_segment_id !== 'string') return;
-        const existing = this.signalIndex.get(payload.signal_agent_segment_id);
-        if (existing) {
-          // Updated event — merge known fields.
-          this.signalIndex.set(payload.signal_agent_segment_id, {
-            ...existing,
-            ...(payload as Partial<Signal>),
-          });
-        } else if (payload.signal_id) {
-          // Created event with enough fields to seed the index.
-          this.signalIndex.set(payload.signal_agent_segment_id, payload as unknown as Signal);
+        if (payload.signal) {
+          this.signalIndex.set(payload.signal_agent_segment_id, payload.signal);
         }
         return;
       }
@@ -799,14 +763,14 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
         }
         return;
       }
-      case 'catalog.bulk_change':
-        // Bulk change events trigger re-bootstrap in pollFeed before
+      case 'wholesale_feed.bulk_change':
+        // Bulk change events trigger re-bootstrap in applyWebhook before
         // reaching this method.
         return;
     }
   }
 
-  private emitTypedEvent(event: V31Beta.CatalogEvent): void {
+  private emitTypedEvent(event: V31Beta.WholesaleFeedEvent): void {
     // event_type is the discriminator; every value maps to a typed listener
     // name. The switch keeps TypeScript honest about exhaustiveness.
     switch (event.event_type) {
@@ -834,8 +798,8 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       case 'signal.removed':
         this.emit('signal.removed', { event });
         return;
-      case 'catalog.bulk_change':
-        // Already emitted in pollFeed before recovery.
+      case 'wholesale_feed.bulk_change':
+        // Already emitted in applyWebhook before recovery.
         return;
     }
   }
@@ -845,25 +809,25 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   private emitDiffs(previousProducts: Map<string, Product>, previousSignals: Map<string, Signal>): void {
     const now = new Date().toISOString();
     const makeEvent = (
-      event_type: V31Beta.CatalogEvent['event_type'],
-      entity_type: V31Beta.CatalogEvent['entity_type'],
+      event_type: V31Beta.WholesaleFeedEvent['event_type'],
+      entity_type: V31Beta.WholesaleFeedEvent['entity_type'],
       entity_id: string,
       payload: object
-    ): V31Beta.CatalogEvent =>
+    ): V31Beta.WholesaleFeedEvent =>
       ({
         // crypto.randomUUID() emits a v4 UUID, NOT v7. Synthetic events
         // are flagged via `synthetic: true` on the emit envelope so
         // adopters writing event_ids to a dedupe table know not to
-        // treat the ID as cursor-orderable. Real change-feed events
-        // carry the agent's authoritative v7 event_id.
+        // treat the ID as seller-authored. Real webhook events carry the
+        // agent's authoritative event_id.
         event_id: randomUUID(),
         event_type,
         entity_type,
         entity_id,
         created_at: now,
         payload,
-      }) as V31Beta.CatalogEvent;
-    const emit = (channel: keyof CatalogSyncEvents, event: V31Beta.CatalogEvent): void => {
+      }) as V31Beta.WholesaleFeedEvent;
+    const emit = (channel: keyof WholesaleFeedSyncEvents, event: V31Beta.WholesaleFeedEvent): void => {
       this.emit('event', { event, synthetic: true });
       this.emit(channel as 'product.created', { event, synthetic: true });
     };
@@ -876,7 +840,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           makeEvent('product.created', 'product', id, {
             product_id: id,
             product,
-            applies_to: { scope: this.cacheScope },
+            applies_to: { scope: this.productCacheScope },
           })
         );
       } else if (priceChanged(prev, product)) {
@@ -885,7 +849,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           makeEvent('product.priced', 'product', id, {
             product_id: id,
             pricing_options: product.pricing_options ?? [],
-            applies_to: { scope: this.cacheScope },
+            applies_to: { scope: this.productCacheScope },
           })
         );
       } else if (!isDeepStrictEqual(prev, product)) {
@@ -894,14 +858,20 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           makeEvent('product.updated', 'product', id, {
             product_id: id,
             product,
-            applies_to: { scope: this.cacheScope },
+            applies_to: { scope: this.productCacheScope },
           })
         );
       }
     }
     for (const [id] of previousProducts) {
       if (!this.productIndex.has(id)) {
-        emit('product.removed', makeEvent('product.removed', 'product', id, { product_id: id }));
+        emit(
+          'product.removed',
+          makeEvent('product.removed', 'product', id, {
+            product_id: id,
+            applies_to: { scope: this.productCacheScope },
+          })
+        );
       }
     }
     for (const [id, signal] of this.signalIndex) {
@@ -911,7 +881,8 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           'signal.created',
           makeEvent('signal.created', 'signal', id, {
             signal_agent_segment_id: id,
-            applies_to: { scope: this.cacheScope },
+            signal,
+            applies_to: { scope: this.signalCacheScope },
           })
         );
       } else if (signalPriceChanged(prev, signal)) {
@@ -920,7 +891,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           makeEvent('signal.priced', 'signal', id, {
             signal_agent_segment_id: id,
             pricing_options: (signal as { pricing_options?: unknown[] }).pricing_options ?? [],
-            applies_to: { scope: this.cacheScope },
+            applies_to: { scope: this.signalCacheScope },
           })
         );
       } else if (!isDeepStrictEqual(prev, signal)) {
@@ -928,14 +899,21 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
           'signal.updated',
           makeEvent('signal.updated', 'signal', id, {
             signal_agent_segment_id: id,
-            applies_to: { scope: this.cacheScope },
+            signal,
+            applies_to: { scope: this.signalCacheScope },
           })
         );
       }
     }
     for (const [id] of previousSignals) {
       if (!this.signalIndex.has(id)) {
-        emit('signal.removed', makeEvent('signal.removed', 'signal', id, { signal_agent_segment_id: id }));
+        emit(
+          'signal.removed',
+          makeEvent('signal.removed', 'signal', id, {
+            signal_agent_segment_id: id,
+            applies_to: { scope: this.signalCacheScope },
+          })
+        );
       }
     }
   }
@@ -1003,7 +981,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Private: state ======
 
-  private setState(next: CatalogSyncState): void {
+  private setState(next: WholesaleFeedSyncState): void {
     const from = this._state;
     if (from === next) return;
     this._state = next;
@@ -1023,4 +1001,15 @@ function signalPriceChanged(prev: Signal, next: Signal): boolean {
   const a = (prev as { pricing_options?: unknown[] }).pricing_options;
   const b = (next as { pricing_options?: unknown[] }).pricing_options;
   return !isDeepStrictEqual(a, b);
+}
+
+function isUuidV7(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function compareUuidV7(a: string, b: string): number {
+  if (!isUuidV7(a) || !isUuidV7(b)) return 1;
+  const normalizedA = a.toLowerCase();
+  const normalizedB = b.toLowerCase();
+  return normalizedA === normalizedB ? 0 : normalizedA > normalizedB ? 1 : -1;
 }

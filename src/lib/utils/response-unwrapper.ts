@@ -359,13 +359,18 @@ function unwrapMCPResponse(response: any): McpUnwrapOutcome {
 
         return {
           result: {
+            // AdCP 3.1.0-beta.2+: envelope `status` is REQUIRED on every
+            // response. Synthetic error envelopes synthesized by the SDK
+            // when the wire doesn't carry a valid AdCP payload need the
+            // same. `failed` matches the error semantics of this branch.
+            status: 'failed' as const,
             errors: [
               {
                 code: ERROR_CODES.INVALID_RESPONSE,
                 message: `Response does not contain structured AdCP data. Text content: "${snippet}"`,
               },
             ],
-          },
+          } as AdCPResponse,
           extractionPath: 'text_fallback',
         };
       }
@@ -468,6 +473,10 @@ function unwrapA2AResponse(response: any): AdCPResponse {
   // payloads) inherit the same defensive behavior.
   if (response.error && !hasTerminalTaskWithDataArtifact(response)) {
     return {
+      // AdCP 3.1.0-beta.2+: envelope `status` is REQUIRED. Synthetic error
+      // envelopes for A2A JSON-RPC failures carry `failed` to match the
+      // error semantics.
+      status: 'failed' as const,
       errors: [
         {
           code: response.error.code?.toString() || ERROR_CODES.UNKNOWN,
@@ -475,7 +484,7 @@ function unwrapA2AResponse(response: any): AdCPResponse {
           ...(response.error.data && { data: response.error.data }),
         },
       ],
-    };
+    } as AdCPResponse;
   }
 
   // A2A terminal response — same shape regardless of success or failure:

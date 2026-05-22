@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "7.10.0",
+  "version": "8.0.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -45,10 +45,10 @@
       "require": "./dist/lib/types/v3-1-beta/index.js",
       "types": "./dist/lib/types/v3-1-beta/index.d.ts"
     },
-    "./catalog-sync": {
-      "import": "./dist/lib/catalog-sync/index.js",
-      "require": "./dist/lib/catalog-sync/index.js",
-      "types": "./dist/lib/catalog-sync/index.d.ts"
+    "./wholesale-feed-sync": {
+      "import": "./dist/lib/wholesale-feed-sync/index.js",
+      "require": "./dist/lib/wholesale-feed-sync/index.js",
+      "types": "./dist/lib/wholesale-feed-sync/index.d.ts"
     },
     "./v2/projection": {
       "import": "./dist/lib/v2/projection/index.js",
@@ -79,6 +79,11 @@
       "import": "./dist/lib/auth/index.js",
       "require": "./dist/lib/auth/index.js",
       "types": "./dist/lib/auth/index.d.ts"
+    },
+    "./webhooks": {
+      "import": "./dist/lib/webhooks/index.js",
+      "require": "./dist/lib/webhooks/index.js",
+      "types": "./dist/lib/webhooks/index.d.ts"
     },
     "./server": {
       "import": "./dist/lib/server/index.js",
@@ -167,8 +172,8 @@
       "types/v3-1-beta": [
         "dist/lib/types/v3-1-beta/index.d.ts"
       ],
-      "catalog-sync": [
-        "dist/lib/catalog-sync/index.d.ts"
+      "wholesale-feed-sync": [
+        "dist/lib/wholesale-feed-sync/index.d.ts"
       ],
       "v2/projection": [
         "dist/lib/v2/projection/index.d.ts"
@@ -184,6 +189,9 @@
       ],
       "auth": [
         "dist/lib/auth/index.d.ts"
+      ],
+      "webhooks": [
+        "dist/lib/webhooks/index.d.ts"
       ],
       "server": [
         "dist/lib/server/index.d.ts"
@@ -245,7 +253,7 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run schemas:ensure",
     "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js && npm test --workspace=packages/eslint-plugin --if-present",
@@ -411,5 +419,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.1.0-beta.2"
+  "adcp_version": "3.1.0-beta.3"
 }

@@ -87,6 +87,11 @@ signalId.agent({ agent_url: 'https://liveramp.com/.well-known/adcp/signals', id:
 A bare-string `signal_ids` filter is rejected by the request type as soon
 as you stop typing it as `any`.
 
+**Extract fields from a received `SignalID`:** use `getSignalId(sid)` (returns
+`id`) and `getSignalIssuer(sid)` (returns `data_provider_domain` or
+`agent_url`). Do not reach for `sid.catalog_id` or `sid.agent_id` — those
+fields do not exist and TypeScript will not always catch the error.
+
 ---
 
 ## 3. `VASTAsset` requires an embedded `delivery_type` discriminator

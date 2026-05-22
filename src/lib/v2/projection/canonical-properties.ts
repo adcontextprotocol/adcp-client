@@ -1,8 +1,10 @@
 /**
  * Read structural properties off the canonical format schemas at
- * `schemas/cache/<version>/formats/canonical/<kind>.json`. The
- * projection layer needs `v1_translatable` per canonical to honor the
- * normative rule from `v1-canonical-mapping.json`:
+ * `dist/lib/schemas-data/<version>/formats/canonical/<kind>.json` in
+ * published tarballs, or `schemas/cache/<version>/formats/canonical/...`
+ * in a source checkout. The projection layer needs `v1_translatable`
+ * per canonical to honor the normative rule from
+ * `v1-canonical-mapping.json`:
  *
  *   > SDKs encountering `v1_translatable: false` on a canonical SHOULD
  *   > NOT emit `FORMAT_PROJECTION_FAILED` (which signals registry-
@@ -39,18 +41,33 @@ function loadCanonicalSchema(kind: CanonicalFormatKind, cacheRoot: string): Cano
 }
 
 function findCacheRoot(): string {
-  // Track whichever 3.1+ cache the workspace has synced. `latest` is the
-  // last-resort candidate because in workspaces pinned to a 3.0.x GA it
-  // points at a cache that lacks canonical-format schemas — the loader
-  // would silently return `true` for every v1_translatable check and miss
-  // the 4 inherently-v2 canonicals.
-  const candidates = BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v));
+  // Resolution order:
+  //   1. Published-tarball path adjacent to the compiled loader —
+  //      `dist/lib/schemas-data/<version>/`. Populated by
+  //      `scripts/copy-schemas-to-dist.ts` during `build:lib`.
+  //   2. Source-tree path `schemas/cache/<version>/` relative to the
+  //      loader's source location. Used when running from a source
+  //      checkout (e.g. `tsx`, vitest) before `build:lib`.
+  //
+  // Within both, versions are tried in `BETA_VERSIONS_TO_TRY` order:
+  // current beta wins; older betas survive for adopters who haven't
+  // synced; `latest` is last-resort and skipped in dist (the symlink
+  // is intentionally not copied — adopters pinned to 3.0.x GA hit the
+  // throw below rather than silently picking up a v3.0 cache that
+  // lacks canonical-format schemas).
+  const candidates = [
+    ...BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', 'schemas-data', v)),
+    ...BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v)),
+  ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
   throw new Error(
-    `No 3.1+ schema cache found. Run \`npm run sync-schemas\` for a 3.1+ AdCP version. ` +
-      `Looked in: ${candidates.join(', ')}.`
+    `No 3.1+ schema cache found. Looked in: ${candidates.join(', ')}. ` +
+      `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
+      `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
+      `your install method (npm/yarn/pnpm) and Node version. ` +
+      `If you're working from a source checkout, run \`npm run sync-schemas:3.1-beta\` then \`npm run build:lib\`.`
   );
 }
 

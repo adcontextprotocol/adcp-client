@@ -12,4 +12,10 @@
  *
  * Single source of truth so the next beta bump touches one file, not two.
  */
-export const BETA_VERSIONS_TO_TRY: readonly string[] = ['3.1.0-beta.2', '3.1.0-beta.1', '3.1.0-beta.0', 'latest'];
+export const BETA_VERSIONS_TO_TRY: readonly string[] = [
+  '3.1.0-beta.3',
+  '3.1.0-beta.2',
+  '3.1.0-beta.1',
+  '3.1.0-beta.0',
+  'latest',
+];

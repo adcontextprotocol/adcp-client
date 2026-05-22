@@ -1,6 +1,8 @@
 /**
  * Loader + reverse-lookup for the v1↔v2 canonical-format registry
- * (`schemas/cache/<version>/registries/v1-canonical-mapping.json`).
+ * (`dist/lib/schemas-data/<version>/registries/v1-canonical-mapping.json`
+ * in published tarballs; `schemas/cache/<version>/registries/...` in a
+ * source checkout).
  *
  * The spec authors the registry **forward** — given a v1 named format,
  * find the v2 canonical. v2 → v1 projection needs the inverse direction,
@@ -26,6 +28,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { BETA_VERSIONS_TO_TRY } from './cache-versions';
 
 interface RegistryEntryV1Pattern {
@@ -57,11 +60,19 @@ interface CanonicalMappingRegistry {
 let cached: CanonicalMappingRegistry | null = null;
 
 /**
- * Load the registry from a known schema-cache version. Tries `3.1.0-beta.2`
- * first (current beta), then `3.1.0-beta.1`, then `3.1.0-beta.0`, then the
- * `latest` symlink — whichever ships `registries/v1-canonical-mapping.json`
- * is the source of truth. The pin floats deliberately so the registry tracks
- * whichever 3.1+ cache the workspace has synced.
+ * Load the registry from a known schema-cache version. Resolution order:
+ *
+ *   1. Caller-supplied `cacheRoot` (test hook / explicit pin).
+ *   2. Published-tarball path adjacent to the compiled loader —
+ *      `dist/lib/schemas-data/<version>/registries/v1-canonical-mapping.json`.
+ *      Populated by `scripts/copy-schemas-to-dist.ts` during `build:lib`.
+ *   3. Source-tree path `schemas/cache/<version>/registries/...` relative
+ *      to the loader's source location. Used when running from a source
+ *      checkout (e.g. `tsx`, vitest) before `build:lib`.
+ *
+ * Within (2) and (3), versions are tried in `BETA_VERSIONS_TO_TRY` order
+ * — current beta wins; older betas survive for adopters who haven't
+ * synced; `latest` is last-resort.
  *
  * Memoized — the registry is small and immutable per version.
  */
@@ -69,9 +80,14 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   if (cached) return cached;
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
-    : BETA_VERSIONS_TO_TRY.map(v =>
-        path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
-      );
+    : [
+        ...BETA_VERSIONS_TO_TRY.map(v =>
+          path.join(__dirname, '..', '..', 'schemas-data', v, 'registries', 'v1-canonical-mapping.json')
+        ),
+        ...BETA_VERSIONS_TO_TRY.map(v =>
+          path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
+        ),
+      ];
   for (const file of candidates) {
     if (existsSync(file)) {
       cached = JSON.parse(readFileSync(file, 'utf-8')) as CanonicalMappingRegistry;
@@ -80,7 +96,10 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   }
   throw new Error(
     `v1-canonical-mapping.json not found. Looked in: ${candidates.join(', ')}. ` +
-      `Run \`npm run sync-schemas\` for a 3.1+ AdCP version.`
+      `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
+      `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
+      `your install method (npm/yarn/pnpm) and Node version. ` +
+      `If you're working from a source checkout, run \`npm run sync-schemas:3.1-beta\` then \`npm run build:lib\`.`
   );
 }
 
@@ -252,13 +271,17 @@ export function reverseLookup(canonical: CanonicalFormatKind, params: Record<str
 
 /**
  * Synthesize a v1 format_id from a literal glob and the registry's recorded params.
- * Uses the AAO canonical agent_url base form with trailing slash, matching the
- * seller-asserted fixtures in the spec's reference set
- * (`creative.adcontextprotocol.org/`).
+ *
+ * Uses {@link AAO_CANONICAL_AGENT_URL} as the `agent_url` base. Note that this
+ * value is **non-normative**: the AdCP spec treats registry synthesis as
+ * implementation-defined, so the resulting `agent_url` is a best-effort
+ * fallback that mirrors the AAO reference agent, not a wire-truth value.
+ * Callers that require a seller-authoritative `agent_url` must use the
+ * `v1_format_ref` from the seller's response directly.
  */
 function synthesizeFormatIdFromGlob(glob: string, registryParams: Record<string, unknown>): V1FormatId {
   const out: V1FormatId = {
-    agent_url: 'https://creative.adcontextprotocol.org/',
+    agent_url: AAO_CANONICAL_AGENT_URL,
     id: glob,
   };
   if (typeof registryParams.width === 'number') out.width = registryParams.width;
