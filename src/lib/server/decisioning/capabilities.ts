@@ -20,6 +20,16 @@ import type {
   GetAdCPCapabilitiesResponse,
 } from '../../types/tools.generated';
 
+/**
+ * Pre-resolved alias for the wire `media_buy` block. Used as the projection
+ * source for the five `media_buy.*` capability fields below so each typed
+ * field references a single resolved shape instead of re-walking the
+ * `GetAdCPCapabilitiesResponse` type graph independently. Without the
+ * alias, `strict + skipLibCheck:false` adopters hit the TS instantiation
+ * budget on the published `.d.ts` and tsc OOMs.
+ */
+type _MediaBuyCapabilities = NonNullable<GetAdCPCapabilitiesResponse['media_buy']>;
+
 export interface DecisioningCapabilities<TConfig = unknown> {
   /**
    * Specialisms claimed; framework type-checks these against implemented platform
@@ -91,7 +101,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.audience_targeting`.
    */
-  audience_targeting?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['audience_targeting']>;
+  audience_targeting?: NonNullable<_MediaBuyCapabilities['audience_targeting']>;
 
   /**
    * Conversion-tracking capabilities — projected onto
@@ -103,7 +113,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.conversion_tracking`.
    */
-  conversion_tracking?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['conversion_tracking']>;
+  conversion_tracking?: NonNullable<_MediaBuyCapabilities['conversion_tracking']>;
 
   /**
    * Content-standards capabilities — projected onto
@@ -115,7 +125,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.content_standards`.
    */
-  content_standards?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['content_standards']>;
+  content_standards?: NonNullable<_MediaBuyCapabilities['content_standards']>;
 
   /**
    * Seller-level rollup of optimization metrics — projected onto
@@ -132,9 +142,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.supported_optimization_metrics`.
    */
-  supported_optimization_metrics?: NonNullable<
-    NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['supported_optimization_metrics']
-  >;
+  supported_optimization_metrics?: NonNullable<_MediaBuyCapabilities['supported_optimization_metrics']>;
 
   /**
    * Frequency-cap support declaration — projected onto
@@ -146,7 +154,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.frequency_capping`.
    */
-  frequency_capping?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['frequency_capping']>;
+  frequency_capping?: NonNullable<_MediaBuyCapabilities['frequency_capping']>;
 
   /**
    * Brand-protocol capabilities. Projected onto the wire `brand` block of

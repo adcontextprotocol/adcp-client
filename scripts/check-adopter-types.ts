@@ -51,8 +51,8 @@ void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
 `;
 
-function run(cmd: string, args: string[], cwd: string): void {
-  execFileSync(cmd, args, { cwd, stdio: 'inherit' });
+function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): void {
+  execFileSync(cmd, args, { cwd, stdio: 'inherit', env: env ?? process.env });
 }
 
 function main(): void {
@@ -110,8 +110,17 @@ function main(): void {
   );
 
   console.log('[adopter-types] running tsc --noEmit against published types...');
+  // Bump node's heap for tsc — `strict + skipLibCheck:false` against the
+  // 21k-line `tools.generated.d.ts` exceeds the default 4GB heap once
+  // multiple `NonNullable<X['k']>` projections off `GetAdCPCapabilitiesResponse`
+  // accumulate. Real adopters override per their environment; we bump here
+  // so the guard reflects what tsc actually needs to typecheck the surface.
+  const tscEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-old-space-size=8192'].filter(Boolean).join(' '),
+  };
   try {
-    run('npx', ['--no-install', 'tsc', '--noEmit'], adopterDir);
+    run('npx', ['--no-install', 'tsc', '--noEmit'], adopterDir, tscEnv);
     console.log('[adopter-types] PASS — published .d.ts files type-check cleanly for an adopter.');
   } catch {
     console.error('[adopter-types] FAIL — published .d.ts files do not type-check on a clean adopter project.');
