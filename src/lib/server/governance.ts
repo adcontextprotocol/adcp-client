@@ -189,7 +189,7 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
   }
   const response = extracted as unknown as CheckGovernanceResponse;
 
-  if (response.status === 'approved') {
+  if (response.verdict === 'approved') {
     return {
       approved: true,
       checkId: response.check_id,
@@ -201,7 +201,7 @@ export async function checkGovernance(options: CheckGovernanceOptions): Promise<
     };
   }
 
-  if (response.status === 'conditions') {
+  if (response.verdict === 'conditions') {
     return {
       approved: 'conditions',
       checkId: response.check_id,

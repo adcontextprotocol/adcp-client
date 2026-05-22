@@ -596,14 +596,15 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
+  const dataAsAny = data as AcquireRightsResponse & { rights_status?: string; rights_id?: string };
   const defaultSummary =
     'errors' in data
       ? 'Rights acquisition error'
-      : data.status === 'acquired'
-        ? `Rights ${data.rights_id} acquired`
-        : data.status === 'rejected'
-          ? `Rights ${data.rights_id} rejected`
-          : `Rights ${data.rights_id} pending approval`;
+      : dataAsAny.rights_status === 'acquired'
+        ? `Rights ${dataAsAny.rights_id} acquired`
+        : dataAsAny.rights_status === 'rejected'
+          ? `Rights ${dataAsAny.rights_id} rejected`
+          : `Rights ${dataAsAny.rights_id} pending approval`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: toStructuredContent(data),
@@ -617,23 +618,32 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
  * shape directly without reading a 4-variant union.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function acquireRightsAcquired(data: Omit<AcquireRightsAcquired, 'status'>, summary?: string): McpToolResponse {
-  return acquireRightsResponse({ ...data, status: 'acquired' } as AcquireRightsAcquired, summary);
+export function acquireRightsAcquired(
+  data: Omit<AcquireRightsAcquired, 'rights_status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, rights_status: 'acquired' } as unknown as AcquireRightsResponse, summary);
 }
 
 /** Per-variant constructor for the `pending_approval` branch. */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsPendingApproval(
-  data: Omit<AcquireRightsPendingApproval, 'status'>,
+  data: Omit<AcquireRightsPendingApproval, 'rights_status'>,
   summary?: string
 ): McpToolResponse {
-  return acquireRightsResponse({ ...data, status: 'pending_approval' } as AcquireRightsPendingApproval, summary);
+  return acquireRightsResponse(
+    { ...data, rights_status: 'pending_approval' } as unknown as AcquireRightsResponse,
+    summary
+  );
 }
 
 /** Per-variant constructor for the `rejected` branch. */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'>, summary?: string): McpToolResponse {
-  return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
+export function acquireRightsRejected(
+  data: Omit<AcquireRightsRejected, 'rights_status'>,
+  summary?: string
+): McpToolResponse {
+  return acquireRightsResponse({ ...data, rights_status: 'rejected' } as unknown as AcquireRightsResponse, summary);
 }
 
 /**
@@ -670,7 +680,7 @@ export function updateRightsResponse(data: UpdateRightsResponse, summary?: strin
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function updateRightsSuccess(data: UpdateRightsSuccess, summary?: string): McpToolResponse {
-  return updateRightsResponse(data, summary);
+  return updateRightsResponse(data as unknown as UpdateRightsResponse, summary);
 }
 
 /**
@@ -814,5 +824,12 @@ reportUsageResponse.acceptAll = function acceptAll(
   const total = request.usage?.length ?? 0;
   const errors = opts?.errors ?? [];
   const accepted = Math.max(0, total - errors.length);
-  return reportUsageResponse({ accepted, ...(errors.length > 0 ? { errors } : {}) }, opts?.summary);
+  return reportUsageResponse(
+    {
+      status: errors.length > 0 ? 'failed' : 'completed',
+      accepted,
+      ...(errors.length > 0 ? { errors } : {}),
+    } as ReportUsageResponse,
+    opts?.summary
+  );
 };

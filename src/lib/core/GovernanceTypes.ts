@@ -145,7 +145,7 @@ export interface GovernanceOutcome {
 export function parseCheckResponse(response: CheckGovernanceResponse): GovernanceCheckResult {
   return {
     checkId: response.check_id,
-    status: response.status,
+    status: response.verdict,
     explanation: response.explanation,
     findings: response.findings?.map(f => ({
       categoryId: f.category_id,

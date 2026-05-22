@@ -155,6 +155,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     this.authTokens.set(listId, authToken);
 
     return {
+      status: 'completed',
       list,
       auth_token: authToken,
     };
@@ -186,7 +187,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
 
     this.lists.set(request.list_id, updated);
 
-    return { list: updated };
+    return { status: 'completed', list: updated };
   }
 
   async getList(request: GetPropertyListRequest): Promise<GetPropertyListResponse> {
@@ -217,6 +218,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     }
 
     return {
+      status: 'completed',
       list: {
         ...list,
         property_count: identifiers?.length ?? list.property_count,
@@ -268,6 +270,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     const paginatedLists = lists.slice(0, maxResults);
 
     return {
+      status: 'completed',
       lists: paginatedLists,
       pagination: {
         has_more: paginatedLists.length < lists.length,
@@ -292,6 +295,7 @@ export class PropertyListAdapter implements IPropertyListAdapter {
     this.authTokens.delete(request.list_id);
 
     return {
+      status: 'completed',
       deleted: true,
       list_id: request.list_id,
     };

@@ -5045,6 +5045,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       };
 
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
+    status: 'completed',
     adcp: {
       major_versions: capConfig?.major_versions ?? [3],
       idempotency: idempotencyCapability,

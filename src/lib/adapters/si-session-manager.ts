@@ -122,6 +122,7 @@ export class SISessionManager implements ISISessionManager {
   async getOffering(request: SIGetOfferingRequest): Promise<SIGetOfferingResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         available: false,
         unavailable_reason: 'SI not supported by this server',
         errors: [
@@ -135,6 +136,7 @@ export class SISessionManager implements ISISessionManager {
 
     // Override in subclass to implement actual offering lookup
     return {
+      status: 'failed',
       available: false,
       unavailable_reason: 'Offering not found',
       errors: [
@@ -149,6 +151,7 @@ export class SISessionManager implements ISISessionManager {
   async initiateSession(request: SIInitiateSessionRequest): Promise<SIInitiateSessionResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         session_id: '',
         session_status: 'terminated',
         errors: [
@@ -187,6 +190,7 @@ export class SISessionManager implements ISISessionManager {
     const initialResponse = await this.generateInitialResponse(session, request.intent);
 
     return {
+      status: 'completed',
       session_id: sessionId,
       session_status: 'active',
       response: initialResponse,
@@ -197,6 +201,7 @@ export class SISessionManager implements ISISessionManager {
   async sendMessage(request: SISendMessageRequest): Promise<SISendMessageResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         session_id: request.session_id,
         session_status: 'terminated',
         errors: [
@@ -211,6 +216,7 @@ export class SISessionManager implements ISISessionManager {
     const session = await this.getSession(request.session_id);
     if (!session) {
       return {
+        status: 'failed',
         session_id: request.session_id,
         session_status: 'terminated',
         errors: [
@@ -224,6 +230,7 @@ export class SISessionManager implements ISISessionManager {
 
     if (session.status === 'terminated' || session.status === 'complete') {
       return {
+        status: 'failed',
         session_id: request.session_id,
         session_status: 'terminated',
         errors: [
@@ -262,6 +269,7 @@ export class SISessionManager implements ISISessionManager {
     this.sessions.set(session.sessionId, session);
 
     return {
+      status: 'completed',
       session_id: session.sessionId,
       response,
       session_status: session.status,
@@ -271,6 +279,7 @@ export class SISessionManager implements ISISessionManager {
   async terminateSession(request: SITerminateSessionRequest): Promise<SITerminateSessionResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         session_id: request.session_id,
         terminated: false,
         session_status: 'terminated',
@@ -286,6 +295,7 @@ export class SISessionManager implements ISISessionManager {
     const session = await this.getSession(request.session_id);
     if (!session) {
       return {
+        status: 'failed',
         session_id: request.session_id,
         terminated: false,
         session_status: 'terminated',
@@ -309,6 +319,7 @@ export class SISessionManager implements ISISessionManager {
     }
 
     return {
+      status: 'completed',
       session_id: session.sessionId,
       terminated: true,
       session_status: 'terminated',

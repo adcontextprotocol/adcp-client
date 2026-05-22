@@ -116,6 +116,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async listStandards(request: ListContentStandardsRequest): Promise<ListContentStandardsResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -127,6 +128,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to return actual standards
     return {
+      status: 'completed',
       standards: [],
       context: request.context,
     };
@@ -135,6 +137,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async getStandards(request: GetContentStandardsRequest): Promise<GetContentStandardsResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -146,6 +149,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to return actual standards
     return {
+      status: 'failed',
       errors: [
         {
           code: ContentStandardsErrorCodes.STANDARDS_NOT_FOUND,
@@ -158,6 +162,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async createStandards(request: CreateContentStandardsRequest): Promise<CreateContentStandardsResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -169,6 +174,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to implement creation logic
     return {
+      status: 'failed',
       errors: [
         {
           code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -181,6 +187,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async updateStandards(request: UpdateContentStandardsRequest): Promise<UpdateContentStandardsResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         success: false as const,
         errors: [
           {
@@ -193,6 +200,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to implement update logic
     return {
+      status: 'failed',
       success: false as const,
       errors: [
         {
@@ -206,6 +214,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async calibrateContent(request: CalibrateContentRequest): Promise<CalibrateContentResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -217,6 +226,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 
     // Override in subclass to implement calibration logic
     return {
+      status: 'failed',
       errors: [
         {
           code: ContentStandardsErrorCodes.EVALUATION_FAILED,
@@ -229,6 +239,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
   async validateContentDelivery(request: ValidateContentDeliveryRequest): Promise<ValidateContentDeliveryResponse> {
     if (!this.isSupported()) {
       return {
+        status: 'failed',
         errors: [
           {
             code: ContentStandardsErrorCodes.NOT_SUPPORTED,
@@ -242,6 +253,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
     // Override in subclass to implement validation logic
     // Stub returns all records as passed (no filtering)
     return {
+      status: 'completed',
       summary: {
         total_records: request.records.length,
         passed_records: request.records.length,
