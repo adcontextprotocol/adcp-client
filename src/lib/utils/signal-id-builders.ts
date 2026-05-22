@@ -25,3 +25,31 @@ export const signalId = {
   catalog: catalogSignalId,
   agent: agentSignalId,
 } as const;
+
+/**
+ * Return the segment identifier from a `SignalID`, independent of source.
+ * Both `catalog` and `agent` variants carry the segment identifier in `id`.
+ *
+ * @example
+ * getSignalId(signalId.catalog({ data_provider_domain: 'polk.com', id: 'likely_ev_buyers' }))
+ * // → 'likely_ev_buyers'
+ */
+export function getSignalId(sid: SignalID): string {
+  return sid.id;
+}
+
+/**
+ * Return the issuer identifier from a `SignalID`, independent of source.
+ * - `source: 'catalog'` → `data_provider_domain` (e.g. `'polk.com'`)
+ * - `source: 'agent'`   → `agent_url` (e.g. `'https://liveramp.com/.well-known/adcp/signals'`)
+ *
+ * @example
+ * getSignalIssuer(signalId.catalog({ data_provider_domain: 'polk.com', id: 'likely_ev_buyers' }))
+ * // → 'polk.com'
+ */
+export function getSignalIssuer(sid: SignalID): string {
+  if (sid.source === 'catalog') return sid.data_provider_domain;
+  if (sid.source === 'agent') return sid.agent_url;
+  const _exhaustive: never = sid;
+  throw new Error(`Unhandled SignalID source: ${String((_exhaustive as { source: unknown }).source)}`);
+}
