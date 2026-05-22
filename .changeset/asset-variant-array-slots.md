@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 feat(manifest-helpers): handle `AssetVariant | AssetVariant[]` slot widening (3.1.0-beta.2)

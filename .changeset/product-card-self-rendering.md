@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 feat(preview-utils): adopt 3.1.0-beta.2 self-rendering `product_card` shape

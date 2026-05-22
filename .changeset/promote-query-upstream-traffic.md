@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 feat(test-controller): promote `query_upstream_traffic` to first-class `CONTROLLER_SCENARIOS` member

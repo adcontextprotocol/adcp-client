@@ -900,11 +900,13 @@ async function handleTestControllerRequestImpl(
         if (!creativeStatus.success) {
           return controllerError('INVALID_PARAMS', `Invalid creative status: ${params.status}`);
         }
-        return wrapStoreSuccess(await store.forceCreativeStatus(
-          params.creative_id as string,
-          creativeStatus.data,
-          params.rejection_reason as string | undefined
-        ));
+        return wrapStoreSuccess(
+          await store.forceCreativeStatus(
+            params.creative_id as string,
+            creativeStatus.data,
+            params.rejection_reason as string | undefined
+          )
+        );
       }
 
       case CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS: {
@@ -935,11 +937,13 @@ async function handleTestControllerRequestImpl(
         if (!mediaBuyStatus.success) {
           return controllerError('INVALID_PARAMS', `Invalid media buy status: ${params.status}`);
         }
-        return wrapStoreSuccess(await store.forceMediaBuyStatus(
-          params.media_buy_id as string,
-          mediaBuyStatus.data,
-          params.rejection_reason as string | undefined
-        ));
+        return wrapStoreSuccess(
+          await store.forceMediaBuyStatus(
+            params.media_buy_id as string,
+            mediaBuyStatus.data,
+            params.rejection_reason as string | undefined
+          )
+        );
       }
 
       case CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS: {
@@ -953,11 +957,13 @@ async function handleTestControllerRequestImpl(
         if (!validSessionStatuses.includes(params.status as string)) {
           return controllerError('INVALID_PARAMS', `Invalid session status: ${params.status}`);
         }
-        return wrapStoreSuccess(await store.forceSessionStatus(
-          params.session_id as string,
-          params.status as 'complete' | 'terminated',
-          params.termination_reason as string | undefined
-        ));
+        return wrapStoreSuccess(
+          await store.forceSessionStatus(
+            params.session_id as string,
+            params.status as 'complete' | 'terminated',
+            params.termination_reason as string | undefined
+          )
+        );
       }
 
       case CONTROLLER_SCENARIOS.SIMULATE_DELIVERY: {
@@ -987,14 +993,16 @@ async function handleTestControllerRequestImpl(
           );
         }
         // Spread params verbatim so extension fields reach the adapter.
-        return wrapStoreSuccess(await store.simulateBudgetSpend(
-          params as {
-            account_id?: string;
-            media_buy_id?: string;
-            spend_percentage: number;
-            [key: string]: unknown;
-          }
-        ));
+        return wrapStoreSuccess(
+          await store.simulateBudgetSpend(
+            params as {
+              account_id?: string;
+              media_buy_id?: string;
+              spend_percentage: number;
+              [key: string]: unknown;
+            }
+          )
+        );
       }
 
       case CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM: {
@@ -1023,11 +1031,13 @@ async function handleTestControllerRequestImpl(
             "force_create_media_buy_arm with arm='input-required' must not include params.task_id"
           );
         }
-        return wrapStoreSuccess(await store.forceCreateMediaBuyArm({
-          arm,
-          task_id: params?.task_id as string | undefined,
-          message: params?.message as string | undefined,
-        }));
+        return wrapStoreSuccess(
+          await store.forceCreateMediaBuyArm({
+            arm,
+            task_id: params?.task_id as string | undefined,
+            message: params?.message as string | undefined,
+          })
+        );
       }
 
       case CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION: {
@@ -1047,7 +1057,9 @@ async function handleTestControllerRequestImpl(
             'force_task_completion requires params.result (completion payload object)'
           );
         }
-        return wrapStoreSuccess(await store.forceTaskCompletion(params.task_id as string, params.result as Record<string, unknown>));
+        return wrapStoreSuccess(
+          await store.forceTaskCompletion(params.task_id as string, params.result as Record<string, unknown>)
+        );
       }
 
       case SEED_SCENARIOS.SEED_PRODUCT:
@@ -1100,11 +1112,13 @@ async function handleTestControllerRequestImpl(
         // name used by force_creative_status / force_media_buy_status). The
         // adapter receives whichever was supplied — de-risks the eventual spec
         // PR (adcp#2860) picking either name.
-        return wrapStoreSuccess(await store.forceAudienceStatus(
-          params.audience_id as string,
-          audienceStatus.data,
-          (params.reason ?? params.rejection_reason) as string | undefined
-        ));
+        return wrapStoreSuccess(
+          await store.forceAudienceStatus(
+            params.audience_id as string,
+            audienceStatus.data,
+            (params.reason ?? params.rejection_reason) as string | undefined
+          )
+        );
       }
 
       case FORCE_CATALOG_ITEM_STATUS_SCENARIO: {
@@ -1122,11 +1136,13 @@ async function handleTestControllerRequestImpl(
           return controllerError('INVALID_PARAMS', `Invalid catalog item status: ${params.status}`);
         }
         // See force_audience_status above — same dual-name acceptance.
-        return wrapStoreSuccess(await store.forceCatalogItemStatus(
-          params.catalog_item_id as string,
-          itemStatus.data,
-          (params.reason ?? params.rejection_reason) as string | undefined
-        ));
+        return wrapStoreSuccess(
+          await store.forceCatalogItemStatus(
+            params.catalog_item_id as string,
+            itemStatus.data,
+            (params.reason ?? params.rejection_reason) as string | undefined
+          )
+        );
       }
 
       case CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC: {
