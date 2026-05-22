@@ -6,7 +6,7 @@
 import { createAdcpServer, serve, adcpError } from '@adcp/sdk/server/legacy/v5';
 import type { GetSignalsResponse } from '@adcp/sdk';
 
-type Signal = GetSignalsResponse['signals'][number];
+type Signal = NonNullable<GetSignalsResponse['signals']>[number];
 
 const SIGNALS: Signal[] = [
   {
@@ -96,7 +96,7 @@ serve(() =>
           results = results.slice(0, params.max_results);
         }
 
-        return { signals: results, sandbox: true };
+        return { status: 'completed' as const, signals: results, sandbox: true };
       },
 
       activateSignal: async (params, ctx) => {
