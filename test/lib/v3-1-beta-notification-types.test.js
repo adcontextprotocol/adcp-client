@@ -60,8 +60,8 @@ const settingsUpdate: SyncAccountsRequest = {
       account: { account_id: 'acc_acme_pinnacle' },
       notification_configs: [
         {
-          subscriber_id: 'catalog-sync',
-          url: 'https://buyer.example/webhooks/adcp/catalog',
+          subscriber_id: 'wholesale-feed-sync',
+          url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
           event_types: [
             'product.created',
             'product.updated',

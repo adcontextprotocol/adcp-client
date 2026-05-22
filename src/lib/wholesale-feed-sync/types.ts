@@ -2,7 +2,7 @@ import type { SingleAgentClient } from '../core/SingleAgentClient';
 import type * as V31Beta from '../types/v3-1-beta';
 
 /**
- * Operating mode for a {@link CatalogSync} instance, resolved from the
+ * Operating mode for a {@link WholesaleFeedSync} instance, resolved from the
  * agent's capability stanza at `start()` time.
  *
  * - `'auto-poll'` — agent declares `wholesale_feed_versioning.supported: true`
@@ -13,40 +13,40 @@ import type * as V31Beta from '../types/v3-1-beta';
  *   `start()`. No background activity; `refresh()` triggers a re-bootstrap
  *   and diff-emits any detected changes.
  *
- * The top-level `catalog.mode` is the lowest mode across the two entity
- * tracks — `catalog.products.mode` and `catalog.signals.mode` can differ
+ * The top-level `sync.mode` is the lowest mode across the two entity
+ * tracks — `sync.products.mode` and `sync.signals.mode` can differ
  * when the agent declares per-entity capability vectors (e.g., products
  * feed supported but signals wholesale only).
  */
-export type CatalogSyncMode = 'manual' | 'auto-poll';
+export type WholesaleFeedSyncMode = 'manual' | 'auto-poll';
 
 /**
  * Lifecycle state of the sync engine.
  */
-export type CatalogSyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
+export type WholesaleFeedSyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
 
 /**
- * Subset of `SingleAgentClient` that {@link CatalogSync} actually uses.
+ * Subset of `SingleAgentClient` that {@link WholesaleFeedSync} actually uses.
  * Lets tests inject a minimal stub without constructing a full client.
  */
-export interface CatalogSyncClient {
+export interface WholesaleFeedSyncClient {
   getAdcpCapabilities: SingleAgentClient['getAdcpCapabilities'];
   getProducts: SingleAgentClient['getProducts'];
   getSignals: SingleAgentClient['getSignals'];
 }
 
 /**
- * Configuration for a {@link CatalogSync} instance.
+ * Configuration for a {@link WholesaleFeedSync} instance.
  *
- * The SDK's primary version pin (`ADCP_VERSION`) stays at GA; the catalog-
- * sync surfaces activate when the agent declares `wholesale_feed_versioning`
+ * The SDK's primary version pin (`ADCP_VERSION`) stays at GA; the wholesale
+ * feed surfaces activate when the agent declares `wholesale_feed_versioning`
  * and/or `wholesale_feed_webhooks` in its `get_adcp_capabilities` response.
  * Against pre-3.1 agents the sync still works in `'manual'` mode — bootstrap
  * via wholesale, no background sync.
  */
-export interface CatalogSyncConfig {
+export interface WholesaleFeedSyncConfig {
   /** Pre-configured client (or stub) for tool calls against the target agent. */
-  client: CatalogSyncClient;
+  client: WholesaleFeedSyncClient;
 
   /**
    * Account scope for wholesale product/signal reads. Beta 3 wholesale-feed
@@ -58,7 +58,7 @@ export interface CatalogSyncConfig {
 
   /**
    * Expected inbound webhook subscription scope. Set this when routing a
-   * validated webhook receiver into a CatalogSync instance so misrouted
+   * validated webhook receiver into a WholesaleFeedSync instance so misrouted
    * account/subscriber fires are rejected before mutating the mirror.
    */
   webhookScope?: {
@@ -81,23 +81,6 @@ export interface CatalogSyncConfig {
   };
 
   /**
-   * @deprecated Beta 3 removed the public `/catalog/events` polling feed.
-   * Register account-level `notification_configs[]` via `sync_accounts`,
-   * deliver inbound webhook payloads to `applyWebhook()`, and use
-   * conditional wholesale reads for repair/reconciliation.
-   */
-  feedOrigin?: string;
-
-  /** @deprecated No-op after beta 3; direct feed polling was removed. */
-  feedHeaders?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
-
-  /** @deprecated No-op after beta 3; direct feed polling was removed. */
-  maxFeedResponseBytes?: number;
-
-  /** @deprecated No-op after beta 3; inbound webhooks are pushed by the seller. */
-  pollIntervalMs?: number;
-
-  /**
    * Version-probe interval in `'auto-poll'` mode. Default: 600000 (10
    * minutes). The spec's recommended cadence: cheap conditional fetch is
    * fast enough that polling more often than every few minutes wastes
@@ -114,14 +97,8 @@ export interface CatalogSyncConfig {
    */
   capabilityRefreshIntervalMs?: number;
 
-  /** @deprecated No-op after beta 3; direct feed cursors were removed. */
-  cursorStore?: unknown;
-
   /** Error callback for background poll/probe failures. */
   onError?: (error: Error) => void;
-
-  /** @deprecated No-op after beta 3; direct feed polling was removed. */
-  fetch?: typeof fetch;
 }
 
 /**
@@ -132,8 +109,6 @@ export interface CatalogSyncConfig {
 export interface ResolvedCapabilities {
   /** Whether the agent supports `if_wholesale_feed_version` conditional fetch. */
   wholesaleFeedVersioning: boolean;
-  /** @deprecated Use `wholesaleFeedVersioning`. */
-  catalogVersioning: boolean;
   /** Whether the agent supports webhook subscriptions on the feed. */
   webhooks: boolean;
   /** Event types the agent advertises for account-level wholesale feed webhooks. */
@@ -141,9 +116,9 @@ export interface ResolvedCapabilities {
 }
 
 /**
- * EventEmitter contract. Catalog change events fire per-type so callers
- * can `catalog.on('product.priced', ...)` without filtering. The wildcard
- * `'event'` channel emits every catalog change for callers that want a
+ * EventEmitter contract. Wholesale feed events fire per-type so callers
+ * can `sync.on('product.priced', ...)` without filtering. The wildcard
+ * `'event'` channel emits every feed change for callers that want a
  * single sink (audit logs, downstream queues).
  *
  * **Authoritative vs synthetic events.** Events delivered through
@@ -166,15 +141,15 @@ export interface ResolvedCapabilities {
  *   re-bootstrap, webhook-version mismatch repair, or manual refresh.
  * - `error` — background poll/probe error. Non-fatal; sync stays in
  *   `'syncing'` and retries on the next tick.
- * - `stateChange` — fires on every {@link CatalogSyncState} transition.
+ * - `stateChange` — fires on every {@link WholesaleFeedSyncState} transition.
  */
-export interface CatalogSyncEvents {
-  bootstrap: [{ productCount: number; signalCount: number; mode: CatalogSyncMode }];
+export interface WholesaleFeedSyncEvents {
+  bootstrap: [{ productCount: number; signalCount: number; mode: WholesaleFeedSyncMode }];
   sync: [{ eventsApplied: number }];
-  mode_resolved: [{ mode: CatalogSyncMode; capabilities: ResolvedCapabilities }];
+  mode_resolved: [{ mode: WholesaleFeedSyncMode; capabilities: ResolvedCapabilities }];
   resyncing: [{ reason: 'bulk_change' | 'version_mismatch' | 'manual' }];
   error: [{ error: Error }];
-  stateChange: [{ from: CatalogSyncState; to: CatalogSyncState }];
+  stateChange: [{ from: WholesaleFeedSyncState; to: WholesaleFeedSyncState }];
   // Per-event-type fan-outs. Payload is the full WholesaleFeedEvent so callers
   // can read `event_id`, `created_at`, and the discriminated `payload`.
   // `synthetic: true` flags events emitted from refresh() or auto-poll
@@ -192,7 +167,7 @@ export interface CatalogSyncEvents {
 }
 
 /**
- * Client-side filter for {@link CatalogSync.products.search}.
+ * Client-side filter for {@link WholesaleFeedSync.products.search}.
  *
  * Filters operate over the in-memory replica — no round trips. All
  * specified dimensions use AND; values within arrays use OR. Pass an
@@ -210,7 +185,7 @@ export interface ProductFilter {
 }
 
 /**
- * Client-side filter for {@link CatalogSync.signals.search}. Same
+ * Client-side filter for {@link WholesaleFeedSync.signals.search}. Same
  * semantics as {@link ProductFilter} but over the signal index.
  */
 export interface SignalFilter {

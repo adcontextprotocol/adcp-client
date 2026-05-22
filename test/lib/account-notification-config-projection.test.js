@@ -13,8 +13,8 @@ describe('account notification_configs projection', () => {
       ctx_metadata: {},
       notification_configs: [
         {
-          subscriber_id: 'catalog-sync',
-          url: 'https://buyer.example/webhooks/adcp/catalog',
+          subscriber_id: 'wholesale-feed-sync',
+          url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
           event_types: ['product.updated', 'signal.priced', 'wholesale_feed.bulk_change'],
           authentication: {
             schemes: ['Bearer'],
@@ -27,8 +27,8 @@ describe('account notification_configs projection', () => {
 
     assert.deepStrictEqual(wire.notification_configs, [
       {
-        subscriber_id: 'catalog-sync',
-        url: 'https://buyer.example/webhooks/adcp/catalog',
+        subscriber_id: 'wholesale-feed-sync',
+        url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
         event_types: ['product.updated', 'signal.priced', 'wholesale_feed.bulk_change'],
         authentication: {
           schemes: ['Bearer'],
@@ -47,8 +47,8 @@ describe('account notification_configs projection', () => {
       status: 'active',
       notification_configs: [
         {
-          subscriber_id: 'catalog-sync',
-          url: 'https://buyer.example/webhooks/adcp/catalog',
+          subscriber_id: 'wholesale-feed-sync',
+          url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
           event_types: ['product.created'],
           authentication: {
             schemes: ['HMAC-SHA256'],
@@ -60,8 +60,8 @@ describe('account notification_configs projection', () => {
 
     assert.deepStrictEqual(wire.notification_configs, [
       {
-        subscriber_id: 'catalog-sync',
-        url: 'https://buyer.example/webhooks/adcp/catalog',
+        subscriber_id: 'wholesale-feed-sync',
+        url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
         event_types: ['product.created'],
         authentication: {
           schemes: ['HMAC-SHA256'],
@@ -79,8 +79,8 @@ describe('account notification_configs projection', () => {
           status: 'active',
           notification_configs: [
             {
-              subscriber_id: 'catalog-sync',
-              url: 'https://buyer.example/webhooks/adcp/catalog',
+              subscriber_id: 'wholesale-feed-sync',
+              url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
               event_types: ['product.updated'],
               authentication: {
                 schemes: ['Bearer'],
@@ -107,8 +107,8 @@ describe('account notification_configs projection', () => {
           status: 'active',
           notification_configs: [
             {
-              subscriber_id: 'catalog-sync',
-              url: 'https://buyer.example/webhooks/adcp/catalog',
+              subscriber_id: 'wholesale-feed-sync',
+              url: 'https://buyer.example/webhooks/adcp/wholesale-feed',
               event_types: ['signal.updated'],
               authentication: {
                 schemes: ['HMAC-SHA256'],

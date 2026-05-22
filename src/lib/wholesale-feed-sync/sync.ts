@@ -3,11 +3,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import type * as V31Beta from '../types/v3-1-beta';
 import type {
-  CatalogSyncClient,
-  CatalogSyncConfig,
-  CatalogSyncEvents,
-  CatalogSyncMode,
-  CatalogSyncState,
+  WholesaleFeedSyncClient,
+  WholesaleFeedSyncConfig,
+  WholesaleFeedSyncEvents,
+  WholesaleFeedSyncMode,
+  WholesaleFeedSyncState,
   ProductFilter,
   ResolvedCapabilities,
   SignalFilter,
@@ -24,9 +24,9 @@ const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
 const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
 
 /**
- * In-memory replica of an AdCP agent's product and signal catalog.
+ * In-memory mirror of an AdCP agent's wholesale product and signal feeds.
  *
- * Discovers the agent's catalog-sync capabilities at `start()`, picks the
+ * Discovers the agent's wholesale-feed capabilities at `start()`, picks the
  * highest-capability sync strategy the agent supports, and maintains a
  * local index for zero-latency lookups. Falls back gracefully to manual
  * bootstrap when the agent does not advertise conditional-fetch tokens.
@@ -34,26 +34,26 @@ const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
  * @example
  * ```ts
  * import { AdCPClient } from '@adcp/sdk';
- * import { CatalogSync } from '@adcp/sdk/catalog-sync';
+ * import { WholesaleFeedSync } from '@adcp/sdk/wholesale-feed-sync';
  *
  * const client = new AdCPClient({ agentUrl, adcpVersion: '3.1-beta' });
- * const catalog = new CatalogSync({ client });
+ * const sync = new WholesaleFeedSync({ client });
  *
- * catalog.on('product.priced', ({ event }) => {
+ * sync.on('product.priced', ({ event }) => {
  *   const p = event.payload as { product_id: string; pricing_options: unknown[] };
  *   console.log('reprice:', p.product_id);
  * });
  *
- * await catalog.start();
- * // catalog.mode is 'auto-poll' / 'manual' depending on the agent
- * console.log(`syncing ${catalog.products.count} products via ${catalog.mode} mode`);
+ * await sync.start();
+ * // sync.mode is 'auto-poll' / 'manual' depending on the agent
+ * console.log(`syncing ${sync.products.count} products via ${sync.mode} mode`);
  * ```
  */
-export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
-  private readonly client: CatalogSyncClient;
+export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
+  private readonly client: WholesaleFeedSyncClient;
   private readonly account: V31Beta.AccountReference | undefined;
-  private readonly webhookScope: NonNullable<CatalogSyncConfig['webhookScope']> | undefined;
-  private readonly webhookDedupStore: CatalogSyncConfig['webhookDedupStore'] | undefined;
+  private readonly webhookScope: NonNullable<WholesaleFeedSyncConfig['webhookScope']> | undefined;
+  private readonly webhookDedupStore: WholesaleFeedSyncConfig['webhookDedupStore'] | undefined;
   private readonly probeIntervalMs: number;
   private readonly capabilityRefreshIntervalMs: number;
   private readonly errorHandler: ((error: Error) => void) | undefined;
@@ -63,11 +63,10 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   private readonly processedWebhookEventKeys = new Set<string>();
   private lastWebhookEventId: string | undefined;
 
-  private _state: CatalogSyncState = 'idle';
-  private _mode: CatalogSyncMode = 'manual';
+  private _state: WholesaleFeedSyncState = 'idle';
+  private _mode: WholesaleFeedSyncMode = 'manual';
   private _capabilities: ResolvedCapabilities = {
     wholesaleFeedVersioning: false,
-    catalogVersioning: false,
     webhooks: false,
     eventTypes: [],
   };
@@ -100,7 +99,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     get count(): number {
       return this.list().length;
     },
-    get mode(): CatalogSyncMode {
+    get mode(): WholesaleFeedSyncMode {
       // Per-entity mode is the lowest mode for which the agent declares
       // the entity's event family. Future extension: when capability vectors
       // diverge per entity, return the entity-specific resolution here. v1
@@ -109,7 +108,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     },
     // Allow the inline getter `mode` to reach private state without binding.
     // Assigned in the constructor below.
-    _mode: 'manual' as CatalogSyncMode,
+    _mode: 'manual' as WholesaleFeedSyncMode,
   };
 
   /** Read-only view of the in-memory signal index. */
@@ -126,13 +125,13 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     get count(): number {
       return this.list().length;
     },
-    get mode(): CatalogSyncMode {
+    get mode(): WholesaleFeedSyncMode {
       return this._mode;
     },
-    _mode: 'manual' as CatalogSyncMode,
+    _mode: 'manual' as WholesaleFeedSyncMode,
     /**
      * `true` when the agent supports `discovery_mode: 'wholesale'` on
-     * `get_signals` (i.e., catalogs are browsable). When `false`, the
+     * `get_signals` (i.e., signals are browsable). When `false`, the
      * agent only supports brief-mode discovery — `signals.list()` will
      * be empty until adopters call into the agent with their own briefs.
      */
@@ -151,13 +150,13 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     this.signalsQueryableWarned = true;
     // eslint-disable-next-line no-console
     console.warn(
-      `[CatalogSync] signals.list()/search() returned an empty replica because the agent does not declare ` +
+      `[WholesaleFeedSync] signals.list()/search() returned an empty replica because the agent does not declare ` +
         `signals.discovery_modes: ["wholesale"]. Brief-mode signal discovery isn't mirrored — call ` +
         `client.getSignals({ signal_spec, ... }) with your brief instead, or omit this surface for this agent.`
     );
   }
 
-  constructor(config: CatalogSyncConfig) {
+  constructor(config: WholesaleFeedSyncConfig) {
     super();
     this.client = config.client;
     this.account = config.account;
@@ -231,7 +230,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   /**
    * Force a manual re-bootstrap. Available in all modes. Fires diff events
    * for changes detected between the current replica and the freshly
-   * fetched catalog.
+   * fetched wholesale feed.
    */
   async refresh(): Promise<void> {
     this.emit('resyncing', { reason: 'manual' });
@@ -247,16 +246,18 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   async applyWebhook(webhook: V31Beta.WholesaleFeedWebhook): Promise<void> {
     const event = webhook.event;
     if (!event || webhook.notification_type !== event.event_type) {
-      throw new Error('CatalogSync: wholesale feed webhook notification_type does not match event.event_type.');
+      throw new Error('WholesaleFeedSync: wholesale feed webhook notification_type does not match event.event_type.');
     }
     if (webhook.notification_id !== event.event_id) {
-      throw new Error('CatalogSync: wholesale feed webhook notification_id does not match event.event_id.');
+      throw new Error('WholesaleFeedSync: wholesale feed webhook notification_id does not match event.event_id.');
     }
     this.assertWebhookScope(webhook);
 
     const payloadScope = (event.payload as { applies_to?: { scope?: string } }).applies_to?.scope;
     if (payloadScope && payloadScope !== webhook.cache_scope) {
-      throw new Error('CatalogSync: wholesale feed webhook cache_scope does not match event.payload.applies_to.scope.');
+      throw new Error(
+        'WholesaleFeedSync: wholesale feed webhook cache_scope does not match event.payload.applies_to.scope.'
+      );
     }
     const payloadAccountIds = (event.payload as { applies_to?: { account_ids?: unknown } }).applies_to?.account_ids;
     const expectedAccountId = this.expectedWebhookAccountId();
@@ -266,7 +267,9 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       Array.isArray(payloadAccountIds) &&
       !payloadAccountIds.includes(expectedAccountId)
     ) {
-      throw new Error('CatalogSync: wholesale feed webhook account overlay does not include this mirror account.');
+      throw new Error(
+        'WholesaleFeedSync: wholesale feed webhook account overlay does not include this mirror account.'
+      );
     }
 
     const dedupeKey = this.webhookDedupeKey(webhook);
@@ -292,7 +295,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
     if (event.event_type === 'wholesale_feed.bulk_change') {
       this.emit('wholesale_feed.bulk_change', { event });
-      await this.recoverFromBulkChange();
+      await this.recoverFromBulkChange(event);
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       this.rememberLastWebhookEventId(event.event_id);
       return;
@@ -311,15 +314,15 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Public state ======
 
-  get state(): CatalogSyncState {
+  get state(): WholesaleFeedSyncState {
     return this._state;
   }
-  get mode(): CatalogSyncMode {
+  get mode(): WholesaleFeedSyncMode {
     return this._mode;
   }
   get capabilities(): Readonly<ResolvedCapabilities> {
     // Return a fresh clone — `Readonly<T>` is shallow, and an adopter
-    // mutating `catalog.capabilities.eventTypes` (a JS array) would
+    // mutating `sync.capabilities.eventTypes` (a JS array) would
     // otherwise corrupt internal state. Deep-clone is cheap (a handful
     // of primitives + one string array).
     return structuredClone(this._capabilities);
@@ -346,7 +349,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     if (typeof status === 'string' && status !== 'success' && status !== 'completed') {
       const message =
         (caps as { error?: { message?: string } }).error?.message ?? `get_adcp_capabilities returned status=${status}`;
-      const err = new Error(`CatalogSync: capability probe returned non-success status: ${message}`);
+      const err = new Error(`WholesaleFeedSync: capability probe returned non-success status: ${message}`);
       this.errorHandler?.(err);
       this.emit('error', { error: err });
       // Fall through to the empty-stanza path below so the sync still
@@ -370,12 +373,11 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
     const resolved: ResolvedCapabilities = {
       wholesaleFeedVersioning,
-      catalogVersioning: wholesaleFeedVersioning,
       webhooks,
       eventTypes,
     };
 
-    const mode: CatalogSyncMode = wholesaleFeedVersioning ? 'auto-poll' : 'manual';
+    const mode: WholesaleFeedSyncMode = wholesaleFeedVersioning ? 'auto-poll' : 'manual';
     this._capabilities = resolved;
     this._mode = mode;
     this.products._mode = mode;
@@ -386,7 +388,9 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Private: bootstrap (wholesale enumeration) ======
 
-  private async bootstrap(options: { emitDiffs?: boolean } = {}): Promise<void> {
+  private async bootstrap(
+    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all' } = {}
+  ): Promise<void> {
     this.setState('bootstrapping');
     try {
       // Build into local maps and atomically swap on success. The previous
@@ -402,19 +406,24 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       const incomingSignals = new Map<string, Signal>();
       let productsUnchanged = false;
       let signalsUnchanged = false;
+      const entities = options.entities ?? 'all';
+      const refreshProducts = entities !== 'signals';
+      const refreshSignals = entities !== 'products' && this.signals.queryable;
 
-      productsUnchanged = await this.bootstrapProducts(incomingProducts);
-      if (this.signals.queryable) {
+      if (refreshProducts) {
+        productsUnchanged = await this.bootstrapProducts(incomingProducts);
+      }
+      if (refreshSignals) {
         signalsUnchanged = await this.bootstrapSignals(incomingSignals);
       }
 
-      if (productsUnchanged) {
+      if (refreshProducts && productsUnchanged) {
         // Seller confirmed our cached version is current. Keep the
         // existing index intact; don't swap with the empty incoming.
-      } else {
+      } else if (refreshProducts) {
         this.productIndex = incomingProducts;
       }
-      if (this.signals.queryable && !signalsUnchanged) {
+      if (refreshSignals && !signalsUnchanged) {
         this.signalIndex = incomingSignals;
       }
 
@@ -523,9 +532,11 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     return false;
   }
 
-  private async recoverFromBulkChange(): Promise<void> {
+  private async recoverFromBulkChange(event: V31Beta.WholesaleFeedEvent): Promise<void> {
     this.emit('resyncing', { reason: 'bulk_change' });
-    await this.bootstrap({ emitDiffs: true });
+    const affected = (event.payload as { affected_entity_type?: string }).affected_entity_type;
+    const entities = affected === 'product' ? 'products' : affected === 'signal' ? 'signals' : 'all';
+    await this.bootstrap({ emitDiffs: true, entities });
   }
 
   private async recoverFromVersionMismatch(): Promise<void> {
@@ -607,10 +618,10 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   private assertWebhookScope(webhook: V31Beta.WholesaleFeedWebhook): void {
     const expectedAccountId = this.expectedWebhookAccountId();
     if (expectedAccountId && webhook.account_id !== expectedAccountId) {
-      throw new Error('CatalogSync: wholesale feed webhook account_id does not match this mirror.');
+      throw new Error('WholesaleFeedSync: wholesale feed webhook account_id does not match this mirror.');
     }
     if (this.webhookScope?.subscriberId && webhook.subscriber_id !== this.webhookScope.subscriberId) {
-      throw new Error('CatalogSync: wholesale feed webhook subscriber_id does not match this mirror.');
+      throw new Error('WholesaleFeedSync: wholesale feed webhook subscriber_id does not match this mirror.');
     }
   }
 
@@ -791,7 +802,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
         created_at: now,
         payload,
       }) as V31Beta.WholesaleFeedEvent;
-    const emit = (channel: keyof CatalogSyncEvents, event: V31Beta.WholesaleFeedEvent): void => {
+    const emit = (channel: keyof WholesaleFeedSyncEvents, event: V31Beta.WholesaleFeedEvent): void => {
       this.emit('event', { event, synthetic: true });
       this.emit(channel as 'product.created', { event, synthetic: true });
     };
@@ -945,7 +956,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
 
   // ====== Private: state ======
 
-  private setState(next: CatalogSyncState): void {
+  private setState(next: WholesaleFeedSyncState): void {
     const from = this._state;
     if (from === next) return;
     this._state = next;

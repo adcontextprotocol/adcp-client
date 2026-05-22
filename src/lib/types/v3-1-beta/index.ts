@@ -9,8 +9,8 @@
 //   import type { GetProductsResponse, WholesaleFeedEvent } from '@adcp/sdk/types/v3-1-beta';
 //
 // The SDK's primary type surface (`@adcp/sdk/types`) stays pinned to the
-// GA `ADCP_VERSION`; this opt-in parallel tree exposes the catalog-sync
-// wholesale-feed sync additions (`if_wholesale_feed_version`, `cache_scope`,
+// GA `ADCP_VERSION`; this opt-in parallel tree exposes the wholesale feed
+// additions (`if_wholesale_feed_version`, `cache_scope`,
 // `unchanged`, `WholesaleFeedEvent`, `WholesaleFeedWebhook`) so consumers can build against
 // beta sellers with full type coverage.
 //
