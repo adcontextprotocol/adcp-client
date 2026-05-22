@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "beta",
+  "initialVersions": {
+    "@adcp/sdk": "8.0.0",
+    "@adcp/client": "6.0.0",
+    "@adcp/eslint-plugin": "0.1.2"
+  },
+  "changesets": []
+}
