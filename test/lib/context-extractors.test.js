@@ -91,9 +91,9 @@ describe('context extractors', () => {
   });
 
   describe('check_governance', () => {
-    it('extracts governance_context, check_id, plan_id, and status', () => {
+    it('extracts governance_context, check_id, plan_id, and verdict', () => {
       const data = {
-        status: 'approved',
+        verdict: 'approved',
         check_id: 'chk_123',
         plan_id: 'plan_1',
         governance_context: 'opaque-ctx-abc123',
@@ -108,7 +108,7 @@ describe('context extractors', () => {
     });
 
     it('extracts only present fields', () => {
-      const data = { status: 'denied' };
+      const data = { verdict: 'denied' };
       const result = extractContext('check_governance', data);
       assert.deepStrictEqual(result, { governance_status: 'denied' });
     });
@@ -154,13 +154,13 @@ describe('context extractors', () => {
   });
 
   describe('report_plan_outcome', () => {
-    it('extracts outcome_id and outcome_status', () => {
-      const data = { status: 'completed', outcome_id: 'out_456' };
+    it('extracts outcome_id and outcome_state', () => {
+      const data = { outcome_state: 'completed', outcome_id: 'out_456' };
       const result = extractContext('report_plan_outcome', data);
       assert.deepStrictEqual(result, { outcome_id: 'out_456', outcome_status: 'completed' });
     });
 
-    it('returns empty object when status is missing', () => {
+    it('returns empty object when outcome_state is missing', () => {
       assert.deepStrictEqual(extractContext('report_plan_outcome', {}), {});
     });
   });
