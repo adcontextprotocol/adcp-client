@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 fix(governance): drop `categories` from `governance_agents[]` wire emission (3.1.0-beta.2)

@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 fix(types): handle `OutcomeMeasurement` → `OutcomeMeasurementDeprecated` rename (AdCP 3.1.0-beta.2)
