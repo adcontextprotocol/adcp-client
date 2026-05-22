@@ -21,6 +21,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       reporting_period: { start: '2026-02-13T00:00:00Z', end: '2026-03-04T00:00:00Z' },
       currency: 'USD',
       media_buy_deliveries: [
@@ -51,6 +52,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       reporting_period: { start: '2026-02-13T00:00:00Z', end: '2026-03-04T00:00:00Z' },
       currency: 'USD',
       media_buy_deliveries: [
@@ -82,6 +84,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
 
     // Second real failure case from logs: by_package[1] has no rate but by_package[0] does
     const response = {
+      status: 'completed',
       reporting_period: { start: '2026-02-13T00:00:00Z', end: '2026-03-04T00:00:00Z' },
       currency: 'USD',
       media_buy_deliveries: [
@@ -121,6 +124,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       reporting_period: { start: '2026-02-13T00:00:00Z', end: '2026-03-04T00:00:00Z' },
       currency: 'USD',
       media_buy_deliveries: [
@@ -152,6 +156,7 @@ describe('Backward compat: get_media_buy_delivery schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       reporting_period: { start: '2026-02-13T00:00:00Z', end: '2026-03-04T00:00:00Z' },
       currency: 'USD',
       media_buy_deliveries: [
@@ -190,6 +195,7 @@ describe('Backward compat: get_media_buys schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_test',
@@ -209,6 +215,7 @@ describe('Backward compat: get_media_buys schema', () => {
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
     const response = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_test',
