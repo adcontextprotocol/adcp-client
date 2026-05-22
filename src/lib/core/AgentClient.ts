@@ -8,6 +8,7 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type { AdcpCapabilities } from '../utils/capabilities';
+import type { WebhookHeaderValue } from '../webhooks';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -433,9 +434,9 @@ export class AgentClient {
     payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
     taskType: string,
     operationId: string,
-    signature?: string,
-    timestamp?: string | number,
-    rawBody?: string
+    signature?: WebhookHeaderValue,
+    timestamp?: WebhookHeaderValue,
+    rawBody?: string | Buffer | Uint8Array
   ): Promise<boolean> {
     return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
   }
@@ -452,7 +453,11 @@ export class AgentClient {
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(rawBodyOrPayload: string | unknown, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(
+    rawBodyOrPayload: string | Buffer | Uint8Array | unknown,
+    signature: WebhookHeaderValue,
+    timestamp: WebhookHeaderValue
+  ): boolean {
     return this.client.verifyWebhookSignature(rawBodyOrPayload, signature, timestamp);
   }
 

@@ -105,6 +105,7 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
+import { verifyWebhookRequest, type WebhookHeaderValue } from '../webhooks';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import {
   isWellKnownAgentCardUrl as isWellKnownCardUrl,
@@ -847,12 +848,25 @@ export class SingleAgentClient {
    *
    * @example
    * ```typescript
-   * app.post('/webhook/:taskType', async (req, res) => {
-   *   const signature = req.headers['x-adcp-signature'];
-   *   const timestamp = req.headers['x-adcp-timestamp'];
+   * import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
    *
+   * app.post('/webhook/:taskType', async (req, res) => {
    *   try {
-   *     const handled = await client.handleWebhook(req.body, signature, timestamp, req.params.taskType);
+   *     const check = verifyWebhookRequest({
+   *       rawBody: req.rawBody,
+   *       headers: req.headers,
+   *       globalSecret: process.env.WEBHOOK_SECRET,
+   *     });
+   *     if (!check.ok) return res.status(401).json({ error: check.reason });
+   *
+   *     const handled = await client.handleWebhook(
+   *       req.body,
+   *       req.params.taskType,
+   *       req.params.operationId,
+   *       check.signature,
+   *       check.timestamp,
+   *       req.rawBody
+   *     );
    *     res.status(200).json({ received: handled });
    *   } catch (error) {
    *     res.status(401).json({ error: error.message });
@@ -864,9 +878,9 @@ export class SingleAgentClient {
     payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
     taskType: string,
     operationId: string,
-    signature?: string,
-    timestamp?: string | number,
-    rawBody?: string
+    signature?: WebhookHeaderValue,
+    timestamp?: WebhookHeaderValue,
+    rawBody?: string | Buffer | Uint8Array
   ): Promise<boolean> {
     // Verify signature if secret is configured
     if (this.config.webhookSecret) {
@@ -1058,7 +1072,7 @@ export class SingleAgentClient {
    * Create an HTTP webhook handler that automatically verifies signatures
    *
    * This helper creates a standard HTTP handler (Express/Next.js/etc.) that:
-   * - Extracts X-ADCP-Signature and X-ADCP-Timestamp headers
+   * - Reads the full header bag so duplicate/conflicting signature headers are rejected
    * - Verifies HMAC signature (if webhookSecret configured)
    * - Validates timestamp freshness
    * - Calls handleWebhook() with proper error handling
@@ -1086,7 +1100,12 @@ export class SingleAgentClient {
    */
   createWebhookHandler() {
     return async (
-      req: { headers: Record<string, string | undefined>; body: unknown; params?: Record<string, string> },
+      req: {
+        headers: Record<string, WebhookHeaderValue>;
+        body: unknown;
+        rawBody?: string | Buffer | Uint8Array;
+        params?: Record<string, string>;
+      },
       res: {
         status: (code: number) => { json: (body: unknown) => void };
         json?: unknown;
@@ -1095,19 +1114,44 @@ export class SingleAgentClient {
       }
     ) => {
       try {
-        // Extract headers (case-insensitive)
-        const signature = req.headers['x-adcp-signature'] || req.headers['X-ADCP-Signature'];
-        const timestamp = req.headers['x-adcp-timestamp'] || req.headers['X-ADCP-Timestamp'];
-
-        // Capture raw body for signature verification, then parse
-        const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-        const payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+        // Capture raw body bytes for signature verification, then parse.
+        const rawBody =
+          req.rawBody ??
+          (typeof req.body === 'string' || Buffer.isBuffer(req.body) || req.body instanceof Uint8Array
+            ? req.body
+            : undefined);
+        if (this.config.webhookSecret && rawBody === undefined) {
+          throw new Error(
+            'Raw webhook body required for HMAC signature verification; capture bytes before JSON parsing.'
+          );
+        }
+        const payload =
+          typeof req.body === 'string'
+            ? JSON.parse(req.body)
+            : Buffer.isBuffer(req.body) || req.body instanceof Uint8Array
+              ? JSON.parse(Buffer.from(req.body).toString('utf8'))
+              : req.body;
 
         // Extract routing params if available (e.g., Express route params)
         const taskType = req.params?.task_type || req.params?.taskType || 'unknown';
         const operationId = req.params?.operation_id || req.params?.operationId || 'unknown';
 
-        // Handle webhook with automatic verification using raw body bytes
+        let signature: WebhookHeaderValue;
+        let timestamp: WebhookHeaderValue;
+        if (this.config.webhookSecret) {
+          const check = verifyWebhookRequest({
+            rawBody: rawBody!,
+            secret: this.config.webhookSecret,
+            headers: req.headers,
+          });
+          if (!check.ok) {
+            throw new Error(check.message);
+          }
+          signature = check.signature;
+          timestamp = check.timestamp;
+        }
+
+        // Handle webhook with automatic verification using raw body bytes.
         const handled = await this.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
 
         // Return success
@@ -1152,37 +1196,29 @@ export class SingleAgentClient {
    * @param timestamp - X-ADCP-Timestamp header value (Unix timestamp)
    * @returns true if signature is valid
    */
-  verifyWebhookSignature(rawBodyOrPayload: string | unknown, signature: string, timestamp: string | number): boolean {
+  verifyWebhookSignature(
+    rawBodyOrPayload: string | Buffer | Uint8Array | unknown,
+    signature: WebhookHeaderValue,
+    timestamp: WebhookHeaderValue
+  ): boolean {
     if (!this.config.webhookSecret) {
       return false;
     }
 
-    // Validate timestamp freshness (reject requests older than 5 minutes)
-    const now = Math.floor(Date.now() / 1000);
-    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
-
-    if (Math.abs(now - ts) > 300) {
-      return false; // Request too old or from future
-    }
-
     // Use raw body bytes when available; fall back to JSON.stringify for backward compat
-    const body = typeof rawBodyOrPayload === 'string' ? rawBodyOrPayload : JSON.stringify(rawBodyOrPayload);
+    const rawBody =
+      typeof rawBodyOrPayload === 'string' ||
+      Buffer.isBuffer(rawBodyOrPayload) ||
+      rawBodyOrPayload instanceof Uint8Array
+        ? rawBodyOrPayload
+        : String(JSON.stringify(rawBodyOrPayload));
 
-    // Build message per AdCP spec: {timestamp}.{raw_body}
-    const message = `${ts}.${body}`;
-
-    // Calculate expected signature
-    const hmac = crypto.createHmac('sha256', this.config.webhookSecret);
-    hmac.update(message);
-    const expectedSignature = `sha256=${hmac.digest('hex')}`;
-
-    // Constant-time comparison to prevent timing attacks
-    // Check length first to avoid timingSafeEqual error
-    if (signature.length !== expectedSignature.length) {
-      return false;
-    }
-
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+    return verifyWebhookRequest({
+      rawBody,
+      secret: this.config.webhookSecret,
+      signature,
+      timestamp,
+    }).ok;
   }
 
   /**
