@@ -118,6 +118,37 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   content_standards?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['content_standards']>;
 
   /**
+   * Seller-level rollup of optimization metrics — projected onto
+   * `get_adcp_capabilities.media_buy.supported_optimization_metrics`.
+   * Added in AdCP 3.1 (adcp#4669). The array union of every product's
+   * `metric_optimization.supported_metrics`. Storyboard runners gate
+   * `metric_optimization`-using scenarios on this field; declaring it
+   * gives buyers an upfront signal of which optimization metrics the
+   * seller can compute against (clicks, views, completed_views, etc.).
+   *
+   * Adopters can compute the rollup from their catalog using the
+   * exported {@link rollupOptimizationMetricsFromProducts} helper —
+   * keeps the declaration in sync with what products actually offer.
+   *
+   * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.supported_optimization_metrics`.
+   */
+  supported_optimization_metrics?: NonNullable<
+    NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['supported_optimization_metrics']
+  >;
+
+  /**
+   * Frequency-cap support declaration — projected onto
+   * `get_adcp_capabilities.media_buy.frequency_capping`. Added in AdCP
+   * 3.1 (adcp#4670). Presence-only object with `supported_per_units` /
+   * `supported_window_units` sub-fields declaring which frequency-cap
+   * shapes the platform honors. Omit when the platform doesn't accept
+   * frequency caps at all; buyers will avoid the field on `pacing.*`.
+   *
+   * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.frequency_capping`.
+   */
+  frequency_capping?: NonNullable<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>['frequency_capping']>;
+
+  /**
    * Brand-protocol capabilities. Projected onto the wire `brand` block of
    * `get_adcp_capabilities` (`brand: { rights, right_types, available_uses,
    * generation_providers, description }`). The framework auto-derives

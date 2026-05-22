@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-05-17
-> @adcp/sdk v7.5.0
+> Generated at: 2026-05-22
+> @adcp/sdk v8.1.0-beta.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -88,13 +88,16 @@ _Response (success branch):_
   request_signing: object
   webhook_signing: object
   identity: object
+  measurement: object
   compliance_testing: object
   specialisms: object[]
   extensions_supported: string[]
   experimental_features: string[]
+  wholesale_feed_versioning: object
   last_updated: string
   errors: object[]
   context: Context
+  wholesale_feed_webhooks: object
 }
 ```
 
@@ -233,6 +236,8 @@ _Request:_
   fields: string[]
   time_budget
   pagination: Pagination Request
+  if_wholesale_feed_version: string
+  if_pricing_version: string
   context: Context
   required_policies: string[]
 }
@@ -241,14 +246,20 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  products: object[]  // required
+  products: object[]
+  extensions: object
   proposals: object[]
   errors: object[]
   property_list_applied: boolean
   catalog_applied: boolean
   refinement_applied: object[]
   incomplete: object[]
+  filter_diagnostics: object
   pagination: Pagination Response
+  wholesale_feed_version: string
+  pricing_version: string
+  cache_scope: 'public' | 'account'
+  unchanged: 'true'
   sandbox: boolean
   context: Context
 }
@@ -267,6 +278,8 @@ _Request:_
   min_height: integer
   is_responsive: boolean
   name_search: string
+  publisher_domain: string
+  property_id: Property Id
   wcag_level: Wcag Level
   disclosure_positions: object[]
   disclosure_persistence: object[]
@@ -281,6 +294,7 @@ _Response (success branch):_
 ```
 {
   formats: object[]  // required
+  source: 'publisher' | 'aao_mirror' | 'agent_derived'
   creative_agents: object[]
   errors: object[]
   pagination: Pagination Response
@@ -322,11 +336,15 @@ _Response (success branch):_
   packages: object[]  // required
   account: Account
   invoice_recipient: Business Entity
+  media_buy_status: Media Buy Status
   status: Media Buy Status
   confirmed_at: string
   creative_deadline: string
   revision: integer
+  currency: string
+  total_budget: number
   valid_actions: object[]
+  available_actions: object[]
   planned_delivery: Planned Delivery
   sandbox: boolean
   context: Context
@@ -360,12 +378,16 @@ _Response (success branch):_
 ```
 {
   media_buy_id: string  // required
+  media_buy_status: Media Buy Status
   status: Media Buy Status
   revision: integer
+  currency: string
+  total_budget: number
   implementation_date: string,null
   invoice_recipient: Business Entity
   affected_packages: object[]
   valid_actions: object[]
+  available_actions: object[]
   sandbox: boolean
   context: Context
 }
@@ -381,6 +403,8 @@ _Request:_
   status_filter: Media Buy Status | object[]
   include_snapshot: boolean
   include_history: integer
+  include_webhook_activity: boolean
+  webhook_activity_limit: integer
   pagination: Pagination Request
   context: Context
 }
@@ -408,6 +432,8 @@ _Request:_
   start_date: string
   end_date: string
   include_package_daily_breakdown: boolean
+  time_granularity: Reporting Frequency
+  include_window_breakdown: boolean
   attribution_window: object
   reporting_dimensions: object
   context: Context
@@ -626,8 +652,8 @@ _Response (success branch):_
 {
   response_type: 'single'  // required
   previews: object[]  // required
-  expires_at: string  // required
   interactive_url: string
+  expires_at: string
   context: Context
 }
 ```
@@ -712,6 +738,9 @@ _Request:_
   include_items: boolean
   include_variables: boolean
   include_pricing: boolean
+  include_purged: boolean
+  include_webhook_activity: boolean
+  webhook_activity_limit: integer
   account: Account Ref
   fields: string[]
   context: Context
@@ -760,6 +789,23 @@ _Response (success branch):_
 }
 ```
 
+**`validate_input`** — Request parameters for validating a creative manifest against canonical formats and/or specific products without committing to a render.
+
+_Request:_
+```
+{
+  manifest: Creative Manifest  // required
+  targets: object[]
+}
+```
+
+_Response (success branch):_
+```
+{
+  results: object[]  // required
+}
+```
+
 ### Signals
 
 **`get_signals`** — Request parameters for discovering signals based on description.
@@ -767,6 +813,7 @@ _Response (success branch):_
 _Request:_
 ```
 {
+  discovery_mode: 'brief' | 'wholesale'
   account: Account Ref
   signal_spec: string
   signal_ids: object[]
@@ -775,6 +822,8 @@ _Request:_
   filters: Signal Filters
   max_results: integer
   pagination: Pagination Request
+  if_wholesale_feed_version: string
+  if_pricing_version: string
   context: Context
 }
 ```
@@ -782,8 +831,13 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  signals: object[]  // required
+  signals: object[]
   errors: object[]
+  incomplete: object[]
+  wholesale_feed_version: string
+  pricing_version: string
+  cache_scope: 'public' | 'account'
+  unchanged: 'true'
   pagination: Pagination Response
   sandbox: boolean
   context: Context
@@ -1283,7 +1337,7 @@ _Response (success branch):_
 ```
 {
   outcome_id: string  // required
-  status: 'accepted' | 'findings'  // required
+  outcome_state: 'accepted' | 'findings'  // required
   committed_budget: number
   findings: object[]
   plan_summary: object
@@ -1338,7 +1392,7 @@ _Response (success branch):_
 ```
 {
   check_id: string  // required
-  status: Governance Decision  // required
+  verdict: Governance Decision  // required
   plan_id: string  // required
   explanation: string  // required
   findings: object[]

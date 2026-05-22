@@ -375,6 +375,7 @@ export {
 export type { IdempotencyCapabilities } from './utils/capabilities';
 export type { MutatingRequestInput } from './utils/idempotency';
 export { canonicalize, canonicalJsonSha256 } from './utils/jcs';
+export { rollupOptimizationMetricsFromProducts } from './utils/capability-rollups';
 
 // ====== CORE TYPES ======
 export * from './types';
