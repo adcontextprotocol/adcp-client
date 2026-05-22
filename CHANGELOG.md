@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.0.0
+
+### Major Changes
+
+- 93d390d: Remove the beta `CatalogSync` surface and replace it with `WholesaleFeedSync` / `@adcp/sdk/wholesale-feed-sync`. This removes the old `@adcp/sdk/catalog-sync` subpath, the `catalogVersioning` capability alias, the beta direct-feed config keys (`feedOrigin`, `feedHeaders`, `maxFeedResponseBytes`, `pollIntervalMs`, `cursorStore`, `fetch`), and the cursor-store re-exports from that subpath.
+
+  Wholesale feed webhooks now repair only the affected product or signal feed on `wholesale_feed.bulk_change`, fail closed on missing or invalid `affected_entity_type`, and record terminally rejected bulk-change deliveries in the webhook dedupe store before rethrowing.
+
+### Minor Changes
+
+- 2c3b589: Add `@adcp/sdk/webhooks` with `verifyWebhookRequest`, a standalone verifier for legacy HMAC-SHA256 webhook deliveries. The helper verifies exact raw body bytes, normalizes `x-adcp-*` header casing, enforces timestamp skew, uses constant-time comparison, and returns structured failure reasons for receiver endpoints that need diagnostic responses.
+
+### Patch Changes
+
+- 4cb1620: Pick up AdCP 3.1.0-beta.3 wholesale feed schemas, including account-level `sync_accounts` notification configs for product/signal feed webhooks. The wholesale feed mirror now uses `if_wholesale_feed_version` conditional reads and applies inbound `WholesaleFeedWebhook` payloads directly; the removed `/catalog/events` polling path is no longer used.
+
 ## 7.11.0
 
 ### Minor Changes
@@ -387,7 +403,7 @@
 
     "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
     De-duplicates `format_ids` by full identity (`{agent_url, id,
-    width, height, duration_ms}`) — multi-size declarations sharing
+width, height, duration_ms}`) — multi-size declarations sharing
     `{agent_url, id}`survive de-dup. When every chosen capability is
     V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
     from the result rather than emitted as`[]`(which would violate the
