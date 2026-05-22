@@ -743,7 +743,13 @@ function extractStatusObservations(task: string, body: Record<string, unknown>):
 
 function pushMediaBuy(obs: StatusObservation[], record: Record<string, unknown>): void {
   const id = asString(record.media_buy_id);
-  const status = asString(record.status);
+  // 3.1+: `media_buy_status` (body) carries MediaBuyStatus; top-level
+  // `status` (envelope) carries TaskStatus. Pre-3.1 + nested fields on
+  // `get_media_buys` / `get_media_buy_delivery`: `status` still carries
+  // MediaBuyStatus. Read the canonical 3.1 field first, fall back to
+  // legacy. Refs adcontextprotocol/adcp#4895 (3.1 additive-deprecate),
+  // #4906 (3.2 legacy removal), #4905 (4.0 nested cascade).
+  const status = asString(record.media_buy_status) ?? asString(record.status);
   if (id && status) {
     obs.push({
       resource_type: 'media_buy',
