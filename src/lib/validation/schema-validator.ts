@@ -9,6 +9,7 @@ import type { ErrorObject } from 'ajv';
 import { getValidator, getRegisteredSchemaIds, type Direction, type ResponseVariant } from './schema-loader';
 import { parseAdcpMajorVersion } from '../version';
 import { findHint } from './hints';
+import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 
 /**
  * One variant of a `oneOf` / `anyOf` that the caller's payload could have
@@ -685,7 +686,17 @@ function selectResponseVariant(payload: unknown): ResponseVariant {
  * the per-instance use case.
  */
 export function validateResponse(toolName: string, payload: unknown, version?: string): ValidationOutcome {
-  const variant = selectResponseVariant(payload);
+  // 3.0.x back-compat: synthesize envelope `status` when the payload
+  // declares itself as 3.0.x (or carries no version field at all). 3.1+
+  // payloads remain unchanged so the strict validator still rejects a
+  // 3.1 peer that omits `status`. Applied before variant selection so a
+  // synthesized `completed` doesn't get misrouted to the async-variant
+  // schema. See `utils/envelope-status-compat.ts`.
+  const compatPayload =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? injectLegacyEnvelopeStatus(payload as Record<string, unknown>)
+      : payload;
+  const variant = selectResponseVariant(compatPayload);
   const validator = getValidator(toolName, variant, version);
   // If an async variant schema is missing, fall back to the sync one —
   // some tools declare `-response.json` only and use `status` as an
@@ -697,7 +708,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   // of omitting them. Strip before Ajv to avoid spurious type errors on `errors`,
   // `context`, and `ext`. Gated to v2.x only — see stripEnvelopeNulls JSDoc.
   const isV2Bundle = version != null && parseAdcpMajorVersion(version) === 2;
-  const normalizedPayload = isV2Bundle ? stripEnvelopeNulls(payload, rootSchema) : payload;
+  const normalizedPayload = isV2Bundle ? stripEnvelopeNulls(compatPayload, rootSchema) : compatPayload;
   const valid = effective(normalizedPayload) as boolean;
   const usedVariant: Direction = validator ? variant : 'sync';
   const variantFallback = !validator && variant !== 'sync';

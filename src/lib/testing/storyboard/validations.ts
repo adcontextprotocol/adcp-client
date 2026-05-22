@@ -9,6 +9,7 @@
  */
 
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
 import { ADCP_VERSION } from '../../version';
@@ -473,7 +474,13 @@ function validateResponseSchema(
         const { _message, ...rest } = rawData as Record<string, unknown>;
         return rest;
       })();
-  const parseResult = schema.safeParse(dataWithoutMessage);
+  // 3.0.x back-compat: synthesize envelope `status` for legacy peers
+  // before validating against the 3.1 envelope schema. See
+  // `utils/envelope-status-compat.ts`.
+  const dataForValidation = Array.isArray(dataWithoutMessage)
+    ? dataWithoutMessage
+    : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>);
+  const parseResult = schema.safeParse(dataForValidation);
 
   // Strict (AJV) verdict runs alongside the lenient Zod check so the run
   // report surfaces strictness deltas (issue #820 follow-up). The AJV path
