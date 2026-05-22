@@ -20,7 +20,7 @@ describe('v3.1-beta sync_accounts notification config types', () => {
     assert.match(typesContent, /notification_configs\?: NotificationConfig\[\];/);
   });
 
-  test('SyncAccountsRequest accepts account notifications but not catalog feed events', () => {
+  test('SyncAccountsRequest accepts account notifications including wholesale feed events', () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'v31-sync-accounts-types-'));
     const fixturePath = path.join(fixtureDir, 'typecheck.ts');
     const importPath = path.relative(fixtureDir, path.join(repoRoot, 'src/lib/types/v3-1-beta')).replace(/\\/g, '/');
@@ -60,26 +60,20 @@ const settingsUpdate: SyncAccountsRequest = {
       account: { account_id: 'acc_acme_pinnacle' },
       notification_configs: [
         {
-          subscriber_id: 'creative-sync',
-          url: 'https://buyer.example/webhooks/adcp/creative',
-          event_types: ['creative.purged'],
-        },
-      ],
-    },
-  ],
-};
-
-const catalogFeedEventOnAccountNotifications: SyncAccountsRequest = {
-  idempotency_key: 'catalog-event-wrong-surface',
-  accounts: [
-    {
-      account: { account_id: 'acc_acme_pinnacle' },
-      notification_configs: [
-        {
           subscriber_id: 'catalog-sync',
           url: 'https://buyer.example/webhooks/adcp/catalog',
-          // @ts-expect-error - catalog feed events are advertised via catalog_change_feed, not sync_accounts notification_configs.
-          event_types: ['product.created'],
+          event_types: [
+            'product.created',
+            'product.updated',
+            'product.priced',
+            'product.removed',
+            'signal.created',
+            'signal.updated',
+            'signal.priced',
+            'signal.removed',
+            'wholesale_feed.bulk_change',
+          ],
+          active: true,
         },
       ],
     },
@@ -88,7 +82,6 @@ const catalogFeedEventOnAccountNotifications: SyncAccountsRequest = {
 
 void provisioning;
 void settingsUpdate;
-void catalogFeedEventOnAccountNotifications;
 `
     );
 

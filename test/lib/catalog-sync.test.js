@@ -1,46 +1,51 @@
-// CatalogSync — in-memory replica of an AdCP agent's product / signal
-// catalog with three sync modes (manual / auto-poll / live). Tests inject
-// a stub client (CatalogSyncClient interface) so each mode is exercised
-// without real network I/O. The live-mode change-feed poll talks to
-// `<feedOrigin>/catalog/events` via raw fetch; we override that with a
-// mock implementation in the constructor.
-
-const { test, describe, beforeEach } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { CatalogSync } = require('../../dist/lib/catalog-sync/index.js');
 
-// ====== Fixture helpers ======
-
 function makeCapabilitiesResult(stanza) {
-  // SingleAgentClient.getAdcpCapabilities returns TaskResult<...>. The
-  // CatalogSync mode resolver reads `.data` directly; we stub the same
-  // shape here without recreating the full TaskResult union.
   return { data: stanza };
 }
 
-function makeProductsResult(products, { catalog_version, cache_scope = 'public', pagination } = {}) {
-  const out = {
-    products,
-    cache_scope,
-    ...(catalog_version && { catalog_version }),
-    ...(pagination && { pagination }),
-  };
-  return { data: out };
-}
-
-function makeUnchangedResult({ catalog_version, cache_scope = 'public' }) {
+function makeProductsResult(
+  products,
+  { wholesale_feed_version, pricing_version, cache_scope = 'public', pagination } = {}
+) {
   return {
     data: {
-      unchanged: true,
-      catalog_version,
+      products,
       cache_scope,
+      ...(wholesale_feed_version && { wholesale_feed_version }),
+      ...(pricing_version && { pricing_version }),
+      ...(pagination && { pagination }),
     },
   };
 }
 
-function makeSignalsResult(signals, { pagination } = {}) {
-  return { data: { signals, cache_scope: 'public', ...(pagination && { pagination }) } };
+function makeSignalsResult(
+  signals,
+  { wholesale_feed_version, pricing_version, cache_scope = 'public', pagination } = {}
+) {
+  return {
+    data: {
+      signals,
+      cache_scope,
+      ...(wholesale_feed_version && { wholesale_feed_version }),
+      ...(pricing_version && { pricing_version }),
+      ...(pagination && { pagination }),
+    },
+  };
+}
+
+function makeUnchangedResult({ wholesale_feed_version, pricing_version, cache_scope = 'public' }) {
+  return {
+    data: {
+      unchanged: true,
+      wholesale_feed_version,
+      ...(pricing_version && { pricing_version }),
+      cache_scope,
+    },
+  };
 }
 
 function makeProduct(product_id, overrides = {}) {
@@ -73,593 +78,410 @@ function makeSignal(signal_agent_segment_id, overrides = {}) {
   };
 }
 
+function makeWebhook(event, { version = 'v2', previous = 'v1', cache_scope = 'public' } = {}) {
+  return {
+    idempotency_key: `idem-${event.event_id}`,
+    notification_id: event.event_id,
+    notification_type: event.event_type,
+    fired_at: '2026-05-22T12:00:00Z',
+    subscriber_id: 'catalog-sync',
+    account_id: 'acc_acme',
+    wholesale_feed_version: version,
+    previous_wholesale_feed_version: previous,
+    cache_scope,
+    event,
+  };
+}
+
+function makeEvent(event_type, entity_type, entity_id, payload) {
+  return {
+    event_id: `018f-${entity_id}-${event_type}`,
+    event_type,
+    entity_type,
+    entity_id,
+    created_at: '2026-05-22T12:00:00Z',
+    payload,
+  };
+}
+
 function makeStubClient(opts = {}) {
-  const calls = { capabilities: 0, getProducts: 0, getSignals: 0 };
+  const calls = { capabilities: 0, getProducts: [], getSignals: [] };
   const client = {
     async getAdcpCapabilities() {
       calls.capabilities++;
       return makeCapabilitiesResult(opts.capabilities ?? {});
     },
     async getProducts(params) {
-      calls.getProducts++;
-      if (typeof opts.getProducts === 'function') return opts.getProducts(params, calls.getProducts);
+      calls.getProducts.push(params);
+      if (typeof opts.getProducts === 'function') return opts.getProducts(params, calls.getProducts.length);
       return makeProductsResult([]);
     },
     async getSignals(params) {
-      calls.getSignals++;
-      if (typeof opts.getSignals === 'function') return opts.getSignals(params, calls.getSignals);
+      calls.getSignals.push(params);
+      if (typeof opts.getSignals === 'function') return opts.getSignals(params, calls.getSignals.length);
       return makeSignalsResult([]);
     },
   };
   return { client, calls };
 }
 
-// Build a Response-like object for fetch mocks. The CatalogSync code uses
-// status, statusText, ok, clone(), and json(). We don't need a full
-// implementation — just enough for the live-mode poll loop.
-function makeFetchResponse(body, { status = 200, statusText = 'OK' } = {}) {
-  const json = async () => body;
-  const response = {
-    status,
-    statusText,
-    ok: status >= 200 && status < 300,
-    clone: () => makeFetchResponse(body, { status, statusText }),
-    json,
-  };
-  return response;
-}
+describe('CatalogSync beta 3 wholesale feed flow', () => {
+  const account = { account_id: 'acc_acme' };
 
-// ====== Tests ======
-
-describe('CatalogSync', () => {
-  describe('mode resolution from capabilities', () => {
-    test('resolves to live when catalog_change_feed.supported is true', async () => {
-      const { client } = makeStubClient({
-        capabilities: {
-          catalog_change_feed: { supported: true, event_types: ['product.priced'] },
-        },
-      });
-      // No feedOrigin → mode resolution still succeeds; the live-mode
-      // poll loop throws lazily if it ever fires without one.
-      const sync = new CatalogSync({ client, feedOrigin: 'https://agent.example.com' });
-      // Bypass bootstrap by stubbing wholesale to return empty.
-      await sync.start();
-      assert.strictEqual(sync.mode, 'live');
-      assert.strictEqual(sync.capabilities.changeFeed, true);
-      assert.deepStrictEqual([...sync.capabilities.eventTypes], ['product.priced']);
-      sync.stop();
+  test('resolves auto-poll from wholesale_feed_versioning and records webhook event types', async () => {
+    const { client } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['product.updated', 'wholesale_feed.bulk_change'] },
+      },
     });
+    const sync = new CatalogSync({ client });
 
-    test('resolves to auto-poll when only catalog_versioning is supported', async () => {
-      const { client } = makeStubClient({
-        capabilities: { catalog_versioning: { supported: true } },
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      assert.strictEqual(sync.mode, 'auto-poll');
-      assert.strictEqual(sync.capabilities.catalogVersioning, true);
-      assert.strictEqual(sync.capabilities.changeFeed, false);
-      sync.stop();
-    });
+    await sync.start();
 
-    test('resolves to manual when neither stanza is declared (3.0 agent)', async () => {
-      const { client } = makeStubClient({ capabilities: {} });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      assert.strictEqual(sync.mode, 'manual');
-      assert.strictEqual(sync.capabilities.changeFeed, false);
-      assert.strictEqual(sync.capabilities.catalogVersioning, false);
-      sync.stop();
-    });
-
-    test('signals.queryable mirrors signals.discovery_modes.wholesale', async () => {
-      const { client: clientYes } = makeStubClient({
-        capabilities: { signals: { discovery_modes: ['brief', 'wholesale'] } },
-      });
-      const yesSync = new CatalogSync({ client: clientYes });
-      await yesSync.start();
-      assert.strictEqual(yesSync.signals.queryable, true);
-      yesSync.stop();
-
-      const { client: clientNo } = makeStubClient({
-        capabilities: { signals: { discovery_modes: ['brief'] } },
-      });
-      const noSync = new CatalogSync({ client: clientNo });
-      await noSync.start();
-      assert.strictEqual(noSync.signals.queryable, false);
-      noSync.stop();
-    });
+    assert.strictEqual(sync.mode, 'auto-poll');
+    assert.strictEqual(sync.capabilities.wholesaleFeedVersioning, true);
+    assert.strictEqual(sync.capabilities.catalogVersioning, true, 'legacy alias remains true');
+    assert.strictEqual(sync.capabilities.webhooks, true);
+    assert.deepStrictEqual([...sync.capabilities.eventTypes], ['product.updated', 'wholesale_feed.bulk_change']);
+    sync.stop();
   });
 
-  describe('manual mode bootstrap', () => {
-    test('paginates wholesale get_products and populates the product index', async () => {
-      const products1 = [makeProduct('p1'), makeProduct('p2')];
-      const products2 = [makeProduct('p3')];
-      const { client } = makeStubClient({
-        capabilities: {},
-        getProducts: (_params, callNumber) => {
-          if (callNumber === 1) {
-            return makeProductsResult(products1, {
-              catalog_version: 'v1',
-              pagination: { has_more: true, cursor: 'page-2' },
-            });
-          }
-          return makeProductsResult(products2, {
-            catalog_version: 'v1',
-            pagination: { has_more: false },
+  test('bootstraps wholesale products and signals, then preserves mirrors on unchanged probes', async () => {
+    const product = makeProduct('p1');
+    const signal = makeSignal('s1');
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: (params, callNumber) => {
+        assert.deepStrictEqual(params.account, account);
+        if (callNumber === 1) {
+          return makeProductsResult([product], {
+            wholesale_feed_version: 'products-v1',
+            pricing_version: 'products-price-v1',
           });
-        },
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      assert.strictEqual(sync.products.count, 3);
-      assert.strictEqual(sync.products.get('p2')?.name, 'Product p2');
-      assert.strictEqual(sync.mode, 'manual');
-      sync.stop();
+        }
+        assert.strictEqual(params.if_wholesale_feed_version, 'products-v1');
+        assert.strictEqual(params.if_pricing_version, 'products-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'products-v1',
+          pricing_version: 'products-price-v1',
+        });
+      },
+      getSignals: (params, callNumber) => {
+        assert.deepStrictEqual(params.account, account);
+        if (callNumber === 1) {
+          return makeSignalsResult([signal], {
+            wholesale_feed_version: 'signals-v1',
+            pricing_version: 'signals-price-v1',
+          });
+        }
+        assert.strictEqual(params.if_wholesale_feed_version, 'signals-v1');
+        assert.strictEqual(params.if_pricing_version, 'signals-price-v1');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'signals-v1',
+          pricing_version: 'signals-price-v1',
+        });
+      },
     });
+    const sync = new CatalogSync({ client, account });
 
-    test('skips signal bootstrap when discovery_mode wholesale is unsupported', async () => {
-      const { client, calls } = makeStubClient({
-        capabilities: { signals: { discovery_modes: ['brief'] } },
-        getProducts: () => makeProductsResult([makeProduct('p1')], { catalog_version: 'v1' }),
-        getSignals: () => {
-          throw new Error('CatalogSync must not call get_signals when wholesale is unsupported');
-        },
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      assert.strictEqual(calls.getSignals, 0);
-      assert.strictEqual(sync.signals.queryable, false);
-      assert.strictEqual(sync.signals.count, 0);
-      sync.stop();
-    });
+    await sync.start();
+    await sync.refresh();
 
-    test('refresh() emits diff events for added/removed/repriced products', async () => {
-      const initial = [makeProduct('p1'), makeProduct('p2')];
-      let phase = 'initial';
-      const { client } = makeStubClient({
-        capabilities: {},
-        getProducts: () => {
-          if (phase === 'initial') return makeProductsResult(initial, { catalog_version: 'v1' });
-          // After refresh:
-          // - p1 removed
-          // - p2 reprice
-          // - p3 added
-          return makeProductsResult(
-            [
-              makeProduct('p2', {
-                pricing_options: [
-                  { pricing_option_id: 'po_cpm_v2', pricing_model: 'cpm', currency: 'USD', fixed_price: 22.0 },
-                ],
-              }),
-              makeProduct('p3'),
-            ],
-            { catalog_version: 'v2' }
-          );
-        },
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      assert.strictEqual(sync.products.count, 2);
-
-      const events = [];
-      sync.on('event', ({ event }) => events.push(event.event_type));
-
-      phase = 'after';
-      await sync.refresh();
-
-      assert.deepStrictEqual(events.sort(), ['product.created', 'product.priced', 'product.removed']);
-      assert.strictEqual(sync.products.count, 2);
-      assert.strictEqual(sync.products.get('p1'), undefined);
-      assert.strictEqual(sync.products.get('p3')?.name, 'Product p3');
-      sync.stop();
-    });
+    assert.strictEqual(sync.products.count, 1);
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    assert.strictEqual(sync.signals.count, 1);
+    assert.strictEqual(sync.signals.get('s1').name, 'Signal s1');
+    assert.strictEqual(calls.getProducts.length, 2);
+    assert.strictEqual(calls.getSignals.length, 2);
+    sync.stop();
   });
 
-  describe('search', () => {
-    test('products.search filters by format_ids, delivery_type, and text', async () => {
-      const { client } = makeStubClient({
-        capabilities: {},
-        getProducts: () =>
-          makeProductsResult(
-            [
-              makeProduct('ctv-premium', { name: 'Premium CTV', delivery_type: 'guaranteed' }),
-              makeProduct('display-floor', {
-                name: 'Display Floor',
-                delivery_type: 'non_guaranteed',
-                format_ids: [{ id: 'display_300x250' }],
-              }),
-              makeProduct('ctv-budget', { name: 'Budget CTV', delivery_type: 'guaranteed' }),
-            ],
-            { catalog_version: 'v1' }
+  test('applyWebhook applies product and signal deltas and emits typed events', async () => {
+    const { client } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['product.updated', 'signal.priced'] },
+        signals: { discovery_modes: ['wholesale'] },
+      },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+      getSignals: () => makeSignalsResult([makeSignal('s1')], { wholesale_feed_version: 'sv1' }),
+    });
+    const sync = new CatalogSync({
+      client,
+      account,
+      webhookScope: { accountId: 'acc_acme', subscriberId: 'catalog-sync' },
+    });
+    const typed = [];
+    const wildcard = [];
+    sync.on('product.updated', ({ event }) => typed.push(event.event_type));
+    sync.on('signal.priced', ({ event }) => typed.push(event.event_type));
+    sync.on('event', ({ event }) => wildcard.push(event.event_type));
+
+    await sync.start();
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('product.updated', 'product', 'p1', {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Updated Product' }),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'v2', previous: 'v1' }
+      )
+    );
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('signal.priced', 'signal', 's1', {
+          signal_agent_segment_id: 's1',
+          pricing_options: [{ pricing_option_id: 'po_new', model: 'cpm', cpm: 4, currency: 'USD' }],
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'sv2', previous: 'sv1' }
+      )
+    );
+
+    assert.strictEqual(sync.products.get('p1').name, 'Updated Product');
+    assert.deepStrictEqual(sync.signals.get('s1').pricing_options, [
+      { pricing_option_id: 'po_new', model: 'cpm', cpm: 4, currency: 'USD' },
+    ]);
+    assert.deepStrictEqual(typed, ['product.updated', 'signal.priced']);
+    assert.deepStrictEqual(wildcard, ['product.updated', 'signal.priced']);
+    sync.stop();
+  });
+
+  test('wholesale_feed.bulk_change repairs by re-reading the affected wholesale mirror', async () => {
+    let phase = 'initial';
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['wholesale_feed.bulk_change'] },
+      },
+      getProducts: () => {
+        if (phase === 'initial') return makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' });
+        return makeProductsResult([makeProduct('p1'), makeProduct('p2')], { wholesale_feed_version: 'v2' });
+      },
+    });
+    const sync = new CatalogSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const reasons = [];
+    sync.on('resyncing', ({ reason }) => reasons.push(reason));
+
+    await sync.start();
+    phase = 'bulk';
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('wholesale_feed.bulk_change', 'feed', 'bulk-1', {
+          summary: 'Q3 rate-card refresh',
+          affected_count: 2,
+          affected_entity_type: 'product',
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'v2', previous: 'v1' }
+      )
+    );
+
+    assert.deepStrictEqual(reasons, ['bulk_change']);
+    assert.strictEqual(sync.products.count, 2);
+    assert.ok(sync.products.get('p2'));
+    assert.deepStrictEqual(calls.getProducts.at(-1).account, account);
+    sync.stop();
+  });
+
+  test('out-of-order webhook version repairs instead of applying stale delta', async () => {
+    let phase = 'initial';
+    const { client } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+        wholesale_feed_webhooks: { supported: true, event_types: ['product.updated'] },
+      },
+      getProducts: () => {
+        if (phase === 'initial') return makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v5' });
+        return makeProductsResult([makeProduct('p1', { name: 'Repaired Product' })], { wholesale_feed_version: 'v6' });
+      },
+    });
+    const sync = new CatalogSync({ client, account });
+    const reasons = [];
+    sync.on('resyncing', ({ reason }) => reasons.push(reason));
+
+    await sync.start();
+    phase = 'repair';
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('product.updated', 'product', 'p1', {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Stale Webhook Product' }),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'v6', previous: 'v4' }
+      )
+    );
+
+    assert.deepStrictEqual(reasons, ['version_mismatch']);
+    assert.strictEqual(sync.products.get('p1').name, 'Repaired Product');
+    sync.stop();
+  });
+
+  test('rejects malformed webhook envelopes before mutating the mirror', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new CatalogSync({ client });
+    await sync.start();
+
+    await assert.rejects(
+      () =>
+        sync.applyWebhook({
+          ...makeWebhook(
+            makeEvent('product.updated', 'product', 'p1', {
+              product_id: 'p1',
+              product: makeProduct('p1', { name: 'Bad Update' }),
+              applies_to: { scope: 'public' },
+            })
           ),
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-
-      const byFormat = sync.products.search({ format_ids: ['video_ctv_1080p_30s'] });
-      assert.strictEqual(byFormat.length, 2);
-
-      const byDelivery = sync.products.search({ delivery_types: ['non_guaranteed'] });
-      assert.strictEqual(byDelivery.length, 1);
-      assert.strictEqual(byDelivery[0].product_id, 'display-floor');
-
-      const byText = sync.products.search({ text: 'premium' });
-      assert.strictEqual(byText.length, 1);
-      assert.strictEqual(byText[0].product_id, 'ctv-premium');
-
-      const combined = sync.products.search({
-        format_ids: ['video_ctv_1080p_30s'],
-        delivery_types: ['guaranteed'],
-        text: 'budget',
-      });
-      assert.strictEqual(combined.length, 1);
-      assert.strictEqual(combined[0].product_id, 'ctv-budget');
-      sync.stop();
-    });
+          notification_type: 'signal.updated',
+        }),
+      /notification_type/
+    );
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    sync.stop();
   });
 
-  describe('auto-poll mode', () => {
-    test('probeVersion short-circuits on unchanged: true and does not re-bootstrap', async () => {
-      let phase = 'bootstrap';
-      const { client, calls } = makeStubClient({
-        capabilities: { catalog_versioning: { supported: true } },
-        getProducts: () => {
-          if (phase === 'bootstrap') {
-            return makeProductsResult([makeProduct('p1')], { catalog_version: 'v1' });
-          }
-          return makeUnchangedResult({ catalog_version: 'v1' });
-        },
-      });
-      const sync = new CatalogSync({
-        client,
-        probeIntervalMs: 1_000_000, // never fires during the test
-      });
-      await sync.start();
-      assert.strictEqual(sync.mode, 'auto-poll');
-      assert.strictEqual(sync.products.count, 1);
-
-      // Switch the stub to the unchanged branch and call refresh(). The
-      // bootstrap path sends if_catalog_version and gets unchanged: true.
-      // CRITICAL: the post-fix behavior MUST preserve the in-memory
-      // replica on `unchanged: true`. The pre-fix bug was that the
-      // bootstrap cleared the index BEFORE fetching, so an unchanged
-      // response wiped the mirror. The fix builds into a local map and
-      // only swaps on a non-unchanged response.
-      phase = 'probe';
-      await sync.refresh();
-      assert.strictEqual(calls.getProducts, 2, 'one bootstrap call + one probe call');
-      assert.strictEqual(
-        sync.products.count,
-        1,
-        'unchanged: true MUST preserve the previously-bootstrapped products (was the silent-wipe bug)'
-      );
-      assert.strictEqual(
-        sync.products.get('p1')?.name,
-        'Product p1',
-        'product entry survived the unchanged short-circuit'
-      );
-      sync.stop();
+  test('account-scoped webhook rejects misrouted subscribers before mutating the mirror', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
+    const sync = new CatalogSync({
+      client,
+      account,
+      webhookScope: { accountId: 'acc_acme', subscriberId: 'catalog-sync' },
+    });
+    await sync.start();
+
+    await assert.rejects(
+      () =>
+        sync.applyWebhook(
+          makeWebhook(
+            makeEvent('product.updated', 'product', 'p1', {
+              product_id: 'p1',
+              product: makeProduct('p1', { name: 'Wrong Account' }),
+              applies_to: { scope: 'account', account_ids: ['acc_other'] },
+            }),
+            { version: 'v2', previous: 'v1', cache_scope: 'account' }
+          )
+        ),
+      /account overlay/
+    );
+
+    await assert.rejects(
+      () =>
+        sync.applyWebhook({
+          ...makeWebhook(
+            makeEvent('product.updated', 'product', 'p1', {
+              product_id: 'p1',
+              product: makeProduct('p1', { name: 'Wrong Subscriber' }),
+              applies_to: { scope: 'account', account_ids: ['acc_acme'] },
+            }),
+            { version: 'v2', previous: 'v1', cache_scope: 'account' }
+          ),
+          subscriber_id: 'other-subscriber',
+        }),
+      /subscriber_id/
+    );
+
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    sync.stop();
   });
 
-  describe('feedOrigin validation (SSRF guard)', () => {
-    test('rejects file: scheme at construction', () => {
-      const { client } = makeStubClient({ capabilities: {} });
-      assert.throws(
-        () => new CatalogSync({ client, feedOrigin: 'file:///etc/passwd' }),
-        /protocol must be http: or https:/
-      );
+  test('dedupes retry and logical re-emission webhooks before emitting duplicate events', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new CatalogSync({ client, account, webhookScope: { accountId: 'acc_acme' } });
+    const seen = [];
+    sync.on('product.updated', ({ event }) => seen.push(event.event_id));
+
+    await sync.start();
+    const event = makeEvent('product.updated', 'product', 'p1', {
+      product_id: 'p1',
+      product: makeProduct('p1', { name: 'Updated Once' }),
+      applies_to: { scope: 'public' },
+    });
+    await sync.applyWebhook(makeWebhook(event, { version: 'v2', previous: 'v1' }));
+    await sync.applyWebhook(makeWebhook(event, { version: 'v2', previous: 'v1' }));
+    await sync.applyWebhook({
+      ...makeWebhook(event, { version: 'v2', previous: 'v1' }),
+      idempotency_key: 'new-delivery-same-event',
     });
 
-    test('rejects data: scheme at construction', () => {
-      const { client } = makeStubClient({ capabilities: {} });
-      assert.throws(
-        () => new CatalogSync({ client, feedOrigin: 'data:text/plain,hello' }),
-        /protocol must be http: or https:/
-      );
-    });
-
-    test('rejects malformed URL at construction', () => {
-      const { client } = makeStubClient({ capabilities: {} });
-      assert.throws(() => new CatalogSync({ client, feedOrigin: 'not-a-url' }), /not a valid URL/);
-    });
-
-    test('accepts http: and https: feedOrigin values', () => {
-      const { client: clientHttps } = makeStubClient({ capabilities: {} });
-      const { client: clientHttp } = makeStubClient({ capabilities: {} });
-      assert.doesNotThrow(() => new CatalogSync({ client: clientHttps, feedOrigin: 'https://agent.example.com' }));
-      assert.doesNotThrow(() => new CatalogSync({ client: clientHttp, feedOrigin: 'http://localhost:8080' }));
-    });
+    assert.deepStrictEqual(seen, [event.event_id]);
+    assert.strictEqual(sync.products.get('p1').name, 'Updated Once');
+    sync.stop();
   });
 
-  describe('product.updated partial-payload merge', () => {
-    test('merges top-level payload fields into the existing entry when payload.product is absent', async () => {
-      const { client } = makeStubClient({
-        capabilities: { catalog_change_feed: { supported: true } },
-        getProducts: () =>
-          makeProductsResult([makeProduct('p1', { name: 'Original Name', description: 'Original' })], {
-            catalog_version: 'v1',
-          }),
-      });
-      let fetchCallCount = 0;
-      const fetchMock = async () => {
-        fetchCallCount++;
-        if (fetchCallCount > 1) {
-          return makeFetchResponse({ events: [], next_cursor: 'cur-empty', has_more: false });
-        }
-        // Sparse update — no `product`, just changed_fields + name overlay
-        return makeFetchResponse({
-          events: [
-            {
-              event_id: '019539a0-eeee-7eee-eeee-eeeeeeeeeeee',
-              event_type: 'product.updated',
-              entity_type: 'product',
-              entity_id: 'p1',
-              created_at: '2026-05-19T10:00:00Z',
-              payload: {
-                product_id: 'p1',
-                changed_fields: ['name'],
-                name: 'Updated Name',
-                applies_to: { scope: 'public' },
-              },
-            },
-          ],
-          next_cursor: '019539a1-eeee-7eee-eeee-eeeeeeeeeeee',
-          has_more: false,
-        });
-      };
-      const sync = new CatalogSync({
-        client,
-        feedOrigin: 'https://agent.example.com',
-        fetch: fetchMock,
-        pollIntervalMs: 50,
-      });
-      await sync.start();
-      await new Promise(resolve => setTimeout(resolve, 200));
-      sync.stop();
-      const merged = sync.products.get('p1');
-      assert.strictEqual(merged?.name, 'Updated Name', 'partial payload merged the name overlay');
-      assert.strictEqual(merged?.description, 'Original', 'fields not in the partial payload preserved from existing');
+  test('wildcard webhook listeners observe the post-mutation mirror state', async () => {
+    const { client } = makeStubClient({
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
     });
+    const sync = new CatalogSync({ client, account });
+    const observedNames = [];
+    sync.on('event', () => observedNames.push(sync.products.get('p1').name));
+
+    await sync.start();
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('product.updated', 'product', 'p1', {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Updated Product' }),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'v2', previous: 'v1' }
+      )
+    );
+
+    assert.deepStrictEqual(observedNames, ['Updated Product']);
+    sync.stop();
   });
 
-  describe('synthetic event marker', () => {
-    test('refresh() diff-emitted events carry synthetic: true', async () => {
-      const initial = [makeProduct('p1')];
-      let phase = 'initial';
-      const { client } = makeStubClient({
-        capabilities: {},
-        getProducts: () => {
-          if (phase === 'initial') return makeProductsResult(initial, { catalog_version: 'v1' });
-          return makeProductsResult([makeProduct('p2')], { catalog_version: 'v2' });
-        },
-      });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-
-      const seen = [];
-      sync.on('event', envelope => seen.push(envelope));
-
-      phase = 'after';
-      await sync.refresh();
-
-      assert.ok(seen.length > 0, 'refresh emitted diff events');
-      assert.ok(
-        seen.every(e => e.synthetic === true),
-        'every diff-emitted event carries synthetic: true so adopters can filter dedupe-table writes'
-      );
-      sync.stop();
-    });
-  });
-
-  describe('resyncing rename + reasons', () => {
-    test("manual refresh emits 'resyncing' with reason: 'manual'", async () => {
-      const { client } = makeStubClient({ capabilities: {} });
-      const sync = new CatalogSync({ client });
-      await sync.start();
-      const reasons = [];
-      sync.on('resyncing', ({ reason }) => reasons.push(reason));
-      await sync.refresh();
-      assert.deepStrictEqual(reasons, ['manual']);
-      sync.stop();
-    });
-  });
-
-  describe('feedHeaders function form', () => {
-    test('feedHeaders accepts an async function and calls it on every poll', async () => {
-      const { client } = makeStubClient({
-        capabilities: { catalog_change_feed: { supported: true } },
-        getProducts: () => makeProductsResult([], { catalog_version: 'v1' }),
-      });
-      let headerCalls = 0;
-      const feedHeaders = async () => {
-        headerCalls++;
-        return { Authorization: `Bearer token-${headerCalls}` };
-      };
-      const seenAuthHeaders = [];
-      const fetchMock = async (_url, init) => {
-        seenAuthHeaders.push(init?.headers?.Authorization);
-        return makeFetchResponse({ events: [], next_cursor: null, has_more: false });
-      };
-      const sync = new CatalogSync({
-        client,
-        feedOrigin: 'https://agent.example.com',
-        feedHeaders,
-        fetch: fetchMock,
-        pollIntervalMs: 50,
-      });
-      await sync.start();
-      await new Promise(resolve => setTimeout(resolve, 200));
-      sync.stop();
-      assert.ok(headerCalls >= 1, 'feedHeaders function was called at least once');
-      assert.ok(seenAuthHeaders.length >= 1, 'fetch received the resolved Authorization header');
-      assert.match(seenAuthHeaders[0], /Bearer token-\d+/);
-    });
-  });
-
-  describe('live mode', () => {
-    test('polls the change feed, applies events, and emits typed listeners', async () => {
-      const products = [makeProduct('p1')];
-      const { client } = makeStubClient({
-        capabilities: {
-          catalog_change_feed: {
-            supported: true,
-            event_types: ['product.priced', 'product.removed'],
-            retention_window_days: 30,
-          },
-        },
-        getProducts: () => makeProductsResult(products, { catalog_version: 'v1' }),
-      });
-
-      let fetchCallCount = 0;
-      const fetchMock = async (url, _init) => {
-        fetchCallCount++;
-        const parsed = new URL(url);
-        assert.strictEqual(parsed.pathname, '/catalog/events');
-        // Only the first poll returns the priced event. Subsequent polls
-        // return an empty feed so the test's elapsed-time-budget doesn't
-        // accidentally fan out multiple identical events.
-        if (fetchCallCount > 1) {
-          return makeFetchResponse({
-            events: [],
-            next_cursor: '019539a1-bbbb-7bbb-bbbb-bbbbbbbbbbbb',
-            has_more: false,
+  test('webhook structural updates preserve pricing_version for the next conditional repair read', async () => {
+    let phase = 'initial';
+    const { client, calls } = makeStubClient({
+      capabilities: {
+        wholesale_feed_versioning: { supported: true },
+      },
+      getProducts: (params, callNumber) => {
+        if (callNumber === 1) {
+          return makeProductsResult([makeProduct('p1')], {
+            wholesale_feed_version: 'v1',
+            pricing_version: 'price-v1',
           });
         }
-        return makeFetchResponse({
-          events: [
-            {
-              event_id: '019539a0-aaaa-7aaa-aaaa-aaaaaaaaaaaa',
-              event_type: 'product.priced',
-              entity_type: 'product',
-              entity_id: 'p1',
-              created_at: '2026-05-19T10:00:00Z',
-              payload: {
-                product_id: 'p1',
-                pricing_options: [
-                  { pricing_option_id: 'po_cpm_v2', pricing_model: 'cpm', currency: 'USD', fixed_price: 22.0 },
-                ],
-                applies_to: { scope: 'public' },
-              },
-            },
-          ],
-          next_cursor: '019539a1-bbbb-7bbb-bbbb-bbbbbbbbbbbb',
-          has_more: false,
+        assert.strictEqual(phase, 'refresh');
+        return makeUnchangedResult({
+          wholesale_feed_version: 'v2',
+          pricing_version: 'price-v1',
         });
-      };
-
-      const sync = new CatalogSync({
-        client,
-        feedOrigin: 'https://agent.example.com',
-        feedHeaders: { Authorization: 'Bearer test-token' },
-        fetch: fetchMock,
-        pollIntervalMs: 50,
-      });
-
-      const typedEvents = [];
-      sync.on('product.priced', ({ event }) => typedEvents.push(event));
-
-      await sync.start();
-      assert.strictEqual(sync.mode, 'live');
-
-      // Wait for the first poll cycle to fire and complete.
-      await new Promise(resolve => setTimeout(resolve, 200));
-
-      sync.stop();
-
-      assert.ok(fetchCallCount > 0, 'fetch should have been called at least once');
-      assert.strictEqual(typedEvents.length, 1, 'one typed product.priced event applied');
-      const repriced = sync.products.get('p1');
-      assert.strictEqual(repriced?.pricing_options?.[0]?.fixed_price, 22.0);
+      },
     });
+    const sync = new CatalogSync({ client, account });
 
-    test('catalog.bulk_change triggers re-bootstrap and emits resyncing', async () => {
-      let productsPhase = 'initial';
-      const { client, calls } = makeStubClient({
-        capabilities: {
-          catalog_change_feed: { supported: true, event_types: ['catalog.bulk_change'] },
-        },
-        getProducts: () => {
-          if (productsPhase === 'initial') return makeProductsResult([makeProduct('p1')], { catalog_version: 'v1' });
-          return makeProductsResult([makeProduct('p1'), makeProduct('p2')], { catalog_version: 'v2' });
-        },
-      });
+    await sync.start();
+    await sync.applyWebhook(
+      makeWebhook(
+        makeEvent('product.updated', 'product', 'p1', {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Updated Product' }),
+          applies_to: { scope: 'public' },
+        }),
+        { version: 'v2', previous: 'v1' }
+      )
+    );
+    phase = 'refresh';
+    await sync.refresh();
 
-      const fetchMock = async () =>
-        makeFetchResponse({
-          events: [
-            {
-              event_id: '019539a0-cccc-7ccc-cccc-cccccccccccc',
-              event_type: 'catalog.bulk_change',
-              entity_type: 'catalog',
-              entity_id: 'op-q3-rate-refresh',
-              created_at: '2026-05-19T10:00:00Z',
-              payload: {
-                summary: 'Q3 rate card refresh',
-                affected_entity_types: ['product'],
-                affected_count: 1480,
-                recommendation: 'wholesale_resync',
-                applies_to: { scope: 'public' },
-              },
-            },
-          ],
-          next_cursor: '019539a1-dddd-7ddd-dddd-dddddddddddd',
-          has_more: false,
-        });
-
-      const sync = new CatalogSync({
-        client,
-        feedOrigin: 'https://agent.example.com',
-        fetch: fetchMock,
-        pollIntervalMs: 50,
-      });
-
-      const resyncReasons = [];
-      sync.on('resyncing', ({ reason }) => resyncReasons.push(reason));
-
-      await sync.start();
-      assert.strictEqual(sync.products.count, 1, 'initial bootstrap has one product');
-
-      productsPhase = 'after';
-      await new Promise(resolve => setTimeout(resolve, 200));
-      sync.stop();
-
-      assert.ok(resyncReasons.includes('bulk_change'), 'resyncing emitted with bulk_change reason');
-      assert.strictEqual(sync.products.count, 2, 're-bootstrap pulled the new product');
-      assert.ok(calls.getProducts >= 2, 'get_products called at least twice (initial + re-bootstrap)');
-    });
-
-    test('RETENTION_EXPIRED (HTTP 410) triggers re-bootstrap with the retention_expired reason', async () => {
-      const { client } = makeStubClient({
-        capabilities: { catalog_change_feed: { supported: true } },
-        getProducts: () => makeProductsResult([makeProduct('p1')], { catalog_version: 'v1' }),
-      });
-
-      let firstCall = true;
-      const fetchMock = async () => {
-        if (firstCall) {
-          firstCall = false;
-          return makeFetchResponse({ error: { code: 'RETENTION_EXPIRED' } }, { status: 410, statusText: 'Gone' });
-        }
-        return makeFetchResponse({ events: [], next_cursor: 'cur-new', has_more: false });
-      };
-
-      const sync = new CatalogSync({
-        client,
-        feedOrigin: 'https://agent.example.com',
-        fetch: fetchMock,
-        pollIntervalMs: 50,
-      });
-
-      const reasons = [];
-      sync.on('resyncing', ({ reason }) => reasons.push(reason));
-
-      await sync.start();
-      await new Promise(resolve => setTimeout(resolve, 200));
-      sync.stop();
-
-      assert.ok(reasons.includes('retention_expired'), 'retention_expired resyncing emitted');
-    });
+    assert.strictEqual(calls.getProducts.at(-1).if_wholesale_feed_version, 'v2');
+    assert.strictEqual(calls.getProducts.at(-1).if_pricing_version, 'price-v1');
+    sync.stop();
   });
 });
