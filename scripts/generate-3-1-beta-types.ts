@@ -32,6 +32,17 @@ const BETA_VERSION = '3.1.0-beta.2';
 const BETA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache', BETA_VERSION);
 const OUTPUT_DIR = path.join(REPO_ROOT, 'src/lib/types/v3-1-beta');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'tools.generated.ts');
+const CATALOG_NOTIFICATION_TYPES = [
+  'product.created',
+  'product.updated',
+  'product.priced',
+  'product.removed',
+  'signal.created',
+  'signal.updated',
+  'signal.priced',
+  'signal.removed',
+  'catalog.bulk_change',
+] as const;
 
 interface TaskRef {
   request?: { $ref?: string };
@@ -325,6 +336,68 @@ function widenIndexSignaturesOnAnonymousObjects(src: string): string {
   return src.replace(/(\[k: string\]:\s+)([A-Z][\w.]*(?:\[\])?);/g, '$1$2 | undefined;');
 }
 
+/**
+ * The current 3.1 beta schema cache has catalog-change webhook support split
+ * across two surfaces: `catalog_change_feed.event_types` already declares the
+ * product/signal/catalog event literals, while `NotificationConfig.event_types`
+ * still points at the older account-notification enum. Keep the opt-in TS
+ * surface aligned with the intended sync_accounts settings-update flow until
+ * the upstream enum catches up.
+ */
+function widenCatalogNotificationTypes(src: string): string {
+  let replacements = 0;
+  const next = src.replace(/export type NotificationType =\n([\s\S]*?);/, (_match, members: string) => {
+    replacements += 1;
+    const existing = [...members.matchAll(/'([^']+)'/g)].map(match => match[1]);
+    const merged = Array.from(new Set([...existing, ...CATALOG_NOTIFICATION_TYPES]));
+    const lines = merged.map((value, index) => `  | '${value}'${index === merged.length - 1 ? ';' : ''}`);
+    return `export type NotificationType =\n${lines.join('\n')}`;
+  });
+  if (replacements !== 1) {
+    throw new Error(`Expected to rewrite NotificationType exactly once, rewrote ${replacements} times.`);
+  }
+  return next;
+}
+
+function tightenSyncAccountsModeTypes(src: string): string {
+  const provisioning = `export interface ProvisioningMode {
+  brand: BrandReference;
+  operator: string;
+  billing: BillingParty;
+  account?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  sandbox?: boolean;
+  preferred_reporting_protocol?: CloudStorageProtocol;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
+}`;
+  const settingsUpdate = `export interface SettingsUpdateMode {
+  account: AccountReference;
+  brand?: never;
+  operator?: never;
+  billing?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
+}`;
+
+  let replacements = 0;
+  let next = src.replace(/export interface ProvisioningMode \{\n\s+\[k: string\]: unknown \| undefined;\n\}/, () => {
+    replacements += 1;
+    return provisioning;
+  });
+  next = next.replace(/export interface SettingsUpdateMode \{\n\s+\[k: string\]: unknown \| undefined;\n\}/, () => {
+    replacements += 1;
+    return settingsUpdate;
+  });
+  if (replacements !== 2) {
+    throw new Error(`Expected to rewrite sync_accounts mode interfaces exactly twice, rewrote ${replacements} times.`);
+  }
+  return next;
+}
+
 async function main(): Promise<void> {
   console.log('🔧 Generating AdCP 3.1-beta TypeScript types...');
   const tools = loadTools();
@@ -372,6 +445,8 @@ async function main(): Promise<void> {
   let body = compiled.replace(wrapperPattern, '').trim();
   body = removeNumberedTypeDuplicates(body);
   body = widenIndexSignaturesOnAnonymousObjects(body);
+  body = widenCatalogNotificationTypes(body);
+  body = tightenSyncAccountsModeTypes(body);
 
   const banner = `// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
 // Generated from schemas/cache/${BETA_VERSION}/ via scripts/generate-3-1-beta-types.ts

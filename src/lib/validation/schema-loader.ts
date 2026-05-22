@@ -36,6 +36,18 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
   'input-required': 'async-response-input-required',
 };
 
+const CATALOG_NOTIFICATION_TYPES = [
+  'product.created',
+  'product.updated',
+  'product.priced',
+  'product.removed',
+  'signal.created',
+  'signal.updated',
+  'signal.priced',
+  'signal.removed',
+  'catalog.bulk_change',
+] as const;
+
 /**
  * Map a consumer-provided version pin to the loader's bundle key.
  *
@@ -328,6 +340,39 @@ function loadJson(file: string): LoadedSchema {
   return JSON.parse(readFileSync(file, 'utf-8')) as LoadedSchema;
 }
 
+// Matches the 3.1-beta type surface widening for sync_accounts webhook
+// subscriptions while the upstream beta enum is still catching up.
+function supportsCatalogNotificationWidening(version: string, file: string): boolean {
+  if (!/^3\.1(?:\.0)?-beta(?:\.|$)/.test(version)) return false;
+  const normalized = file.split(path.sep).join('/');
+  return (
+    normalized.endsWith('/enums/notification-type.json') ||
+    normalized.endsWith('/account/sync-accounts-request.json') ||
+    normalized.endsWith('/bundled/account/sync-accounts-request.json')
+  );
+}
+
+function widenCatalogNotificationEnums(node: unknown): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) widenCatalogNotificationEnums(item);
+    return;
+  }
+
+  const obj = node as Record<string, unknown>;
+  if (
+    Array.isArray(obj.enum) &&
+    obj.enum.includes('creative.status_changed') &&
+    obj.enum.includes('creative.purged')
+  ) {
+    obj.enum = Array.from(new Set([...obj.enum, ...CATALOG_NOTIFICATION_TYPES]));
+  }
+
+  for (const value of Object.values(obj)) {
+    widenCatalogNotificationEnums(value);
+  }
+}
+
 /**
  * Clear `additionalProperties: false` at the response root so envelope
  * fields (`replayed`, `context`, `ext`, and future envelope additions)
@@ -511,6 +556,9 @@ function ensureCoreLoaded(s: LoaderState): void {
     for (const file of walkJsonFiles(abs)) {
       if (responseToolFiles.has(file)) continue;
       const schema = loadJson(file);
+      if (supportsCatalogNotificationWidening(s.version, file)) {
+        widenCatalogNotificationEnums(schema);
+      }
       if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
         s.ajv.addSchema(schema);
       }
@@ -550,6 +598,9 @@ export function getValidator(
   if (!fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
+  if (supportsCatalogNotificationWidening(s.version, file)) {
+    widenCatalogNotificationEnums(rawSchema);
+  }
   const schema = direction === 'request' ? rawSchema : relaxResponseRoot(rawSchema);
   const existing = typeof schema.$id === 'string' ? s.ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? s.ajv.compile(schema);

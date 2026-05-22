@@ -102,7 +102,7 @@ export type AccountScope = 'operator' | 'brand' | 'operator_brand' | 'agent';
  */
 export type CloudStorageProtocol = 's3' | 'gcs' | 'azure_blob';
 /**
- * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.purged`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. New notification types added to this enum MUST declare their anchor (media-buy or account) and per-type `notification_id` semantics in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored type, and MUST reject `push_notification_config` registrations for account-anchored types.
+ * Type of push notification fired by a seller agent. Media-buy-anchored notifications (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) fire against a media buy's `push_notification_config`. Account-anchored notifications (`creative.status_changed`, `creative.purged`) and catalog-change events (`product.*`, `signal.*`, `catalog.bulk_change`) fire against an account's `notification_configs[]` entries whose `event_types` include the value — these outlive any single media buy and anchor at the account. New notification types added to this enum MUST declare their anchor (media-buy or account) and per-type `notification_id` semantics in the enumDescription. Sellers MUST reject `notification_configs[]` entries whose `event_types` include any media-buy-anchored type, and MUST reject `push_notification_config` registrations for account-anchored types.
  */
 export type NotificationType =
   | 'scheduled'
@@ -111,7 +111,16 @@ export type NotificationType =
   | 'adjusted'
   | 'impairment'
   | 'creative.status_changed'
-  | 'creative.purged';
+  | 'creative.purged'
+  | 'product.created'
+  | 'product.updated'
+  | 'product.priced'
+  | 'product.removed'
+  | 'signal.created'
+  | 'signal.updated'
+  | 'signal.priced'
+  | 'signal.removed'
+  | 'catalog.bulk_change';
 /**
  * Legacy authentication schemes for the webhook auth block. Bearer: token sent in Authorization header. HMAC-SHA256: legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit the authentication block and use the RFC 9421 webhook signing profile (applicable on schemas where authentication is optional). Removed in AdCP 4.0.
  */
@@ -10860,7 +10869,7 @@ export interface BusinessEntity {
   ext?: ExtensionObject;
 }
 /**
- * Account-level webhook subscription for notifications whose lifecycle outlives any single media buy — creative state changes, library purges, future org-level signals. Distinct from `push-notification-config.json`, which anchors at a per-resource operation (a single task or media buy). An account MAY register multiple notification configs to fan a single seller's events out to multiple buyer-side endpoints; each entry filters by `event_types`. As with push-notification-config, the default signing scheme is the AdCP RFC 9421 webhook profile against the seller's brand.json `agents[]` JWKS; the optional `authentication` block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in `authentication.credentials` are write-only — sellers MUST NOT echo them back in `list_accounts` responses.
+ * Account-level webhook subscription for notifications whose lifecycle outlives any single media buy — creative state changes, library purges, and wholesale product/signal catalog changes. Distinct from `push-notification-config.json`, which anchors at a per-resource operation (a single task or media buy). An account MAY register multiple notification configs to fan a single seller's events out to multiple buyer-side endpoints; each entry filters by `event_types`. As with push-notification-config, the default signing scheme is the AdCP RFC 9421 webhook profile against the seller's brand.json `agents[]` JWKS; the optional `authentication` block opts into the deprecated Bearer / HMAC-SHA256 fallback for compatibility. Credentials and shared secrets in `authentication.credentials` are write-only — sellers MUST NOT echo them back in `list_accounts` responses.
  */
 export interface NotificationConfig {
   /**
@@ -10872,7 +10881,7 @@ export interface NotificationConfig {
    */
   url: string;
   /**
-   * Notification types this subscriber wishes to receive on the registered `url`. The seller MUST NOT fire other types against this endpoint, and MUST NOT silently widen the filter when new types are added to `notification-type.json`. When omitted, the seller MUST default to a no-fire policy and surface an `errors[]` entry on `sync_accounts` so the buyer notices the missing filter. Values are drawn from `notification-type.json`, but only types whose contract anchors at the account scope are valid here — media-buy-anchored types (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) belong on a media buy's `push_notification_config`, not on this surface; sellers MUST reject those entries with an `errors[]` warning rather than silently dropping them.
+   * Notification types this subscriber wishes to receive on the registered `url`. The seller MUST NOT fire other types against this endpoint, and MUST NOT silently widen the filter when new types are added to `notification-type.json`. When omitted, the seller MUST default to a no-fire policy and surface an `errors[]` entry on `sync_accounts` so the buyer notices the missing filter. Values are drawn from `notification-type.json` and catalog-change events, but only types whose contract anchors at the account scope are valid here — media-buy-anchored types (`scheduled`, `final`, `delayed`, `adjusted`, `impairment`) belong on a media buy's `push_notification_config`, not on this surface; sellers MUST reject those entries with an `errors[]` warning rather than silently dropping them.
    */
   event_types: NotificationType[];
   /**
@@ -11037,13 +11046,29 @@ export interface PaginationResponse {
  * Provisioning-mode entry — natural-key trio is required, `account` is forbidden.
  */
 export interface ProvisioningMode {
-  [k: string]: unknown | undefined;
+  brand: BrandReference;
+  operator: string;
+  billing: BillingParty;
+  account?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  sandbox?: boolean;
+  preferred_reporting_protocol?: CloudStorageProtocol;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
 }
 /**
  * Settings-update entry — `account` (AccountRef) is required, provisioning trio fields are forbidden.
  */
 export interface SettingsUpdateMode {
-  [k: string]: unknown | undefined;
+  account: AccountReference;
+  brand?: never;
+  operator?: never;
+  billing?: never;
+  billing_entity?: BusinessEntity;
+  payment_terms?: PaymentTerms;
+  notification_configs?: NotificationConfig[];
+  ext?: ExtensionObject;
 }
 /**
  * Webhook for async notifications when account status changes (e.g., pending_approval transitions to active).
