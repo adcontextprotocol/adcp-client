@@ -29,6 +29,7 @@ import type {
   GetAccountFinancialsRequest,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
+import type { NotificationConfig } from '../../types/v3-1-beta';
 import type { CursorPage, CursorRequest } from './pagination';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 
@@ -146,6 +147,15 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * schema description for security constraints.
    */
   reporting_bucket?: WireAccount['reporting_bucket'];
+
+  /**
+   * Account-level webhook subscriptions registered through `sync_accounts`.
+   * Beta 3 adds wholesale product/signal feed webhooks here. The framework
+   * strips legacy `authentication.credentials` before emitting accounts on
+   * `list_accounts`; adopters must still persist credentials server-side if
+   * they accept legacy webhook auth.
+   */
+  notification_configs?: NotificationConfig[];
 
   /**
    * Sandbox account marker. For implicit accounts the wire schema treats
@@ -485,6 +495,10 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * upserts and returns per-account result rows. `throw new AdcpError(...)`
    * for buyer-facing rejection.
    *
+   * In AdCP 3.1 beta, adopters that need settings-update entries with
+   * `notification_configs[]` can read the full wire body from `ctx.input`
+   * or supply a top-level `accounts.syncAccounts` handler.
+   *
    * **Optional.** Stateless platforms (creative-template, signal-marketplace
    * proxies) that don't manage account lifecycle can omit this; framework
    * surfaces `UNSUPPORTED_FEATURE` to buyers calling `sync_accounts`.
@@ -729,6 +743,8 @@ export interface SyncAccountsResultRow {
   rate_card?: string;
   payment_terms?: PaymentTerms;
   credit_limit?: WireAccount['credit_limit'];
+  /** Applied account-level webhook subscriptions; credentials are stripped on emit. */
+  notification_configs?: NotificationConfig[];
   errors?: { code: string; message: string }[];
   warnings?: string[];
   sandbox?: boolean;
@@ -789,6 +805,10 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     wire.governance_agents = account.governance_agents.map(projectGovernanceAgent);
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
+  if (account.notification_configs !== undefined) {
+    (wire as WireAccount & { notification_configs?: NotificationConfig[] }).notification_configs =
+      account.notification_configs.map(projectNotificationConfig);
+  }
   if (account.sandbox !== undefined) wire.sandbox = account.sandbox;
   if (account.ext !== undefined) wire.ext = account.ext;
   return wire;
@@ -826,10 +846,19 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.rate_card !== undefined) wire.rate_card = row.rate_card;
   if (row.payment_terms !== undefined) wire.payment_terms = row.payment_terms;
   if (row.credit_limit !== undefined) wire.credit_limit = row.credit_limit;
+  if (row.notification_configs !== undefined) {
+    (wire as WireSyncAccountRow & { notification_configs?: NotificationConfig[] }).notification_configs =
+      row.notification_configs.map(projectNotificationConfig);
+  }
   if (row.errors !== undefined) wire.errors = row.errors;
   if (row.warnings !== undefined) wire.warnings = row.warnings;
   if (row.sandbox !== undefined) wire.sandbox = row.sandbox;
   return wire;
+}
+
+function projectNotificationConfig(config: NotificationConfig): NotificationConfig {
+  const { authentication: _authentication, ...rest } = config;
+  return rest;
 }
 
 type WireSyncGovernanceRow = SyncGovernanceSuccess['accounts'][number];

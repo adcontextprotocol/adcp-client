@@ -1,13 +1,14 @@
 #!/usr/bin/env tsx
 /**
  * Generate TypeScript request/response interfaces from the cached AdCP
- * 3.1.0-beta.2 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
+ * 3.1.0-beta.3 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
  *
  * The SDK's primary type surface (`src/lib/types/tools.generated.ts`) is
  * pinned to the GA `ADCP_VERSION` (3.0.x). The v3-1-beta surface is an
- * opt-in parallel tree consumers import explicitly to type the catalog-sync
- * cluster additions (`if_catalog_version`, `catalog_version`, `cache_scope`,
- * `unchanged`, `catalog_change_feed`, `core/catalog-event.json`).
+ * opt-in parallel tree consumers import explicitly to type the wholesale-feed
+ * sync additions (`if_wholesale_feed_version`, `wholesale_feed_version`,
+ * `cache_scope`, `unchanged`, `wholesale_feed_webhooks`,
+ * `core/wholesale-feed-event.json`, `core/wholesale-feed-webhook.json`).
  *
  * Mirrors the v2.5 pipeline: one mega-schema compile, strip-if-then-else
  * before `json-schema-to-typescript` (Ajv enforces conditionals at runtime),
@@ -28,7 +29,7 @@ import { removeArrayLengthConstraints } from './schema-utils';
 import { enforceStrictSchema, removeNumberedTypeDuplicates } from './generate-types';
 
 const REPO_ROOT = path.join(__dirname, '..');
-const BETA_VERSION = '3.1.0-beta.2';
+const BETA_VERSION = '3.1.0-beta.3';
 const BETA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache', BETA_VERSION);
 const OUTPUT_DIR = path.join(REPO_ROOT, 'src/lib/types/v3-1-beta');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'tools.generated.ts');
@@ -50,7 +51,7 @@ interface SchemaIndex {
 
 /**
  * Resolve a schema $ref to a path in the cached beta bundle. The bundle ships
- * with refs already normalized to `/schemas/3.1.0-beta.2/...`; this just
+ * with refs already normalized to `/schemas/3.1.0-beta.3/...`; this just
  * strips the leading version segment so the relative path resolves against
  * the cache root.
  */
@@ -262,7 +263,7 @@ function stripIfThenElse<T>(node: T): T {
   delete obj.else;
   // `dependencies` (draft-07 key-dependency form) gates one field's presence
   // on another's; jsts emits it as an intersection that breaks for the
-  // `if_pricing_version requires if_catalog_version` rule. Ajv enforces it.
+  // `if_pricing_version requires if_wholesale_feed_version` rule. Ajv enforces it.
   delete obj.dependencies;
   for (const key of Object.keys(obj)) {
     stripIfThenElse(obj[key]);
@@ -271,19 +272,19 @@ function stripIfThenElse<T>(node: T): T {
 }
 
 /**
- * Load every JSON schema under `core/` so the catalog-event surface and
- * its `$defs` (appliesTo, removalReason) are reachable as standalone exports
+ * Load standalone JSON schemas under `core/` so wholesale-feed webhook payloads
+ * and their event union are reachable as standalone exports
  * even though no task points at them via `index.schemas[*].tasks`.
  */
 function loadStandaloneCoreSchemas(): Array<{ name: string; schema: any }> {
   const out: Array<{ name: string; schema: any }> = [];
   const coreDir = path.join(BETA_CACHE_DIR, 'core');
   if (!existsSync(coreDir)) return out;
-  // Catalog-event is the only schema PR #4767 added that isn't reachable
-  // via the tasks index. Hand-pick it so the parallel type surface includes
-  // `CatalogEvent` / `CatalogEventsResponse` without inflating the codegen
-  // output with every `core/` primitive.
-  const targets = ['catalog-event.json', 'catalog-events-response.json'];
+  // Wholesale-feed event/webhook schemas are not reachable via the tasks
+  // index. Hand-pick them so the parallel type surface includes
+  // `WholesaleFeedEvent` / `WholesaleFeedWebhook` without inflating the
+  // codegen output with every `core/` primitive.
+  const targets = ['wholesale-feed-event.json', 'wholesale-feed-webhook.json'];
   for (const file of targets) {
     const full = path.join(coreDir, file);
     if (!existsSync(full)) continue;
@@ -420,7 +421,7 @@ async function main(): Promise<void> {
   body = widenIndexSignaturesOnAnonymousObjects(body);
   body = tightenSyncAccountsModeTypes(body);
 
-  const banner = `// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
+  const banner = `// AdCP 3.1.0-beta.3 tool request/response types — DO NOT EDIT
 // Generated from schemas/cache/${BETA_VERSION}/ via scripts/generate-3-1-beta-types.ts
 // Refresh with: npm run sync-schemas:3.1-beta && npm run generate-types:3.1-beta
 `;

@@ -449,7 +449,7 @@ Wire into `package.json#scripts`:
 
 Add `scripts/generate-<version>-types.ts` modeled on `scripts/generate-3-1-beta-types.ts`. The 3.1-beta codegen extends the v2.5 mega-schema pipeline with three preprocessors that newer AdCP schemas need:
 
-- **`stripIfThenElse`** — deletes `if`/`then`/`else`/`dependencies` keywords before `json-schema-to-typescript`. AdCP 3.1+ uses these for response-shape gating (`unchanged: true ⇒ products omitted`) and request-shape gating (`if_pricing_version requires if_catalog_version`). jsts produces unusable union expansions; Ajv enforces the conditionals at runtime, so the TS surface collapses to all-optional. Memory: `feedback_strip_if_then_before_jsts`.
+- **`stripIfThenElse`** — deletes `if`/`then`/`else`/`dependencies` keywords before `json-schema-to-typescript`. AdCP 3.1+ uses these for response-shape gating (`unchanged: true ⇒ products omitted`) and request-shape gating (`if_pricing_version requires if_wholesale_feed_version`). jsts produces unusable union expansions; Ajv enforces the conditionals at runtime, so the TS surface collapses to all-optional. Memory: `feedback_strip_if_then_before_jsts`.
 - **`reseatLocalRefs`** — rewrites intra-schema `$ref` paths (`#/oneOf/0/...`, `#/definitions/<inner>`) to `#/definitions/<WrapperName>/oneOf/0/...` before bundling into the mega-schema. Required for any schema that self-references inside its own tree (e.g., `brand/get-brand-identity-response.json`, `brand/verify-brand-claims-request.json`).
 - **`propagateRootRequiredIntoOneOfBranches`** — for discriminated-union schemas with `oneOf` (notably `core/catalog-event.json`), lifts root-level `required` field names into every branch's `required` array. Without this, jsts emits the field as optional in each branch type and TS intersection-with-the-wrapper produces a watered-down union (`payload: {}` instead of `payload: BranchShape`).
 
@@ -506,7 +506,7 @@ Use `'X.Y-beta'` (release-precision) as the canonical pin in adopter-facing exam
 
 **When the upstream cuts the next beta:**
 
-- Update `BETA_VERSION` constant in both scripts to the new tag (e.g., `'3.1.0-beta.2'`).
+- Update `BETA_VERSION` constant in both scripts to the new tag (e.g., `'3.1.0-beta.3'`).
 - Update `COMPATIBLE_PREFIX` to include the new version.
 - Run `npm run sync-schemas:<version> && npm run generate-types:<version>`.
 - Commit the regenerated types.
