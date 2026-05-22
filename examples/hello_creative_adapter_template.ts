@@ -421,7 +421,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       // workspace tied to the API key's principal. Mock keys templates
       // per workspace, so we hit a default workspace that has the full set.
       const templates = await upstream.listTemplates(workspaceId);
-      return { formats: templates.map(templateToFormat) };
+      return { status: 'completed', formats: templates.map(templateToFormat) };
     },
 
     buildCreative: async (req: BuildCreativeRequest, ctx): Promise<BuildCreativeReturn> => {
@@ -499,6 +499,12 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       if (!req.creative_manifest) {
         throw new AdcpError('INVALID_REQUEST', { message: 'creative_manifest required for single preview' });
       }
+      if (!req.creative_manifest.format_id) {
+        throw new AdcpError('INVALID_REQUEST', {
+          message: 'creative_manifest.format_id required for single preview',
+          field: 'creative_manifest.format_id',
+        });
+      }
 
       // Buyer's manifest carries the input format_id; resolve to upstream.
       const sourceFormatId = req.creative_manifest.format_id.id;
@@ -528,25 +534,28 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       // `response_type: 'single'`. The render slot's `output_format`
       // discriminator is in turn injected by `urlRender({...})`.
       // SHAPE-GOTCHAS §4.
-      return previewCreative.single({
-        previews: [
-          {
-            preview_id: `prv_${created.render_id}`,
-            renders: [
-              urlRender({
-                render_id: `rnd_${created.render_id}`,
-                preview_url: previewUrl,
-                role: 'primary',
-                ...(template.dimensions
-                  ? { dimensions: { width: template.dimensions.width, height: template.dimensions.height } }
-                  : {}),
-              }),
-            ],
-            input: { name: 'default' },
-          },
-        ],
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
+      return {
+        status: 'completed' as const,
+        ...previewCreative.single({
+          previews: [
+            {
+              preview_id: `prv_${created.render_id}`,
+              renders: [
+                urlRender({
+                  render_id: `rnd_${created.render_id}`,
+                  preview_url: previewUrl,
+                  role: 'primary',
+                  ...(template.dimensions
+                    ? { dimensions: { width: template.dimensions.width, height: template.dimensions.height } }
+                    : {}),
+                }),
+              ],
+              input: { name: 'default' },
+            },
+          ],
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }),
+      };
     },
   });
 }

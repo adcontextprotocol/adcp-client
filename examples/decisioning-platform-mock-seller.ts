@@ -147,6 +147,7 @@ function rejectPreflight(errors: AdcpStructuredError[]): never {
 }
 
 const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
+  status: 'completed' as const,
   products: [
     {
       product_id: 'prod_premium_video',
@@ -187,6 +188,7 @@ const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<SyncCr
 const SHARED_GET_MEDIA_BUY_DELIVERY = async (
   filter: GetMediaBuyDeliveryRequest
 ): Promise<GetMediaBuyDeliveryResponse> => ({
+  status: 'completed' as const,
   currency: 'USD',
   reporting_period: {
     start: filter.start_date ?? '2026-04-01',
@@ -299,7 +301,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
     getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
     // Required on SalesPlatform — empty-array stub (mock seller doesn't
     // persist buys across runs; getMediaBuys returns nothing).
-    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
   };
 }
 
@@ -325,7 +327,7 @@ export function buildHybridServerExample(platform: MockHybridSeller) {
     mediaBuy: {
       // v5 leftover — listCreativeFormats isn't on SalesPlatform v1.0
       // (deferred to rc.1). Custom handler here fills the gap until then.
-      listCreativeFormats: async () => ({ formats: [] }),
+      listCreativeFormats: async () => ({ status: 'completed' as const, formats: [] }),
     },
   });
 }

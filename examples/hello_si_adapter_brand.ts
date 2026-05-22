@@ -433,6 +433,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
         }))
       : undefined;
     const response: SIGetOfferingResponse = {
+      status: 'completed',
       available: offering.available,
       ...(offering.offering_query_id !== undefined ? { offering_token: offering.offering_query_id } : {}),
       ...(offering.offering_query_ttl_seconds !== undefined
@@ -473,6 +474,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
     });
     const initial = conversation.turns[0];
     return {
+      status: 'completed',
       // conversation_id → session_id (rename only — the brand-side and
       // AdCP-side identifiers are the same opaque token).
       session_id: conversation.conversation_id,
@@ -508,6 +510,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
     // `si_terminate_session` to formally close.
     const closeProjection = turn.close_recommended ? projectCloseHint(turn.close_recommended) : null;
     return {
+      status: 'completed',
       session_id: turn.conversation_id,
       response: {
         message: turn.assistant_message,
@@ -526,6 +529,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
     });
     const handoff = conversation.close?.transaction_handoff ?? null;
     return {
+      status: 'completed',
       session_id: conversation.conversation_id,
       terminated: conversation.status === 'closed',
       session_status: 'terminated',

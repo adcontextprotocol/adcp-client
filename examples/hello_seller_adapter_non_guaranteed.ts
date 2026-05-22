@@ -88,7 +88,7 @@ import type {
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
-type Product = GetProductsResponse['products'][number];
+type Product = NonNullable<GetProductsResponse['products']>[number];
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4451';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_non_guaranteed_key_do_not_use_in_prod';
@@ -593,7 +593,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { products: products.map(p => projectProduct(p, publisherDomain)) };
+      return { status: 'completed', products: products.map(p => projectProduct(p, publisherDomain)) };
     },
 
     /**
@@ -825,6 +825,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         );
       }
       const response: GetMediaBuyDeliveryResponse = {
+        status: 'completed',
         currency: filtered[0]?.currency ?? 'USD',
         reporting_period: {
           start: filtered[0]?.reporting_period.start ?? new Date().toISOString(),
@@ -891,7 +892,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           };
         })
       );
-      const response: GetMediaBuysResponse = { media_buys };
+      const response: GetMediaBuysResponse = { status: 'completed', media_buys };
       return response;
     },
 
@@ -959,6 +960,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         FormatAsset.url({ asset_id: 'click_url', required: true }),
       ];
       return {
+        status: 'completed',
         formats: [
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_300x250' },
