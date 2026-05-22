@@ -314,14 +314,15 @@ function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPl
 // assignment site.
 function _sales_guaranteed_field_annotation_pattern() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
-    getProducts: async () => ({ products: [] }),
+    getProducts: async () => ({ status: 'completed' as const, products: [] }),
     createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
     updateMediaBuy: async () => ({ media_buy_id: 'x' }),
     getMediaBuyDelivery: async () => ({
+      status: 'completed' as const,
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
     }),
-    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
     syncCreatives: async () => [],
   };
   type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
@@ -338,14 +339,15 @@ function _sales_guaranteed_field_annotation_pattern() {
 function _sales_guaranteed_spread_helpers_pattern() {
   const sales = {
     ...defineSalesCorePlatform<_SocialMeta>({
-      getProducts: async () => ({ products: [] }),
+      getProducts: async () => ({ status: 'completed' as const, products: [] }),
       createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
       updateMediaBuy: async () => ({ media_buy_id: 'x' }),
       getMediaBuyDelivery: async () => ({
+        status: 'completed' as const,
         reporting_period: { start: '2026-01-01', end: '2026-01-31' },
         media_buy_deliveries: [],
       }),
-      getMediaBuys: async () => ({ media_buys: [] }),
+      getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
     }),
     ...defineSalesIngestionPlatform<_SocialMeta>({
       syncCreatives: async () => [],
@@ -366,14 +368,15 @@ function _sales_guaranteed_spread_helpers_pattern() {
 // inference-through-defaults don't silently regress the adopter migration.
 function _define_sales_platform_widens_post_1341() {
   const sales = defineSalesPlatform<_SocialMeta>({
-    getProducts: async () => ({ products: [] }),
+    getProducts: async () => ({ status: 'completed' as const, products: [] }),
     createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
     updateMediaBuy: async () => ({ media_buy_id: 'x' }),
     getMediaBuyDelivery: async () => ({
+      status: 'completed' as const,
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
     }),
-    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuys: async () => ({ status: 'completed' as const, media_buys: [] }),
   });
   type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
     sales: unknown;
@@ -605,6 +608,7 @@ function _build_creative_return_factories_pin_arm(): void {
 
 function _media_buy_delivery_notification_factories_inject_discriminator(): void {
   const scheduled = mediaBuyDeliveryNotification.scheduled({
+    status: 'completed' as const,
     reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
     currency: 'USD',
     media_buy_deliveries: [],
