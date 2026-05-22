@@ -108,6 +108,40 @@ export function toStructuredContent(data: object): Record<string, unknown> {
   return data as unknown as Record<string, unknown>;
 }
 
+function stripNotificationConfigSecrets<T extends object>(row: T): T {
+  const notificationConfigs = (row as { notification_configs?: unknown }).notification_configs;
+  if (!Array.isArray(notificationConfigs)) return row;
+  return {
+    ...row,
+    notification_configs: notificationConfigs.map(config => {
+      if (config == null || typeof config !== 'object') return config;
+      const authentication = (config as { authentication?: unknown }).authentication;
+      if (authentication == null || typeof authentication !== 'object') return config;
+      const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication as Record<
+        string,
+        unknown
+      >;
+      const stripped = { ...(config as Record<string, unknown>) };
+      if (Object.keys(authenticationWithoutCredentials).length > 0) {
+        stripped.authentication = authenticationWithoutCredentials;
+      } else {
+        delete stripped.authentication;
+      }
+      return stripped;
+    }),
+  };
+}
+
+function stripAccountNotificationConfigSecrets<T extends { accounts?: unknown }>(data: T): T {
+  if (!Array.isArray(data.accounts)) return data;
+  return {
+    ...data,
+    accounts: data.accounts.map(account =>
+      account != null && typeof account === 'object' ? stripNotificationConfigSecrets(account) : account
+    ),
+  };
+}
+
 // `setup` is only ever nested inside an `Account` (the IO-signing / pending_approval
 // path). A top-level `setup` on a media buy response means the builder read the
 // storyboard's "setup.url" shorthand as a top-level field. The strict handler types
@@ -207,9 +241,10 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listAccountsResponse(data: ListAccountsResponse, summary?: string): McpToolResponse {
+  const stripped = stripAccountNotificationConfigSecrets(data);
   return {
-    content: [{ type: 'text', text: summary ?? `Found ${data.accounts.length} accounts` }],
-    structuredContent: toStructuredContent(data),
+    content: [{ type: 'text', text: summary ?? `Found ${stripped.accounts.length} accounts` }],
+    structuredContent: toStructuredContent(stripped),
   };
 }
 
@@ -682,13 +717,14 @@ export function creativeApprovalError(data: CreativeApprovalError): CreativeAppr
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
+  const stripped = 'accounts' in data ? stripAccountNotificationConfigSecrets(data) : data;
   const defaultSummary =
-    'errors' in data
+    'errors' in stripped
       ? 'Account sync error'
-      : `Synced ${data.accounts?.length ?? 0} account${data.accounts?.length === 1 ? '' : 's'}`;
+      : `Synced ${stripped.accounts?.length ?? 0} account${stripped.accounts?.length === 1 ? '' : 's'}`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: toStructuredContent(stripped),
   };
 }
 

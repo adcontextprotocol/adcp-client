@@ -49,6 +49,38 @@ export interface CatalogSyncConfig {
   client: CatalogSyncClient;
 
   /**
+   * Account scope for wholesale product/signal reads. Beta 3 wholesale-feed
+   * webhooks are account-anchored; pass the same account used when registering
+   * `notification_configs[]` so repair reads reconcile the correct public or
+   * account overlay.
+   */
+  account?: V31Beta.AccountReference;
+
+  /**
+   * Expected inbound webhook subscription scope. Set this when routing a
+   * validated webhook receiver into a CatalogSync instance so misrouted
+   * account/subscriber fires are rejected before mutating the mirror.
+   */
+  webhookScope?: {
+    /** Authenticated sender identity, used only to scope idempotency keys. */
+    senderId?: string;
+    /** Seller account_id expected on wholesale-feed webhook envelopes. */
+    accountId?: string;
+    /** Optional expected notification_configs[].subscriber_id. */
+    subscriberId?: string;
+  };
+
+  /**
+   * Optional durable dedupe store. Receivers handling webhooks across process
+   * restarts should persist these keys; the SDK also keeps a best-effort
+   * in-memory set for single-process duplicate suppression.
+   */
+  webhookDedupStore?: {
+    has(key: string): boolean | Promise<boolean>;
+    add(key: string): void | Promise<void>;
+  };
+
+  /**
    * @deprecated Beta 3 removed the public `/catalog/events` polling feed.
    * Register account-level `notification_configs[]` via `sync_accounts`,
    * deliver inbound webhook payloads to `applyWebhook()`, and use

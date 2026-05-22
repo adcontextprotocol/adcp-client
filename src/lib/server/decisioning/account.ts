@@ -33,6 +33,10 @@ import type { NotificationConfig } from '../../types/v3-1-beta';
 import type { CursorPage, CursorRequest } from './pagination';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 
+type WireNotificationConfig = Omit<NotificationConfig, 'authentication'> & {
+  authentication?: Omit<NonNullable<NotificationConfig['authentication']>, 'credentials'>;
+};
+
 /**
  * Account — framework's rich representation. A strict superset of the wire
  * `Account` shape (from `list_accounts` / response envelopes):
@@ -806,7 +810,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
   if (account.notification_configs !== undefined) {
-    (wire as WireAccount & { notification_configs?: NotificationConfig[] }).notification_configs =
+    (wire as WireAccount & { notification_configs?: WireNotificationConfig[] }).notification_configs =
       account.notification_configs.map(projectNotificationConfig);
   }
   if (account.sandbox !== undefined) wire.sandbox = account.sandbox;
@@ -847,7 +851,7 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.payment_terms !== undefined) wire.payment_terms = row.payment_terms;
   if (row.credit_limit !== undefined) wire.credit_limit = row.credit_limit;
   if (row.notification_configs !== undefined) {
-    (wire as WireSyncAccountRow & { notification_configs?: NotificationConfig[] }).notification_configs =
+    (wire as WireSyncAccountRow & { notification_configs?: WireNotificationConfig[] }).notification_configs =
       row.notification_configs.map(projectNotificationConfig);
   }
   if (row.errors !== undefined) wire.errors = row.errors;
@@ -856,9 +860,11 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   return wire;
 }
 
-function projectNotificationConfig(config: NotificationConfig): NotificationConfig {
-  const { authentication: _authentication, ...rest } = config;
-  return rest;
+function projectNotificationConfig(config: NotificationConfig): WireNotificationConfig {
+  const { authentication, ...rest } = config;
+  if (!authentication) return rest;
+  const { credentials: _credentials, ...authenticationWithoutCredentials } = authentication;
+  return { ...rest, authentication: authenticationWithoutCredentials };
 }
 
 type WireSyncGovernanceRow = SyncGovernanceSuccess['accounts'][number];

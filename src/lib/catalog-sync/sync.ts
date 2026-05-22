@@ -51,11 +51,17 @@ const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
  */
 export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   private readonly client: CatalogSyncClient;
+  private readonly account: V31Beta.AccountReference | undefined;
+  private readonly webhookScope: NonNullable<CatalogSyncConfig['webhookScope']> | undefined;
+  private readonly webhookDedupStore: CatalogSyncConfig['webhookDedupStore'] | undefined;
   private readonly probeIntervalMs: number;
   private readonly capabilityRefreshIntervalMs: number;
   private readonly errorHandler: ((error: Error) => void) | undefined;
   private startPromise: Promise<void> | null = null;
   private signalsQueryableWarned = false;
+  private readonly processedWebhookKeys = new Set<string>();
+  private readonly processedWebhookEventKeys = new Set<string>();
+  private lastWebhookEventId: string | undefined;
 
   private _state: CatalogSyncState = 'idle';
   private _mode: CatalogSyncMode = 'manual';
@@ -154,6 +160,9 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
   constructor(config: CatalogSyncConfig) {
     super();
     this.client = config.client;
+    this.account = config.account;
+    this.webhookScope = config.webhookScope;
+    this.webhookDedupStore = config.webhookDedupStore;
     this.probeIntervalMs = config.probeIntervalMs ?? DEFAULT_PROBE_INTERVAL_MS;
     this.capabilityRefreshIntervalMs = config.capabilityRefreshIntervalMs ?? DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS;
     this.errorHandler = config.onError;
@@ -243,10 +252,31 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     if (webhook.notification_id !== event.event_id) {
       throw new Error('CatalogSync: wholesale feed webhook notification_id does not match event.event_id.');
     }
+    this.assertWebhookScope(webhook);
 
     const payloadScope = (event.payload as { applies_to?: { scope?: string } }).applies_to?.scope;
     if (payloadScope && payloadScope !== webhook.cache_scope) {
       throw new Error('CatalogSync: wholesale feed webhook cache_scope does not match event.payload.applies_to.scope.');
+    }
+    const payloadAccountIds = (event.payload as { applies_to?: { account_ids?: unknown } }).applies_to?.account_ids;
+    const expectedAccountId = this.expectedWebhookAccountId();
+    if (
+      webhook.cache_scope === 'account' &&
+      expectedAccountId &&
+      Array.isArray(payloadAccountIds) &&
+      !payloadAccountIds.includes(expectedAccountId)
+    ) {
+      throw new Error('CatalogSync: wholesale feed webhook account overlay does not include this mirror account.');
+    }
+
+    const dedupeKey = this.webhookDedupeKey(webhook);
+    const eventDedupeKey = this.webhookEventDedupeKey(webhook);
+    if (await this.hasProcessedWebhook(dedupeKey, eventDedupeKey)) return;
+
+    if (this.lastWebhookEventId && compareUuidV7(event.event_id, this.lastWebhookEventId) <= 0) {
+      await this.recoverFromVersionMismatch();
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      return;
     }
 
     const currentVersion = this.currentWholesaleFeedVersionForEvent(event);
@@ -256,19 +286,24 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       webhook.previous_wholesale_feed_version !== currentVersion
     ) {
       await this.recoverFromVersionMismatch();
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       return;
     }
 
-    this.emit('event', { event });
     if (event.event_type === 'wholesale_feed.bulk_change') {
       this.emit('wholesale_feed.bulk_change', { event });
       await this.recoverFromBulkChange();
+      await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+      this.rememberLastWebhookEventId(event.event_id);
       return;
     }
 
     this.applyEvent(event);
     this.rememberWebhookVersion(webhook);
+    this.emit('event', { event });
     this.emitTypedEvent(event);
+    await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
+    this.rememberLastWebhookEventId(event.event_id);
     this._lastEventAt = new Date();
     this._lastSyncedAt = new Date();
     this.emit('sync', { eventsApplied: 1 });
@@ -410,6 +445,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       const params: Record<string, unknown> = {
         buying_mode: 'wholesale',
         pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
+        ...(this.account && { account: this.account }),
       };
       // Conditional fetch on the page-0 call when we already have a cached
       // version. Per the spec, the seller short-circuits with
@@ -454,6 +490,7 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
       const params: Record<string, unknown> = {
         discovery_mode: 'wholesale',
         pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
+        ...(this.account && { account: this.account }),
       };
       if (!cursor && this.signalWholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
         params.if_wholesale_feed_version = this.signalWholesaleFeedVersion;
@@ -558,14 +595,65 @@ export class CatalogSync extends EventEmitter<CatalogSyncEvents> {
     const event = webhook.event;
     if (event.event_type.startsWith('product.')) {
       this.productWholesaleFeedVersion = webhook.wholesale_feed_version;
-      this.productPricingVersion = undefined;
       this.productCacheScope = webhook.cache_scope;
       return;
     }
     if (event.event_type.startsWith('signal.')) {
       this.signalWholesaleFeedVersion = webhook.wholesale_feed_version;
-      this.signalPricingVersion = undefined;
       this.signalCacheScope = webhook.cache_scope;
+    }
+  }
+
+  private assertWebhookScope(webhook: V31Beta.WholesaleFeedWebhook): void {
+    const expectedAccountId = this.expectedWebhookAccountId();
+    if (expectedAccountId && webhook.account_id !== expectedAccountId) {
+      throw new Error('CatalogSync: wholesale feed webhook account_id does not match this mirror.');
+    }
+    if (this.webhookScope?.subscriberId && webhook.subscriber_id !== this.webhookScope.subscriberId) {
+      throw new Error('CatalogSync: wholesale feed webhook subscriber_id does not match this mirror.');
+    }
+  }
+
+  private expectedWebhookAccountId(): string | undefined {
+    if (this.webhookScope?.accountId) return this.webhookScope.accountId;
+    return this.account && 'account_id' in this.account ? this.account.account_id : undefined;
+  }
+
+  private webhookDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+    return [
+      this.webhookScope?.senderId ?? 'default',
+      webhook.account_id,
+      webhook.subscriber_id,
+      webhook.idempotency_key,
+    ].join(':');
+  }
+
+  private webhookEventDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+    return [
+      this.webhookScope?.senderId ?? 'default',
+      webhook.account_id,
+      webhook.subscriber_id,
+      webhook.notification_id,
+    ].join(':');
+  }
+
+  private async hasProcessedWebhook(dedupeKey: string, eventDedupeKey: string): Promise<boolean> {
+    if (this.processedWebhookKeys.has(dedupeKey) || this.processedWebhookEventKeys.has(eventDedupeKey)) return true;
+    if (!this.webhookDedupStore) return false;
+    return (await this.webhookDedupStore.has(dedupeKey)) || (await this.webhookDedupStore.has(eventDedupeKey));
+  }
+
+  private async markWebhookProcessed(dedupeKey: string, eventDedupeKey: string): Promise<void> {
+    this.processedWebhookKeys.add(dedupeKey);
+    this.processedWebhookEventKeys.add(eventDedupeKey);
+    await this.webhookDedupStore?.add(dedupeKey);
+    await this.webhookDedupStore?.add(eventDedupeKey);
+  }
+
+  private rememberLastWebhookEventId(eventId: string): void {
+    if (!isUuidV7(eventId)) return;
+    if (!this.lastWebhookEventId || compareUuidV7(eventId, this.lastWebhookEventId) > 0) {
+      this.lastWebhookEventId = eventId;
     }
   }
 
@@ -877,4 +965,15 @@ function signalPriceChanged(prev: Signal, next: Signal): boolean {
   const a = (prev as { pricing_options?: unknown[] }).pricing_options;
   const b = (next as { pricing_options?: unknown[] }).pricing_options;
   return !isDeepStrictEqual(a, b);
+}
+
+function isUuidV7(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function compareUuidV7(a: string, b: string): number {
+  if (!isUuidV7(a) || !isUuidV7(b)) return 1;
+  const normalizedA = a.toLowerCase();
+  const normalizedB = b.toLowerCase();
+  return normalizedA === normalizedB ? 0 : normalizedA > normalizedB ? 1 : -1;
 }
