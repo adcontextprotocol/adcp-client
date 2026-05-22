@@ -80,6 +80,11 @@
       "require": "./dist/lib/auth/index.js",
       "types": "./dist/lib/auth/index.d.ts"
     },
+    "./webhooks": {
+      "import": "./dist/lib/webhooks/index.js",
+      "require": "./dist/lib/webhooks/index.js",
+      "types": "./dist/lib/webhooks/index.d.ts"
+    },
     "./server": {
       "import": "./dist/lib/server/index.js",
       "require": "./dist/lib/server/index.js",
@@ -184,6 +189,9 @@
       ],
       "auth": [
         "dist/lib/auth/index.d.ts"
+      ],
+      "webhooks": [
+        "dist/lib/webhooks/index.d.ts"
       ],
       "server": [
         "dist/lib/server/index.d.ts"
