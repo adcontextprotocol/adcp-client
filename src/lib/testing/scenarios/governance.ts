@@ -919,13 +919,13 @@ export async function testCampaignGovernance(
       const data = result.data;
       checkId = data.check_id;
       governanceContext = data.governance_context;
-      const status = data.status;
+      const verdict = data.verdict;
 
-      step.details = `Governance check: status=${status}, binding=${data.binding}, mode=${data.mode || 'unknown'}`;
+      step.details = `Governance check: verdict=${verdict}, binding=${data.binding}, mode=${data.mode || 'unknown'}`;
       step.response_preview = JSON.stringify(
         {
           check_id: data.check_id,
-          status: data.status,
+          verdict: data.verdict,
           binding: data.binding,
           mode: data.mode,
           explanation: data.explanation,
@@ -938,10 +938,10 @@ export async function testCampaignGovernance(
       );
       step.observation_data = { governance_context: data.governance_context || null };
 
-      // Only spec-valid statuses are accepted — we're testing the protocol, not the policy
-      if (!['approved', 'denied', 'conditions'].includes(status)) {
+      // Only spec-valid verdicts are accepted — we're testing the protocol, not the policy
+      if (!['approved', 'denied', 'conditions'].includes(verdict)) {
         step.passed = false;
-        step.error = `Unexpected governance status: ${status}`;
+        step.error = `Unexpected governance verdict: ${verdict}`;
       }
 
       // Validate governance_context format if present
@@ -1128,10 +1128,10 @@ export async function testCampaignGovernanceDenied(
   if (overBudgetResult?.success && overBudgetResult?.data) {
     const data = overBudgetResult.data;
     overBudgetGovernanceContext = data.governance_context;
-    overBudgetStep.details = `Over-budget check: status=${data.status}, explanation: ${data.explanation}`;
+    overBudgetStep.details = `Over-budget check: verdict=${data.verdict}, explanation: ${data.explanation}`;
     overBudgetStep.response_preview = JSON.stringify(
       {
-        status: data.status,
+        verdict: data.verdict,
         explanation: data.explanation,
         findings: data.findings?.map((f: any) => ({
           category_id: f.category_id,
@@ -1146,11 +1146,11 @@ export async function testCampaignGovernanceDenied(
     );
     overBudgetStep.observation_data = { governance_context: data.governance_context || null };
 
-    if (data.status === 'approved' && data.mode !== 'advisory' && data.mode !== 'audit') {
+    if (data.verdict === 'approved' && data.mode !== 'advisory' && data.mode !== 'audit') {
       overBudgetStep.passed = false;
       overBudgetStep.error =
         'Governance approved a $50,000 buy against a $500 plan in enforce mode — expected denial or conditions';
-    } else if (data.status === 'approved') {
+    } else if (data.verdict === 'approved') {
       overBudgetStep.warnings = [
         'Governance approved a $50,000 buy against a $500 plan — advisory/audit mode detected',
       ];
@@ -1185,10 +1185,10 @@ export async function testCampaignGovernanceDenied(
 
   if (geoResult?.success && geoResult?.data) {
     const data = geoResult.data;
-    geoStep.details = `Unauthorized market check: status=${data.status}`;
+    geoStep.details = `Unauthorized market check: verdict=${data.verdict}`;
     geoStep.response_preview = JSON.stringify(
       {
-        status: data.status,
+        verdict: data.verdict,
         explanation: data.explanation,
         findings: data.findings?.map((f: any) => ({
           category_id: f.category_id,
@@ -1199,7 +1199,7 @@ export async function testCampaignGovernanceDenied(
       2
     );
 
-    if (data.status === 'approved') {
+    if (data.verdict === 'approved') {
       geoStep.warnings = [
         'Governance approved targeting CN/RU against US-only plan — may indicate audit/advisory mode',
       ];
@@ -1334,11 +1334,11 @@ export async function testCampaignGovernanceConditions(
   if (checkResult?.success && checkResult?.data) {
     const data = checkResult.data;
     const initialGovernanceContext: string | undefined = data.governance_context;
-    checkStep.details = `Initial check: status=${data.status}`;
+    checkStep.details = `Initial check: verdict=${data.verdict}`;
     checkStep.response_preview = JSON.stringify(
       {
         check_id: data.check_id,
-        status: data.status,
+        verdict: data.verdict,
         explanation: data.explanation,
         conditions: data.conditions,
         findings: data.findings?.map((f: any) => ({
@@ -1353,7 +1353,7 @@ export async function testCampaignGovernanceConditions(
     checkStep.observation_data = { governance_context: initialGovernanceContext || null };
 
     // If we got conditions, apply them and re-check with governance_context round-trip
-    if (data.status === 'conditions' && data.conditions?.length > 0) {
+    if (data.verdict === 'conditions' && data.conditions?.length > 0) {
       const conditions = data.conditions;
       const appliedConditions = conditions
         .filter((c: any) => c.required_value !== undefined)
@@ -1395,11 +1395,11 @@ export async function testCampaignGovernanceConditions(
 
       if (recheckResult?.success && recheckResult?.data) {
         const recheckData = recheckResult.data;
-        recheckStep.details = `Re-check after conditions: status=${recheckData.status}`;
+        recheckStep.details = `Re-check after conditions: verdict=${recheckData.verdict}`;
         recheckStep.response_preview = JSON.stringify(
           {
             check_id: recheckData.check_id,
-            status: recheckData.status,
+            verdict: recheckData.verdict,
             explanation: recheckData.explanation,
             governance_context: recheckData.governance_context ? '(present)' : '(absent)',
           },
@@ -1533,11 +1533,11 @@ export async function testCampaignGovernanceDelivery(
   if (deliveryResult?.success && deliveryResult?.data) {
     const data = deliveryResult.data;
     deliveryGovernanceContext = data.governance_context;
-    deliveryStep.details = `Delivery check: status=${data.status}, next_check=${data.next_check || 'not specified'}`;
+    deliveryStep.details = `Delivery check: verdict=${data.verdict}, next_check=${data.next_check || 'not specified'}`;
     deliveryStep.response_preview = JSON.stringify(
       {
         check_id: data.check_id,
-        status: data.status,
+        verdict: data.verdict,
         binding: data.binding,
         explanation: data.explanation,
         findings: data.findings?.map((f: any) => ({
@@ -1592,10 +1592,10 @@ export async function testCampaignGovernanceDelivery(
 
   if (driftResult?.success && driftResult?.data) {
     const data = driftResult.data;
-    driftStep.details = `Overspend drift check: status=${data.status}`;
+    driftStep.details = `Overspend drift check: verdict=${data.verdict}`;
     driftStep.response_preview = JSON.stringify(
       {
-        status: data.status,
+        verdict: data.verdict,
         explanation: data.explanation,
         findings: data.findings?.map((f: any) => ({
           category_id: f.category_id,
@@ -1607,7 +1607,7 @@ export async function testCampaignGovernanceDelivery(
       2
     );
 
-    if (data.status === 'approved' && !data.findings?.length) {
+    if (data.verdict === 'approved' && !data.findings?.length) {
       driftStep.warnings = ['Governance approved delivery at 95% budget with no findings — verify drift detection'];
     }
   } else if (driftResult && !driftResult.success) {

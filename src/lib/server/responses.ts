@@ -613,7 +613,7 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
 
 /**
  * Per-variant constructor — builds an `AcquireRightsAcquired` success response
- * and wraps it. Cleaner autocomplete than `acquireRightsResponse({ status: 'acquired', ... })`
+ * and wraps it. Cleaner autocomplete than `acquireRightsResponse({ rights_status: 'acquired', ... })`
  * because a coding agent typing `acquireRightsAcqu…` gets the required-fields
  * shape directly without reading a 4-variant union.
  */

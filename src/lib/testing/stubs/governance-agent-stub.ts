@@ -285,7 +285,7 @@ export class GovernanceAgentStub {
               type: 'text' as const,
               text: JSON.stringify({
                 check_id: checkId,
-                status: 'approved',
+                verdict: 'approved',
                 plan_id: planId,
                 explanation: 'Stub governance agent: approved for testing.',
                 governance_context: gc,
@@ -312,7 +312,7 @@ export class GovernanceAgentStub {
               type: 'text' as const,
               text: JSON.stringify({
                 outcome_id: `out_stub_${randomUUID().slice(0, 8)}`,
-                status: 'accepted',
+                outcome_state: 'accepted',
               }),
             },
           ],
