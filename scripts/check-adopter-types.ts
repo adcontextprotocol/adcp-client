@@ -99,6 +99,9 @@ import type {
   AccountReference,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
   GetProductsPayload as RootGetProductsPayload,
+  MediaBuyAvailableAction,
+  SLAWindow,
+  SlaWindow,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
 } from '@adcp/sdk';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
@@ -293,9 +296,17 @@ const _rootGetProductsPayload: RootGetProductsPayload = { products: [], cache_sc
 const _typesGetProductsPayload: TypesGetProductsPayload = _rootGetProductsPayload;
 const _rootUpdatePayload: RootUpdateMediaBuyPayload = { media_buy_id: 'mb_1' };
 const _typesUpdatePayload: TypesUpdateMediaBuyPayload = _rootUpdatePayload;
+const _slaWindow: SLAWindow = { response_max: 'PT1H', completion_max: 'P1D' };
+const _legacySlaWindow: SlaWindow = _slaWindow;
+const _availableAction: MediaBuyAvailableAction = {
+  action: 'pause',
+  mode: 'self_serve',
+  sla: _legacySlaWindow,
+};
 void _typesPayloadAlias;
 void _typesGetProductsPayload;
 void _typesUpdatePayload;
+void _availableAction;
 // @ts-expect-error named payload aliases must not expose SDK-owned protocol envelope fields
 void _rootPayloadAlias.task_id;
 

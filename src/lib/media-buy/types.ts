@@ -1,47 +1,34 @@
-// Buyer-side types for the available_actions surface (AdCP 3.1, RFC #4480).
-//
-// Hand-written until schemas/cache/ catches up to the 3.1 release and the
-// codegen regenerates `*.generated.ts`. Mirrors:
-//   - schemas/source/core/media-buy-available-action.json
-//   - schemas/source/core/sla-window.json
-//   - schemas/source/enums/media-buy-action-mode.json
-//   - schemas/source/enums/media-buy-valid-action.json
-//   - schemas/source/enums/action-not-allowed-reason.json
-//   - schemas/source/error-details/action-not-allowed.json
-//
-// When `sync-schemas` next runs and produces the equivalent types under
-// `src/lib/types/*.generated.ts`, this file should be deleted and the public
-// re-exports in `src/lib/media-buy/index.ts` should point at the generated
-// names.
+// Buyer-side type surface for the available_actions / ACTION_NOT_ALLOWED flow.
+// Wire-shape types come from the generated AdCP schema; the helper-local
+// types in this file are convenience subsets that the preflight resolver
+// reads against (kept narrow so a schema bump that adds optional fields
+// to MediaBuy / UpdateMediaBuyRequest doesn't churn the resolver
+// signature).
+
+export type {
+  ActionNotAllowedDetails,
+  ActionNotAllowedReason,
+  MediaBuyActionMode,
+  MediaBuyAvailableAction,
+  MediaBuyValidAction,
+  SLAWindow,
+} from '../types/core.generated';
+
+import type { MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
+import type { SLAWindow } from '../types/core.generated';
 
 /**
- * Fine-grained action identifier introduced in AdCP 3.1. Includes the legacy
- * coarse values (`update_budget`, `update_dates`, `update_packages`,
- * `sync_creatives`) so sellers staying on 3.x continue to round-trip.
+ * @deprecated Use `SLAWindow`. Kept as an import-compatibility alias for the
+ * pre-codegen draft export name; the shape is the generated wire contract.
  */
-export type MediaBuyValidAction =
-  | 'pause'
-  | 'resume'
-  | 'cancel'
-  | 'extend_flight'
-  | 'shorten_flight'
-  | 'update_flight_dates'
-  | 'increase_budget'
-  | 'decrease_budget'
-  | 'reallocate_budget'
-  | 'update_targeting'
-  | 'update_pacing'
-  | 'update_frequency_caps'
-  | 'replace_creative'
-  | 'update_creative_assignments'
-  | 'remove_creative'
-  | 'add_packages'
-  | 'remove_packages'
-  | 'update_budget'
-  | 'update_dates'
-  | 'update_packages'
-  | 'sync_creatives';
+export type SlaWindow = SLAWindow;
 
+/**
+ * Coarse-vocabulary actions retained for backwards compatibility with 3.x
+ * sellers that haven't migrated to the fine-grained set. Each rolls up to
+ * one or more fine-grained values per `enumMetadata[<value>].rollup`.
+ * Removed from the spec in 4.0.
+ */
 export const LEGACY_COARSE_ACTIONS = [
   'update_budget',
   'update_dates',
@@ -50,63 +37,6 @@ export const LEGACY_COARSE_ACTIONS = [
 ] as const satisfies readonly MediaBuyValidAction[];
 
 export type LegacyCoarseAction = (typeof LEGACY_COARSE_ACTIONS)[number];
-
-/**
- * How a seller honors a given action on a media buy. Buyers branch on this to
- * pick a synchronous, conditional, proposal, or async-approval flow.
- */
-export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
-
-/**
- * SLA window expressed as a structured duration. Mirrors `sla-window.json`
- * as a `{ unit, value }` pair (e.g. `{ unit: 'hours', value: 24 }`). The schema
- * landed alongside #4514 but is intentionally minimal; the spec calls out
- * that absence means "no commitment", not "zero commitment".
- */
-export interface SlaWindow {
-  unit: 'minutes' | 'hours' | 'days' | 'business_days';
-  value: number;
-  response_max?: number;
-}
-
-/**
- * One entry of the per-buy `available_actions[]` array. Authoritative for
- * the buy at the moment of emission - sellers MAY resolve to a different
- * mode by the time the mutation arrives, in which case the call is rejected
- * with `ACTION_NOT_ALLOWED` (`reason: mode_mismatch`).
- *
- * The containing array is uniquely keyed by `action` (contract invariant,
- * not enforced by JSON Schema `uniqueItems`).
- */
-export interface MediaBuyAvailableAction {
-  action: MediaBuyValidAction;
-  mode: MediaBuyActionMode;
-  sla?: SlaWindow;
-  /**
-   * Opaque pointer into a buy-terms negotiation. The buy-terms RFC is
-   * separate; until it lands the field is any string.
-   */
-  terms_ref?: string;
-}
-
-/**
- * Reason an `update_media_buy` request was rejected with
- * `ACTION_NOT_ALLOWED`. Buyer SDKs branch on this to choose a recovery path.
- */
-export type ActionNotAllowedReason =
-  | 'wrong_status'
-  | 'not_supported_on_product'
-  | 'not_supported_on_buy'
-  | 'mode_mismatch';
-
-/**
- * Structured details payload for `ACTION_NOT_ALLOWED` errors.
- */
-export interface ActionNotAllowedDetails {
-  attempted_action: MediaBuyValidAction;
-  reason: ActionNotAllowedReason;
-  currently_available_actions?: MediaBuyAvailableAction[];
-}
 
 /**
  * Minimum surface a media buy needs to expose for the preflight helpers to
