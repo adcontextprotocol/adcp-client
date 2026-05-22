@@ -7,9 +7,11 @@
     "@adcp/eslint-plugin": "0.1.2"
   },
   "changesets": [
+    "1853-1818-capability-projection",
     "asset-variant-array-slots",
     "cut-8-0-beta",
     "enter-pre-mode-beta",
+    "fix-zod-schemas-test-envelope-status",
     "governance-agents-categories-removed",
     "outcome-measurement-rename",
     "product-card-self-rendering",
