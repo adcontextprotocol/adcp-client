@@ -87,6 +87,7 @@ class DataMatrixPlatform implements DecisioningPlatform<DataMatrixConfig, DataMa
   signals: SignalsPlatform<DataMatrixMeta> = {
     getSignals: async (_req: GetSignalsRequest): Promise<GetSignalsResponse> => {
       return {
+        status: 'completed',
         signals: [
           {
             signal_id: { source: 'agent', agent_url: 'https://datamatrix.example/signals', id: 'in_market_auto' },
