@@ -2,13 +2,18 @@
  * Shared URL anchors for the v2 projection layer.
  *
  * Post-adcontextprotocol/adcp#4866, `creative.adcontextprotocol.org` is
- * the single AAO (Ad Agents Open) trust anchor for format-schema `$ref`
- * resolution. The base URL here is intentionally NOT derived from
- * `DEFAULT_MIRROR_HOSTS` in `format-schema/sandbox-refs.ts` — that array
- * is an allowlist of *hostnames* for `$ref` sandboxing, while this
- * constant is the base URL written into synthesized `V1FormatId.agent_url`
- * values. The two serve different purposes; deriving one from the other
- * couples orthogonal subsystems.
+ * the canonical AAO (Ad Agents Open) host. We reuse it here as the
+ * `agent_url` base for synthesized v1 refs so projected values match
+ * seller-asserted fixtures byte-for-byte.
+ *
+ * This constant is NOT the `$ref`-resolution trust anchor — that role
+ * belongs to `DEFAULT_MIRROR_HOSTS` in `format-schema/sandbox-refs.ts`,
+ * which is an allowlist of *hostnames* gating HTTP fetches of
+ * `format_schema.uri` and `$ref` targets. Same host, distinct purposes:
+ * one is a fetch-time SSRF gate, the other is a content URL written
+ * into projected `V1FormatId.agent_url` values that are never fetched.
+ * Deriving one from the other would couple the SSRF gate to a
+ * presentation concern.
  */
 
 /**
@@ -18,7 +23,6 @@
  * reference agent URL, not a normative wire contract.
  *
  * @see {@link https://github.com/adcontextprotocol/adcp/issues/4866} —
- * trust-anchor migration that made `creative.adcontextprotocol.org` the
- * single canonical host.
+ * collapse to a single canonical AAO host.
  */
 export const AAO_CANONICAL_AGENT_URL = 'https://creative.adcontextprotocol.org/';
