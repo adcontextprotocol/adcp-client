@@ -72,7 +72,7 @@ describe('parseCheckResponse', () => {
   it('parses an approved response', () => {
     const response = {
       check_id: 'chk-1',
-      status: 'approved',
+      verdict: 'approved',
       explanation: 'All checks passed',
       expires_at: '2026-04-01T00:00:00Z',
     };
@@ -87,7 +87,7 @@ describe('parseCheckResponse', () => {
   it('parses findings with snake_case to camelCase conversion', () => {
     const response = {
       check_id: 'chk-2',
-      status: 'denied',
+      verdict: 'denied',
       explanation: 'Budget exceeded',
       findings: [
         {
@@ -115,7 +115,7 @@ describe('parseCheckResponse', () => {
   it('parses conditions with required_value', () => {
     const response = {
       check_id: 'chk-3',
-      status: 'conditions',
+      verdict: 'conditions',
       explanation: 'Budget adjustment required',
       conditions: [{ field: 'budget.total', required_value: 6000, reason: 'Per-seller max exceeded' }],
     };
@@ -130,7 +130,7 @@ describe('parseCheckResponse', () => {
   it('handles missing optional fields', () => {
     const response = {
       check_id: 'chk-6',
-      status: 'approved',
+      verdict: 'approved',
       explanation: 'OK',
     };
 
@@ -144,7 +144,7 @@ describe('parseCheckResponse', () => {
   it('captures governance_context from response', () => {
     const response = {
       check_id: 'chk-7',
-      status: 'approved',
+      verdict: 'approved',
       explanation: 'OK',
       governance_context: 'opaque-gc-token-abc123',
     };
@@ -337,7 +337,12 @@ describe('GovernanceAdapter', () => {
       governanceContext: 'gc-token-123',
       plannedDelivery: { impressions: 1000, budget: 500 },
     });
-    assert.equal(result.status, 'denied');
+    // 3.1.0-beta.3 splits envelope `status` (task state: failed) from
+    // governance `verdict` (decision: denied). When governance isn't
+    // configured, the adapter synthesizes a task-state failure carrying a
+    // denial verdict.
+    assert.equal(result.status, 'failed');
+    assert.equal(result.verdict, 'denied');
     assert.equal(result.binding, 'committed');
     assert.match(result.explanation, /not configured/i);
     assert.equal(result.error_code, 'governance_not_supported');

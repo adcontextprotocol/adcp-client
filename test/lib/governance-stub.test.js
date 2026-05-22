@@ -43,7 +43,7 @@ describe('GovernanceAgentStub', () => {
 
     assert.ok(result, 'should get a response');
     const parsed = JSON.parse(result.content[0].text);
-    assert.equal(parsed.status, 'approved');
+    assert.equal(parsed.verdict, 'approved');
     assert.equal(parsed.plan_id, 'plan-test-1');
   });
 
@@ -89,7 +89,7 @@ describe('GovernanceAgentStub', () => {
       media_buy_id: 'mb_123',
     });
     const secondParsed = JSON.parse(secondResult.content[0].text);
-    assert.equal(secondParsed.status, 'approved');
+    assert.equal(secondParsed.verdict, 'approved');
 
     // Verify the stub recorded the governance_context
     assert.ok(stub.hasGovernanceContext(gc), 'stub should have recorded the governance_context');
@@ -206,7 +206,7 @@ describe('GovernanceAgentStub HTTPS', () => {
     });
 
     const parsed = JSON.parse(result.content[0].text);
-    assert.equal(parsed.status, 'approved');
+    assert.equal(parsed.verdict, 'approved');
     assert.ok(parsed.governance_context);
   });
 });
