@@ -1,5 +1,53 @@
 # Changelog
 
+## 8.1.0-beta.2
+
+### Minor Changes
+
+- e737144: feat(codegen): surface typed shapes for `oneOf` branches that express their forbidden-field set via `allOf:[{not:{required:[X]}}, ...]`
+
+  Several AdCP 3.1.0-beta.3 request/response schemas use a `oneOf` of titled
+  mutual-exclusion branches where each branch declares "these fields are
+  forbidden" as an `allOf` of single-key `not.required` clauses. Until now,
+  the codegen tightener only recognized the simpler `not: { required: [X] }`
+  shape — when it saw an `allOf`, it bailed and `json-schema-to-typescript`
+  emitted the branch as `{ [k: string]: unknown | undefined }`, dropping
+  every typed field at the parent `items.properties` level.
+
+  **Most visible impact:** `SyncAccountsRequest.accounts[]` — the two
+  branches `ProvisioningMode` and `SettingsUpdateMode` now surface their
+  actual fields instead of being loose passthroughs:
+  - `ProvisioningMode`: `brand`, `operator`, `billing`, `billing_entity`,
+    `payment_terms`, `sandbox`, `preferred_reporting_protocol`,
+    `notification_configs`
+  - `SettingsUpdateMode`: `account`, `billing_entity`, `payment_terms`,
+    `sandbox`, `preferred_reporting_protocol`, `notification_configs`
+
+  Buyers writing typed sync-accounts payloads now get autocomplete and
+  type-checking on the webhook-subscription field
+  (`notification_configs[]`) that 3.1 introduced for account-scoped
+  events (`creative.status_changed`, `creative.purged`, wholesale-feed
+  events). Previously the field would compile against the passthrough
+  arm but the typed shape was invisible to adopter tooling.
+
+  **Also surfaces:** named typed shapes for the same idiom inside
+  `CreativeAsset` (`V1CreativeNamedFormatReference` /
+  `V2CreativeCanonicalFormatKind`) and `CreativeManifest`
+  (`V1ManifestNamedFormatReference` / `V2ManifestCanonicalFormatKind`).
+
+  **Why the two forms aren't interchangeable upstream:**
+  `not: { required: [X, Y, Z] }` matches only when ALL three fields are
+  present (forbids only the conjunction). The `allOf:[{not:{required:
+[X]}}, {not:{required:[Y]}}, {not:{required:[Z]}}]` form forbids each
+  field independently — "none of them may be present." That's the
+  authorial intent for `SettingsUpdateMode`, so the spec uses idiom #2.
+  The codegen now recognizes both forms when collecting per-branch
+  forbidden-name sets; semantics on the wire are unchanged (Ajv enforces
+  the unstripped schema at runtime).
+
+  No source changes required for adopters — regenerated types are
+  strictly more typed in the affected places.
+
 ## 8.1.0-beta.1
 
 ### Minor Changes
@@ -534,40 +582,41 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-                ```ts
-                import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+                    ```ts
+                    import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-                const {
-                  data: { products },
-                } = await agent.getProducts({ brief: '...' });
-                const product = products[0];
+                    const {
+                      data: { products },
+                    } = await agent.getProducts({ brief: '...' });
+                    const product = products[0];
 
-                await agent.createMediaBuy({
-                  packages: [
-                    {
-                      package_id: 'pkg-1',
-                      product_id: product.product_id,
-                      pricing_option_id: product.pricing_options[0].pricing_option_id,
-                      ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-                      budget: { currency: 'USD', total: 5000 },
-                    },
-                  ],
-                });
-                ```
+                    await agent.createMediaBuy({
+                      packages: [
+                        {
+                          package_id: 'pkg-1',
+                          product_id: product.product_id,
+                          pricing_option_id: product.pricing_options[0].pricing_option_id,
+                          ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                          budget: { currency: 'USD', total: 5000 },
+                        },
+                      ],
+                    });
+                    ```
 
-                Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-                in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+                    Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+                    in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
 
-            'empty_input' | 'invalid_product' }`) so adopters can branch on
+                'empty_input' | 'invalid_product' }`) so adopters can branch on
 
-        "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
-        De-duplicates `format_ids` by full identity (`{agent_url, id,
+            "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+            De-duplicates `format_ids` by full identity (`{agent_url, id,
 
-    width, height, duration_ms}`) — multi-size declarations sharing
-`{agent_url, id}`survive de-dup. When every chosen capability is
-V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
-from the result rather than emitted as`[]`(which would violate the
-wire schema's`minItems: 1` constraint).
+        width, height, duration_ms}`) — multi-size declarations sharing
+
+    `{agent_url, id}`survive de-dup. When every chosen capability is
+    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+    from the result rather than emitted as`[]`(which would violate the
+    wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
