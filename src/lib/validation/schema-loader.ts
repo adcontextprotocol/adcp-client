@@ -360,11 +360,7 @@ function widenCatalogNotificationEnums(node: unknown): void {
   }
 
   const obj = node as Record<string, unknown>;
-  if (
-    Array.isArray(obj.enum) &&
-    obj.enum.includes('creative.status_changed') &&
-    obj.enum.includes('creative.purged')
-  ) {
+  if (Array.isArray(obj.enum) && obj.enum.includes('creative.status_changed') && obj.enum.includes('creative.purged')) {
     obj.enum = Array.from(new Set([...obj.enum, ...CATALOG_NOTIFICATION_TYPES]));
   }
 

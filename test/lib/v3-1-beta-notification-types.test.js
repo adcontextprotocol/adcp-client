@@ -60,7 +60,11 @@ describe('v3.1-beta notification types', () => {
   test('schema validation widens the same notification enum at load time', () => {
     const loaderContent = fs.readFileSync(schemaLoaderPath, 'utf8');
 
-    assert.match(loaderContent, /function widenCatalogNotificationEnums/, 'schema loader must preserve runtime widening');
+    assert.match(
+      loaderContent,
+      /function widenCatalogNotificationEnums/,
+      'schema loader must preserve runtime widening'
+    );
     assert.match(
       loaderContent,
       /supportsCatalogNotificationWidening\(s\.version, file\)/,
