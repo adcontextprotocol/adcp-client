@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': minor
+'@adcp/sdk': patch
 ---
 
-Allow AdCP 3.1 beta `sync_accounts` notification subscribers to register catalog change events (`product.*`, `signal.*`, and `catalog.bulk_change`) and validate the opt-in runtime/type surfaces.
+Tighten the opt-in AdCP 3.1 beta `sync_accounts.accounts[]` TypeScript surface so provisioning and settings-update entries expose account `notification_configs`.

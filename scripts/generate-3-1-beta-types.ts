@@ -32,17 +32,6 @@ const BETA_VERSION = '3.1.0-beta.2';
 const BETA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache', BETA_VERSION);
 const OUTPUT_DIR = path.join(REPO_ROOT, 'src/lib/types/v3-1-beta');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'tools.generated.ts');
-const CATALOG_NOTIFICATION_TYPES = [
-  'product.created',
-  'product.updated',
-  'product.priced',
-  'product.removed',
-  'signal.created',
-  'signal.updated',
-  'signal.priced',
-  'signal.removed',
-  'catalog.bulk_change',
-] as const;
 
 interface TaskRef {
   request?: { $ref?: string };
@@ -337,28 +326,12 @@ function widenIndexSignaturesOnAnonymousObjects(src: string): string {
 }
 
 /**
- * The current 3.1 beta schema cache has catalog-change webhook support split
- * across two surfaces: `catalog_change_feed.event_types` already declares the
- * product/signal/catalog event literals, while `NotificationConfig.event_types`
- * still points at the older account-notification enum. Keep the opt-in TS
- * surface aligned with the intended sync_accounts settings-update flow until
- * the upstream enum catches up.
+ * `json-schema-to-typescript` collapses the `sync_accounts.accounts[]` oneOf
+ * mode arms to `{ [k: string]: unknown | undefined }` because the beta schema
+ * uses conditional constraints to distinguish provisioning vs settings-update
+ * mode. AJV still enforces those conditionals at runtime; this restores the
+ * opt-in TS surface so beta adopters can type account notification updates.
  */
-function widenCatalogNotificationTypes(src: string): string {
-  let replacements = 0;
-  const next = src.replace(/export type NotificationType =\n([\s\S]*?);/, (_match, members: string) => {
-    replacements += 1;
-    const existing = [...members.matchAll(/'([^']+)'/g)].map(match => match[1]);
-    const merged = Array.from(new Set([...existing, ...CATALOG_NOTIFICATION_TYPES]));
-    const lines = merged.map((value, index) => `  | '${value}'${index === merged.length - 1 ? ';' : ''}`);
-    return `export type NotificationType =\n${lines.join('\n')}`;
-  });
-  if (replacements !== 1) {
-    throw new Error(`Expected to rewrite NotificationType exactly once, rewrote ${replacements} times.`);
-  }
-  return next;
-}
-
 function tightenSyncAccountsModeTypes(src: string): string {
   const provisioning = `export interface ProvisioningMode {
   brand: BrandReference;
@@ -445,7 +418,6 @@ async function main(): Promise<void> {
   let body = compiled.replace(wrapperPattern, '').trim();
   body = removeNumberedTypeDuplicates(body);
   body = widenIndexSignaturesOnAnonymousObjects(body);
-  body = widenCatalogNotificationTypes(body);
   body = tightenSyncAccountsModeTypes(body);
 
   const banner = `// AdCP 3.1.0-beta.2 tool request/response types — DO NOT EDIT
