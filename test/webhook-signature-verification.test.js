@@ -1,6 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const { AdCPClient } = require('../dist/lib/index.js');
+const { SingleAgentClient } = require('../dist/lib/core/SingleAgentClient.js');
 const crypto = require('crypto');
 
 describe('Webhook Signature Verification (PR #86 Spec)', () => {
@@ -12,6 +13,26 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
   };
 
   const webhookSecret = 'test-secret-key-minimum-32-characters-long';
+
+  function makeResponse() {
+    return {
+      statusCode: undefined,
+      body: undefined,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(body) {
+        this.body = body;
+      },
+      writeHead(code) {
+        this.statusCode = code;
+      },
+      end(body) {
+        this.body = JSON.parse(body);
+      },
+    };
+  }
 
   test('should verify valid webhook signature using raw body string', () => {
     const client = new AdCPClient([agent], { webhookSecret });
@@ -31,6 +52,92 @@ describe('Webhook Signature Verification (PR #86 Spec)', () => {
     // Verify signature using raw body string
     const isValid = agentClient.verifyWebhookSignature(rawBody, signature, timestamp);
     assert.strictEqual(isValid, true);
+  });
+
+  test('should verify valid webhook signature using raw body Buffer', () => {
+    const client = new AdCPClient([agent], { webhookSecret });
+    const agentClient = client.agent('test_agent');
+
+    const rawBody = Buffer.from('{"event":"creative.status_changed","status":"approved"}', 'utf8');
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    const hmac = crypto.createHmac('sha256', webhookSecret);
+    hmac.update(`${timestamp}.`, 'utf8');
+    hmac.update(rawBody);
+    const signature = `sha256=${hmac.digest('hex')}`;
+
+    const isValid = agentClient.verifyWebhookSignature(rawBody, signature, timestamp);
+    assert.strictEqual(isValid, true);
+  });
+
+  test('createWebhookHandler rejects ambiguous signature headers from Node-style header bag', async () => {
+    const client = new SingleAgentClient(agent, { webhookSecret });
+    const handler = client.createWebhookHandler();
+
+    const rawBody = JSON.stringify({
+      operation_id: 'op_1',
+      task_id: 'task_1',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: { media_buy_id: 'mb_1' },
+    });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const hmac = crypto.createHmac('sha256', webhookSecret);
+    hmac.update(`${timestamp}.${rawBody}`);
+    const signature = `sha256=${hmac.digest('hex')}`;
+
+    const res = makeResponse();
+    await handler(
+      {
+        headers: {
+          'x-adcp-signature': `${signature}, ${signature}`,
+          'x-adcp-timestamp': String(timestamp),
+        },
+        body: rawBody,
+        params: { task_type: 'create_media_buy', operation_id: 'op_1' },
+      },
+      res
+    );
+
+    assert.strictEqual(res.statusCode, 401);
+    assert.strictEqual(res.body.error, 'Multiple x-adcp-signature header values were provided.');
+  });
+
+  test('createWebhookHandler requires raw bytes when HMAC verification is enabled', async () => {
+    const client = new SingleAgentClient(agent, { webhookSecret });
+    const handler = client.createWebhookHandler();
+
+    const payload = {
+      operation_id: 'op_1',
+      task_id: 'task_1',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: new Date().toISOString(),
+      result: { media_buy_id: 'mb_1' },
+    };
+    const rawBody =
+      '{ "operation_id": "op_1", "task_id": "task_1", "task_type": "create_media_buy", "status": "completed", "result": {"media_buy_id":"mb_1"} }';
+    const timestamp = Math.floor(Date.now() / 1000);
+    const hmac = crypto.createHmac('sha256', webhookSecret);
+    hmac.update(`${timestamp}.${rawBody}`);
+    const signature = `sha256=${hmac.digest('hex')}`;
+
+    const res = makeResponse();
+    await handler(
+      {
+        headers: {
+          'x-adcp-signature': signature,
+          'x-adcp-timestamp': String(timestamp),
+        },
+        body: payload,
+        params: { task_type: 'create_media_buy', operation_id: 'op_1' },
+      },
+      res
+    );
+
+    assert.strictEqual(res.statusCode, 401);
+    assert.match(res.body.error, /Raw webhook body required/);
   });
 
   test('should verify signature when raw body has different formatting than JSON.stringify', () => {

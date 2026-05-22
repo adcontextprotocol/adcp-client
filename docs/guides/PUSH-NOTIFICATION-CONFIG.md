@@ -96,16 +96,38 @@ All async operations produce the same `push_notification_config` shape on the wi
 
 ## Authentication
 
-The client always uses `HMAC-SHA256`. The agent signs webhook payloads with the shared secret so you can verify delivery on receipt.
+When `webhookSecret` is configured, the legacy webhook authentication path uses `HMAC-SHA256`. The agent signs `${timestamp}.${raw_body_bytes}` with the shared secret and sends:
+
+- `x-adcp-signature: sha256=<hex digest>`
+- `x-adcp-timestamp: <unix seconds>`
+
+Capture the raw request body before JSON parsing and verify it with the SDK helper:
 
 ```typescript
-import { createHmac } from 'crypto';
+import { verifyWebhookRequest } from '@adcp/sdk/webhooks';
 
-function verifyWebhook(payload: string, signature: string, secret: string): boolean {
-  const expected = createHmac('sha256', secret).update(payload).digest('hex');
-  return expected === signature;
-}
+app.post('/adcp/webhook/:task_type/:agent_id/:operation_id', async (req, res) => {
+  const check = verifyWebhookRequest({
+    rawBody: req.rawBody,
+    headers: req.headers,
+    globalSecret: process.env.WEBHOOK_SECRET,
+  });
+
+  if (!check.ok) {
+    return res.status(401).json({ error: check.reason });
+  }
+
+  const handled = await client
+    .agent(req.params.agent_id)
+    .handleWebhook(req.body, req.params.task_type, req.params.operation_id, check.signature, check.timestamp, req.rawBody);
+
+  res.status(200).json({ received: handled });
+});
 ```
+
+`verifyWebhookRequest` normalizes header casing, rejects missing or ambiguous signature headers, enforces a 300s timestamp freshness window by default, and compares signatures in constant time. It does not maintain a replay cache; use `webhookDedup` below to drop duplicate webhook events by `idempotency_key`.
+
+For spec-current RFC 9421 webhook signatures, use `createWebhookVerifier` / `verifyWebhookSignature` from `@adcp/sdk/signing/server` instead of the HMAC helper.
 
 ## Deduplication
 
