@@ -105,7 +105,7 @@ import { mergeSeedProduct } from '../testing/seed-merge';
  * Derived via lookup so it stays in lockstep with the generated wire schema.
  * Dedup key: `signal_id`.
  */
-export type SeededSignal = GetSignalsResponse['signals'][number];
+export type SeededSignal = NonNullable<GetSignalsResponse['signals']>[number];
 
 /**
  * Seeded creative-delivery entry — the inline element type of
@@ -1194,7 +1194,7 @@ export function replaceAccountFinancialsIfSeeded(
   // request's `request_id` / `adcp_version` echo.
   const handlerContext = (response as { context?: unknown }).context;
   const handlerExt = (response as { ext?: unknown }).ext;
-  const merged: GetAccountFinancialsResponse = { ...picked };
+  const merged: GetAccountFinancialsResponse = { status: 'completed', ...picked } as GetAccountFinancialsResponse;
   if (handlerContext !== undefined) (merged as { context?: unknown }).context = handlerContext;
   if (handlerExt !== undefined) (merged as { ext?: unknown }).ext = handlerExt;
   return merged;
@@ -1535,7 +1535,7 @@ export function replaceContentStandardsIfSeeded(
   const replaced: ContentStandards = { ...picked };
   if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
   if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
-  return replaced;
+  return { status: 'completed', ...replaced } as unknown as GetContentStandardsResponse;
 }
 
 // ---------------------------------------------------------------------------
@@ -1944,7 +1944,7 @@ export function replaceBrandIdentityIfSeeded(
   const replaced: SeededBrandIdentity = { ...picked };
   if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
   if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
-  return replaced;
+  return { status: 'completed', ...replaced } as unknown as GetBrandIdentityResponse;
 }
 
 /**

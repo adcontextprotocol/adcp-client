@@ -810,7 +810,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
   if (account.notification_configs !== undefined) {
-    (wire as WireAccount & { notification_configs?: WireNotificationConfig[] }).notification_configs =
+    (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       account.notification_configs.map(projectNotificationConfig);
   }
   if (account.sandbox !== undefined) wire.sandbox = account.sandbox;
@@ -851,7 +851,7 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.payment_terms !== undefined) wire.payment_terms = row.payment_terms;
   if (row.credit_limit !== undefined) wire.credit_limit = row.credit_limit;
   if (row.notification_configs !== undefined) {
-    (wire as WireSyncAccountRow & { notification_configs?: WireNotificationConfig[] }).notification_configs =
+    (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       row.notification_configs.map(projectNotificationConfig);
   }
   if (row.errors !== undefined) wire.errors = row.errors;
@@ -892,11 +892,11 @@ export function toWireSyncGovernanceRow(row: WireSyncGovernanceRow): WireSyncGov
     status: row.status,
   };
   if (row.governance_agents !== undefined) {
-    wire.governance_agents = row.governance_agents.map(a => {
-      const stripped: { url: string; categories?: string[] } = { url: a.url };
-      if (a.categories !== undefined) stripped.categories = a.categories;
-      return stripped;
-    });
+    // AdCP 3.1.0-beta.2 removed `categories` from the governance_agents
+    // wire shape. The schema is now `{ url }` only; per-agent category
+    // signaling moved out of band. The projection still strips
+    // authentication.credentials (write-only) by only naming `url`.
+    wire.governance_agents = row.governance_agents.map(a => ({ url: a.url }));
   }
   if (row.errors !== undefined) wire.errors = row.errors;
   return wire;
@@ -925,15 +925,14 @@ type WireGovernanceAgent = NonNullable<WireAccount['governance_agents']>[number]
 /**
  * Project a governance-agent element to the wire shape, dropping any keys
  * the wire schema doesn't model. The schema notes that authentication
- * credentials are write-only and not included in responses; the wire type
- * already carries only `url` and `categories`, but TS is erased at runtime
- * so adopters using JS or `as any` could otherwise smuggle a `credentials`
- * field straight to the wire. Explicit projection closes that gap.
+ * credentials are write-only and not included in responses; AdCP 3.1.0-beta.2
+ * also removed `categories` from the wire shape. The current shape is
+ * `{ url }` only — TS is erased at runtime so adopters using JS or `as any`
+ * could otherwise smuggle a `credentials` or `categories` field straight
+ * to the wire. Explicit projection closes that gap.
  */
 function projectGovernanceAgent(agent: WireGovernanceAgent): WireGovernanceAgent {
-  const projected: WireGovernanceAgent = { url: agent.url };
-  if (agent.categories !== undefined) projected.categories = agent.categories;
-  return projected;
+  return { url: agent.url };
 }
 
 // ---------------------------------------------------------------------------

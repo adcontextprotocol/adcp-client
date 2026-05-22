@@ -17,6 +17,7 @@ import type {
 } from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
@@ -669,7 +670,14 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     };
   }
 
-  const result = schema.safeParse(data);
+  // 3.0.x back-compat: synthesize envelope `status` for legacy peers so
+  // strict 3.1 validators don't reject otherwise-conformant 3.0 wire
+  // responses. See `utils/envelope-status-compat.ts`.
+  const compatData =
+    data && typeof data === 'object' && !Array.isArray(data)
+      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>)
+      : data;
+  const result = schema.safeParse(compatData);
   if (result.success) {
     return {
       step: `Schema validation: ${toolName}`,

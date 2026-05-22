@@ -39,6 +39,8 @@ import type {
   ListCreativesResponse,
   SyncCreativesRequest,
   SyncCreativesResponse,
+  ValidateInputRequest,
+  ValidateInputResponse,
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
@@ -285,6 +287,13 @@ export class Agent {
    */
   async syncCreatives(params: MutatingRequestInput<SyncCreativesRequest>): Promise<SyncCreativesResponse> {
     return this.callTool<SyncCreativesResponse>('sync_creatives', params);
+  }
+
+  /**
+   * Official AdCP validate_input tool schema
+   */
+  async validateInput(params: ValidateInputRequest): Promise<ValidateInputResponse> {
+    return this.callTool<ValidateInputResponse>('validate_input', params);
   }
 
   /**
@@ -645,6 +654,13 @@ export class AgentCollection {
    */
   async syncCreatives(params: MutatingRequestInput<SyncCreativesRequest>): Promise<SyncCreativesResponse[]> {
     return this.callToolOnAll<SyncCreativesResponse>('sync_creatives', params);
+  }
+
+  /**
+   * Official AdCP validate_input tool schema (across multiple agents)
+   */
+  async validateInput(params: ValidateInputRequest): Promise<ValidateInputResponse[]> {
+    return this.callToolOnAll<ValidateInputResponse>('validate_input', params);
   }
 
   /**

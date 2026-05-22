@@ -545,7 +545,11 @@ export type {
   OptimizationGoal,
   ReachUnit,
   TargetingOverlay,
-  OutcomeMeasurement,
+  // 3.1.0-beta.2 renamed `OutcomeMeasurement` → `OutcomeMeasurementDeprecated`
+  // to signal the surface is on the 4.0 removal track. Re-export under both
+  // names so adopters' existing `import { OutcomeMeasurement }` keeps working.
+  OutcomeMeasurementDeprecated,
+  OutcomeMeasurementDeprecated as OutcomeMeasurement,
   Duration,
   DeviceType,
   DigitalSourceType,
@@ -998,6 +1002,7 @@ export const wireVersion = {
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
 export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
+export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';

@@ -90,6 +90,7 @@ export function buildListCreativesResponse(opts: BuildListCreativesResponseOpts)
   };
 
   return {
+    status: 'completed',
     query_summary: summary,
     pagination,
     creatives,

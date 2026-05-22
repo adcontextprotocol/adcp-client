@@ -82,13 +82,13 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * Acquire rights — buyer commits to an offering. Four wire-spec arms:
    *
    *   - `AcquireRightsAcquired` — rights granted immediately. Carries
-   *     `rights_id`, `status: 'acquired'`, `brand_id`, `terms`,
+   *     `rights_id`, `rights_status: 'acquired'`, `brand_id`, `terms`,
    *     `generation_credentials` (scoped per-LLM-provider keys), and
    *     `rights_constraint` so the buyer can plumb the grant directly
    *     into creative generation.
    *   - `AcquireRightsPendingApproval` — clearance pending counter-
    *     signature, legal review, or rights-holder approval. Carries
-   *     `rights_id`, `status: 'pending_approval'`, `brand_id`, plus
+   *     `rights_id`, `rights_status: 'pending_approval'`, `brand_id`, plus
    *     optional `detail` and `estimated_response_time` (e.g., '48h').
    *     **Async delivery is webhook-only** — the buyer's
    *     `push_notification_config.url` receives the eventual
@@ -96,7 +96,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    *     a polling tool for `acquire_rights`; do not reach for
    *     `tasks_get` here.
    *   - `AcquireRightsRejected` — terminal rejection. Carries
-   *     `rights_id`, `status: 'rejected'`, `brand_id`, `reason`,
+   *     `rights_id`, `rights_status: 'rejected'`, `brand_id`, `reason`,
    *     and optional `suggestions[]` for buyer remediation.
    *
    * The wire spec also defines a fourth `AcquireRightsError` arm

@@ -409,8 +409,10 @@ export interface ComplyController {
 // Implementation
 // ────────────────────────────────────────────────────────────
 
-function controllerError(code: ControllerError['error'], detail: string): ControllerError {
-  return { success: false, error: code, error_detail: detail };
+function controllerError(code: ControllerError['error'], detail: string): ComplyTestControllerResponse {
+  // AdCP 3.1.0-beta.2+: envelope `status` is REQUIRED on every response,
+  // including the error arms of a discriminated controller response.
+  return { status: 'failed', success: false, error: code, error_detail: detail } as ComplyTestControllerResponse;
 }
 
 /** Build a {@link TestControllerStore} that delegates to the domain-grouped

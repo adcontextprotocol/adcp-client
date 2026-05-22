@@ -292,11 +292,13 @@ export async function queryUpstreamTraffic(
 /** Type guard: is the response a success? */
 export function isSuccess(
   response: ComplyTestControllerResponse
-): response is StateTransitionSuccess | SimulationSuccess | ListScenariosSuccess {
-  return response.success === true;
+): response is ComplyTestControllerResponse & (StateTransitionSuccess | SimulationSuccess | ListScenariosSuccess) {
+  return (response as { success?: boolean }).success === true;
 }
 
 /** Type guard: is the response an error? */
-export function isControllerError(response: ComplyTestControllerResponse): response is ControllerError {
-  return response.success === false;
+export function isControllerError(
+  response: ComplyTestControllerResponse
+): response is ComplyTestControllerResponse & ControllerError {
+  return (response as { success?: boolean }).success === false;
 }

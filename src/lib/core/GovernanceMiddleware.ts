@@ -344,7 +344,7 @@ export class GovernanceMiddleware {
 
       return {
         outcomeId: responseData.outcome_id,
-        status: responseData.status as GovernanceOutcome['status'],
+        status: responseData.outcome_state as GovernanceOutcome['status'],
         committedBudget: responseData.committed_budget ?? undefined,
         findings: responseData.findings?.map(f => ({
           categoryId: f.category_id,

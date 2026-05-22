@@ -114,13 +114,14 @@ export class GovernanceAdapter implements IGovernanceAdapter {
   async checkCommitted(request: CommittedCheckRequest): Promise<CheckGovernanceResponse> {
     if (!this.agentConfig) {
       return {
+        status: 'failed',
         check_id: '',
-        status: 'denied',
+        verdict: 'denied',
         binding: 'committed',
         plan_id: request.planId,
         explanation: 'Governance not configured on this server',
         error_code: GovernanceAdapterErrorCodes.NOT_SUPPORTED,
-      } as CheckGovernanceResponse;
+      } as unknown as CheckGovernanceResponse;
     }
 
     const checkRequest: CheckGovernanceRequest = {
@@ -145,13 +146,14 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;
     } catch (err) {
       return {
+        status: 'failed',
         check_id: '',
-        status: 'denied',
+        verdict: 'denied',
         binding: 'committed',
         plan_id: request.planId,
         explanation: `Governance agent unreachable: ${(err as Error).message}`,
         error_code: GovernanceAdapterErrorCodes.AGENT_UNREACHABLE,
-      } as CheckGovernanceResponse;
+      } as unknown as CheckGovernanceResponse;
     }
   }
 }

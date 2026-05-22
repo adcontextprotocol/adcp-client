@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { getBestUnionErrors } from '../utils/union-errors';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 
 export interface ValidationResult {
   valid: boolean;
@@ -323,8 +324,15 @@ export class ResponseValidator {
       return null; // No schema available for this tool
     }
 
+    // 3.0.x back-compat: synthesize envelope `status` when the payload
+    // declares itself as 3.0.x. See `utils/envelope-status-compat.ts`.
+    const validatePayload =
+      data && typeof data === 'object' && !Array.isArray(data)
+        ? injectLegacyEnvelopeStatus(data as Record<string, unknown>)
+        : data;
+
     // Validate
-    const result = schema.safeParse(data);
+    const result = schema.safeParse(validatePayload);
     return result.success ? null : result.error;
   }
 

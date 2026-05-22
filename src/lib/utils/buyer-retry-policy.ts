@@ -69,11 +69,12 @@ export type RetryDecision =
   | {
       action: 'escalate';
       reason:
-        | 'commercial' // POLICY_VIOLATION / COMPLIANCE_UNSATISFIED / GOVERNANCE_DENIED — human review
-        | 'auth' // AUTH_REQUIRED / PERMISSION_DENIED — operator must rotate creds / grant access
+        | 'commercial' // POLICY_VIOLATION / COMPLIANCE_UNSATISFIED / GOVERNANCE_DENIED / billing-family (BILLING_NOT_SUPPORTED / BILLING_NOT_PERMITTED_FOR_AGENT / BILLING_OUT_OF_BAND / PAYMENT_TERMS_NOT_SUPPORTED) / provenance-rejection (PROVENANCE_VERIFIER_NOT_ACCEPTED / PROVENANCE_CLAIM_CONTRADICTED) — human review. Some billing+provenance codes are spec-correctable but we operator-grade override (auto-retrying billing-value alternatives or swapping verifiers without operator policy is precisely the evasion pattern this surface is designed to prevent).
+        | 'auth' // AUTH_REQUIRED / PERMISSION_DENIED / SCOPE_INSUFFICIENT / READ_ONLY_SCOPE / FIELD_NOT_PERMITTED / ACTION_NOT_ALLOWED — operator must rotate creds / grant access
         | 'governance_unreachable' // GOVERNANCE_UNAVAILABLE / CAMPAIGN_SUSPENDED — out-of-band
-        | 'idempotency_check_required' // IDEMPOTENCY_EXPIRED — buyer MUST do a natural-key check before minting a new key (spec safety constraint to prevent double-creation)
-        | 'terminal' // spec recovery 'terminal' (account suspended, budget exhausted, …)
+        | 'idempotency_check_required' // IDEMPOTENCY_EXPIRED / CONFIGURATION_ERROR — buyer MUST do a natural-key check before minting a new key (spec safety constraint to prevent double-creation)
+        | 'capability' // FORMAT_PROJECTION_FAILED / FORMAT_DECLARATION_DIVERGENT / FORMAT_DECLARATION_V1_AMBIGUOUS / FORMAT_CAPABILITY_UNRESOLVED / FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE / PIXEL_TRACKER_LOSSY_DOWNGRADE / PIXEL_TRACKER_UPGRADE_INFERRED — implementation choice problem (operator needs to pick a different adapter or surface the advisory to the buyer); distinct from 'commercial' so dashboards can filter
+        | 'terminal' // spec recovery 'terminal' (account suspended, budget exhausted, CREDENTIAL_IN_ARGS, RETENTION_EXPIRED, STALE_RESPONSE — advisory paired with a populated success payload; consume the payload, surface the advisory, do not retry …)
         | 'attempts_exhausted' // hit attemptCap — caller already retried as many times as the policy allows
         | 'unknown'; // non-standard code, no policy override — buyer surfaces to user
       /** Human-facing message. Mirrors `error.message`. */
@@ -244,6 +245,86 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // not in response to client behavior.
   AGENT_SUSPENDED: { action: 'escalate', escalateReason: 'terminal' },
   AGENT_BLOCKED: { action: 'escalate', escalateReason: 'terminal' },
+
+  // Resource-not-found — proposal variant joins the not-found family.
+  PROPOSAL_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+
+  // Configuration / ops — halt, not retry. Seller misconfiguration; operator
+  // must intervene before another call has any chance of succeeding.
+  CONFIGURATION_ERROR: { action: 'escalate', escalateReason: 'idempotency_check_required' },
+
+  // Idempotency — IN_FLIGHT means the seller is still processing a prior
+  // submission with this key; safe to retry with same key after backoff.
+  IDEMPOTENCY_IN_FLIGHT: { action: 'retry', attemptCap: 3, baseDelayMs: 500 },
+
+  // Capability mismatch — drop the unsupported field/granularity and retry.
+  UNSUPPORTED_GRANULARITY: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  UNSUPPORTED_PROVISIONING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  MULTI_FINALIZE_UNSUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+
+  // Creative value rejection — commercial signal; don't auto-tweak.
+  CREATIVE_VALUE_NOT_ALLOWED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Brand required — validation; patch and retry.
+  BRAND_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+
+  // Scope / permission — operator must adjust API key scopes.
+  SCOPE_INSUFFICIENT: { action: 'escalate', escalateReason: 'auth' },
+  READ_ONLY_SCOPE: { action: 'escalate', escalateReason: 'auth' },
+  FIELD_NOT_PERMITTED: { action: 'escalate', escalateReason: 'auth' },
+  ACTION_NOT_ALLOWED: { action: 'escalate', escalateReason: 'auth' },
+
+  // Provenance — most are correctable by attaching the missing metadata;
+  // verifier-not-accepted / claim-contradicted are commercial rejections.
+  PROVENANCE_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING: {
+    action: 'mutate-and-retry',
+    attemptCap: 2,
+    reason: 'validation',
+    baseDelayMs: 250,
+  },
+  PROVENANCE_DISCLOSURE_MISSING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_EMBEDDED_MISSING: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  PROVENANCE_VERIFIER_NOT_ACCEPTED: { action: 'escalate', escalateReason: 'commercial' },
+  PROVENANCE_CLAIM_CONTRADICTED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Billing / payment terms — commercial-relationship signals; human in loop.
+  BILLING_NOT_SUPPORTED: { action: 'escalate', escalateReason: 'commercial' },
+  BILLING_NOT_PERMITTED_FOR_AGENT: { action: 'escalate', escalateReason: 'commercial' },
+  BILLING_OUT_OF_BAND: { action: 'escalate', escalateReason: 'commercial' },
+  PAYMENT_TERMS_NOT_SUPPORTED: { action: 'escalate', escalateReason: 'commercial' },
+
+  // Format-projection — capability mismatch between buyer's declared format
+  // and what the seller can render. Buyer typically needs a different
+  // creative-template specialism, not a payload tweak. Surface to operator
+  // via `capability` so dashboards can filter implementation-choice tickets
+  // from commercial-policy ones.
+  //
+  // NOTE: spec marks several FORMAT_DECLARATION_* codes as advisory (emitted
+  // in `errors[]` on a 200-success response, not on failure). The retry
+  // policy still fires when an adopter routes them through `decideRetry()`,
+  // so the policy here is "what to do if a caller hands us this code" — for
+  // a 200-success+advisory shape, the caller should typically not invoke
+  // the retry policy at all. Tracked separately.
+  FORMAT_PROJECTION_FAILED: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_DECLARATION_DIVERGENT: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_CAPABILITY_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'capability' },
+
+  // Pixel-tracker — buyer's tracker shape doesn't fit the seller's surface.
+  PIXEL_TRACKER_LOSSY_DOWNGRADE: { action: 'escalate', escalateReason: 'capability' },
+  PIXEL_TRACKER_UPGRADE_INFERRED: { action: 'escalate', escalateReason: 'capability' },
+
+  // Security violation — credentials in args; terminate immediately. Retrying
+  // would re-leak. Operator must rotate the leaked credential and refactor
+  // the call site before any further calls.
+  CREDENTIAL_IN_ARGS: { action: 'escalate', escalateReason: 'terminal' },
+
+  // STALE_RESPONSE is an advisory: seller responded from a stale cache,
+  // payload still populated. No retry — surface the advisory to operator
+  // and consume the payload as if it were fresh.
+  STALE_RESPONSE: { action: 'escalate', escalateReason: 'terminal' },
 };
 
 // ---------------------------------------------------------------------------

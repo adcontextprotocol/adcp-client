@@ -1619,6 +1619,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             const requestContext = safeEcho((input as { context?: unknown }).context);
             const requestExt = safeEcho((input as { ext?: unknown }).ext);
             return toMcpResponse({
+              status: 'failed',
               success: false,
               error: 'FORBIDDEN',
               error_detail:
@@ -4655,6 +4656,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         () => accounts.list!(filter, resolveCtx),
         page => ({
+          status: 'completed' as const,
           accounts: page.items.map(toWireAccount),
           ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
         })
