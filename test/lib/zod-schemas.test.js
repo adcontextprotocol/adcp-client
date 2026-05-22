@@ -87,6 +87,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const validResponse = {
+      status: 'completed',
       products: [],
     };
 
@@ -176,6 +177,7 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.GetMediaBuysResponseSchema, 'GetMediaBuysResponseSchema should exist');
 
     const validResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_123',
@@ -213,6 +215,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const validResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_123',
@@ -249,6 +252,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const invalidResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_123',
@@ -281,6 +285,7 @@ describe('Zod Schema Validation', () => {
 
     // Missing required: status, currency, total_budget, packages
     const invalidResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_123',
@@ -317,6 +322,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const validResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_123',
@@ -350,6 +356,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const validResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_456',
@@ -389,6 +396,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const validResponse = {
+      status: 'completed',
       media_buys: [
         {
           media_buy_id: 'mb_789',
@@ -849,6 +857,7 @@ describe('Zod Schema Validation', () => {
     }
 
     const response = {
+      status: 'completed',
       signals: [
         {
           signal_id: { source: 'agent', agent_url: 'https://signals.example.com', id: 'sig-001' },
