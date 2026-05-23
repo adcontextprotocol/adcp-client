@@ -10,6 +10,7 @@
     "1853-1818-capability-projection",
     "asset-variant-array-slots",
     "cluster-3-schema-validation-sweep",
+    "cluster-7-server-decisioning",
     "codegen-flatten-allof-not-branches",
     "context-extractors-verdict-outcome-state-fixtures",
     "cut-8-0-beta",
@@ -22,6 +23,7 @@
     "promote-query-upstream-traffic",
     "schema-loader-strip-nested-ids",
     "source-fixes-1950-union-products-governance",
+    "storyboard-brand-invariant-fix",
     "test-agents-envelope-status"
   ]
 }

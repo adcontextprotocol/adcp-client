@@ -201,20 +201,25 @@ describe('toWireAccount', () => {
     });
 
     it('projects account_scope and governance_agents', () => {
+      // 3.1.0-beta.3 tightened `governance_agents[]` items to
+      // `additionalProperties: false` and dropped `categories` (the single-
+      // agent-owns-full-lifecycle clarification). Only `url` + `authentication`
+      // are permitted on the wire; the projection strips anything else.
       const wire = toWireAccount({
         ...baseAccount(),
         account_scope: 'operator_brand',
-        governance_agents: [{ url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] }],
+        governance_agents: [{ url: 'https://gov.acme.com/mcp' }],
       });
       assert.equal(wire.account_scope, 'operator_brand');
-      assert.deepEqual(wire.governance_agents, [{ url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] }]);
+      assert.deepEqual(wire.governance_agents, [{ url: 'https://gov.acme.com/mcp' }]);
     });
 
     it('drops unknown keys on governance_agents elements (credential smuggling guard)', () => {
       // Schema notes governance auth credentials are write-only; the wire type
       // already excludes them, but adopters using JS / `as any` could otherwise
       // smuggle a credentials field straight to the wire. Element-level
-      // projection closes that gap.
+      // projection closes that gap. Same projection also drops the now-
+      // deprecated `categories` field (removed in 3.1.0-beta.3).
       const wire = toWireAccount({
         ...baseAccount(),
         governance_agents: [
@@ -228,8 +233,8 @@ describe('toWireAccount', () => {
       });
       assert.equal('credentials' in wire.governance_agents[0], false);
       assert.equal('api_key' in wire.governance_agents[0], false);
+      assert.equal('categories' in wire.governance_agents[0], false);
       assert.equal(wire.governance_agents[0].url, 'https://gov.acme.com/mcp');
-      assert.deepEqual(wire.governance_agents[0].categories, ['budget_authority']);
     });
 
     it('projects reporting_bucket', () => {

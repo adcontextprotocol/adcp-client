@@ -54,7 +54,7 @@ const RIGHTS_OFFERING = {
 function buildAcquired(rightsId, brandId, pricingOptionId) {
   return {
     rights_id: rightsId,
-    status: 'acquired',
+    rights_status: 'acquired',
     brand_id: brandId,
     terms: {
       pricing_option_id: pricingOptionId,
@@ -107,7 +107,7 @@ function brandRightsPlatform(brOverrides = {}) {
         }
         return {
           rights_id: req.rights_id,
-          status: 'pending_approval',
+          rights_status: 'pending_approval',
           brand_id: RIGHTS_OFFERING.brand_id,
           detail: 'Awaiting rights-holder counter-signature',
           estimated_response_time: '48h',
@@ -193,7 +193,9 @@ describe('BrandRightsPlatform — 3-method specialism', () => {
     });
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.strictEqual(result.structuredContent.status, 'acquired');
+    // 3.1.0-beta.3 renamed the discriminator from `status` to `rights_status`
+    // (envelope `status` is now reserved for task-state: completed/failed/...).
+    assert.strictEqual(result.structuredContent.rights_status, 'acquired');
     assert.strictEqual(result.structuredContent.rights_id, 'rights_endorsement_us');
     assert.strictEqual(result.structuredContent.brand_id, 'brand_acme_42');
     assert.ok(result.structuredContent.terms, 'Acquired arm requires terms');
@@ -224,7 +226,7 @@ describe('BrandRightsPlatform — 3-method specialism', () => {
     });
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.strictEqual(result.structuredContent.status, 'pending_approval');
+    assert.strictEqual(result.structuredContent.rights_status, 'pending_approval');
     assert.strictEqual(result.structuredContent.estimated_response_time, '48h');
   });
 

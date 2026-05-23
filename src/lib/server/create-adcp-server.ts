@@ -37,7 +37,7 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { bundleSupportsAdcpVersionField } from '../protocols';
@@ -2676,18 +2676,25 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  *   destroy payload semantics until the spec disambiguates.
  */
 function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
-  if (response.isError === true) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
   if ('status' in sc) return;
-  sc.status = 'completed';
+  // AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response, error
+  // or otherwise. Map MCP's `isError` to the wire-level task state:
+  //   - `isError: true`           → `'failed'`  (task explicitly failed)
+  //   - `isError: false`/absent   → `'completed'` (default for success path)
+  // Tools that need richer states (`submitted`, `working`, `input-required`)
+  // should set `status` themselves; this injector only fills in the default
+  // when the handler hasn't.
+  const status = response.isError === true ? 'failed' : 'completed';
+  sc.status = status;
   if (Array.isArray(response.content)) {
     const first = response.content[0];
     if (first && first.type === 'text' && typeof first.text === 'string') {
       try {
         const parsed = JSON.parse(first.text);
         if (parsed && typeof parsed === 'object' && !('status' in parsed)) {
-          parsed.status = 'completed';
+          parsed.status = status;
           first.text = JSON.stringify(parsed);
         }
       } catch {
@@ -2699,16 +2706,21 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
 
 function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
   if (!servedVersion) return;
+  // Normalize to release-precision (`3.1-beta.3`) before emitting — the wire
+  // regex rejects full-semver (`3.1.0-beta.3`). Bundle metadata is published
+  // with the patch digit; on-the-wire `adcp_version` is not. See the spec
+  // note on `adcp_version` in `core.generated.ts` and the helper itself.
+  const wireVersion = toReleasePrecisionVersion(servedVersion);
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (sc && typeof sc === 'object' && !('adcp_version' in sc)) {
-    sc.adcp_version = servedVersion;
+    sc.adcp_version = wireVersion;
     if (Array.isArray(response.content)) {
       const first = response.content[0];
       if (first && first.type === 'text' && typeof first.text === 'string') {
         try {
           const parsed = JSON.parse(first.text);
           if (parsed && typeof parsed === 'object' && !('adcp_version' in parsed)) {
-            parsed.adcp_version = servedVersion;
+            parsed.adcp_version = wireVersion;
             first.text = JSON.stringify(parsed);
           }
         } catch {
