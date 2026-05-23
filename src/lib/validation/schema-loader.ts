@@ -550,11 +550,54 @@ export function getValidator(
   if (!fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
-  const schema = direction === 'request' ? rawSchema : relaxResponseRoot(rawSchema);
+  // Bundled files inline every referenced subschema with the original
+  // canonical `$id` (e.g. `core/version-envelope.json` appears nested
+  // inside every bundled tool response). Bundled files carry NO
+  // internal `$ref`s — the spec publishes them fully resolved, see
+  // the `note: "This is a bundled schema with all $ref resolved inline"`
+  // tag on every bundled file. Once `ensureCoreLoaded` has registered
+  // any of those core schemas standalone (which it does for the flat-
+  // tree governance / brand / property domains), Ajv's compile of a
+  // bundled file trips the ambiguous-ref check on every nested $id.
+  //
+  // The fix: strip nested `$id` fields before compile on bundled
+  // schemas. The root `$id` is kept (it's the validator's lookup key);
+  // every other `$id` in the tree was just metadata anyway.
+  const prepared = fromBundled ? stripNestedIds(rawSchema) : rawSchema;
+  const schema = direction === 'request' ? prepared : relaxResponseRoot(prepared);
   const existing = typeof schema.$id === 'string' ? s.ajv.getSchema(schema.$id) : undefined;
   const compiled = existing ?? s.ajv.compile(schema);
   s.validators.set(cacheKey, compiled);
   return compiled;
+}
+
+/**
+ * Strip `$id` from every subschema of a bundled response file, preserving
+ * the root `$id`. Bundled files are fully inlined (no internal `$ref`s),
+ * so the nested `$id`s are vestigial metadata — Ajv only cares about the
+ * root `$id` for validator lookup. Without this strip, Ajv's
+ * `checkAmbiguousRef` throws when an inlined nested `$id` matches one
+ * already registered standalone via `ensureCoreLoaded`.
+ *
+ * Returns a deep-copied tree; the input is not mutated.
+ */
+function stripNestedIds(schema: LoadedSchema): LoadedSchema {
+  const root = JSON.parse(JSON.stringify(schema)) as LoadedSchema;
+  const rootId = typeof root.$id === 'string' ? root.$id : undefined;
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (typeof obj.$id === 'string' && obj.$id !== rootId) {
+      delete obj.$id;
+    }
+    for (const value of Object.values(obj)) walk(value);
+  };
+  walk(root);
+  return root;
 }
 
 /** List of (toolName, direction) pairs that have schemas. Used by tests. */
