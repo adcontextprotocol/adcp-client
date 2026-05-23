@@ -90,11 +90,20 @@ function isPathReachable(schema, segments) {
     return false;
   }
 
-  // Object: look up key in shape
+  // Object: look up key in shape. When the key isn't declared but the
+  // schema allows extra keys via `.passthrough()` (Zod's representation:
+  // `_zod.def.catchall` carries the catchall schema, e.g. `z.unknown()`
+  // for passthrough), treat the rest of the path as reachable against the
+  // catchall's type. This matches the JSON Schema semantic where a node
+  // with `additionalProperties: true` accepts any key — drift detection
+  // shouldn't reject paths into free-form blocks like `error.details`
+  // (which are `additionalProperties: true` per spec).
   if (type === 'object' && schema.shape) {
     const field = schema.shape[head];
-    if (!field) return false;
-    return isPathReachable(field, rest);
+    if (field) return isPathReachable(field, rest);
+    const catchall = schema._zod?.def?.catchall;
+    if (catchall) return isPathReachable(catchall, rest);
+    return false;
   }
 
   // Record: any string key is valid

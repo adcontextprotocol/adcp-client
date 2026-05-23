@@ -294,11 +294,28 @@ describe('runStoryboard: brand invariant on the wire', () => {
       });
 
       assert.strictEqual(seen.length, 3, `expected 3 tool calls, got ${seen.length}`);
+      // The brand invariant: the configured BRAND must be reachable from the
+      // wire request — either at top level (for tools that declare top-level
+      // `brand` in their schema, e.g. get_products) OR via `account.brand`
+      // (for tools that declare top-level `account` instead, e.g. list_creatives).
+      // AdCP 3.1.0-beta.3 dropped top-level `brand` from many request schemas
+      // in favor of carrying it inside `account.brand`; the runner now only
+      // injects top-level `brand` when the schema declares it, per the spec-
+      // aligned `schemaAllowsTopLevelField` semantics. Either path satisfies
+      // the invariant.
       for (const call of seen) {
-        assert.deepStrictEqual(call.args.brand, BRAND, `step ${call.name} brand diverged`);
-        if (call.args.account && typeof call.args.account === 'object' && !Array.isArray(call.args.account)) {
-          assert.deepStrictEqual(call.args.account.brand, BRAND, 'account.brand diverged');
-        }
+        const topBrand = call.args.brand;
+        const accountBrand =
+          call.args.account && typeof call.args.account === 'object' && !Array.isArray(call.args.account)
+            ? call.args.account.brand
+            : undefined;
+        const reachable =
+          (topBrand && JSON.stringify(topBrand) === JSON.stringify(BRAND)) ||
+          (accountBrand && JSON.stringify(accountBrand) === JSON.stringify(BRAND));
+        assert.ok(
+          reachable,
+          `step ${call.name} brand not reachable from wire: top-level=${JSON.stringify(topBrand)} account.brand=${JSON.stringify(accountBrand)}`
+        );
       }
     } finally {
       server.close();
