@@ -752,7 +752,11 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { status: 'completed', products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
+      return {
+        status: 'completed',
+        cache_scope: 'public',
+        products: guaranteed.map(p => projectProduct(p, publisherDomain)),
+      };
     },
 
     /**

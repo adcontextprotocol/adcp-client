@@ -60,14 +60,23 @@ describe('capabilitiesResponse', () => {
 
 describe('productsResponse', () => {
   it('returns product count in default summary', () => {
-    const result = productsResponse({ products: [{ product_id: 'p1' }, { product_id: 'p2' }] });
+    const result = productsResponse({
+      products: [{ product_id: 'p1' }, { product_id: 'p2' }],
+      cache_scope: 'account',
+    });
     assert.strictEqual(result.content[0].text, 'Found 2 products');
     assert.strictEqual(result.structuredContent.products.length, 2);
   });
 
   it('handles empty products array', () => {
-    const result = productsResponse({ products: [] });
+    const result = productsResponse({ products: [], cache_scope: 'public' });
     assert.strictEqual(result.content[0].text, 'Found 0 products');
+  });
+
+  it('does not default cache_scope when omitted', () => {
+    const result = productsResponse({ products: [{ product_id: 'p1' }] });
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.cache_scope, undefined);
   });
 });
 

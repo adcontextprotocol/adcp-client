@@ -34,7 +34,7 @@
  * server.registerTool(
  *   'get_products',
  *   { inputSchema: GetProductsRequestSchema.shape },
- *   async (params) => productsResponse({ products: myProducts })
+ *   async (params) => productsResponse({ products: myProducts, cache_scope: 'account' })
  * );
  * ```
  */
@@ -186,7 +186,6 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
   const structured = toStructuredContent(data) as Record<string, unknown>;
   if (structured.status === undefined) structured.status = 'completed';
-  if (Array.isArray(structured.products) && structured.cache_scope === undefined) structured.cache_scope = 'public';
   return {
     content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
     structuredContent: structured,

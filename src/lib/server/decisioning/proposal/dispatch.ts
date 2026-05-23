@@ -247,6 +247,8 @@ function projectFinalizeResponse(args: {
   // `get_products({ product_ids: [...] })` keyed off
   // `proposals[0].allocations[].product_id`.
   return {
+    status: 'completed',
+    cache_scope: 'account',
     products: [],
     proposals: [args.committedProposal as unknown as Proposal],
     refinement_applied: refinementApplied,

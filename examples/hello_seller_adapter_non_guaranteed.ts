@@ -593,7 +593,11 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { status: 'completed', products: products.map(p => projectProduct(p, publisherDomain)) };
+      return {
+        status: 'completed',
+        cache_scope: 'public',
+        products: products.map(p => projectProduct(p, publisherDomain)),
+      };
     },
 
     /**
