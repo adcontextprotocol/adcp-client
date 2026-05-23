@@ -60,7 +60,10 @@ test('resolves capability-driven storyboard set', async () => {
 
   assert.ok(result.results.length > 0, 'capability resolution produced runnable storyboards');
   const ids = result.results.map(r => r.storyboard_id);
-  assert.ok(ids.every(id => typeof id === 'string' && id.length > 0), `expected storyboard ids; got: ${ids.join(', ')}`);
+  assert.ok(
+    ids.every(id => typeof id === 'string' && id.length > 0),
+    `expected storyboard ids; got: ${ids.join(', ')}`
+  );
 });
 
 test('throws on unknown storyboard ids', async () => {

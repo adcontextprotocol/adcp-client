@@ -208,18 +208,16 @@ function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Rec
           const branch = oneOfBranches[idx]!;
           const forbidden = new Set(branch.forbidden);
           const branchSpec = Object.fromEntries(Object.entries(propertySpec).filter(([key]) => !forbidden.has(key)));
-          const requiredKeys = Array.from(
-            new Set([...baseRequired, ...branch.required.filter(k => k in branchSpec)])
-          );
+          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.required.filter(k => k in branchSpec)]));
           return fc.record(branchSpec, { requiredKeys });
         })
-    : anyOfRequired.length === 0
-      ? fc.record(propertySpec, { requiredKeys: baseRequired })
-      : fc.nat(anyOfRequired.length - 1).chain(idx => {
-          const branch = anyOfRequired[idx]!;
-          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter(k => declared.has(k))]));
-          return fc.record(propertySpec, { requiredKeys });
-        });
+      : anyOfRequired.length === 0
+        ? fc.record(propertySpec, { requiredKeys: baseRequired })
+        : fc.nat(anyOfRequired.length - 1).chain(idx => {
+            const branch = anyOfRequired[idx]!;
+            const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter(k => declared.has(k))]));
+            return fc.record(propertySpec, { requiredKeys });
+          });
 
   let withDeps = base;
   if (dependencies.length > 0) withDeps = base.map(value => enforceDependencies(value, dependencies));
@@ -342,7 +340,7 @@ function collectExclusiveOneOfBranches(schema: JsonSchema): ExclusiveBranch[] {
 
 function enforceSimpleConditionals(value: Record<string, unknown>, schema: JsonSchema): Record<string, unknown> {
   let current = { ...value };
-  for (const entry of ((schema.allOf as JsonSchema[] | undefined) ?? [])) {
+  for (const entry of (schema.allOf as JsonSchema[] | undefined) ?? []) {
     current = enforceRequiredTriggerConst(current, entry);
   }
   current = enforceConstThenForbidden(current, schema);
