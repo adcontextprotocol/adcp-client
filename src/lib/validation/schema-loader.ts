@@ -681,6 +681,10 @@ export function _resetValidationLoader(version?: string): void {
  * `schemaDeclaresTopLevelField` when the question is "does the spec explicitly
  * list this field?" rather than "would AJV accept it?". See #1955.
  *
+ * @deprecated Use `schemaDeclaresTopLevelField` for brand/account injection gates.
+ *   `schemaAllowsTopLevelField` returns `true` for every field on every tool when
+ *   `additionalProperties` is `true` (the 3.1.0-beta.3 norm), making it unsuitable
+ *   for distinguishing "declared" from "permitted". See #1955.
  * @internal — not part of the public API surface; may change without a major bump.
  */
 export function schemaAllowsTopLevelField(toolName: string, field: string, version: string = ADCP_VERSION): boolean {
