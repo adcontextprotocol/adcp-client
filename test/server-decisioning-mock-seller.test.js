@@ -202,7 +202,8 @@ describe('MockSeller worked example — unified hybrid shape', () => {
       const server = buildServer(platform);
       const result = await dispatchCreate(server, { total_budget: 5000 });
       assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-      assert.strictEqual(result.structuredContent.status, 'pending_creatives');
+      assert.strictEqual(result.structuredContent.status, 'completed');
+      assert.strictEqual(result.structuredContent.media_buy_status, 'pending_creatives');
       assert.ok(result.structuredContent.media_buy_id.startsWith('mb_'));
     });
   });
