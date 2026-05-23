@@ -33,6 +33,16 @@ import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
+const MEDIA_BUY_STATUS_VALUES = new Set([
+  'pending_creatives',
+  'pending_start',
+  'active',
+  'paused',
+  'completed',
+  'rejected',
+  'canceled',
+]);
+
 /**
  * Broader validation context that carries the run-level state a single
  * validation might need: the task result (for MCP tools), the HTTP probe
@@ -867,6 +877,21 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
   const actual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
 
+  // AdCP 3.1 flat MCP reserves top-level `status` for the task envelope,
+  // while create/update media-buy kept a deprecated body-level
+  // `status: MediaBuyStatus` during the transition to `media_buy_status`.
+  // Body-scoped tolerant checks on that legacy field should not interpret the
+  // envelope's synchronous `completed` as a seller-emitted media-buy status.
+  if (isMediaBuyEnvelopeStatusCollision(validation, taskResult, actual)) {
+    return {
+      check: checkName,
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+
   // Absent → pass. The check only fires when the field is present.
   if (actual === undefined) {
     return {
@@ -922,6 +947,25 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     expected: validation.value,
     actual,
   };
+}
+
+function isMediaBuyEnvelopeStatusCollision(
+  validation: StoryboardValidation,
+  taskResult: TaskResult,
+  actual: unknown
+): boolean {
+  if (validation.check !== 'field_value_or_absent') return false;
+  if (validation.path !== 'status') return false;
+  if (actual !== 'completed') return false;
+
+  const data = taskResult.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  const record = data as Record<string, unknown>;
+  if (typeof record.media_buy_status !== 'string') return false;
+
+  const expectedValues =
+    validation.allowed_values && validation.allowed_values.length > 0 ? validation.allowed_values : [validation.value];
+  return expectedValues.some(value => typeof value === 'string' && MEDIA_BUY_STATUS_VALUES.has(value));
 }
 
 // ────────────────────────────────────────────────────────────
