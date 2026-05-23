@@ -53,7 +53,10 @@ describe('createAdcpServer validation middleware', () => {
         stateStore: new InMemoryStateStore(),
         validation: { requests: 'strict' },
         mediaBuy: {
-          getProducts: async () => ({ products: [] }),
+          // 3.1.0-beta.2 made envelope `status` required on every response.
+          // 3.1.0-beta.3's get_products response also requires `cache_scope`
+          // (declares the two-layer cache model per response — see schema).
+          getProducts: async () => ({ status: 'completed', cache_scope: 'public', products: [] }),
         },
       });
 
@@ -167,7 +170,10 @@ describe('createAdcpServer validation middleware', () => {
         stateStore: new InMemoryStateStore(),
         validation: { responses: 'strict' },
         mediaBuy: {
-          getProducts: async () => ({ products: [] }),
+          // 3.1.0-beta.2 made envelope `status` required on every response.
+          // 3.1.0-beta.3's get_products response also requires `cache_scope`
+          // (declares the two-layer cache model per response — see schema).
+          getProducts: async () => ({ status: 'completed', cache_scope: 'public', products: [] }),
         },
       });
 
