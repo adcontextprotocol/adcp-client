@@ -783,7 +783,7 @@ describe('Response Unwrapper', () => {
     // which is a source-side change outside the cluster-3 fixture sweep.
     // Tracked alongside the `union schema error reporting` skips in
     // response-schema-validation.test.js.
-    test.skip('should report specific field names for union schema validation failures', () => {
+    test('should report specific field names for union schema validation failures', () => {
       const mcpResponse = {
         structuredContent: {
           packages: [createTestPackage({ package_id: 'pkg1' })],
@@ -811,7 +811,7 @@ describe('Response Unwrapper', () => {
     // needs the helper to unwrap `ZodOptional` (and reassert the optionality
     // after filtering), which is a source-side change outside the
     // cluster-3 fixture sweep.
-    test.skip('should filter invalid products when filterInvalidProducts is enabled', () => {
+    test('should filter invalid products when filterInvalidProducts is enabled', () => {
       const validProduct = createTestProduct({ product_id: 'valid-1' });
       const invalidProduct = { product_id: 'invalid-1' }; // Missing required fields
 
@@ -833,7 +833,7 @@ describe('Response Unwrapper', () => {
     });
 
     // See above (filterInvalidProducts skip) — same source-side root cause.
-    test.skip('should return empty array when all products are invalid and filtering is enabled', () => {
+    test('should return empty array when all products are invalid and filtering is enabled', () => {
       const invalidProduct1 = { product_id: 'bad-1' };
       const invalidProduct2 = { product_id: 'bad-2' };
 
@@ -885,7 +885,7 @@ describe('Response Unwrapper', () => {
     // See the MCP-path skips above (`filterInvalidProducts` /
     // `ZodOptional<ZodArray>` source-side root cause) — same issue surfaced
     // via the A2A unwrap path.
-    test.skip('should filter invalid products via A2A protocol path', () => {
+    test('should filter invalid products via A2A protocol path', () => {
       const validProduct = createTestProduct({ product_id: 'a2a-valid' });
       const invalidProduct = { product_id: 'a2a-bad' };
 

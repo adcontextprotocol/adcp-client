@@ -215,7 +215,16 @@ function filterInvalidProducts(schema: z.ZodType, data: Record<string, unknown>)
   const products = data.products;
   if (!Array.isArray(products)) return null;
 
-  const ProductSchema = (schema as z.ZodObject<any>).shape?.products;
+  // `products` is optional on `get_products` since AdCP 3.1.0-beta.3 (the
+  // `unchanged: true` wholesale-feed branch legitimately omits it). The Zod
+  // shape is now `ZodOptional<ZodArray<...>>` rather than the bare
+  // `ZodArray<...>` we used to see. Unwrap a level of `ZodOptional` /
+  // `ZodNullable` before the array check so the helper still finds the
+  // element schema.
+  let ProductSchema = (schema as z.ZodObject<any>).shape?.products;
+  if (ProductSchema instanceof z.ZodOptional || ProductSchema instanceof z.ZodNullable) {
+    ProductSchema = (ProductSchema as z.ZodOptional<any>).unwrap();
+  }
   if (!(ProductSchema instanceof z.ZodArray)) return null;
 
   const elementSchema = (ProductSchema as z.ZodArray<any>).element;

@@ -39,14 +39,7 @@ const EXTRA_MUTATING = new Set(['creative_approval', 'update_rights']);
 // then remove the entry. Empty today; the guard tests below still run so any
 // newly-documented-and-then-fixed entry would surface via the "still-fail"
 // guard.
-const KNOWN_NONCONFORMING = new Map([
-  // 3.1.0-beta.3 dropped `categories` from `governance_agents[]` items (the
-  // single-agent-owns-full-lifecycle clarification) and tightened items to
-  // `additionalProperties: false`. The fallback builder still emits the legacy
-  // `categories` array. Tracked separately; remove this entry when the
-  // builder is updated.
-  ['sync_governance', '3.1.0-beta.3 governance_agents[] is additionalProperties:false; builder still emits categories'],
-]);
+const KNOWN_NONCONFORMING = new Map([]);
 
 const SYNTHETIC_IDEMPOTENCY_KEY = 'roundtrip_test_key_0000000000';
 
