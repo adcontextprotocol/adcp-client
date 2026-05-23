@@ -221,37 +221,9 @@ const RESPONSES_WITH_NOT_CLAUSE = [
   'update_rights',
 ];
 
-// Tools whose response root currently trips the production schema-loader's
-// Ajv "resolves to more than one schema" check on `core/{business-entity,
-// deployment, format-id}.json`. These core schemas appear both standalone
-// (registered via `ensureCoreLoaded`) and embedded inside bundled response
-// `.json` files with the same `$id`. The compile path can't disambiguate
-// once both are seen, so any tool whose response embeds one of them fails
-// to compile at all — and the #1383 invariant can't be measured.
-//
-// Skipped here pending a source-side fix to the schema-loader's
-// embedded-vs-standalone $id registration. Tracking: cluster-3 follow-up.
-const SCHEMA_LOADER_AMBIGUOUS_REF_SKIP = new Set([
-  'activate_signal',
-  'build_creative',
-  'create_media_buy',
-  'get_adcp_capabilities',
-  'get_creative_delivery',
-  'get_media_buys',
-  'list_creative_formats',
-  'list_creatives',
-  'preview_creative',
-  'sync_audiences',
-  'sync_catalogs',
-  'sync_creatives',
-  'sync_event_sources',
-  'update_media_buy',
-]);
-
 describe('#1383 — `not`-keyword exclusion sweep across all Success/Error response unions', () => {
   for (const toolName of RESPONSES_WITH_NOT_CLAUSE) {
-    const skip = SCHEMA_LOADER_AMBIGUOUS_REF_SKIP.has(toolName);
-    it(`${toolName}: empty payload surfaces no \`not\`-keyword issue`, { skip }, () => {
+    it(`${toolName}: empty payload surfaces no \`not\`-keyword issue`, () => {
       // Empty payload is a near-miss for both arms — it satisfies the
       // Error variant's `not.required` clause vacuously (has none of
       // the Success-only fields) and fails the Error variant's
