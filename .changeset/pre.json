@@ -9,13 +9,18 @@
   "changesets": [
     "1853-1818-capability-projection",
     "asset-variant-array-slots",
+    "cluster-3-schema-validation-sweep",
     "codegen-flatten-allof-not-branches",
+    "context-extractors-verdict-outcome-state-fixtures",
     "cut-8-0-beta",
     "enter-pre-mode-beta",
     "fix-zod-schemas-test-envelope-status",
     "governance-agents-categories-removed",
+    "governance-fixtures-verdict-rename",
     "outcome-measurement-rename",
     "product-card-self-rendering",
-    "promote-query-upstream-traffic"
+    "promote-query-upstream-traffic",
+    "source-fixes-1950-union-products-governance",
+    "test-agents-envelope-status"
   ]
 }
