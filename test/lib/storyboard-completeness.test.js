@@ -50,6 +50,22 @@ const HARNESS_TASKS = new Set([
   // inspects the previous step's preview artifact rather than issuing a
   // tool call — no request or response schema applies.
   'expect_substitution_safe',
+  // Rate-limit replay observer (universal/idempotency.yaml). The runner
+  // drives the `rate_limit_trip_runner` contract — fresh-key burst until a
+  // `RATE_LIMITED` arrives, then replays the captured key after
+  // `retry_after` and asserts the response is not the cached rate-limit.
+  // No standalone request shape; the runner builds requests itself.
+  'expect_rate_limit_not_replayed',
+  // Brand.json/JWKS probes (universal/webhook-emission.yaml). The runner
+  // fetches brand.json + walks `agents[].jwks_uri`, then inspects the JWKS
+  // for keys with `adcp_use: "webhook-signing"`. Both are raw HTTP probes
+  // against `brand_json_url` / `jwks_uri`, not AdCP tool calls.
+  'fetch_brand_jwks',
+  // `assert_jwks_purpose` is the runner-side check the spec uses to assert
+  // a JWKS key advertises a specific `adcp_use` purpose (e.g.
+  // `webhook-signing`). No AdCP tool call; the runner inspects the JWKS
+  // fetched in the prior `fetch_brand_jwks` step.
+  'assert_jwks_purpose',
 ]);
 
 // Tasks that reference test-kit data (e.g. "$test_kit.auth.probe_task"). The

@@ -1415,7 +1415,13 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     try {
       const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
       const result = await comply(agentUrl, {
-        storyboards: ['media-buy'],
+        // `billing_gate_dispatch` exercises `sync_accounts` (a real tool)
+        // — discovery returns 401, so the tool isn't reachable, and the
+        // overall result should fall through to `auth_required`. The
+        // earlier choice `creative_sales_agent` was removed from the spec
+        // bundle in 3.1.0-beta.3; any tool-driven storyboard works for
+        // this assertion.
+        storyboards: ['billing_gate_dispatch'],
         allow_http: true,
         timeout_ms: 30000,
       });
