@@ -1942,21 +1942,30 @@ async function executeStoryboardPass(
     if (phase.not_applicable_if_response) {
       const gateDetail = evaluateResponseNotApplicableGate(phase.not_applicable_if_response, context);
       if (gateDetail !== null) {
-        const gateSteps: StoryboardStepResult[] = phase.steps.map(step => ({
-          storyboard_id: storyboard.id,
-          step_id: step.id,
-          phase_id: phase.id,
-          title: step.title,
-          task: step.task,
-          passed: true,
-          skipped: true,
-          skip_reason: 'not_applicable' as const,
-          skip: buildSkip('not_applicable', gateDetail),
-          duration_ms: 0,
-          validations: [],
-          context,
-          extraction: { path: 'none' },
-        }));
+        const gateSteps: StoryboardStepResult[] = phase.steps.map(step => {
+          const gateStep: StoryboardStepResult = {
+            storyboard_id: storyboard.id,
+            step_id: step.id,
+            phase_id: phase.id,
+            title: step.title,
+            task: step.task,
+            passed: true,
+            skipped: true,
+            skip_reason: 'not_applicable' as const,
+            skip: buildSkip('not_applicable', gateDetail),
+            duration_ms: 0,
+            validations: [],
+            context,
+            // `agent_url` / `agent_index` are intentionally absent — no dispatch
+            // ran for this phase, consistent with seeding-cascade skips.
+            extraction: { path: 'none' },
+          };
+          // Register each gate-skipped step so downstream `priorStepResults`
+          // lookups (e.g. `contributes_if`, per-step assertions) get a
+          // valid result rather than undefined.
+          priorStepResults.set(step.id, gateStep);
+          return gateStep;
+        });
         phaseResults.push({
           phase_id: phase.id,
           phase_title: phase.title,
