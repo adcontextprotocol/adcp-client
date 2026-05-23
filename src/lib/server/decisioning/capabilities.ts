@@ -157,6 +157,15 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   frequency_capping?: NonNullable<_MediaBuyCapabilities['frequency_capping']>;
 
   /**
+   * Whether this seller commits to the proposal lifecycle on get_products.
+   * Projected onto `get_adcp_capabilities.media_buy.supports_proposals`.
+   * Direct-buy sellers should declare `false` so proposal-only compliance
+   * storyboards are skipped; sellers with a ProposalManager are auto-derived
+   * as `true` unless they override this explicitly.
+   */
+  supportsProposals?: boolean;
+
+  /**
    * Brand-protocol capabilities. Projected onto the wire `brand` block of
    * `get_adcp_capabilities` (`brand: { rights, right_types, available_uses,
    * generation_providers, description }`). The framework auto-derives

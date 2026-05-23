@@ -2708,14 +2708,16 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   }
 
   // identifier_paths: extract every value at each declared path against the
-  // storyboard's sample_request (author-controlled vectors), then assert each
-  // resolved value appears at any depth in some matched call's payload. Spec
-  // is explicit: ALL resolved values must be present — single-placeholder
-  // fabrication is the threat. Replaces the earlier `buyer_identifier_echo`
-  // boolean shorthand per spec PR adcp#3816.
+  // resolved request the runner sent, then assert each resolved value appears
+  // at any depth in some matched call's payload. Fall back to the raw
+  // sample_request for direct validator tests and older callers that do not
+  // pass request records. Spec is explicit: ALL resolved values must be
+  // present — single-placeholder fabrication is the threat. Replaces the
+  // earlier `buyer_identifier_echo` boolean shorthand per spec PR adcp#3816.
   const missingIdentifierValues: unknown[] = [];
   if (validation.identifier_paths && validation.identifier_paths.length > 0) {
-    const sample = ctx.storyboardStep?.sample_request;
+    const requestPayload = isRefObject(ctx.request?.payload) ? ctx.request.payload : undefined;
+    const sample = requestPayload ?? ctx.storyboardStep?.sample_request;
     for (const path of validation.identifier_paths) {
       const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
       for (const vector of vectors) {

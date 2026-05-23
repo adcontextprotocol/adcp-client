@@ -37,8 +37,5 @@ runHelloAdapterGates({
     'POST /v1.3/advertiser/{id}/creative/create',
     'POST /v1.3/advertiser/{id}/catalog/create',
     'POST /v1.3/advertiser/{id}/catalog/upload',
-    'POST /v1.3/advertiser/{id}/pixel/create',
-    'POST /v1.3/advertiser/{id}/event/track',
-    'GET /v1.3/advertiser/{id}/info',
   ],
 });

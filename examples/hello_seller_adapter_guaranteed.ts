@@ -516,6 +516,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     specialisms: ['sales-guaranteed'] as const,
     channels: ['olv', 'ctv', 'display'] as const,
     pricingModels: ['cpm'] as const,
+    supportsProposals: false,
     config: {},
     // Declares the comply_test_controller surface so the conformance
     // runner picks up `controller_detected: true` and grades missing

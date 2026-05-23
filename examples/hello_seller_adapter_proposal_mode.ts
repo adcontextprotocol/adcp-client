@@ -68,7 +68,7 @@ import type {
 // Wire `Product` and `Proposal` aren't directly re-exported from
 // `@adcp/sdk/types` — derive from the response array (same pattern as
 // `hello_seller_adapter_guaranteed.ts`).
-type Product = GetProductsResponse['products'][number];
+type Product = NonNullable<GetProductsResponse['products']>[number];
 type Proposal = NonNullable<GetProductsResponse['proposals']>[number];
 type Package = CreateMediaBuySuccess['packages'][number];
 
@@ -324,6 +324,16 @@ function projectProposal(up: UpstreamProposal, total_budget?: { amount: number; 
         ? `Locked at ${a.locked_cpm} ${total_budget?.currency ?? 'USD'} CPM.`
         : `Indicative pricing ${a.indicative_cpm} CPM.`,
     })),
+    ...(up.status === 'committed' && {
+      insertion_order: {
+        io_id: `io_${up.proposal_id}`,
+        requires_signature: false,
+        terms: {
+          publisher: up.network_code,
+          ...(total_budget && { total_budget }),
+        },
+      },
+    }),
     ...(up.expires_at !== undefined && { expires_at: up.expires_at }),
     ...(total_budget && { total_budget }),
   };
@@ -343,7 +353,7 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
     const networkCode = ctx.account.ctx_metadata.network_code;
     const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
     const products = await upstream.listProducts(networkCode);
-    if (products.length === 0) return { products: [] };
+    if (products.length === 0) return { status: 'completed', cache_scope: 'public', products: [] };
 
     // brief + total_budget signals → curated proposal. Without a brief
     // the buyer is browsing the catalog; skip proposal generation.
@@ -352,7 +362,7 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
     if (!brief) {
       // Catalog mode — return products with recipes, no proposals.
       const productsOut = products.map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
-      return { products: productsOut };
+      return { status: 'completed', cache_scope: 'public', products: productsOut };
     }
 
     const draft = await upstream.createProposal(networkCode, {
@@ -364,6 +374,8 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
       .filter(p => referencedIds.has(p.product_id))
       .map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
     return {
+      status: 'completed',
+      cache_scope: 'public',
       products: productsOut,
       proposals: [projectProposal(draft, totalBudget)],
     };
@@ -390,6 +402,8 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
       .filter(p => referencedIds.has(p.product_id))
       .map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
     return {
+      status: 'completed',
+      cache_scope: 'public',
       products: productsOut,
       proposals: [projectProposal(refined)],
       refinement_applied: refine.map(r => ({
@@ -449,7 +463,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
   // getProducts is owned by proposalManager when wired; the framework
   // routes there. We keep this empty at the type level — the framework
   // never reaches it.
-  getProducts: async () => ({ products: [] }),
+  getProducts: async () => ({ status: 'completed', cache_scope: 'public', products: [] }),
 
   async createMediaBuy(req: CreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess> {
     const networkCode = ctx.account.ctx_metadata.network_code;
@@ -529,6 +543,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
       });
     }
     return {
+      status: 'completed',
       reporting_period: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T23:59:59Z' },
       currency: 'USD',
       media_buy_deliveries: deliveries,
@@ -536,7 +551,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
   },
 
   async getMediaBuys(_req: GetMediaBuysRequest): Promise<GetMediaBuysResponse> {
-    return { media_buys: [] };
+    return { status: 'completed', media_buys: [] };
   },
 };
 

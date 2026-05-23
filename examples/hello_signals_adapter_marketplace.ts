@@ -79,6 +79,20 @@ interface UpstreamActivation {
   agent_activation_key?: { agent_segment?: string };
 }
 
+const PLATFORM_CODE_ALIASES: Record<string, string> = {
+  // The compliance storyboard uses the buyer-facing DSP label; the mock
+  // upstream exposes the concrete integration vendor code.
+  'pinnacle-dsp': 'the-trade-desk',
+};
+
+function resolvePlatformDestination(
+  destinations: UpstreamDestination[],
+  requestedPlatform: string
+): UpstreamDestination | undefined {
+  const platformCode = PLATFORM_CODE_ALIASES[requestedPlatform] ?? requestedPlatform;
+  return destinations.find(d => d.platform_type !== 'agent' && d.platform_code === platformCode);
+}
+
 // ---------------------------------------------------------------------------
 // Upstream-traffic recorder (sandbox-only, opts into `upstream_traffic` storyboard checks)
 // ---------------------------------------------------------------------------
@@ -405,7 +419,11 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
               sid.id === c.data_provider_id
           );
         });
-        return { status: 'completed', signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
+        return {
+          status: 'completed',
+          cache_scope: 'public',
+          signals: filtered.map(toAdcpSignal),
+        } satisfies GetSignalsResponse;
       }),
 
     activateSignal: (req: ActivateSignalRequest, ctx): Promise<ActivateSignalSuccess> =>
@@ -433,7 +451,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
           req.destinations.map(async (dest, i) => {
             const matched =
               dest.type === 'platform'
-                ? upstreamDests.find(d => d.platform_type !== 'agent' && d.platform_code === dest.platform)
+                ? resolvePlatformDestination(upstreamDests, dest.platform)
                 : upstreamDests.find(d => d.platform_type === 'agent' && d.agent_url === dest.agent_url);
             if (!matched) {
               const target = dest.type === 'platform' ? dest.platform : dest.agent_url;

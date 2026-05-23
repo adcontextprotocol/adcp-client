@@ -2709,6 +2709,36 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
   }
 }
 
+const MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT = new Set([
+  'create_media_buy',
+  'update_media_buy',
+  'cancel_media_buy',
+]);
+
+const MEDIA_BUY_STATUS_VALUES = new Set([
+  'pending_creatives',
+  'pending_start',
+  'active',
+  'paused',
+  'completed',
+  'rejected',
+  'canceled',
+]);
+
+function normalizeMediaBuyStatusCollision(response: McpToolResponse, toolName: string): void {
+  if (!MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT.has(toolName)) return;
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return;
+  const status = sc.status;
+  if (typeof status !== 'string' || !MEDIA_BUY_STATUS_VALUES.has(status)) return;
+  const looksLikeMediaBuyPayload =
+    typeof sc.media_buy_id === 'string' || 'media_buy_status' in sc || Array.isArray(sc.packages);
+  if (!looksLikeMediaBuyPayload) return;
+  if (sc.media_buy_status === undefined) sc.media_buy_status = status;
+  delete sc.status;
+  syncContentJsonText(response, sc);
+}
+
 function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
   if (!servedVersion) return;
   // Normalize to release-precision (`3.1-beta.3`) before emitting — the wire
@@ -3476,6 +3506,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, toolsWithErrorArm);
+          normalizeMediaBuyStatusCollision(response, toolName);
           injectEnvelopeStatusIntoResponse(response);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
@@ -4687,6 +4718,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 });
               }
             }
+          }
+
+          if (!isErrorResponse(formatted)) {
+            normalizeMediaBuyStatusCollision(formatted, toolName);
+            injectEnvelopeStatusIntoResponse(formatted);
           }
 
           // --- Response schema validation (opt-in) ---

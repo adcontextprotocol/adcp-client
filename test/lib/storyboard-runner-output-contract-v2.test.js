@@ -193,6 +193,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         ...(opts.unresolvedSinceRefs && { unresolvedSinceRefs: opts.unresolvedSinceRefs }),
       },
       ...(opts.storyboardStep && { storyboardStep: opts.storyboardStep }),
+      ...(opts.request && { request: opts.request }),
     };
   }
 
@@ -553,6 +554,39 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       ctx
     );
     assert.equal(result.passed, true);
+  });
+
+  test('identifier_paths uses resolved request payload when sample_request contains context placeholders', () => {
+    const vector = 'cohort_real_1';
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [makeCall({ payload: { cohort_id: vector } })],
+      },
+      {
+        storyboardStep: {
+          sample_request: { signal_agent_segment_id: '$context.first_signal_agent_segment_id' },
+        },
+        request: {
+          transport: 'mcp',
+          operation: 'activate_signal',
+          payload: { signal_agent_segment_id: vector },
+        },
+      }
+    );
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'echo resolved identifier paths',
+          identifier_paths: ['signal_agent_segment_id'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.actual.missing_identifier_values, []);
   });
 
   test('identifier_paths fails when ANY resolved value is missing (anti-fabrication)', () => {
