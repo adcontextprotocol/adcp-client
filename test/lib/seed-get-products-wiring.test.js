@@ -364,7 +364,7 @@ describe('createAdcpServer — seeded get_products under strict response validat
       // Strict response validation ON — no opt-out.
       validation: { requests: 'off', responses: 'strict' },
       mediaBuy: {
-        getProducts: async () => ({ products: [makeStrictProduct('handler-1')] }),
+        getProducts: async () => ({ products: [makeStrictProduct('handler-1')], cache_scope: 'public' }),
       },
       testController: {
         getSeededProducts: () => [makeStrictProduct('seed-1'), makeStrictProduct('seed-2')],

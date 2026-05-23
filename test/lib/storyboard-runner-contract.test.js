@@ -142,6 +142,19 @@ describe('runner-output contract: validation_result', () => {
       assert.strictEqual(absent.passed, true);
     });
 
+    test('treats task envelope status as absent when checking legacy media buy status', () => {
+      const result = runOne(
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          value: 'pending_creatives',
+          description: 'legacy media buy status is either absent or pending_creatives',
+        },
+        { taskResult: { success: true, data: { status: 'completed', media_buy_status: 'pending_creatives' } } }
+      );
+      assert.strictEqual(result.passed, true);
+    });
+
     test('with a null field fails (null is present, not absent)', () => {
       const result = runOne(
         {

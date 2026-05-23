@@ -1,7 +1,7 @@
 // End-to-end test: runConformance against a live MCP agent served in-process.
 // Exercises the full fuzz → oracle → report path.
 
-const { test, describe, after } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 
 const { runConformance } = require('../../dist/lib/conformance/index.js');
@@ -57,11 +57,11 @@ function makeSignalsServer() {
   );
 }
 
-describe('conformance: integration', () => {
+describe('conformance: integration', { concurrency: false }, () => {
   let httpServer;
   let port;
 
-  test('setup: start in-process MCP signals agent', async () => {
+  before(async () => {
     httpServer = makeSignalsServer();
     await waitForListening(httpServer);
     port = httpServer.address().port;

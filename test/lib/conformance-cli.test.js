@@ -1,7 +1,7 @@
 // CLI smoke test for `adcp fuzz`. Verifies flag parsing, --help, and
 // end-to-end execution against an in-process signals agent.
 
-const { test, describe, after } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
@@ -43,7 +43,7 @@ describe('adcp fuzz CLI', () => {
   let httpServer;
   let port;
 
-  test('setup: start in-process signals agent', async () => {
+  before(async () => {
     httpServer = serve(
       () =>
         createAdcpServer({
@@ -64,6 +64,9 @@ describe('adcp fuzz CLI', () => {
     assert.equal(code, 0);
     assert.match(stdout, /Usage: adcp fuzz/);
     assert.match(stdout, /--fixture/);
+    assert.match(stdout, /--auth-token-cross-tenant/);
+    assert.match(stdout, /uniform-error/);
+    assert.match(stdout, /ADCP_AUTH_TOKEN_CROSS_TENANT/);
   });
 
   test('--list-tools prints the default tool set', async () => {
@@ -71,6 +74,8 @@ describe('adcp fuzz CLI', () => {
     assert.equal(code, 0);
     assert.match(stdout, /get_signals/);
     assert.match(stdout, /get_creative_delivery/);
+    assert.match(stdout, /get_property_list.*referential/);
+    assert.match(stdout, /update_media_buy.*update.*--auto-seed/);
   });
 
   test('unknown flag → exit 2 with usage hint', async () => {
@@ -160,13 +165,6 @@ describe('adcp fuzz CLI', () => {
     assert.match(stderr, /--fixture name is empty/);
   });
 
-  test('--list-tools annotates Tier-2 tools', async () => {
-    const { code, stdout } = await runCli(['--list-tools']);
-    assert.equal(code, 0);
-    assert.match(stdout, /get_signals\b/);
-    assert.match(stdout, /get_property_list.*referential/);
-  });
-
   test('clean-run output tells the user to pin the seed', async () => {
     const { code, stdout } = await runCli([
       `http://localhost:${port}/mcp`,
@@ -181,20 +179,6 @@ describe('adcp fuzz CLI', () => {
     ]);
     assert.equal(code, 0);
     assert.match(stdout, /Pin this seed in CI: --seed 7/);
-  });
-
-  test('--list-tools marks Tier-3 update tools too', async () => {
-    const { code, stdout } = await runCli(['--list-tools']);
-    assert.equal(code, 0);
-    assert.match(stdout, /update_media_buy.*update.*--auto-seed/);
-  });
-
-  test('--help documents --auth-token-cross-tenant', async () => {
-    const { code, stdout } = await runCli(['--help']);
-    assert.equal(code, 0);
-    assert.match(stdout, /--auth-token-cross-tenant/);
-    assert.match(stdout, /uniform-error/);
-    assert.match(stdout, /ADCP_AUTH_TOKEN_CROSS_TENANT/);
   });
 
   test('--auth-token-cross-tenant missing value exits 2', async () => {

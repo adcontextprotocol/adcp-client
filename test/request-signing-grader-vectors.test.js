@@ -21,9 +21,9 @@ const {
 const loaded = loadRequestSigningVectors();
 
 describe('request-signing vector loader', () => {
-  test('loads 12 positive and 27 negative vectors from the compliance cache', () => {
+  test('loads 12 positive and 28 negative vectors from the compliance cache', () => {
     assert.strictEqual(loaded.positive.length, 12, 'positive count');
-    assert.strictEqual(loaded.negative.length, 27, 'negative count');
+    assert.strictEqual(loaded.negative.length, 28, 'negative count');
   });
 
   test('every vector carries request, verifier_capability, and a jwks selector', () => {

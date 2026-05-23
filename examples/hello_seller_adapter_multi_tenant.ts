@@ -551,10 +551,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           tenant.governanceBindings.delete(brandDomain);
         }
       }
-      const echoedAgents = entry.governance_agents.map(a => ({
-        url: a.url,
-        ...(a.categories && { categories: a.categories }),
-      }));
+      const echoedAgents = entry.governance_agents.map(a => ({ url: a.url }));
       return {
         account: entry.account,
         status: 'synced' as const,
@@ -594,7 +591,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       // pre-existing plan.
       const firstNew = (req.plans ?? [])[0]?.plan_id;
       if (firstNew && !tenant.active_plan_id) tenant.active_plan_id = firstNew;
-      return { plans };
+      return { status: 'completed', plans };
     },
 
     checkGovernance: async (req: CheckGovernanceRequest, ctx): Promise<CheckGovernanceResponse> => {
@@ -615,18 +612,18 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           : (proposed.packages ?? []).reduce((s, p) => s + (p.budget ?? 0), 0);
 
       const overBudget = proposedBudget > plan.budget_total;
-      const status = overBudget ? 'denied' : plan.custom_policies.length > 0 ? 'conditions' : 'approved';
+      const verdict = overBudget ? 'denied' : plan.custom_policies.length > 0 ? 'conditions' : 'approved';
 
       const response: CheckGovernanceResponse = {
         check_id: checkId,
-        status,
+        verdict,
         plan_id: plan.plan_id,
         explanation: overBudget
           ? `Proposed spend ${proposedBudget} ${plan.currency} exceeds plan budget ${plan.budget_total} ${plan.currency}.`
-          : status === 'conditions'
+          : verdict === 'conditions'
             ? 'Approved with custom policy conditions.'
             : 'Approved.',
-        ...(status === 'denied' && {
+        ...(verdict === 'denied' && {
           findings: [
             {
               category_id: 'budget_compliance',
@@ -635,13 +632,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
             },
           ],
         }),
-        ...(status === 'conditions' && {
+        ...(verdict === 'conditions' && {
           conditions: plan.custom_policies.map(p => ({
             field: `payload.${p.policy_id}`,
             reason: p.policy,
           })),
         }),
-        ...(status !== 'denied' && {
+        ...(verdict !== 'denied' && {
           governance_context: `gov_ctx_${plan.plan_id}_${checkId}`,
           expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         }),
@@ -651,7 +648,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         timestamp: new Date().toISOString(),
         kind: 'check',
         check_id: checkId,
-        detail: { status, proposed_budget: proposedBudget },
+        detail: { verdict, proposed_budget: proposedBudget },
       });
       return response;
     },
@@ -674,7 +671,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       });
       return {
         outcome_id: randomUUID(),
-        status: 'accepted',
+        outcome_state: 'accepted',
         committed_budget: committed,
         plan_summary: {
           total_committed: committed,
@@ -702,7 +699,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           governed_actions: [],
         };
       });
-      return { plans };
+      return { status: 'completed', plans };
     },
   });
 
@@ -726,7 +723,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       };
       const auth_token = `pltok_${randomUUID().replace(/-/g, '')}`;
       tenant.propertyLists.set(listId, { list, auth_token });
-      return { list, auth_token };
+      return { status: 'completed', list, auth_token };
     },
 
     updatePropertyList: async (req: UpdatePropertyListRequest, ctx): Promise<UpdatePropertyListResponse> => {
@@ -748,7 +745,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         updated_at: new Date().toISOString(),
       };
       stored.list = updated;
-      return { list: updated };
+      return { status: 'completed', list: updated };
     },
 
     getPropertyList: async (req: GetPropertyListRequest, ctx): Promise<GetPropertyListResponse> => {
@@ -761,6 +758,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         });
       }
       return {
+        status: 'completed',
         list: stored.list,
         identifiers: [],
         resolved_at: new Date().toISOString(),
@@ -774,13 +772,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       const filtered = req.name_contains
         ? all.filter(l => l.name.toLowerCase().includes(req.name_contains!.toLowerCase()))
         : all;
-      return { lists: filtered };
+      return { status: 'completed', lists: filtered };
     },
 
     deletePropertyList: async (req: DeletePropertyListRequest, ctx): Promise<DeletePropertyListResponse> => {
       const tenant = getTenant(ctx);
       const existed = tenant.propertyLists.delete(req.list_id);
-      return { deleted: existed, list_id: req.list_id };
+      return { status: 'completed', deleted: existed, list_id: req.list_id };
     },
   });
 
@@ -879,7 +877,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       if (unsupported.length > 0) {
         return {
           rights_id: offering.rights_id,
-          status: 'rejected',
+          rights_status: 'rejected',
           brand_id: offering.brand_id,
           reason: `Requested uses [${unsupported.join(', ')}] are not covered by offering ${offering.rights_id}.`,
           suggestions: [`This offering covers: ${offering.available_uses.join(', ')}.`],
@@ -891,7 +889,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       // tenant-scoped persistence when wiring a real backend.
       return {
         rights_id: offering.rights_id,
-        status: 'acquired',
+        rights_status: 'acquired',
         brand_id: offering.brand_id,
         terms: {
           pricing_option_id: offering.pricing_option_id,
@@ -936,7 +934,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       // adopters validate brand-guideline compliance, queue for human review,
       // or reject with structured `reason` + `suggestions[]`.
       return {
-        status: 'approved',
+        approval_status: 'approved',
         rights_id: req.rights_id,
         ...(req.creative_id !== undefined && { creative_id: req.creative_id }),
       };
@@ -1010,7 +1008,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       },
       ctx
     );
-    if (govResp.status !== 'denied') return null;
+    if (govResp.verdict !== 'denied') return null;
 
     // Spec-correct denial shape: `AcquireRightsRejected` with `reason`
     // (and optional `suggestions`). Don't echo the buyer-controlled
@@ -1020,7 +1018,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
     // belongs in server-side logs, not the buyer envelope.
     return {
       rights_id: offering.rights_id,
-      status: 'rejected',
+      rights_status: 'rejected',
       brand_id: offering.brand_id,
       reason: `Denied by governance plan ${planId}: ${govResp.explanation}`,
       ...(govResp.findings &&

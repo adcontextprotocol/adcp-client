@@ -191,6 +191,7 @@ interface ObjectShape {
   properties: Record<string, JsonSchema>;
   required: Set<string>;
   additionalProperties: boolean | JsonSchema;
+  hasPatternProperties: boolean;
 }
 
 function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Record<string, unknown>> {
@@ -212,6 +213,7 @@ function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Rec
 
   let withDeps = base;
   if (dependencies.length > 0) withDeps = base.map(value => enforceDependencies(value, dependencies));
+  withDeps = withDeps.map(value => enforceKnownConditionals(value, shape));
 
   // Unknown-property probe: when the schema allows additional properties,
   // sometimes inject one. Exercises the "unknown-field tolerance"
@@ -219,8 +221,59 @@ function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Rec
   // strict struct and reject keys they weren't expecting. Kept at ~15%
   // frequency and capped at one extra key so overall sample validity
   // stays high; the oracle's two-path design absorbs the rest.
-  if (shape.additionalProperties !== true) return withDeps;
+  if (shape.additionalProperties !== true || shape.hasPatternProperties) return withDeps;
   return withDeps.chain(value => injectExtraProperty(value, declared));
+}
+
+function enforceKnownConditionals(value: Record<string, unknown>, shape: ObjectShape): Record<string, unknown> {
+  let current = value;
+
+  if (declares(shape, 'discovery_mode')) {
+    current = enforceSignalsDiscoveryMode(current);
+  }
+
+  if (declares(shape, 'format_id') && declares(shape, 'format_kind')) {
+    current = enforceCreativeManifestFormatSelector(current);
+  }
+
+  return current;
+}
+
+function declares(shape: ObjectShape, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(shape.properties, key);
+}
+
+function enforceSignalsDiscoveryMode(value: Record<string, unknown>): Record<string, unknown> {
+  const hasWholesaleVersion = 'if_wholesale_feed_version' in value || 'if_pricing_version' in value;
+  const current = { ...value };
+
+  if (hasWholesaleVersion) {
+    current.discovery_mode = 'wholesale';
+  }
+
+  if (current.discovery_mode === 'wholesale') {
+    delete current.signal_spec;
+    delete current.signal_ids;
+    return current;
+  }
+
+  if (!('signal_spec' in current) && !('signal_ids' in current)) {
+    current.signal_spec = 'conformance probe';
+  }
+
+  return current;
+}
+
+function enforceCreativeManifestFormatSelector(value: Record<string, unknown>): Record<string, unknown> {
+  const current = { ...value };
+
+  if ('format_id' in current && 'format_kind' in current) {
+    delete current.format_kind;
+  } else if (!('format_id' in current) && !('format_kind' in current)) {
+    current.format_kind = 'image';
+  }
+
+  return current;
 }
 
 /**
@@ -293,7 +346,7 @@ function readObjectShape(schema: JsonSchema): ObjectShape {
     typeof schema.additionalProperties === 'boolean'
       ? schema.additionalProperties
       : ((schema.additionalProperties as JsonSchema | undefined) ?? true);
-  return { properties, required, additionalProperties };
+  return { properties, required, additionalProperties, hasPatternProperties: !!schema.patternProperties };
 }
 
 function collectAnyOfRequired(schema: JsonSchema): string[][] {

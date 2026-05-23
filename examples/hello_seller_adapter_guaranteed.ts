@@ -751,7 +751,11 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { status: 'completed', products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
+      return {
+        status: 'completed',
+        products: guaranteed.map(p => projectProduct(p, publisherDomain)),
+        cache_scope: 'account',
+      };
     },
 
     /**
@@ -915,7 +919,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         localBuyStatus.set(order.order_id, 'pending_creatives');
         return {
           media_buy_id: order.order_id,
-          status: 'pending_creatives',
+          media_buy_status: 'pending_creatives',
           confirmed_at: new Date().toISOString(),
           packages: packagesOut,
         };
@@ -1010,7 +1014,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // worked example just echoes success with the post-transition status.
       return {
         media_buy_id: buyId,
-        status: nextStatus,
+        media_buy_status: nextStatus,
       };
     },
 

@@ -30,7 +30,7 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
-import { toJsonPointer } from './path';
+import { resolvePath, toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
@@ -42,10 +42,12 @@ import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
   probeOauthAuthServerMetadata,
+  fetchProbe,
   rawMcpProbe,
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
 } from './probes';
+import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -80,6 +82,7 @@ import type {
   RequirementName,
   RunnerSkipReason,
   RunnerNotice,
+  ResponseNotApplicableGate,
   StepAuthDirective,
   Storyboard,
   StoryboardStep,
@@ -267,6 +270,138 @@ export function evaluateCapabilityPredicate(
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
+}
+
+interface ResponseDerivedSkip {
+  detail: string;
+  contextKeys: string[];
+}
+
+function detectResponseDerivedNotApplicable(
+  step: StoryboardStep,
+  request: Record<string, unknown>,
+  response: unknown,
+  runState?: ExecutionState,
+  allSteps?: Array<{ step: StoryboardStep }>
+): ResponseDerivedSkip | null {
+  if (response === undefined || response === null) return null;
+  const gates = [
+    ...normalizeResponseNotApplicableGates(step.not_applicable_if),
+    ...inferImplicitResponseNotApplicableGates(step, request, runState, allSteps),
+  ];
+  for (const gate of gates) {
+    if (gate.kind !== 'terminal_page') continue;
+    if (!terminalPageGateMatches(gate, request, response)) continue;
+    const detail =
+      gate.detail ??
+      `${gate.reason ?? 'single_page_result'}: ${step.task} response is terminal; cursor-walk not applicable`;
+    return {
+      detail,
+      contextKeys: responseNotApplicableContextKeys(step, gate),
+    };
+  }
+  return null;
+}
+
+function normalizeResponseNotApplicableGates(gates: StoryboardStep['not_applicable_if']): ResponseNotApplicableGate[] {
+  if (!gates) return [];
+  return Array.isArray(gates) ? gates : [gates];
+}
+
+function inferImplicitResponseNotApplicableGates(
+  step: StoryboardStep,
+  request: Record<string, unknown>,
+  runState?: ExecutionState,
+  allSteps?: Array<{ step: StoryboardStep }>
+): ResponseNotApplicableGate[] {
+  // Back-compat for the already-published pagination_integrity_list_accounts
+  // storyboard: it expresses the continuation requirement as validations
+  // rather than a dedicated response-derived gate. Keep this narrowly scoped
+  // to list_accounts so other seeded pagination storyboards do not silently
+  // waive fixture/setup mistakes.
+  if (step.task !== 'list_accounts') return [];
+  const expectsContinuation = step.validations?.some(
+    v => v.check === 'field_value' && v.path === 'pagination.has_more' && v.value === true
+  );
+  const capturesCursor = step.context_outputs?.some(o => o.path === 'pagination.cursor');
+  const validatesCursor = step.validations?.some(v => v.check === 'field_present' && v.path === 'pagination.cursor');
+  if (!expectsContinuation || (!capturesCursor && !validatesCursor)) return [];
+  const maxResults = resolvePath(request, 'pagination.max_results');
+  if (
+    typeof maxResults === 'number' &&
+    Number.isFinite(maxResults) &&
+    hasUnrunAccountSeedExceedingPageSize(allSteps, runState, maxResults)
+  ) {
+    return [];
+  }
+  const setupAccounts = resolvePath(runState?.priorStepResults.get('sync_three_accounts')?.response, 'accounts');
+  if (
+    typeof maxResults === 'number' &&
+    Number.isFinite(maxResults) &&
+    Array.isArray(setupAccounts) &&
+    setupAccounts.length > maxResults
+  ) {
+    return [];
+  }
+  return [{ kind: 'terminal_page', items_path: 'accounts', reason: 'single_page_result' }];
+}
+
+function hasUnrunAccountSeedExceedingPageSize(
+  allSteps: Array<{ step: StoryboardStep }> | undefined,
+  runState: ExecutionState | undefined,
+  maxResults: number
+): boolean {
+  return (
+    allSteps?.some(({ step }) => {
+      if (runState?.priorStepResults.has(step.id)) return false;
+      if (step.task !== 'sync_accounts') return false;
+      const accounts = resolvePath(step.sample_request, 'accounts');
+      return Array.isArray(accounts) && accounts.length > maxResults;
+    }) ?? false
+  );
+}
+
+function terminalPageGateMatches(
+  gate: Extract<ResponseNotApplicableGate, { kind: 'terminal_page' }>,
+  request: Record<string, unknown>,
+  response: unknown
+): boolean {
+  const maxResults = resolvePath(request, gate.request_max_results_path ?? 'pagination.max_results');
+  if (typeof maxResults !== 'number' || !Number.isFinite(maxResults) || maxResults <= 0) return false;
+
+  const items = resolvePath(response, gate.items_path);
+  if (!Array.isArray(items)) return false;
+
+  const pagination = resolvePath(response, 'pagination');
+  if (pagination === undefined || pagination === null) return items.length < maxResults;
+  if (typeof pagination !== 'object' || Array.isArray(pagination)) return false;
+
+  const p = pagination as Record<string, unknown>;
+  if (p.has_more === true) return false;
+  if (p.has_more !== false) return false;
+  if (typeof p.total_count === 'number' && p.total_count > items.length) return false;
+  if (items.length < maxResults) return true;
+  return typeof p.total_count === 'number' && p.total_count <= items.length;
+}
+
+function responseNotApplicableContextKeys(
+  step: StoryboardStep,
+  gate: Extract<ResponseNotApplicableGate, { kind: 'terminal_page' }>
+): string[] {
+  if (gate.context_keys?.length) return gate.context_keys;
+  return (step.context_outputs ?? [])
+    .filter(o => o.path === 'pagination.cursor')
+    .map(o => o.key)
+    .filter((key): key is string => typeof key === 'string' && key.length > 0);
+}
+
+function responseDerivedContextResult(
+  runState: ExecutionState
+): Pick<StoryboardStepResult, 'response_derived_not_applicable_context_keys'> {
+  const entries = runState.responseDerivedNotApplicableContextKeys;
+  return entries && entries.size > 0
+    ? { response_derived_not_applicable_context_keys: Object.fromEntries(entries) }
+    : {};
 }
 
 /**
@@ -1620,6 +1755,7 @@ async function executeStoryboardPass(
   const contextProvenance = new Map<string, ContextProvenanceEntry>();
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const stepRequestStarts = new Map<string, string>();
+  const responseDerivedNotApplicableContextKeys = new Map<string, string>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -2137,6 +2273,7 @@ async function executeStoryboardPass(
         contextProvenance,
         priorA2aEnvelopes,
         stepRequestStarts,
+        responseDerivedNotApplicableContextKeys,
         agentLibraryVersion: profile?.library_version,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -2919,6 +3056,9 @@ export async function runStoryboardStep(
   // previous step's result). Storyboard-level runs build this internally;
   // here the caller owns accumulation across stateless invocations.
   const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
+  const responseDerivedNotApplicableContextKeys = new Map<string, string>(
+    Object.entries(options.response_derived_not_applicable_context_keys ?? {})
+  );
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
     contributions: new Set(),
     priorStepResults: new Map(),
@@ -2929,6 +3069,7 @@ export async function runStoryboardStep(
     contextProvenance,
     priorA2aEnvelopes: new Map(),
     stepRequestStarts: new Map(),
+    responseDerivedNotApplicableContextKeys,
     agentLibraryVersion: profile?.library_version,
   });
 
@@ -2959,6 +3100,12 @@ interface ExecutionState {
    * step in the run has fired a request yet.
    */
   stepRequestStarts?: Map<string, string>;
+  /**
+   * Context keys whose producer step was response-gated as not_applicable.
+   * Consumer steps referencing only these keys should skip as not_applicable
+   * rather than prerequisite_failed.
+   */
+  responseDerivedNotApplicableContextKeys?: Map<string, string>;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
   /** Shared runner-variable bag for `{{runner.*}}` substitution. */
@@ -3011,6 +3158,7 @@ async function executeStep(
     agentUrl: '',
     contextProvenance: new Map(),
     stepRequestStarts: new Map(),
+    responseDerivedNotApplicableContextKeys: new Map(),
   };
 
   // HTTP probe tasks bypass the MCP client entirely.
@@ -3190,44 +3338,50 @@ async function executeStep(
   const unresolvedVars = findUnresolvedContextVars(request);
   if (unresolvedVars.length > 0 && !step.expect_error) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
-    const detail = `Skipped: unresolved context variables from prior steps: ${unresolvedVars.map(v => v.key).join(', ')}.`;
-    // Per runner-output-contract.yaml v2.0.0, a skipped consumer step MUST
-    // carry an `unresolved_substitution` validation result for each missing
-    // token — `expected` is the token string, `actual` / `json_pointer` /
-    // `request` / `response` are null (pre-wire failure; no response payload
-    // exists). Surfacing this as a validation rather than only a skip detail
-    // keeps the runner-output contract's "failed/skipped steps include at
-    // least one validation result" invariant intact and lets dashboards
-    // attribute the cascade origin without parsing the skip message.
-    const seenTokens = new Set<string>();
+    const responseDerivedDetails = unresolvedVars
+      .map(v => runState.responseDerivedNotApplicableContextKeys?.get(v.key))
+      .filter((d): d is string => typeof d === 'string');
+    const allResponseDerived =
+      responseDerivedDetails.length === unresolvedVars.length && responseDerivedDetails.length > 0;
+    const detail = allResponseDerived
+      ? [...new Set(responseDerivedDetails)].join('; ')
+      : `Skipped: unresolved context variables from prior steps: ${unresolvedVars.map(v => v.key).join(', ')}.`;
+    // Normal unresolved substitutions carry one validation result per missing
+    // token. Response-derived terminal-page skips are already successful
+    // not_applicable rows, so their downstream cursor consumers stay validation
+    // empty to avoid inventing a failing-looking check for an expected skip.
     const synthesized: ValidationResult[] = [];
-    for (const v of unresolvedVars) {
-      if (seenTokens.has(v.token)) continue;
-      seenTokens.add(v.token);
-      synthesized.push({
-        check: 'unresolved_substitution',
-        passed: false,
-        description: `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
-        json_pointer: null,
-        expected: v.token,
-        actual: null,
-        schema_id: null,
-        schema_url: null,
-      });
+    if (!allResponseDerived) {
+      const seenTokens = new Set<string>();
+      for (const v of unresolvedVars) {
+        if (seenTokens.has(v.token)) continue;
+        seenTokens.add(v.token);
+        synthesized.push({
+          check: 'unresolved_substitution',
+          passed: false,
+          description: `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
+          json_pointer: null,
+          expected: v.token,
+          actual: null,
+          schema_id: null,
+          schema_url: null,
+        });
+      }
     }
     return {
       step_id: step.id,
       phase_id: phaseId,
       title: step.title,
       task: step.task,
-      passed: false,
+      passed: allResponseDerived,
       skipped: true,
-      skip_reason: 'prerequisite_failed',
-      skip: buildSkip('prerequisite_failed', detail),
+      skip_reason: allResponseDerived ? 'not_applicable' : 'prerequisite_failed',
+      skip: buildSkip(allResponseDerived ? 'not_applicable' : 'prerequisite_failed', detail),
       duration_ms: 0,
       validations: synthesized,
       context,
-      error: detail,
+      ...responseDerivedContextResult(runState),
+      ...(!allResponseDerived && { error: detail }),
       next,
       extraction: { path: 'none' },
     };
@@ -3592,6 +3746,39 @@ async function executeStep(
     taskResult = { ...taskResult, data: { error: taskResult.error } };
   }
 
+  const responseDerivedSkip = detectResponseDerivedNotApplicable(
+    effectiveStep,
+    request,
+    taskResult?.data,
+    runState,
+    allSteps
+  );
+  if (responseDerivedSkip && !step.expect_error) {
+    for (const key of responseDerivedSkip.contextKeys) {
+      runState.responseDerivedNotApplicableContextKeys?.set(key, responseDerivedSkip.detail);
+    }
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_applicable',
+      skip: buildSkip('not_applicable', responseDerivedSkip.detail),
+      duration_ms: stepResult.duration_ms,
+      validations: [],
+      context,
+      ...responseDerivedContextResult(runState),
+      response: redactSecrets(taskResult?.data),
+      next,
+      request: requestRecord,
+      ...(responseRecord && { response_record: responseRecord }),
+      extraction: extractionFromTaskResult(taskResult),
+    };
+  }
+
   // Determine pass/fail — inverted when expect_error is set
   let passed: boolean;
   if (step.expect_error) {
@@ -3773,6 +3960,9 @@ async function executeStep(
   if (passed && hasData && taskResult) {
     const extracted = extractContextWithProvenance(effectiveStep.task, taskResult.data, step.id);
     Object.assign(updatedContext, extracted.values);
+    for (const key of Object.keys(extracted.values)) {
+      runState.responseDerivedNotApplicableContextKeys?.delete(key);
+    }
     if (runState.contextProvenance) {
       for (const [key, entry] of Object.entries(extracted.provenance)) {
         runState.contextProvenance.set(key, entry);
@@ -3791,6 +3981,9 @@ async function executeStep(
   // ensures the minted value from any same-step $generate:…#<key> inline
   // substitution is visible here.
   if (step.context_outputs?.length) {
+    for (const output of step.context_outputs) {
+      if (output.key) runState.responseDerivedNotApplicableContextKeys?.delete(output.key);
+    }
     // Resolve `task_completion.<path>` outputs against the eventual task
     // artifact rather than the immediate response. When the immediate
     // response is a submitted-arm envelope (HITL / async-signed-IO flows),
@@ -3829,6 +4022,9 @@ async function executeStep(
       updatedContext
     );
     Object.assign(updatedContext, explicit.values);
+    for (const key of Object.keys(explicit.values)) {
+      runState.responseDerivedNotApplicableContextKeys?.delete(key);
+    }
     if (runState.contextProvenance) {
       for (const [key, entry] of Object.entries(explicit.provenance)) {
         runState.contextProvenance.set(key, entry);
@@ -3963,6 +4159,7 @@ async function executeStep(
       runState.contextProvenance.size > 0 && {
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
+    ...responseDerivedContextResult(runState),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
@@ -3989,7 +4186,24 @@ async function executeProbeStep(
   let httpResult: HttpProbeResult | undefined;
   const probeOpts = { allowPrivateIp: options.allow_http === true };
 
-  if (step.task === 'protected_resource_metadata') {
+  if (step.requires_contract) {
+    const contracts = new Set(options.contracts ?? []);
+    if (!contracts.has(step.requires_contract)) {
+      httpResult = {
+        url: runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: null,
+        skipped: true,
+        skip_reason: 'missing_test_kit_contract',
+        error: `Test-kit contract "${step.requires_contract}" is not configured on this runner.`,
+      };
+    }
+  }
+
+  if (httpResult) {
+    // Contract-gated synthetic probes self-skip before doing any network work.
+  } else if (step.task === 'protected_resource_metadata') {
     httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
     // RFC 9728 presence semantics (adcp-client#677): a 404 means the agent is
     // honestly not advertising OAuth. Convert to a clean step skip so the
@@ -4011,6 +4225,19 @@ async function executeProbeStep(
     httpResult = undefined;
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
+  } else if (step.task === 'fetch_brand_jwks') {
+    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, probeOpts);
+  } else if (step.task === 'assert_jwks_purpose') {
+    httpResult = assertJwksPurpose(runState.priorProbes.get('fetch_brand_jwks'), 'webhook-signing');
+  } else if (step.task === 'expect_rate_limit_not_replayed') {
+    httpResult = {
+      url: runState.agentUrl,
+      status: 0,
+      headers: {},
+      body: null,
+      error:
+        'rate_limit_trip_runner contract is configured, but this SDK runner does not yet implement live rate-limit trip/replay probing.',
+    };
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
@@ -4101,6 +4328,97 @@ async function executeProbeStep(
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction,
+  };
+}
+
+async function probeBrandJwks(
+  rawCapabilities: unknown,
+  options: { allowPrivateIp?: boolean }
+): Promise<HttpProbeResult> {
+  const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
+  if (!brandJsonUrl) {
+    return {
+      url: '',
+      status: 0,
+      headers: {},
+      body: null,
+      error: 'identity.brand_json_url missing from get_adcp_capabilities; cannot fetch brand JWKS',
+    };
+  }
+
+  const brand = await fetchProbe(brandJsonUrl, options);
+  if (brand.error || brand.status < 200 || brand.status >= 300) {
+    return {
+      ...brand,
+      error: brand.error ?? `brand.json fetch returned HTTP ${brand.status}`,
+    };
+  }
+
+  const agents = brand.body && typeof brand.body === 'object' ? (brand.body as { agents?: unknown }).agents : undefined;
+  const jwksUri = Array.isArray(agents)
+    ? agents
+        .map(agent => (agent && typeof agent === 'object' ? (agent as { jwks_uri?: unknown }).jwks_uri : undefined))
+        .find((uri): uri is string => typeof uri === 'string' && uri.length > 0)
+    : undefined;
+  if (!jwksUri) {
+    return {
+      url: brandJsonUrl,
+      status: 0,
+      headers: {},
+      body: brand.body,
+      error: 'brand.json agents[] did not contain a jwks_uri',
+    };
+  }
+
+  const jwks = await fetchProbe(jwksUri, options);
+  if (jwks.error || jwks.status < 200 || jwks.status >= 300) {
+    return {
+      ...jwks,
+      error: jwks.error ?? `JWKS fetch returned HTTP ${jwks.status}`,
+    };
+  }
+  return jwks;
+}
+
+function assertJwksPurpose(prior: HttpProbeResult | undefined, purpose: string): HttpProbeResult {
+  if (!prior || prior.error) {
+    return {
+      url: prior?.url ?? '',
+      status: prior?.status ?? 0,
+      headers: prior?.headers ?? {},
+      body: prior?.body ?? null,
+      error: prior?.error ?? 'fetch_brand_jwks step missing; cannot assert JWKS purpose',
+    };
+  }
+  const keys = prior.body && typeof prior.body === 'object' ? (prior.body as { keys?: unknown }).keys : undefined;
+  if (!Array.isArray(keys)) {
+    return {
+      url: prior.url,
+      status: 0,
+      headers: {},
+      body: prior.body,
+      error: 'JWKS body does not contain keys[]',
+    };
+  }
+  const matching = keys.filter(key => {
+    if (!key || typeof key !== 'object') return false;
+    const rec = key as { adcp_use?: unknown; status?: unknown; revoked?: unknown };
+    return rec.adcp_use === purpose && rec.status !== 'revoked' && rec.revoked !== true;
+  });
+  if (matching.length === 0) {
+    return {
+      url: prior.url,
+      status: 0,
+      headers: {},
+      body: prior.body,
+      error: `JWKS contains no active key with adcp_use="${purpose}"`,
+    };
+  }
+  return {
+    url: prior.url,
+    status: 200,
+    headers: prior.headers,
+    body: { purpose, matching_key_count: matching.length },
   };
 }
 

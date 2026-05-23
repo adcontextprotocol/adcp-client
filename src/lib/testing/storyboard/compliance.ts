@@ -65,6 +65,12 @@ export const PROTOCOL_TO_PATH: Readonly<Record<string, string>> = Object.freeze(
   sponsored_intelligence: 'sponsored-intelligence',
 });
 
+export const UNBASELINED_SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set([
+  // Declared in get_adcp_capabilities.supported_protocols, but 3.1.0-beta.3
+  // ships no standalone compliance/protocols/measurement baseline yet.
+  'measurement',
+]);
+
 export interface ComplianceIndexProtocol {
   id: string;
   title: string | null;
@@ -514,7 +520,7 @@ export function resolveStoryboardsForCapabilities(
     // Legacy: older agents listed `compliance_testing` under supported_protocols.
     // The current schema declares it via the top-level `compliance_testing`
     // capability block instead, and it has no compliance baseline. Skip silently.
-    if (protocol === 'compliance_testing') continue;
+    if (protocol === 'compliance_testing' || UNBASELINED_SUPPORTED_PROTOCOLS.has(protocol)) continue;
 
     const protocolId = PROTOCOL_TO_PATH[protocol];
     if (!protocolId) {

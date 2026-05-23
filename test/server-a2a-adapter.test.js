@@ -47,8 +47,26 @@ function dataPartMessage(skill, input) {
   };
 }
 
-async function postJsonRpc(app, body, headers = {}) {
+async function listen(app) {
   const server = app.listen(0);
+  if (!server.listening) {
+    await new Promise((resolve, reject) => {
+      server.once('listening', resolve);
+      server.once('error', reject);
+    });
+  }
+  return server;
+}
+
+async function close(server) {
+  if (!server.listening) return;
+  await new Promise((resolve, reject) => {
+    server.close(err => (err ? reject(err) : resolve()));
+  });
+}
+
+async function postJsonRpc(app, body, headers = {}) {
+  const server = await listen(app);
   try {
     const port = server.address().port;
     const res = await fetch(`http://127.0.0.1:${port}/`, {
@@ -59,18 +77,18 @@ async function postJsonRpc(app, body, headers = {}) {
     const json = await res.json();
     return { status: res.status, body: json };
   } finally {
-    server.close();
+    await close(server);
   }
 }
 
 async function getAgentCard(app) {
-  const server = app.listen(0);
+  const server = await listen(app);
   try {
     const port = server.address().port;
     const res = await fetch(`http://127.0.0.1:${port}/.well-known/agent-card.json`);
     return { status: res.status, body: await res.json() };
   } finally {
-    server.close();
+    await close(server);
   }
 }
 
@@ -160,7 +178,7 @@ describe('createA2AAdapter', () => {
 
   describe('mount() helper', () => {
     async function jsonRpcAt(app, path, body) {
-      const server = app.listen(0);
+      const server = await listen(app);
       try {
         const port = server.address().port;
         const res = await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -170,18 +188,18 @@ describe('createA2AAdapter', () => {
         });
         return { status: res.status, body: await res.json() };
       } finally {
-        server.close();
+        await close(server);
       }
     }
 
     async function cardAt(app, path) {
-      const server = app.listen(0);
+      const server = await listen(app);
       try {
         const port = server.address().port;
         const res = await fetch(`http://127.0.0.1:${port}${path}`);
         return { status: res.status, body: res.status === 200 ? await res.json() : null };
       } finally {
-        server.close();
+        await close(server);
       }
     }
 

@@ -1062,6 +1062,8 @@ export interface SignedRequestsConfig {
    * accepts unsigned traffic outside this list.
    */
   required_for?: string[];
+  /** JSON-RPC protocol methods, such as `tasks/cancel`, that MUST arrive signed. */
+  protocol_methods_required_for?: string[];
   /** Default `'either'` — accept signatures with or without Content-Digest. */
   covers_content_digest?: ContentDigestPolicy;
   /**
@@ -2750,7 +2752,7 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
  */
 function buildSignedRequestsPreTransport(
   signedRequests: SignedRequestsConfig,
-  capabilityRequiredFor?: string[]
+  capabilityRequestSigning?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>
 ): AdcpPreTransport {
   // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
   // > fallback to every mutating task. Buyers read required_for from
@@ -2758,12 +2760,15 @@ function buildSignedRequestsPreTransport(
   // MUTATING_TASKS when the seller advertised a narrower list would cause
   // buyers to get request_signature_required on tools they had no contractual
   // duty to sign.
-  const requiredFor = signedRequests.required_for ?? capabilityRequiredFor ?? [...MUTATING_TASKS];
+  const requiredFor = signedRequests.required_for ?? capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS];
+  const protocolMethodsRequiredFor =
+    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
       covers_content_digest: signedRequests.covers_content_digest ?? 'either',
       required_for: requiredFor,
+      ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,
@@ -5212,7 +5217,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // on the wrapper — it's a private contract between this function and
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing);
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

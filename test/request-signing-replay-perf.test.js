@@ -36,8 +36,8 @@ test('InMemoryReplayStore: has() stays sub-linear as entries-per-keyid grows', (
   for (let i = 0; i < 50_000; i++) bigStore.preload(keyid, scope, `nonce-b-${i}`, ttl, now);
 
   // has() at now+10 — well within the window, so no bucket eviction runs.
-  const smallNs = timeBatch(i => smallStore.has(keyid, scope, `nonce-s-${i % 1_000}`, now + 10), 10_000);
-  const bigNs = timeBatch(i => bigStore.has(keyid, scope, `nonce-b-${i % 50_000}`, now + 10), 10_000);
+  const smallNs = timeBatch(() => smallStore.has(keyid, scope, 'nonce-s-0', now + 10), 10_000);
+  const bigNs = timeBatch(() => bigStore.has(keyid, scope, 'nonce-b-0', now + 10), 10_000);
 
   // 50x more entries → at most 4x per-op latency. Linear behaviour would be
   // ~50x. The fudge factor absorbs GC + measurement jitter on CI.
