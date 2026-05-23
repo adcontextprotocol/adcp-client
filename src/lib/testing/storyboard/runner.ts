@@ -3170,11 +3170,11 @@ async function executeStep(
   // routing — env-var fallbacks, brand-domain heuristics, fixture
   // substitutes — and exercise their real adapter path. Agents that
   // don't recognize the field ignore it (per spec, `ext` is accepted
-  // without error and not echoed). Gated on the schema check that
-  // `applyBrandInvariant` uses for `account` and `brand` so tools whose
-  // `additionalProperties: false` schema would reject `ext` aren't broken.
+  // without error and not echoed). No schema gate needed: AdCP 3.1.0-beta.3
+  // sets `additionalProperties: true` on all mutating schemas, so `ext` is
+  // accepted without error on every tool (#1955).
   if (options.disable_sandbox === true) {
-    request = applyDisableSandboxHint(request, effectiveStep.task);
+    request = applyDisableSandboxHint(request);
   }
 
   // Mutating AdCP requests require idempotency_key per spec. Storyboard
@@ -4500,7 +4500,7 @@ export function applyBrandInvariant(
  * might exercise). The injected `disable_sandbox` flag rides alongside
  * those rather than overwriting them.
  */
-export function applyDisableSandboxHint(request: Record<string, unknown>, taskName?: string): Record<string, unknown> {
+export function applyDisableSandboxHint(request: Record<string, unknown>): Record<string, unknown> {
 
   const existingExt = request.ext;
   const existingExtObj =

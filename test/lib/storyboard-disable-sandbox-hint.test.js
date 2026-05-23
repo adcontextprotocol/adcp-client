@@ -75,13 +75,12 @@ describe('applyDisableSandboxHint', () => {
     assert.deepStrictEqual(result.ext.adcp, { disable_sandbox: true });
   });
 
-  test('injects ext on every AdCP 3.0 tool (ext is standardized at the top level)', () => {
-    // AdCP 3.0.1 standardizes `ext` as a top-level field on every tool's
-    // request schema, so the schema-permits-ext check is permissive in
-    // practice. Spot-check a few representative tools to confirm the hint
-    // lands cleanly across protocol surfaces.
+  test('injects ext unconditionally (ext is always permitted since additionalProperties: true)', () => {
+    // AdCP 3.1.0-beta.3 sets additionalProperties: true on all mutating schemas,
+    // so ext is accepted on every tool without a schema gate. Spot-check that
+    // the hint still lands across representative protocol surfaces (#1955).
     for (const taskName of ['get_products', 'comply_test_controller', 'tasks_get', 'si_get_offering']) {
-      const result = applyDisableSandboxHint({ scenario: 'list_scenarios' }, taskName);
+      const result = applyDisableSandboxHint({ scenario: 'list_scenarios' });
       assert.deepStrictEqual(
         result.ext?.adcp?.disable_sandbox,
         true,
