@@ -286,6 +286,44 @@ export function parseAdcpMajorVersion(version: string): number {
   const major = parseInt(semverLike.split('.')[0] ?? '', 10);
   return Number.isFinite(major) ? major : NaN;
 }
+
+/**
+ * Normalize a full-semver AdCP version (\`MAJOR.MINOR.PATCH[-prerelease]\`) to
+ * the release-precision form that AdCP 3.1+ requires on the wire:
+ * \`MAJOR.MINOR[-prerelease]\` — the patch digit is dropped.
+ *
+ * Per the spec note on \`adcp_version\`: "SDKs that read full-semver values
+ * from bundle metadata (e.g. \`ComplianceIndex.published_version =
+ * "3.1.0-beta.1"\`) MUST normalize to release-precision (\`"3.1-beta.1"\`)
+ * before emitting on the wire — meta-field values are NOT valid wire
+ * values." The wire regex (\`^\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?$\`) rejects strings
+ * with a patch digit.
+ *
+ * Behavior:
+ *   - \`"3.1.0-beta.3"\` → \`"3.1-beta.3"\`
+ *   - \`"3.1.0"\`        → \`"3.1"\`
+ *   - \`"3.0.12"\`       → \`"3.0"\`
+ *   - Already-release-precision input (\`"3.1"\`, \`"3.1-beta.3"\`) passes through
+ *   - Legacy aliases (\`"v2.5"\`, \`"v3"\`) pass through unchanged — the wire
+ *     regex doesn't accept them anyway; the v2.5 path uses
+ *     \`adcp_major_version\` instead of \`adcp_version\` for transport.
+ *   - Unrecognized strings pass through unchanged so callers can detect drift
+ *     via the wire validator rather than have it masked by this helper.
+ */
+export function toReleasePrecisionVersion(version: string): string {
+  const trimmed = version.trim();
+  // Pre-release form \`MAJOR.MINOR.PATCH-prerelease\` → \`MAJOR.MINOR-prerelease\`
+  const semverMatch = trimmed.match(/^(\\d+)\\.(\\d+)\\.\\d+(-[A-Za-z0-9.-]+)?$/);
+  if (semverMatch) {
+    const [, major, minor, pre = ''] = semverMatch;
+    return \`\${major}.\${minor}\${pre}\`;
+  }
+  // Already release-precision (no patch digit). Includes \`3.1\`, \`3.1-beta.3\`.
+  if (/^\\d+\\.\\d+(-[A-Za-z0-9.-]+)?$/.test(trimmed)) return trimmed;
+  // Legacy aliases (\`v3\`, \`v2.5\`, \`v2.6\`) and anything we don't recognize —
+  // pass through so the wire validator can flag genuine drift.
+  return version;
+}
 `;
 
   const versionChanged = writeFileIfChanged(versionFilePath, versionContent);

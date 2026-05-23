@@ -42,7 +42,10 @@ describe('buildProduct — emits correct wire shape', () => {
       publisher_domain: 'sports.example',
       agentUrl: 'http://127.0.0.1:4200/mcp',
     });
-    const result = validateResponse('get_products', { products: [product] });
+    // `cache_scope: 'public'` is required on the populated-products branch
+    // of `get-products-response.json`'s top-level `if (unchanged) ... else`
+    // since 3.1.0-beta.3.
+    const result = validateResponse('get_products', { products: [product], cache_scope: 'public' });
     if (!result.valid) {
       // eslint-disable-next-line no-console
       console.error('validation issues:', JSON.stringify(result.issues, null, 2));
