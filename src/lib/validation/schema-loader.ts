@@ -659,21 +659,32 @@ export function _resetValidationLoader(version?: string): void {
 }
 
 /**
- * Returns true when `field` is a declared top-level property in the request
- * schema for `toolName`, or when no schema is available (fail-open). Used by
- * the storyboard runner to decide whether to inject envelope fields that aren't
- * universally present across tools (e.g. `brand`, `account`).
+ * Returns true when `field` is **explicitly declared** as a top-level property
+ * in the request schema for `toolName`, or when no schema is available
+ * (fail-open). Used by the storyboard runner to decide whether to inject
+ * envelope fields that aren't universally present across tools (e.g. `brand`,
+ * `account`, `ext`).
  *
  * Reads the raw JSON schema file without compiling — avoids coupling to AJV
- * internals. Only inspects the top-level `properties` / `additionalProperties`
- * pair; nested sub-schemas are not traversed. Results are memoized in
- * `LoaderState.rawSchemas` so multi-step storyboard runs don't re-read the
- * same file on each step.
+ * internals. Only inspects the top-level `properties` map; nested sub-schemas
+ * are not traversed. Results are memoized in `LoaderState.rawSchemas` so
+ * multi-step storyboard runs don't re-read the same file on each step.
+ *
+ * **Semantic note**: AdCP 3.1.0-beta.3 set `additionalProperties: true` on
+ * mutating request schemas (vendor-extension friendly). Before that flip, the
+ * helper used `additionalProperties: false` as the gate — "if the schema is
+ * strict, only `properties` keys are allowed." Now requests are universally
+ * permissive at the schema level, so that gate would say `true` for any field
+ * on any request — defeating the storyboard runner's intent ("only inject
+ * envelope fields the tool's schema declares it expects to see"). The helper
+ * now checks `field in properties` directly: the question we actually care
+ * about is **"does the schema declare this field at top level?"**, not
+ * "does the schema permit this field at top level?" (it permits everything).
  *
  * Fails open (returns `true`) when:
  * - No schema file is indexed for the tool (custom tool, schema not synced)
  * - The schema root is not reachable (schemas not built/synced yet)
- * - The schema does not set `additionalProperties: false` (permissive schema)
+ * - Any I/O / parse error during the read
  *
  * @internal — not part of the public API surface; may change without a major bump.
  */
@@ -688,11 +699,8 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
       schema = loadJson(file) as Record<string, unknown>;
       s.rawSchemas.set(cacheKey, schema);
     }
-    if (schema.additionalProperties === false) {
-      const props = schema.properties as Record<string, unknown> | undefined;
-      return props !== undefined && field in props;
-    }
-    return true;
+    const props = schema.properties as Record<string, unknown> | undefined;
+    return props !== undefined && field in props;
   } catch {
     return true;
   }
