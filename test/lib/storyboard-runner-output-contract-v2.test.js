@@ -193,6 +193,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         ...(opts.unresolvedSinceRefs && { unresolvedSinceRefs: opts.unresolvedSinceRefs }),
       },
       ...(opts.storyboardStep && { storyboardStep: opts.storyboardStep }),
+      ...(opts.request && { request: opts.request }),
     };
   }
 
@@ -548,6 +549,38 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
           check: 'upstream_traffic',
           description: 'echo identifier paths',
           identifier_paths: ['audiences[*].add[*].hashed_email'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+  });
+
+  test('identifier_paths uses the resolved request payload before raw storyboard placeholders', () => {
+    const vector = 'sig_agent_segment_123';
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [makeCall({ payload: { signal_agent_segment_id: vector } })],
+      },
+      {
+        request: {
+          transport: 'mcp',
+          operation: 'activate_signal',
+          payload: { signal_agent_segment_id: vector },
+        },
+        storyboardStep: {
+          sample_request: { signal_agent_segment_id: '$context.first_signal_agent_segment_id' },
+        },
+      }
+    );
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'echo resolved request identifiers',
+          identifier_paths: ['signal_agent_segment_id'],
         },
       ],
       ctx
