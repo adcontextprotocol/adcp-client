@@ -1,5 +1,43 @@
 # Changelog
 
+## 8.1.0-beta.5
+
+### Patch Changes
+
+- f9f2498: fix: cluster-7 server-decisioning sweep — release-precision wire `adcp_version`, envelope status on error responses, plus test catch-up for 3.1.0-beta.3 field renames (#1955)
+
+  Two source-side fixes and four test catch-ups for the 3.1.0-beta.3 spec changes.
+
+  ## Source-side
+
+  **`adcp_version` wire normalization** (`src/lib/version.ts` + wire emission in `src/lib/server/create-adcp-server.ts`). Per the spec note on `adcp_version`: "SDKs that read full-semver values from bundle metadata (e.g. `ComplianceIndex.published_version = "3.1.0-beta.1"`) MUST normalize to release-precision (`"3.1-beta.1"`) before emitting on the wire — meta-field values are NOT valid wire values." The wire regex (`^\d+\.\d+(-[a-zA-Z0-9.-]+)?$`) rejects strings with a patch digit, but the SDK was reading `ADCP_VERSION` ("3.1.0-beta.3") and stamping that verbatim on every response, failing schema validation on the receiver side.
+
+  New helper `toReleasePrecisionVersion()` strips the patch digit: `3.1.0-beta.3` → `3.1-beta.3`. Wired into `injectVersionIntoResponse` so every framework-emitted response carries a wire-valid version string. Legacy aliases (`v2.5`, `v3`) pass through unchanged (v2.5 uses `adcp_major_version` for transport instead).
+
+  **Envelope `status` on error responses** (`src/lib/server/create-adcp-server.ts`). `injectEnvelopeStatusIntoResponse` previously bailed when `response.isError === true`, leaving error responses without envelope `status`. AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response — success or error. The injector now maps `isError === true` → `status: 'failed'`, defaulting `'completed'` otherwise. Tools that need richer states (`submitted`, `working`, `input-required`) still set them explicitly; this injector only fills in the default.
+
+  ## Test catch-up
+  - `test/server-assembly-helpers.test.js` — fixture gains `cache_scope: 'public'` on `get_products` validation call (required on populated-products branch since 3.1.0-beta.3).
+  - `test/server-decisioning-brand-rights.test.js` — 2 `buildAcquired` fixtures + 2 dispatch-result assertions rename `status` → `rights_status` (AcquireRights discriminator rename in 3.1.0-beta.3).
+  - `test/server-decisioning-to-wire-account.test.js` — 2 `governance_agents[]` fixtures drop `categories` (3.1.0-beta.3 tightened items to `additionalProperties: false` and dropped the deprecated field per the single-agent-owns-full-lifecycle clarification).
+  - `test/lib/update-rights-creative-approval.test.js` — `CreativeApprovalResponseSchema` 4-arm fixture: discriminator rename `status` → `approval_status` (adcp#4878), plus envelope `status: 'completed' | 'failed'` added on each arm.
+
+  110/110 across all 5 cluster-7 files pass; sibling regression check on 277 schema/storyboard/governance/extractor tests — 0 fail.
+
+  Closes #1955 cluster-7 contribution. Remaining clusters (1, 4 storyboard-completeness/security, 6) tracked separately.
+
+- 31c5ae1: fix(storyboard): align `schemaAllowsTopLevelField` with `additionalProperties: true` requests (#1955 sub-piece 1)
+
+  AdCP 3.1.0-beta.3 set `additionalProperties: true` on mutating request schemas (vendor-extension friendly). Before that flip, `schemaAllowsTopLevelField` used `additionalProperties: false` as the gate: "if the schema is strict, only `properties` keys are allowed". Now that requests are universally permissive at the schema level, the old gate said `true` for any field on any request — defeating the storyboard runner's intent ("only inject envelope fields the tool's schema declares it expects to see").
+
+  The helper now checks `field in properties` directly. The question we actually care about is **"does the schema declare this field at top level?"**, not "does the schema permit this field at top level?" (it permits everything since 3.1.0-beta.3).
+
+  Concrete impact: the storyboard runner's `applyBrandInvariant` now correctly skips top-level `brand` injection on tools that don't declare it (e.g. `sync_plans`, `list_creatives`, `list_property_lists` carry brand inside `account.brand`), while still injecting on tools that DO declare it (e.g. `get_products`). Same logic governs the synthetic `account` injection and `ext` propagation.
+
+  Test fixture update: the `runStoryboard: brand invariant on the wire` test's assertion is broadened from "every step carries top-level `brand`" to "the configured BRAND is reachable from the wire request — either at top level OR via `account.brand`". This matches the actual invariant the runner enforces post-3.1-beta-3, where many tools carry brand only via the account ref.
+
+  22/22 tests in `storyboard-brand-invariant.test.js` now pass. No regressions in `storyboard-drift.test.js` (still 700/712 — those are the 6 YAML drift items tracked separately in #1955) or `storyboard-security.test.js` (97/98 — the `comply()` degraded-profile item tracked in #1955). Sub-pieces 2 (YAML drift), 3 (completeness builders), and 4 (security fallback) remain.
+
 ## 8.1.0-beta.4
 
 ### Patch Changes
