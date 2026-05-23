@@ -93,6 +93,7 @@ function startGraderServer({ replayCap, coversContentDigest = 'either' }) {
       supported: true,
       covers_content_digest: coversContentDigest,
       required_for: ['create_media_buy'],
+      protocol_methods_required_for: ['tasks/cancel'],
     },
     jwks,
     replayStore,
@@ -161,7 +162,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     assert.deepStrictEqual(failures, [], 'every non-capability-profile vector grades as expected');
 
     assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 27);
+    assert.strictEqual(report.negative.length, 28);
   });
 
   test('capability profile "required": vector 007 grades correctly', async () => {

@@ -1558,6 +1558,11 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'CatalogAsset1', base: 'CatalogAsset' },
   { numbered: 'AssetVariant1', base: 'AssetVariant' },
   { numbered: 'CreativeAsset1', base: 'CreativeAsset' },
+  ...Array.from({ length: 6 }, (_, index) => index + 2).flatMap(suffix => [
+    { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
+    { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },
+    { numbered: `AssetVariant${suffix}`, base: 'AssetVariant' },
+  ]),
 ];
 
 export function applyKnownJstsAliases(typeDefinitions: string): string {

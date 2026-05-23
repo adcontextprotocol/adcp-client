@@ -154,6 +154,7 @@ describe('Discriminated Union Validation', () => {
   describe('PreviewCreativeResponse - response_type discriminator', () => {
     test('should validate single response type', () => {
       const valid = {
+        status: 'completed',
         response_type: 'single',
         previews: [
           {
@@ -190,6 +191,7 @@ describe('Discriminated Union Validation', () => {
 
     test('should validate batch response type', () => {
       const valid = {
+        status: 'completed',
         response_type: 'batch',
         results: [
           {
@@ -312,6 +314,7 @@ describe('Discriminated Union Validation', () => {
 
     test('PreviewCreativeResponse discriminator enables type narrowing', () => {
       const batchResponse = {
+        status: 'completed',
         response_type: 'batch',
         results: [
           {

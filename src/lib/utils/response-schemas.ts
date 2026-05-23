@@ -93,6 +93,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
 
   // Brand rights
   get_brand_identity: schemas.GetBrandIdentityResponseSchema,
+  verify_brand_claim: schemas.VerifyBrandClaimResponseSchema,
   get_rights: schemas.GetRightsResponseSchema,
   acquire_rights: schemas.AcquireRightsResponseSchema,
 

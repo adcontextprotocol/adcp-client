@@ -9,7 +9,7 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 const { spawn, spawnSync } = require('node:child_process');
-const { existsSync } = require('node:fs');
+const { existsSync, statSync } = require('node:fs');
 const path = require('node:path');
 
 const { gradeRequestSigning } = require('../dist/lib/testing/storyboard/request-signing/index.js');
@@ -22,7 +22,8 @@ const TEST_AGENTS_TSCONFIG = path.join(__dirname, '..', 'test-agents', 'tsconfig
 const REPO_ROOT = path.join(__dirname, '..');
 
 function ensureMcpAgentBuilt() {
-  if (existsSync(MCP_AGENT_SCRIPT)) return;
+  const source = path.join(REPO_ROOT, 'test-agents', 'seller-agent-signed-mcp.ts');
+  if (existsSync(MCP_AGENT_SCRIPT) && statSync(MCP_AGENT_SCRIPT).mtimeMs >= statSync(source).mtimeMs) return;
   const result = spawnSync(
     process.execPath,
     [path.join(REPO_ROOT, 'node_modules', '.bin', 'tsc'), '-p', TEST_AGENTS_TSCONFIG, '--rootDir', 'test-agents'],
@@ -177,7 +178,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     assert.deepStrictEqual(failures, [], 'every non-profile vector grades as expected under MCP transport');
     assert.ok(report.passed, 'overall grade is PASS');
     assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 27);
+    assert.strictEqual(report.negative.length, 28);
   });
 
   test('MCP mode vector bodies are wrapped in JSON-RPC tools/call envelopes', async () => {
@@ -246,7 +247,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     }
   });
 
-  test('every negative mutation produces an MCP-shaped request under transport: mcp', () => {
+  test('every negative mutation produces the expected MCP transport request shape', () => {
     // Locks the invariant that every path in MUTATIONS routes through
     // applyTransport. A regression that bypasses applyTransport (e.g. a new
     // mutator that sets url/body directly from vector.request.*) shows up
@@ -264,6 +265,12 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       assert.ok(signed.body, `${vector.id}: body must be present`);
       const envelope = JSON.parse(signed.body);
       assert.strictEqual(envelope.jsonrpc, '2.0', `${vector.id}: jsonrpc`);
+      if (vector.id === '028-unsigned-protocol-method-required') {
+        assert.strictEqual(envelope.method, 'tasks/cancel', `${vector.id}: method`);
+        assert.strictEqual(envelope.params.taskId, 'task_conformance_001', `${vector.id}: params.taskId`);
+        assert.strictEqual(envelope.params.name, undefined, `${vector.id}: params.name`);
+        continue;
+      }
       assert.strictEqual(envelope.method, 'tools/call', `${vector.id}: method`);
       const originalOp = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
       assert.strictEqual(envelope.params.name, originalOp, `${vector.id}: params.name from vector URL tail`);

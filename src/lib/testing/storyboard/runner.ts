@@ -42,10 +42,12 @@ import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
   probeOauthAuthServerMetadata,
+  fetchProbe,
   rawMcpProbe,
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
 } from './probes';
+import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -4184,7 +4186,24 @@ async function executeProbeStep(
   let httpResult: HttpProbeResult | undefined;
   const probeOpts = { allowPrivateIp: options.allow_http === true };
 
-  if (step.task === 'protected_resource_metadata') {
+  if (step.requires_contract) {
+    const contracts = new Set(options.contracts ?? []);
+    if (!contracts.has(step.requires_contract)) {
+      httpResult = {
+        url: runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: null,
+        skipped: true,
+        skip_reason: 'missing_test_kit_contract',
+        error: `Test-kit contract "${step.requires_contract}" is not configured on this runner.`,
+      };
+    }
+  }
+
+  if (httpResult) {
+    // Contract-gated synthetic probes self-skip before doing any network work.
+  } else if (step.task === 'protected_resource_metadata') {
     httpResult = await probeProtectedResourceMetadata(runState.agentUrl, probeOpts);
     // RFC 9728 presence semantics (adcp-client#677): a 404 means the agent is
     // honestly not advertising OAuth. Convert to a clean step skip so the
@@ -4206,6 +4225,19 @@ async function executeProbeStep(
     httpResult = undefined;
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
+  } else if (step.task === 'fetch_brand_jwks') {
+    httpResult = await probeBrandJwks(options._profile?.raw_capabilities, probeOpts);
+  } else if (step.task === 'assert_jwks_purpose') {
+    httpResult = assertJwksPurpose(runState.priorProbes.get('fetch_brand_jwks'), 'webhook-signing');
+  } else if (step.task === 'expect_rate_limit_not_replayed') {
+    httpResult = {
+      url: runState.agentUrl,
+      status: 0,
+      headers: {},
+      body: null,
+      error:
+        'rate_limit_trip_runner contract is configured, but this SDK runner does not yet implement live rate-limit trip/replay probing.',
+    };
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
@@ -4296,6 +4328,94 @@ async function executeProbeStep(
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction,
+  };
+}
+
+async function probeBrandJwks(rawCapabilities: unknown, options: { allowPrivateIp?: boolean }): Promise<HttpProbeResult> {
+  const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
+  if (!brandJsonUrl) {
+    return {
+      url: '',
+      status: 0,
+      headers: {},
+      body: null,
+      error: 'identity.brand_json_url missing from get_adcp_capabilities; cannot fetch brand JWKS',
+    };
+  }
+
+  const brand = await fetchProbe(brandJsonUrl, options);
+  if (brand.error || brand.status < 200 || brand.status >= 300) {
+    return {
+      ...brand,
+      error: brand.error ?? `brand.json fetch returned HTTP ${brand.status}`,
+    };
+  }
+
+  const agents = brand.body && typeof brand.body === 'object' ? (brand.body as { agents?: unknown }).agents : undefined;
+  const jwksUri = Array.isArray(agents)
+    ? agents
+        .map(agent => (agent && typeof agent === 'object' ? (agent as { jwks_uri?: unknown }).jwks_uri : undefined))
+        .find((uri): uri is string => typeof uri === 'string' && uri.length > 0)
+    : undefined;
+  if (!jwksUri) {
+    return {
+      url: brandJsonUrl,
+      status: 0,
+      headers: {},
+      body: brand.body,
+      error: 'brand.json agents[] did not contain a jwks_uri',
+    };
+  }
+
+  const jwks = await fetchProbe(jwksUri, options);
+  if (jwks.error || jwks.status < 200 || jwks.status >= 300) {
+    return {
+      ...jwks,
+      error: jwks.error ?? `JWKS fetch returned HTTP ${jwks.status}`,
+    };
+  }
+  return jwks;
+}
+
+function assertJwksPurpose(prior: HttpProbeResult | undefined, purpose: string): HttpProbeResult {
+  if (!prior || prior.error) {
+    return {
+      url: prior?.url ?? '',
+      status: prior?.status ?? 0,
+      headers: prior?.headers ?? {},
+      body: prior?.body ?? null,
+      error: prior?.error ?? 'fetch_brand_jwks step missing; cannot assert JWKS purpose',
+    };
+  }
+  const keys = prior.body && typeof prior.body === 'object' ? (prior.body as { keys?: unknown }).keys : undefined;
+  if (!Array.isArray(keys)) {
+    return {
+      url: prior.url,
+      status: 0,
+      headers: {},
+      body: prior.body,
+      error: 'JWKS body does not contain keys[]',
+    };
+  }
+  const matching = keys.filter(key => {
+    if (!key || typeof key !== 'object') return false;
+    const rec = key as { adcp_use?: unknown; status?: unknown; revoked?: unknown };
+    return rec.adcp_use === purpose && rec.status !== 'revoked' && rec.revoked !== true;
+  });
+  if (matching.length === 0) {
+    return {
+      url: prior.url,
+      status: 0,
+      headers: {},
+      body: prior.body,
+      error: `JWKS contains no active key with adcp_use="${purpose}"`,
+    };
+  }
+  return {
+    url: prior.url,
+    status: 200,
+    headers: prior.headers,
+    body: { purpose, matching_key_count: matching.length },
   };
 }
 

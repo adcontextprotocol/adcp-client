@@ -9,10 +9,18 @@ const assert = require('node:assert');
 const { evaluate } = require('../../dist/lib/conformance/oracle.js');
 
 function accepted(tool, data, extra = {}) {
+  const responseData =
+    tool === 'get_signals'
+      ? {
+          status: 'completed',
+          cache_scope: 'public',
+          ...data,
+        }
+      : data;
   return evaluate({
     tool,
     request: { signal_spec: 'auto intenders' },
-    result: { success: true, status: 'completed', data, ...extra },
+    result: { success: true, status: 'completed', data: responseData, ...extra },
   });
 }
 
@@ -160,7 +168,7 @@ describe('conformance: oracle', () => {
         status: 'completed',
         // Python/Go dict round-trip commonly reorders keys; the oracle must
         // not flag this as context mutation.
-        data: { signals: [], context: { b: 2, a: 1 } },
+        data: { status: 'completed', cache_scope: 'public', signals: [], context: { b: 2, a: 1 } },
       },
     });
     assert.equal(out.verdict, 'accepted');
@@ -187,7 +195,7 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: ctx },
-      result: { success: true, status: 'completed', data: { signals: [], context: ctx } },
+      result: { success: true, status: 'completed', data: { status: 'completed', cache_scope: 'public', signals: [], context: ctx } },
     });
     assert.equal(out.verdict, 'accepted');
   });
@@ -199,7 +207,7 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: { trace_id: 'abc' } },
-      result: { success: true, status: 'completed', data: { signals: [] } },
+      result: { success: true, status: 'completed', data: { status: 'completed', cache_scope: 'public', signals: [] } },
     });
     assert.equal(out.verdict, 'invalid');
     assert.ok(out.invariantFailures.some(f => f.includes('context') && f.includes('omitted')));
@@ -209,7 +217,11 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: { trace_id: 'abc' } },
-      result: { success: true, status: 'completed', data: { signals: [], context: { trace_id: 'mutated' } } },
+      result: {
+        success: true,
+        status: 'completed',
+        data: { status: 'completed', cache_scope: 'public', signals: [], context: { trace_id: 'mutated' } },
+      },
     });
     assert.equal(out.verdict, 'invalid');
     assert.ok(out.invariantFailures.some(f => f.includes('context not echoed')));

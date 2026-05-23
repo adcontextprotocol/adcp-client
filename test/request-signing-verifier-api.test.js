@@ -84,6 +84,31 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     );
   });
 
+  it('unsigned JSON-RPC protocol method in protocol_methods_required_for throws request_signature_required', async () => {
+    await assert.rejects(
+      () =>
+        verifyRequestSignature(
+          {
+            method: 'POST',
+            url: 'https://seller.example.com/mcp',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{"jsonrpc":"2.0","method":"tasks/cancel","params":{"taskId":"task_conformance_001"},"id":1}',
+          },
+          {
+            ...baseStores(),
+            capability: {
+              supported: true,
+              covers_content_digest: 'either',
+              required_for: [],
+              protocol_methods_required_for: ['tasks/cancel'],
+            },
+            now: () => 1_776_520_800,
+          }
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required' && err.failedStep === 0
+    );
+  });
+
   it('unsigned request with operation NOT in required_for returns { status: "unsigned" }', async () => {
     const result = await verifyRequestSignature(
       {

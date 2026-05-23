@@ -51,6 +51,7 @@ export async function verifyRequestSignature(
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
     const operation = options.operation;
+    const protocolMethod = jsonRpcProtocolMethod(request.body);
     // `required_for` takes precedence over the webhook-auth elevation below
     // so the more specific error message ("Operation X requires...") wins
     // when the op is already on the always-sign list.
@@ -59,6 +60,13 @@ export async function verifyRequestSignature(
         'request_signature_required',
         0,
         `Operation "${operation}" requires a signed request`
+      );
+    }
+    if (protocolMethod && options.capability.protocol_methods_required_for?.includes(protocolMethod)) {
+      throw new RequestSignatureError(
+        'request_signature_required',
+        0,
+        `Protocol method "${protocolMethod}" requires a signed request`
       );
     }
     // Payload-driven elevation: any request carrying
@@ -228,6 +236,16 @@ export async function verifyRequestSignature(
 
   const agent_url = options.agentUrlForKeyid?.(jwk.kid);
   return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
+}
+
+function jsonRpcProtocolMethod(body: string | undefined): string | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as { method?: unknown };
+    return typeof parsed.method === 'string' ? parsed.method : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {
