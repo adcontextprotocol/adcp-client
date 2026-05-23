@@ -20,6 +20,7 @@
     "outcome-measurement-rename",
     "product-card-self-rendering",
     "promote-query-upstream-traffic",
+    "schema-loader-strip-nested-ids",
     "source-fixes-1950-union-products-governance",
     "test-agents-envelope-status"
   ]
