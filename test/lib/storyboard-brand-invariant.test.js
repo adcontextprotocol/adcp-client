@@ -9,7 +9,7 @@
  * session, regardless of per-tool authorship.
  */
 
-const { describe, test, it } = require('node:test');
+const { describe, test, it, before } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
@@ -101,11 +101,15 @@ describe('applyBrandInvariant', () => {
   });
 
   describe('with synced schemas', () => {
-    let schemaAllowsTopLevelField;
-    test('preconditions: schema-loader exports schemaAllowsTopLevelField', async () => {
+    // Loaded once in before() so sibling tests can call it without sequencing fragility.
+    let schemaDeclaresTopLevelField;
+    before(async () => {
       const mod = await import('../../dist/lib/validation/schema-loader.js');
-      schemaAllowsTopLevelField = mod.schemaAllowsTopLevelField;
-      assert.strictEqual(typeof schemaAllowsTopLevelField, 'function');
+      schemaDeclaresTopLevelField = mod.schemaDeclaresTopLevelField;
+    });
+
+    test('preconditions: schema-loader exports schemaDeclaresTopLevelField', () => {
+      assert.strictEqual(typeof schemaDeclaresTopLevelField, 'function');
     });
 
     // Pin the schema invariants this test suite depends on. If a schema
@@ -114,27 +118,27 @@ describe('applyBrandInvariant', () => {
     // behavior tests below.
     test('preconditions: schema shapes match expectations', () => {
       assert.strictEqual(
-        schemaAllowsTopLevelField('sync_plans', 'brand'),
+        schemaDeclaresTopLevelField('sync_plans', 'brand'),
         false,
-        'sync_plans must declare additionalProperties:false and exclude brand'
+        'sync_plans must not declare brand in its properties'
       );
       assert.strictEqual(
-        schemaAllowsTopLevelField('sync_plans', 'account'),
+        schemaDeclaresTopLevelField('sync_plans', 'account'),
         false,
-        'sync_plans must declare additionalProperties:false and exclude account'
+        'sync_plans must not declare account in its properties'
       );
       assert.strictEqual(
-        schemaAllowsTopLevelField('list_property_lists', 'brand'),
+        schemaDeclaresTopLevelField('list_property_lists', 'brand'),
         false,
-        'list_property_lists must declare additionalProperties:false and exclude brand'
+        'list_property_lists must not declare brand in its properties'
       );
       assert.strictEqual(
-        schemaAllowsTopLevelField('list_property_lists', 'account'),
+        schemaDeclaresTopLevelField('list_property_lists', 'account'),
         true,
         'list_property_lists must declare account at the request root'
       );
       assert.strictEqual(
-        schemaAllowsTopLevelField('get_products', 'brand'),
+        schemaDeclaresTopLevelField('get_products', 'brand'),
         true,
         'get_products must declare brand at the request root (positive control)'
       );

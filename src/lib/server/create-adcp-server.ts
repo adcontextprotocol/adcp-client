@@ -4904,7 +4904,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // Implication for downstream consumers: if you need a tool's shape
       // (cross-version field-stripping, gating, validation), read raw
       // JSON from `schemas/cache/{version}/` via `schema-loader.ts` —
-      // see `schemaAllowsTopLevelField` for the canonical pattern (#940).
+      // see `schemaDeclaresTopLevelField` / `schemaAllowsTopLevelField` for the canonical pattern (#940).
       // Don't try to recover the shape from `tools/list`; it's empty by
       // design and will fail open.
       server.registerTool(

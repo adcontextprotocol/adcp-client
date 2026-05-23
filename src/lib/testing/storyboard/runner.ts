@@ -37,7 +37,7 @@ import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSucc
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import { schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import { schemaDeclaresTopLevelField } from '../../validation/schema-loader';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -4428,12 +4428,15 @@ export function applyBrandInvariant(
   if (!options.brand && !options.brand_manifest) return request;
   const brand = resolveBrand(options);
 
-  // Gate brand/account injection on the tool's request schema. Tools that
-  // declare `additionalProperties: false` without listing the field will fail
-  // the framework's strict AJV validator if we inject it (#940). Fails open
-  // when taskName is absent or the schema isn't available.
-  const topBrandOk = !taskName || schemaAllowsTopLevelField(taskName, 'brand');
-  const topAccountOk = !taskName || schemaAllowsTopLevelField(taskName, 'account');
+  // Gate brand/account injection on whether the tool's request schema explicitly
+  // declares the field in `properties` (#940, #1955). `schemaDeclaresTopLevelField`
+  // checks `'field' in schema.properties` regardless of `additionalProperties`,
+  // which is required now that AdCP 3.1.0-beta.3 sets `additionalProperties: true`
+  // on all mutating schemas — `schemaAllowsTopLevelField` would otherwise always
+  // return true and inject brand into tools like `sync_plans` that don't list it.
+  // Fails open when taskName is absent or the schema isn't available.
+  const topBrandOk = !taskName || schemaDeclaresTopLevelField(taskName, 'brand');
+  const topAccountOk = !taskName || schemaDeclaresTopLevelField(taskName, 'account');
 
   const result: Record<string, unknown> = { ...request };
   if (topBrandOk) result.brand = brand;
@@ -4485,11 +4488,12 @@ export function applyBrandInvariant(
  * operator passed `--no-sandbox` (or `disable_sandbox: true` programmatically).
  * Issue #841.
  *
- * `ext` is the spec-blessed channel for read-by-agent extensions and is
- * accepted-without-error on every tool, so the schema check is conservative
- * — only inject when the tool's request schema permits a top-level `ext`
- * field. Tools with `additionalProperties: false` that don't list `ext`
- * would fail strict AJV validation otherwise.
+ * `ext` is the spec-blessed channel for read-by-agent extensions. AdCP 3.1.0-
+ * beta.3 sets `additionalProperties: true` on all mutating request schemas, so
+ * `ext` is accepted without error on every tool — no schema gate is needed (#1955).
+ * The prior guard (`schemaAllowsTopLevelField`) was correct only for schemas that
+ * set `additionalProperties: false`; with that constraint removed universally, the
+ * guard was dead code and has been dropped.
  *
  * Merging strategy: preserve any existing `ext.adcp` block the storyboard
  * fixture or builder authored (e.g. vendor extensions a future scenario
@@ -4497,7 +4501,6 @@ export function applyBrandInvariant(
  * those rather than overwriting them.
  */
 export function applyDisableSandboxHint(request: Record<string, unknown>, taskName?: string): Record<string, unknown> {
-  if (taskName && !schemaAllowsTopLevelField(taskName, 'ext')) return request;
 
   const existingExt = request.ext;
   const existingExtObj =

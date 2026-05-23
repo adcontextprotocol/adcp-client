@@ -675,6 +675,12 @@ export function _resetValidationLoader(version?: string): void {
  * - The schema root is not reachable (schemas not built/synced yet)
  * - The schema does not set `additionalProperties: false` (permissive schema)
  *
+ * **Note (AdCP 3.1.0-beta.3):** mutating request schemas now set
+ * `additionalProperties: true` (vendor-extension friendly), so this function
+ * returns `true` for every field on every mutating tool. Use
+ * `schemaDeclaresTopLevelField` when the question is "does the spec explicitly
+ * list this field?" rather than "would AJV accept it?". See #1955.
+ *
  * @internal — not part of the public API surface; may change without a major bump.
  */
 export function schemaAllowsTopLevelField(toolName: string, field: string, version: string = ADCP_VERSION): boolean {
@@ -693,6 +699,58 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
       return props !== undefined && field in props;
     }
     return true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Returns true when `field` is explicitly listed in the `properties` map of
+ * the request schema for `toolName`. Unlike `schemaAllowsTopLevelField`, this
+ * function is insensitive to `additionalProperties` — it tests whether the
+ * spec *declares* the field, not whether AJV would *accept* it.
+ *
+ * Used by the storyboard runner to decide whether to inject `brand` and
+ * `account` envelope fields (#940). Since AdCP 3.1.0-beta.3 sets
+ * `additionalProperties: true` on all mutating request schemas (vendor-
+ * extension friendly), `schemaAllowsTopLevelField` can no longer gate
+ * brand/account injection — it returns `true` for every field. This function
+ * restores the pre-beta.3 intent: inject only when the spec explicitly
+ * enumerates the field in `properties` (#1955).
+ *
+ * Only inspects the top-level `properties` key; nested sub-schemas and
+ * `$ref` compositions are not resolved. Bundled (pre-resolved) schemas
+ * inline all `$ref` targets, so the check is complete for those. Flat-tree
+ * domain schemas (governance/, brand/, property/, collection/) are author-
+ * controlled and are expected to list `brand`/`account` inline when present;
+ * the behavior tests in storyboard-brand-invariant.test.js assert this for
+ * the representative tools.
+ *
+ * Fails open (returns `true`) when:
+ * - No schema file is indexed for the tool (custom tool, schema not synced)
+ * - The schema root is not reachable (schemas not built/synced yet)
+ * - The schema has no top-level `properties` map
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function schemaDeclaresTopLevelField(
+  toolName: string,
+  field: string,
+  version: string = ADCP_VERSION
+): boolean {
+  try {
+    const s = ensureInit(version);
+    const cacheKey = `${toolName}::request`;
+    const file = s.fileIndex.get(cacheKey);
+    if (!file) return true;
+    let schema = s.rawSchemas.get(cacheKey);
+    if (!schema) {
+      schema = loadJson(file) as Record<string, unknown>;
+      s.rawSchemas.set(cacheKey, schema);
+    }
+    const props = schema.properties as Record<string, unknown> | undefined;
+    if (!props) return true;
+    return field in props;
   } catch {
     return true;
   }
