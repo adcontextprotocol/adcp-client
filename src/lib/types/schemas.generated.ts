@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-23T21:17:33.345Z
+// Generated at: 2026-05-23T21:12:21.069Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)

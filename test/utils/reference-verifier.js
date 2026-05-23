@@ -85,6 +85,7 @@ async function startReferenceVerifier({
   replayCap,
   coversContentDigest = 'either',
   requiredFor = ['create_media_buy'],
+  protocolMethodsRequiredFor = ['tasks/cancel'],
 } = {}) {
   // Omnibus tests sign every vector with the same keyid; replay cap must be
   // large enough that we don't trip rate_abuse on an unrelated vector.
@@ -110,7 +111,7 @@ async function startReferenceVerifier({
       supported: true,
       covers_content_digest: coversContentDigest,
       required_for: requiredFor,
-      protocol_methods_required_for: ['tasks/cancel'],
+      protocol_methods_required_for: protocolMethodsRequiredFor,
     },
     jwks,
     replayStore,

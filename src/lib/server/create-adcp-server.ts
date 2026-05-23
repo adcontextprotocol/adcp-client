@@ -2795,13 +2795,13 @@ function buildSignedRequestsPreTransport(
   // duty to sign.
   const requiredFor = signedRequests.required_for ?? capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS];
   const protocolMethodsRequiredFor =
-    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for ?? [];
+    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
       covers_content_digest: signedRequests.covers_content_digest ?? 'either',
       required_for: requiredFor,
-      protocol_methods_required_for: protocolMethodsRequiredFor,
+      ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,

@@ -12,7 +12,11 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
-const { PROTOCOL_TO_PATH, loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+const {
+  PROTOCOL_TO_PATH,
+  UNBASELINED_SUPPORTED_PROTOCOLS,
+  loadComplianceIndex,
+} = require('../../dist/lib/testing/storyboard/index.js');
 
 const SCHEMA_PATH = join(__dirname, '../../schemas/cache/latest/protocol/get-adcp-capabilities-response.json');
 
@@ -28,13 +32,13 @@ describe('protocol→path mapping drift alarm', () => {
   const PROTOCOLS_WITHOUT_BASELINE = new Set(['measurement']);
 
   test('every supported_protocols enum value is handled', () => {
-    const unknown = enumValues.filter(v => !(v in PROTOCOL_TO_PATH));
+    const unknown = enumValues.filter(v => !(v in PROTOCOL_TO_PATH) && !UNBASELINED_SUPPORTED_PROTOCOLS.has(v));
     assert.deepEqual(
       unknown,
       [],
       `These supported_protocols values are not in PROTOCOL_TO_PATH: ` +
         `${unknown.join(', ')}. Update src/lib/testing/storyboard/compliance.ts when upstream ` +
-        `adds a new protocol.`
+        `adds a new protocol, or add it to UNBASELINED_SUPPORTED_PROTOCOLS if the cache ships no baseline yet.`
     );
   });
 

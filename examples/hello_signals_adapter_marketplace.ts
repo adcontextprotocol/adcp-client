@@ -134,6 +134,12 @@ const http = createUpstreamHttpClient({
 
 const tenantHeader = (operatorId: string) => ({ 'X-Operator-Id': operatorId });
 
+function upstreamPlatformCode(platform: string): string {
+  // The compliance storyboard uses a fictional buyer-facing DSP label;
+  // this adapter maps it onto the mock upstream's concrete destination.
+  return platform === 'pinnacle-dsp' ? 'the-trade-desk' : platform;
+}
+
 const upstream = {
   // SWAP: tenant lookup. Mock exposes /_lookup; production typically a
   // directory service or config registry.
@@ -173,7 +179,13 @@ const upstream = {
   // SWAP: post an activation.
   async activate(
     operatorId: string,
-    body: { cohort_id: string; destination_id: string; pricing_id: string; client_request_id: string }
+    body: {
+      cohort_id: string;
+      destination_id: string;
+      pricing_id: string;
+      client_request_id: string;
+      signal_agent_segment_id: string;
+    }
   ): Promise<UpstreamActivation> {
     const r = await http.post<UpstreamActivation>('/v2/activations', body, tenantHeader(operatorId));
     if (r.body === null) {
@@ -421,8 +433,8 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         });
         return {
           status: 'completed',
-          cache_scope: 'public',
           signals: filtered.map(toAdcpSignal),
+          cache_scope: 'account',
         } satisfies GetSignalsResponse;
       }),
 
@@ -462,6 +474,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
             }
             const activation = await upstream.activate(operatorId, {
               cohort_id: cohort.cohort_id,
+              signal_agent_segment_id: cohort.cohort_id,
               destination_id: matched.destination_id,
               pricing_id: pricingId,
               client_request_id: `${idempotency}.${i}`,

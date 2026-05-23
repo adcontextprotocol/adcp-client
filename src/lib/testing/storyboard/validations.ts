@@ -33,16 +33,6 @@ import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
-const MEDIA_BUY_STATUS_VALUES = new Set([
-  'pending_creatives',
-  'pending_start',
-  'active',
-  'paused',
-  'completed',
-  'rejected',
-  'canceled',
-]);
-
 /**
  * Broader validation context that carries the run-level state a single
  * validation might need: the task result (for MCP tools), the HTTP probe
@@ -109,9 +99,10 @@ export interface ValidationContext {
    */
   upstreamTraffic?: UpstreamTrafficValidationContext;
   /**
-   * Storyboard step (raw YAML) — used by `upstream_traffic` to scan
-   * `sample_request` for buyer-identifier vectors when
-   * `buyer_identifier_echo: true` is asserted.
+   * Storyboard step (raw YAML) — legacy fallback for direct validation
+   * callers. The runner's resolved `request.payload` is preferred for
+   * `upstream_traffic.identifier_paths` so context/generated tokens compare
+   * against values actually sent on the wire.
    */
   storyboardStep?: { sample_request?: Record<string, unknown> };
   /**
@@ -874,23 +865,16 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     };
   }
 
-  const actual = resolvePath(taskResult.data, validation.path);
+  const rawActual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
-
-  // AdCP 3.1 flat MCP reserves top-level `status` for the task envelope,
-  // while create/update media-buy kept a deprecated body-level
-  // `status: MediaBuyStatus` during the transition to `media_buy_status`.
-  // Body-scoped tolerant checks on that legacy field should not interpret the
-  // envelope's synchronous `completed` as a seller-emitted media-buy status.
-  if (isMediaBuyEnvelopeStatusCollision(validation, taskResult, actual)) {
-    return {
-      check: checkName,
-      passed: true,
-      description: validation.description,
-      path: validation.path,
-      json_pointer: pointer,
-    };
-  }
+  const actual =
+    validation.check === 'field_value_or_absent' &&
+    validation.path === 'status' &&
+    rawActual !== undefined &&
+    isTaskEnvelopeStatus(rawActual) &&
+    resolvePath(taskResult.data, 'media_buy_status') !== undefined
+      ? undefined
+      : rawActual;
 
   // Absent → pass. The check only fires when the field is present.
   if (actual === undefined) {
@@ -949,23 +933,20 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
   };
 }
 
-function isMediaBuyEnvelopeStatusCollision(
-  validation: StoryboardValidation,
-  taskResult: TaskResult,
-  actual: unknown
-): boolean {
-  if (validation.check !== 'field_value_or_absent') return false;
-  if (validation.path !== 'status') return false;
-  if (actual !== 'completed') return false;
+const TASK_ENVELOPE_STATUSES = new Set([
+  'submitted',
+  'working',
+  'input-required',
+  'completed',
+  'canceled',
+  'failed',
+  'rejected',
+  'auth-required',
+  'unknown',
+]);
 
-  const data = taskResult.data;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
-  const record = data as Record<string, unknown>;
-  if (typeof record.media_buy_status !== 'string') return false;
-
-  const expectedValues =
-    validation.allowed_values && validation.allowed_values.length > 0 ? validation.allowed_values : [validation.value];
-  return expectedValues.some(value => typeof value === 'string' && MEDIA_BUY_STATUS_VALUES.has(value));
+function isTaskEnvelopeStatus(value: unknown): boolean {
+  return typeof value === 'string' && TASK_ENVELOPE_STATUSES.has(value);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2708,16 +2689,18 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   }
 
   // identifier_paths: extract every value at each declared path against the
-  // resolved request the runner sent, then assert each resolved value appears
-  // at any depth in some matched call's payload. Fall back to the raw
-  // sample_request for direct validator tests and older callers that do not
-  // pass request records. Spec is explicit: ALL resolved values must be
-  // present — single-placeholder fabrication is the threat. Replaces the
-  // earlier `buyer_identifier_echo` boolean shorthand per spec PR adcp#3816.
+  // storyboard's sample_request (author-controlled vectors), then assert each
+  // resolved value appears at any depth in some matched call's payload. Spec
+  // is explicit: ALL resolved values must be present — single-placeholder
+  // fabrication is the threat. Replaces the earlier `buyer_identifier_echo`
+  // boolean shorthand per spec PR adcp#3816.
   const missingIdentifierValues: unknown[] = [];
   if (validation.identifier_paths && validation.identifier_paths.length > 0) {
-    const requestPayload = isRefObject(ctx.request?.payload) ? ctx.request.payload : undefined;
-    const sample = requestPayload ?? ctx.storyboardStep?.sample_request;
+    const requestPayload = ctx.request?.payload;
+    const sample =
+      requestPayload && typeof requestPayload === 'object' && !Array.isArray(requestPayload)
+        ? (requestPayload as Record<string, unknown>)
+        : ctx.storyboardStep?.sample_request;
     for (const path of validation.identifier_paths) {
       const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
       for (const vector of vectors) {

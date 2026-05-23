@@ -32,6 +32,7 @@ const HARNESS_TASKS = new Set([
   'protected_resource_metadata',
   'oauth_auth_server_metadata',
   'assert_contribution',
+  'request_signing_probe',
   'fetch_brand_jwks',
   'assert_jwks_purpose',
   'expect_rate_limit_not_replayed',
@@ -274,7 +275,14 @@ describe('storyboard schema drift', () => {
   // published tarball yet. `npm run sync-schemas` pulls the most recent
   // release, so a fix merged to adcp `main` post-release stays in this
   // allowlist until the next tarball cut.
-  const KNOWN_FORWARD_DRIFT = new Set([]);
+  const KNOWN_FORWARD_DRIFT = new Set([
+    // 3.1.0-beta.3 cache uses the tolerant matcher for status in two media-buy
+    // steps, but the current generated response schema now requires status.
+    // Keep the SDK lint green until the next compliance tarball rewrites these
+    // to `field_value`.
+    'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
+    'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
+  ]);
 
   // Paths that are structurally valid in the spec schema but that
   // `isPathReachable` can't resolve after the Zod codegen — the codegen
@@ -294,14 +302,6 @@ describe('storyboard schema drift', () => {
     // Filed upstream as adcp#3429 (storyboard authoring: response_schema_ref
     // vs envelope-level field assertions).
     'v3_envelope_integrity/no_legacy_status_fields:status',
-    // `create_media_buy` / `update_media_buy` schemas include the v3
-    // envelope `status: "completed"` at the same root where old media-buy
-    // payloads once exposed lifecycle `status`. These storyboards
-    // intentionally use `field_value_or_absent status` to tolerate sellers
-    // that already migrated to `media_buy_status`; runtime validation treats
-    // the envelope collision as absent for this deprecated payload field.
-    'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
-    'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
   ]);
 
   // Paths that reference spec schema fields the upstream schema doesn't
@@ -440,24 +440,6 @@ describe('storyboard schema drift', () => {
   // response schemas.
   describe('field_value_or_absent is not redundantly applied to schema-required fields', () => {
     const tolerantValidations = fieldValidations.filter(v => v.check === 'field_value_or_absent');
-
-    // Storyboard YAMLs in the compliance bundle where the drift walker
-    // collides envelope `status` with the deprecating payload `status`. Per
-    // adcp#4908, `media_buy_seller/pending_creatives_to_start` is annotating
-    // the *payload* legacy `status` field (the lifecycle field being
-    // supplanted by `media_buy_status` during the 3.1 deprecation window) —
-    // NOT the envelope task `status`. The walker resolves both to the same
-    // top-level path `status` and matches against the schema-required
-    // envelope field, surfacing a false-positive redundancy. The proper
-    // upstream fix is a path qualifier in the YAML (or splitting envelope
-    // vs payload paths in the drift walker). Skip here until either lands;
-    // the sibling `field_value_or_absent paths are reachable in response
-    // schemas` describe (~line 405) still runs on these entries, so
-    // reachability regressions are still caught.
-    const KNOWN_REDUNDANT_TOLERANCE_PENDING_SPEC_UPDATE = new Set([
-      'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
-      'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
-    ]);
 
     for (const entry of tolerantValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];

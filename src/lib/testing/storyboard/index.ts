@@ -118,6 +118,7 @@ export {
   listSpecialisms,
   CapabilityResolutionError,
   PROTOCOL_TO_PATH,
+  UNBASELINED_SUPPORTED_PROTOCOLS,
 } from './compliance';
 export type {
   AgentCapabilities,

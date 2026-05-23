@@ -51,9 +51,10 @@ export async function verifyRequestSignature(
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
     const operation = options.operation;
-    // `required_for` takes precedence over the webhook-auth elevation below
-    // so the more specific error message ("Operation X requires...") wins
-    // when the op is already on the always-sign list.
+    // Precedence is intentionally fail-specific: AdCP tool required_for,
+    // raw JSON-RPC protocol methods, then payload-driven webhook-auth
+    // elevation. The specific signed-only contract should win before the
+    // generic body scan runs.
     if (operation && options.capability.required_for.includes(operation)) {
       throw new RequestSignatureError(
         'request_signature_required',
@@ -61,12 +62,21 @@ export async function verifyRequestSignature(
         `Operation "${operation}" requires a signed request`
       );
     }
-    const protocolMethod = extractJsonRpcProtocolMethod(request);
-    if (protocolMethod && options.capability.protocol_methods_required_for?.includes(protocolMethod)) {
+    const protocolMethodsRequiredFor = options.capability.protocol_methods_required_for ?? [];
+    if (protocolMethodsRequiredFor.length > 0 && exceedsUnsignedBodyInspectionCap(request.body)) {
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Protocol method "${protocolMethod}" requires a signed request`
+        'Unsigned request body exceeds the protocol method inspection cap while protocol methods require signing'
+      );
+    }
+    const protocolMethods = jsonRpcProtocolMethods(request.body);
+    const requiredProtocolMethod = protocolMethods.find(method => protocolMethodsRequiredFor.includes(method));
+    if (requiredProtocolMethod) {
+      throw new RequestSignatureError(
+        'request_signature_required',
+        0,
+        `Protocol method "${requiredProtocolMethod}" requires a signed request`
       );
     }
     // Payload-driven elevation: any request carrying
@@ -236,6 +246,22 @@ export async function verifyRequestSignature(
 
   const agent_url = options.agentUrlForKeyid?.(jwk.kid);
   return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
+}
+
+function jsonRpcProtocolMethods(body: string | undefined): string[] {
+  if (!body) return [];
+  if (exceedsUnsignedBodyInspectionCap(body)) return [];
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    const messages = Array.isArray(parsed) ? parsed : [parsed];
+    return messages.flatMap(message =>
+      message !== null && typeof message === 'object' && typeof (message as { method?: unknown }).method === 'string'
+        ? [(message as { method: string }).method]
+        : []
+    );
+  } catch {
+    return [];
+  }
 }
 
 function requireParams(parsed: ParsedSignatureInput): void {
@@ -473,6 +499,10 @@ const MAX_UNSIGNED_BODY_INSPECTION_BYTES = 1_048_576;
  */
 const MAX_BODY_TRAVERSAL_DEPTH = 64;
 
+function exceedsUnsignedBodyInspectionCap(body: string | undefined): boolean {
+  return typeof body === 'string' && body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES;
+}
+
 /**
  * Scan a JSON request body for a non-empty
  * `push_notification_config.authentication` object — anywhere in the tree,
@@ -491,7 +521,7 @@ const MAX_BODY_TRAVERSAL_DEPTH = 64;
 function carriesWebhookAuthentication(request: RequestLike): boolean {
   const body = request.body;
   if (!body) return false;
-  if (body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES) return true;
+  if (exceedsUnsignedBodyInspectionCap(body)) return true;
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -499,20 +529,6 @@ function carriesWebhookAuthentication(request: RequestLike): boolean {
     return false;
   }
   return containsWebhookAuthentication(parsed, MAX_BODY_TRAVERSAL_DEPTH);
-}
-
-function extractJsonRpcProtocolMethod(request: RequestLike): string | undefined {
-  const body = request.body;
-  if (!body || body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES) return undefined;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    return undefined;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-  const method = (parsed as { method?: unknown }).method;
-  return typeof method === 'string' && method !== 'tools/call' ? method : undefined;
 }
 
 function containsWebhookAuthentication(value: unknown, depthRemaining: number): boolean {

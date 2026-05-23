@@ -34,6 +34,12 @@ const HARNESS_TASKS = new Set([
   // Synthesized request-signing steps — the runner builds each request from
   // a test-vector fixture; no `sample_request` shape applies.
   'request_signing_probe',
+  // Runner-native probes added by webhook/key-publishing and idempotency
+  // compliance storyboards. They inspect metadata or runner-observed traffic
+  // rather than dispatching protocol tools.
+  'fetch_brand_jwks',
+  'assert_jwks_purpose',
+  'expect_rate_limit_not_replayed',
   // Webhook-assertion pseudo-tasks (adcontextprotocol/adcp#2431). The runner
   // observes the shared receiver rather than driving the agent, so these
   // steps have no request shape.

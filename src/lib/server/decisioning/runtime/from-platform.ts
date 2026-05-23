@@ -982,11 +982,22 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const cs = platform.capabilities.content_standards;
   const som = platform.capabilities.supported_optimization_metrics;
   const fc = platform.capabilities.frequency_capping;
+  const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;
   const supportsProposals =
-    platform.capabilities.supportsProposals ?? (platform.proposalManager != null ? true : undefined);
+    platform.capabilities.supportsProposals ??
+    (platform.proposalManager != null ? true : hasSalesPlatform ? false : undefined);
   const hasMediaBuyProjection =
-    at != null || ct != null || cs != null || som != null || fc != null || supportsProposals !== undefined;
+    hasSalesPlatform ||
+    at != null ||
+    ct != null ||
+    cs != null ||
+    som != null ||
+    fc != null ||
+    supportsProposals !== undefined;
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
+    ...(hasSalesPlatform && {
+      buying_modes: supportsProposals ? (['brief', 'refine'] as const) : (['brief'] as const),
+    }),
     ...(at != null && { audience_targeting: at }),
     ...(ct != null && { conversion_tracking: ct }),
     ...(cs != null && { content_standards: cs }),

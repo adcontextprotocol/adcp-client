@@ -32,6 +32,9 @@ export const PROBE_TASKS = new Set([
   'oauth_auth_server_metadata',
   'assert_contribution',
   'request_signing_probe',
+  'fetch_brand_jwks',
+  'assert_jwks_purpose',
+  'expect_rate_limit_not_replayed',
 ]);
 
 // ---------------------------------------------------------------------------
