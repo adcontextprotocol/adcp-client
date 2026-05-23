@@ -1415,7 +1415,7 @@ describe('comply() degraded-profile path (security_baseline against 401-on-disco
     try {
       const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
       const result = await comply(agentUrl, {
-        storyboards: ['creative_sales_agent'],
+        storyboards: ['creative/native_in_feed'],
         allow_http: true,
         timeout_ms: 30000,
       });

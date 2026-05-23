@@ -13,6 +13,12 @@ export interface VerifierCapability {
    */
   warn_for?: string[];
   supported_for?: string[];
+  /**
+   * JSON-RPC protocol methods (for example `tasks/cancel`) that require
+   * request signatures. Kept separate from `required_for`, whose namespace is
+   * AdCP tool names such as `create_media_buy`.
+   */
+  protocol_methods_required_for?: string[];
 }
 
 export interface AdcpJsonWebKey {

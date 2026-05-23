@@ -110,6 +110,7 @@ async function startReferenceVerifier({
       supported: true,
       covers_content_digest: coversContentDigest,
       required_for: requiredFor,
+      protocol_methods_required_for: ['tasks/cancel'],
     },
     jwks,
     replayStore,

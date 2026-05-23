@@ -177,7 +177,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
     assert.deepStrictEqual(failures, [], 'every non-profile vector grades as expected under MCP transport');
     assert.ok(report.passed, 'overall grade is PASS');
     assert.strictEqual(report.positive.length, 12);
-    assert.strictEqual(report.negative.length, 27);
+    assert.strictEqual(report.negative.length, 28);
   });
 
   test('MCP mode vector bodies are wrapped in JSON-RPC tools/call envelopes', async () => {
@@ -247,10 +247,10 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
   });
 
   test('every negative mutation produces an MCP-shaped request under transport: mcp', () => {
-    // Locks the invariant that every path in MUTATIONS routes through
-    // applyTransport. A regression that bypasses applyTransport (e.g. a new
-    // mutator that sets url/body directly from vector.request.*) shows up
-    // here before it reaches the e2e grader.
+    // Locks the invariant that MCP-mode mutations produce MCP endpoint
+    // requests. Most vectors wrap as tools/call; protocol-method vectors
+    // intentionally preserve their JSON-RPC method so the verifier can grade
+    // protocol_methods_required_for.
     const {
       buildNegativeRequest,
       loadRequestSigningVectors,
@@ -264,9 +264,13 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       assert.ok(signed.body, `${vector.id}: body must be present`);
       const envelope = JSON.parse(signed.body);
       assert.strictEqual(envelope.jsonrpc, '2.0', `${vector.id}: jsonrpc`);
-      assert.strictEqual(envelope.method, 'tools/call', `${vector.id}: method`);
-      const originalOp = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
-      assert.strictEqual(envelope.params.name, originalOp, `${vector.id}: params.name from vector URL tail`);
+      if (vector.id === '028-unsigned-protocol-method-required') {
+        assert.strictEqual(envelope.method, 'tasks/cancel', `${vector.id}: method`);
+      } else {
+        assert.strictEqual(envelope.method, 'tools/call', `${vector.id}: method`);
+        const originalOp = new URL(vector.request.url).pathname.split('/').filter(Boolean).pop();
+        assert.strictEqual(envelope.params.name, originalOp, `${vector.id}: params.name from vector URL tail`);
+      }
     }
   });
 });

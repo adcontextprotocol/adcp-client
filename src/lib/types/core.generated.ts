@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.0-beta.3
-// Generated at: 2026-05-22T16:27:18.517Z
+// Generated at: 2026-05-23T21:17:17.089Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -12505,73 +12505,41 @@ export type BriefAsset1 = BriefAsset;
  */
 export type CatalogAsset1 = CatalogAsset;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant2 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset2
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset2
-  | MarkdownAsset
-  | BriefAsset2
-  | CatalogAsset2
-  | CardAsset;
+export type AssetVariant2 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset2 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset2 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset2 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset2 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -12581,73 +12549,41 @@ export type BriefAsset2 = CreativeBrief;
  */
 export type CatalogAsset2 = Catalog;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant3` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant3 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset3
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset3
-  | MarkdownAsset
-  | BriefAsset3
-  | CatalogAsset3
-  | CardAsset;
+export type AssetVariant3 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset3` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset3 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset3 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset3` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset3 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset3 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -12657,73 +12593,41 @@ export type BriefAsset3 = CreativeBrief;
  */
 export type CatalogAsset3 = Catalog;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant4` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant4 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset4
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset4
-  | MarkdownAsset
-  | BriefAsset4
-  | CatalogAsset4
-  | CardAsset;
+export type AssetVariant4 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset4` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset4 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset4 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset4` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset4 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset4 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -12733,73 +12637,41 @@ export type BriefAsset4 = CreativeBrief;
  */
 export type CatalogAsset4 = Catalog;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant5` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant5 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset5
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset5
-  | MarkdownAsset
-  | BriefAsset5
-  | CatalogAsset5
-  | CardAsset;
+export type AssetVariant5 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset5` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset5 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset5 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset5` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset5 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset5 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -12809,73 +12681,41 @@ export type BriefAsset5 = CreativeBrief;
  */
 export type CatalogAsset5 = Catalog;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant6` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant6 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset6
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset6
-  | MarkdownAsset
-  | BriefAsset6
-  | CatalogAsset6
-  | CardAsset;
+export type AssetVariant6 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset6` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset6 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset6 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset6` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset6 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset6 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
@@ -12885,73 +12725,41 @@ export type BriefAsset6 = CreativeBrief;
  */
 export type CatalogAsset6 = Catalog;
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant7` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant7 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset7
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | ZipAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset7
-  | MarkdownAsset
-  | BriefAsset7
-  | CatalogAsset7
-  | CardAsset;
+export type AssetVariant7 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset7` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset7 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset7 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset7` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset7 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset7 = DAASTAsset;
 /**
  * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */

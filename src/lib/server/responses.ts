@@ -184,9 +184,12 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
+  const structured = toStructuredContent(data) as Record<string, unknown>;
+  if (structured.status === undefined) structured.status = 'completed';
+  if (Array.isArray(structured.products) && structured.cache_scope === undefined) structured.cache_scope = 'public';
   return {
     content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: structured,
   };
 }
 

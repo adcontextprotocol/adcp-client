@@ -40,6 +40,9 @@ const HARNESS_TASKS = new Set([
   'expect_webhook',
   'expect_webhook_retry_keys_stable',
   'expect_webhook_signature_valid',
+  'fetch_brand_jwks',
+  'assert_jwks_purpose',
+  'expect_rate_limit_not_replayed',
   // Substitution-safety observer for catalog-driven sellers. The runner
   // inspects the previous step's preview artifact rather than issuing a
   // tool call — no request or response schema applies.

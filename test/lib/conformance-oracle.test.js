@@ -32,7 +32,7 @@ function rejected(tool, code, message, extra = {}) {
 
 describe('conformance: oracle', () => {
   test('valid success payload → accepted', () => {
-    const out = accepted('get_signals', { signals: [] });
+    const out = accepted('get_signals', { signals: [], cache_scope: 'public' });
     assert.equal(out.verdict, 'accepted');
     assert.deepEqual(out.invariantFailures, []);
   });
@@ -45,7 +45,7 @@ describe('conformance: oracle', () => {
 
   test('schema-invalid payload → invalid', () => {
     // signals must be an array per schema; passing an object should fail.
-    const out = accepted('get_signals', { signals: { not: 'an array' } });
+    const out = accepted('get_signals', { signals: { not: 'an array' }, cache_scope: 'public' });
     assert.equal(out.verdict, 'invalid');
     assert.ok(out.invariantFailures[0].startsWith('response schema mismatch'));
   });
@@ -160,7 +160,7 @@ describe('conformance: oracle', () => {
         status: 'completed',
         // Python/Go dict round-trip commonly reorders keys; the oracle must
         // not flag this as context mutation.
-        data: { signals: [], context: { b: 2, a: 1 } },
+        data: { signals: [], cache_scope: 'public', context: { b: 2, a: 1 } },
       },
     });
     assert.equal(out.verdict, 'accepted');
@@ -187,7 +187,7 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: ctx },
-      result: { success: true, status: 'completed', data: { signals: [], context: ctx } },
+      result: { success: true, status: 'completed', data: { signals: [], cache_scope: 'public', context: ctx } },
     });
     assert.equal(out.verdict, 'accepted');
   });
@@ -199,7 +199,7 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: { trace_id: 'abc' } },
-      result: { success: true, status: 'completed', data: { signals: [] } },
+      result: { success: true, status: 'completed', data: { signals: [], cache_scope: 'public' } },
     });
     assert.equal(out.verdict, 'invalid');
     assert.ok(out.invariantFailures.some(f => f.includes('context') && f.includes('omitted')));
@@ -209,7 +209,11 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: { trace_id: 'abc' } },
-      result: { success: true, status: 'completed', data: { signals: [], context: { trace_id: 'mutated' } } },
+      result: {
+        success: true,
+        status: 'completed',
+        data: { signals: [], cache_scope: 'public', context: { trace_id: 'mutated' } },
+      },
     });
     assert.equal(out.verdict, 'invalid');
     assert.ok(out.invariantFailures.some(f => f.includes('context not echoed')));

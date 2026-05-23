@@ -95,6 +95,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_brand_identity: schemas.GetBrandIdentityResponseSchema,
   get_rights: schemas.GetRightsResponseSchema,
   acquire_rights: schemas.AcquireRightsResponseSchema,
+  verify_brand_claim: schemas.VerifyBrandClaimResponseSchema,
 
   // Brand rights — no schema definitions yet for these tools
   update_rights: z.union([

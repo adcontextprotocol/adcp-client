@@ -61,6 +61,14 @@ export async function verifyRequestSignature(
         `Operation "${operation}" requires a signed request`
       );
     }
+    const protocolMethod = extractJsonRpcProtocolMethod(request);
+    if (protocolMethod && options.capability.protocol_methods_required_for?.includes(protocolMethod)) {
+      throw new RequestSignatureError(
+        'request_signature_required',
+        0,
+        `Protocol method "${protocolMethod}" requires a signed request`
+      );
+    }
     // Payload-driven elevation: any request carrying
     // `push_notification_config.authentication` MUST be RFC 9421 signed,
     // regardless of whether the operation appears in `required_for`
@@ -491,6 +499,20 @@ function carriesWebhookAuthentication(request: RequestLike): boolean {
     return false;
   }
   return containsWebhookAuthentication(parsed, MAX_BODY_TRAVERSAL_DEPTH);
+}
+
+function extractJsonRpcProtocolMethod(request: RequestLike): string | undefined {
+  const body = request.body;
+  if (!body || body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const method = (parsed as { method?: unknown }).method;
+  return typeof method === 'string' && method !== 'tools/call' ? method : undefined;
 }
 
 function containsWebhookAuthentication(value: unknown, depthRemaining: number): boolean {

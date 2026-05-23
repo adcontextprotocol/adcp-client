@@ -32,6 +32,9 @@ const HARNESS_TASKS = new Set([
   'protected_resource_metadata',
   'oauth_auth_server_metadata',
   'assert_contribution',
+  'fetch_brand_jwks',
+  'assert_jwks_purpose',
+  'expect_rate_limit_not_replayed',
 ]);
 
 // `$test_kit.*` substitution placeholders — resolved at run time, not tasks themselves.
@@ -291,6 +294,14 @@ describe('storyboard schema drift', () => {
     // Filed upstream as adcp#3429 (storyboard authoring: response_schema_ref
     // vs envelope-level field assertions).
     'v3_envelope_integrity/no_legacy_status_fields:status',
+    // `create_media_buy` / `update_media_buy` schemas include the v3
+    // envelope `status: "completed"` at the same root where old media-buy
+    // payloads once exposed lifecycle `status`. These storyboards
+    // intentionally use `field_value_or_absent status` to tolerate sellers
+    // that already migrated to `media_buy_status`; runtime validation treats
+    // the envelope collision as absent for this deprecated payload field.
+    'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
+    'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
   ]);
 
   // Paths that reference spec schema fields the upstream schema doesn't
@@ -434,15 +445,21 @@ describe('storyboard schema drift', () => {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 
-      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`, () => {
-        const segments = parsePath(entry.path);
-        const required = isPathRequired(schema, segments);
-        assert.ok(
-          !required,
-          `Path "${entry.path}" is required in ${entry.task} response schema — ` +
-            `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
-        );
-      });
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(
+        `${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`,
+        { skip },
+        () => {
+          const segments = parsePath(entry.path);
+          const required = isPathRequired(schema, segments);
+          assert.ok(
+            !required,
+            `Path "${entry.path}" is required in ${entry.task} response schema — ` +
+              `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
+          );
+        }
+      );
     }
   });
 
