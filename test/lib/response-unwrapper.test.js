@@ -1194,7 +1194,10 @@ describe('Response Unwrapper', () => {
       const result = unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
 
       // The synthetic status must NOT be present in the returned data
-      assert.ok(!('status' in result), `Returned data must not carry compat-injected status; got: ${JSON.stringify(result.status)}`);
+      assert.ok(
+        !('status' in result),
+        `Returned data must not carry compat-injected status; got: ${JSON.stringify(result.status)}`
+      );
       // The real fields must be intact
       assert.strictEqual(result.media_buy_id, 'mb-97b30f1a');
       assert.strictEqual(result.media_buy_status, 'pending_creatives');
