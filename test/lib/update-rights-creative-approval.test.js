@@ -189,10 +189,20 @@ describe('creative_approval webhook builders', () => {
   });
 
   it('Zod CreativeApprovalResponseSchema accepts each of the four arms', () => {
-    const approved = { status: 'approved', rights_id: 'rights_grant_123' };
-    const rejected = { status: 'rejected', rights_id: 'rights_grant_123', reason: 'r' };
-    const pending = { status: 'pending_review', rights_id: 'rights_grant_123' };
-    const error = { errors: [{ code: 'INVALID_REQUEST', message: 'm' }] };
+    // 3.1.0-beta.3 renamed the decision discriminator from `status` to
+    // `approval_status` so the top-level `status` is free for the envelope
+    // task-status (TaskStatus) under MCP flat-on-the-wire serialization
+    // (adcp#4878). The schema also requires envelope `status: 'completed'`
+    // on every non-error arm.
+    const approved = { status: 'completed', approval_status: 'approved', rights_id: 'rights_grant_123' };
+    const rejected = {
+      status: 'completed',
+      approval_status: 'rejected',
+      rights_id: 'rights_grant_123',
+      reason: 'r',
+    };
+    const pending = { status: 'completed', approval_status: 'pending_review', rights_id: 'rights_grant_123' };
+    const error = { status: 'failed', errors: [{ code: 'INVALID_REQUEST', message: 'm' }] };
     for (const candidate of [approved, rejected, pending, error]) {
       const parsed = schemas.CreativeApprovalResponseSchema.safeParse(candidate);
       assert.ok(
