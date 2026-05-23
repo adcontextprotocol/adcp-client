@@ -51,15 +51,6 @@ export async function verifyRequestSignature(
   // Pre-check: both headers present or both absent.
   if (!sigInputHeader && !sigHeader) {
     const operation = options.operation;
-    const protocolMethodsRequiredFor = options.capability.protocol_methods_required_for ?? [];
-    if (protocolMethodsRequiredFor.length > 0 && exceedsUnsignedBodyInspectionCap(request.body)) {
-      throw new RequestSignatureError(
-        'request_signature_required',
-        0,
-        'Unsigned request body exceeds the protocol method inspection cap while protocol methods require signing'
-      );
-    }
-    const protocolMethod = jsonRpcProtocolMethod(request.body);
     // Precedence is intentionally fail-specific: AdCP tool required_for,
     // raw JSON-RPC protocol methods, then payload-driven webhook-auth
     // elevation. The specific signed-only contract should win before the
@@ -71,11 +62,21 @@ export async function verifyRequestSignature(
         `Operation "${operation}" requires a signed request`
       );
     }
-    if (protocolMethod && protocolMethodsRequiredFor.includes(protocolMethod)) {
+    const protocolMethodsRequiredFor = options.capability.protocol_methods_required_for ?? [];
+    if (protocolMethodsRequiredFor.length > 0 && exceedsUnsignedBodyInspectionCap(request.body)) {
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        `Protocol method "${protocolMethod}" requires a signed request`
+        'Unsigned request body exceeds the protocol method inspection cap while protocol methods require signing'
+      );
+    }
+    const protocolMethods = jsonRpcProtocolMethods(request.body);
+    const requiredProtocolMethod = protocolMethods.find(method => protocolMethodsRequiredFor.includes(method));
+    if (requiredProtocolMethod) {
+      throw new RequestSignatureError(
+        'request_signature_required',
+        0,
+        `Protocol method "${requiredProtocolMethod}" requires a signed request`
       );
     }
     // Payload-driven elevation: any request carrying
@@ -247,14 +248,19 @@ export async function verifyRequestSignature(
   return { status: 'verified', keyid: jwk.kid, agent_url, verified_at: now };
 }
 
-function jsonRpcProtocolMethod(body: string | undefined): string | undefined {
-  if (!body) return undefined;
-  if (exceedsUnsignedBodyInspectionCap(body)) return undefined;
+function jsonRpcProtocolMethods(body: string | undefined): string[] {
+  if (!body) return [];
+  if (exceedsUnsignedBodyInspectionCap(body)) return [];
   try {
-    const parsed = JSON.parse(body) as { method?: unknown };
-    return typeof parsed.method === 'string' ? parsed.method : undefined;
+    const parsed = JSON.parse(body) as unknown;
+    const messages = Array.isArray(parsed) ? parsed : [parsed];
+    return messages.flatMap(message =>
+      message !== null && typeof message === 'object' && typeof (message as { method?: unknown }).method === 'string'
+        ? [(message as { method: string }).method]
+        : []
+    );
   } catch {
-    return undefined;
+    return [];
   }
 }
 
