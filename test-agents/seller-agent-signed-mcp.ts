@@ -145,6 +145,8 @@ function createAgent({ taskStore }: ServeContext) {
         supported: true,
         covers_content_digest: 'either',
         required_for: ['create_media_buy'],
+        protocol_methods_supported_for: ['tasks/cancel'],
+        protocol_methods_required_for: ['tasks/cancel'],
       },
       specialisms: ['signed-requests'],
     },

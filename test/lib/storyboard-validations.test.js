@@ -191,6 +191,82 @@ describe('envelope_field_value_or_absent (adcp#3429)', () => {
   });
 });
 
+describe('field_value_or_absent media-buy status collision (adcp-client#1961)', () => {
+  it('treats flat MCP envelope status completed as absent for the deprecated media-buy status field', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        status: 'completed',
+        media_buy_status: 'pending_creatives',
+        media_buy_id: 'mb-1',
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          value: 'pending_creatives',
+          description: 'legacy media-buy status mirrors media_buy_status when present',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'field_value_or_absent');
+  });
+
+  it('still fails when a seller emits a mismatched legacy media-buy status', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        status: 'active',
+        media_buy_status: 'pending_creatives',
+        media_buy_id: 'mb-1',
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value_or_absent',
+          path: 'status',
+          value: 'pending_creatives',
+          description: 'legacy media-buy status mirrors media_buy_status when present',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /Expected absent or "pending_creatives", got "active"/);
+  });
+
+  it('does not change envelope-scoped status checks', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        status: 'completed',
+        media_buy_status: 'pending_creatives',
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'envelope_field_value_or_absent',
+          path: 'status',
+          value: 'pending_creatives',
+          description: 'envelope status is still visible to envelope checks',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /Expected absent or "pending_creatives", got "completed"/);
+  });
+});
+
 describe('envelope_field_present (adcp#3429)', () => {
   // Runtime semantics are identical to field_present — TaskResult merges
   // envelope fields into its surface so `data.status` is the envelope's

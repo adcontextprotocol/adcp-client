@@ -132,7 +132,7 @@ function createAgentServer() {
     const limited = checkRateLimit();
     if (limited) return limited;
 
-    return productsResponse({ products: PRODUCTS });
+    return productsResponse({ products: PRODUCTS, cache_scope: 'public' });
   });
 
   // --- create_media_buy ---

@@ -551,7 +551,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           tenant.governanceBindings.delete(brandDomain);
         }
       }
-      const echoedAgents = entry.governance_agents.map(a => ({ url: a.url }));
+      const echoedAgents = entry.governance_agents.map(a => {
+        const categories = (a as { categories?: unknown }).categories;
+        return {
+          url: a.url,
+          ...(categories !== undefined && { categories }),
+        };
+      });
       return {
         account: entry.account,
         status: 'synced' as const,

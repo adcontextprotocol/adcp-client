@@ -197,23 +197,32 @@ interface ObjectShape {
 function objectArb(schema: JsonSchema, opts: ArbitraryOptions): fc.Arbitrary<Record<string, unknown>> {
   const shape = readObjectShape(schema);
   const anyOfRequired = collectAnyOfRequired(schema);
+  const oneOfBranches = collectExclusiveOneOfBranches(schema);
   const propertySpec = buildPropertyRecordSpec(shape, opts);
   const declared = new Set(Object.keys(propertySpec));
   const baseRequired = Array.from(shape.required).filter(k => declared.has(k));
   const dependencies = readDependencies(schema, declared);
 
   const base =
-    anyOfRequired.length === 0
-      ? fc.record(propertySpec, { requiredKeys: baseRequired })
-      : fc.nat(anyOfRequired.length - 1).chain(idx => {
-          const branch = anyOfRequired[idx]!;
-          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter(k => declared.has(k))]));
-          return fc.record(propertySpec, { requiredKeys });
-        });
+    oneOfBranches.length > 0
+      ? fc.nat(oneOfBranches.length - 1).chain(idx => {
+          const branch = oneOfBranches[idx]!;
+          const forbidden = new Set(branch.forbidden);
+          const branchSpec = Object.fromEntries(Object.entries(propertySpec).filter(([key]) => !forbidden.has(key)));
+          const requiredKeys = Array.from(new Set([...baseRequired, ...branch.required.filter(k => k in branchSpec)]));
+          return fc.record(branchSpec, { requiredKeys });
+        })
+      : anyOfRequired.length === 0
+        ? fc.record(propertySpec, { requiredKeys: baseRequired })
+        : fc.nat(anyOfRequired.length - 1).chain(idx => {
+            const branch = anyOfRequired[idx]!;
+            const requiredKeys = Array.from(new Set([...baseRequired, ...branch.filter(k => declared.has(k))]));
+            return fc.record(propertySpec, { requiredKeys });
+          });
 
   let withDeps = base;
   if (dependencies.length > 0) withDeps = base.map(value => enforceDependencies(value, dependencies));
-  withDeps = withDeps.map(value => enforceKnownConditionals(value, shape));
+  withDeps = withDeps.map(value => enforceKnownConditionals(enforceSimpleConditionals(value, schema), shape));
 
   // Unknown-property probe: when the schema allows additional properties,
   // sometimes inject one. Exercises the "unknown-field tolerance"
@@ -358,6 +367,83 @@ function collectAnyOfRequired(schema: JsonSchema): string[][] {
     }
   }
   return out;
+}
+
+interface ExclusiveBranch {
+  required: string[];
+  forbidden: string[];
+}
+
+function collectExclusiveOneOfBranches(schema: JsonSchema): ExclusiveBranch[] {
+  if (!Array.isArray(schema.oneOf)) return [];
+  const branches: ExclusiveBranch[] = [];
+  for (const branch of schema.oneOf as JsonSchema[]) {
+    if (!branch || typeof branch !== 'object') return [];
+    if (!Array.isArray(branch.required) || branch.required.length === 0) return [];
+    const not = branch.not as JsonSchema | undefined;
+    if (!not || !Array.isArray(not.required)) return [];
+    const allowedKeys = new Set(['title', 'description', 'required', 'not']);
+    if (Object.keys(branch).some(k => !allowedKeys.has(k))) return [];
+    if (Object.keys(not).some(k => k !== 'required')) return [];
+    branches.push({ required: branch.required as string[], forbidden: not.required as string[] });
+  }
+  return branches;
+}
+
+function enforceSimpleConditionals(value: Record<string, unknown>, schema: JsonSchema): Record<string, unknown> {
+  let current = { ...value };
+  for (const entry of (schema.allOf as JsonSchema[] | undefined) ?? []) {
+    current = enforceRequiredTriggerConst(current, entry);
+  }
+  current = enforceConstThenForbidden(current, schema);
+  return current;
+}
+
+function enforceRequiredTriggerConst(value: Record<string, unknown>, schema: JsonSchema): Record<string, unknown> {
+  const anyOf = (schema.if as JsonSchema | undefined)?.anyOf as JsonSchema[] | undefined;
+  const thenProps = (schema.then as JsonSchema | undefined)?.properties as Record<string, JsonSchema> | undefined;
+  if (!Array.isArray(anyOf) || !thenProps) return value;
+  const triggered = anyOf.some(branch => {
+    const required = branch?.required;
+    return Array.isArray(required) && required.some(name => typeof name === 'string' && name in value);
+  });
+  if (!triggered) return value;
+
+  let current = value;
+  for (const [key, prop] of Object.entries(thenProps)) {
+    if (prop && typeof prop === 'object' && 'const' in prop) {
+      current = { ...current, [key]: prop.const };
+    }
+  }
+  return current;
+}
+
+function enforceConstThenForbidden(value: Record<string, unknown>, schema: JsonSchema): Record<string, unknown> {
+  const ifSchema = schema.if as JsonSchema | undefined;
+  const thenSchema = schema.then as JsonSchema | undefined;
+  const ifProps = ifSchema?.properties as Record<string, JsonSchema> | undefined;
+  const thenNot = thenSchema?.not as JsonSchema | undefined;
+  const thenAnyOf = thenNot?.anyOf as JsonSchema[] | undefined;
+  if (!ifProps || !Array.isArray(thenAnyOf)) return value;
+
+  const matches = Object.entries(ifProps).every(([key, prop]) => {
+    return prop && typeof prop === 'object' && 'const' in prop && value[key] === prop.const;
+  });
+  if (!matches) return value;
+
+  const forbidden = new Set<string>();
+  for (const branch of thenAnyOf) {
+    if (Array.isArray(branch?.required)) {
+      for (const key of branch.required) {
+        if (typeof key === 'string') forbidden.add(key);
+      }
+    }
+  }
+  if (forbidden.size === 0) return value;
+
+  const next = { ...value };
+  for (const key of forbidden) delete next[key];
+  return next;
 }
 
 function buildPropertyRecordSpec(shape: ObjectShape, opts: ArbitraryOptions): Record<string, fc.Arbitrary<unknown>> {

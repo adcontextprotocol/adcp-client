@@ -47,9 +47,9 @@ function makeSignalsServer() {
               if (matches.length === 0) {
                 return adcpError('REFERENCE_NOT_FOUND', 'No signals matched the requested IDs');
               }
-              return { signals: matches };
+              return { signals: matches, cache_scope: 'public' };
             }
-            return { signals: SIGNALS };
+            return { signals: SIGNALS, cache_scope: 'public' };
           },
         },
       }),

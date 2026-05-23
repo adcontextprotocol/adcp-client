@@ -868,6 +868,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
   const rawActual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
   const actual =
+    validation.check === 'field_value_or_absent' &&
     validation.path === 'status' &&
     rawActual !== undefined &&
     isTaskEnvelopeStatus(rawActual) &&

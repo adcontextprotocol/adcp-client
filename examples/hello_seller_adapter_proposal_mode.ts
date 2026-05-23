@@ -328,6 +328,10 @@ function projectProposal(up: UpstreamProposal, total_budget?: { amount: number; 
       insertion_order: {
         io_id: `io_${up.proposal_id}`,
         requires_signature: false,
+        terms: {
+          publisher: up.network_code,
+          ...(total_budget && { total_budget }),
+        },
       },
     }),
     ...(up.expires_at !== undefined && { expires_at: up.expires_at }),
@@ -349,7 +353,7 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
     const networkCode = ctx.account.ctx_metadata.network_code;
     const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
     const products = await upstream.listProducts(networkCode);
-    if (products.length === 0) return { status: 'completed', products: [] };
+    if (products.length === 0) return { status: 'completed', products: [], cache_scope: 'account' };
 
     // brief + total_budget signals → curated proposal. Without a brief
     // the buyer is browsing the catalog; skip proposal generation.
@@ -459,7 +463,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
   // getProducts is owned by proposalManager when wired; the framework
   // routes there. We keep this empty at the type level — the framework
   // never reaches it.
-  getProducts: async () => ({ status: 'completed', products: [] }),
+  getProducts: async () => ({ status: 'completed', products: [], cache_scope: 'account' }),
 
   async createMediaBuy(req: CreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess> {
     const networkCode = ctx.account.ctx_metadata.network_code;

@@ -29,6 +29,7 @@ function loadSupportedProtocolsEnum() {
 
 describe('protocol→path mapping drift alarm', () => {
   const enumValues = loadSupportedProtocolsEnum();
+  const PROTOCOLS_WITHOUT_BASELINE = new Set(['measurement']);
 
   test('every supported_protocols enum value is handled', () => {
     const unknown = enumValues.filter(v => !(v in PROTOCOL_TO_PATH) && !UNBASELINED_SUPPORTED_PROTOCOLS.has(v));
@@ -45,6 +46,7 @@ describe('protocol→path mapping drift alarm', () => {
     const index = loadComplianceIndex();
     const knownProtocolIds = new Set(index.protocols.filter(p => p.has_baseline).map(p => p.id));
     const missing = Object.entries(PROTOCOL_TO_PATH)
+      .filter(([protocol]) => !PROTOCOLS_WITHOUT_BASELINE.has(protocol))
       .filter(([, protocolId]) => !knownProtocolIds.has(protocolId))
       .map(([protocol, protocolId]) => `${protocol} → ${protocolId}`);
     assert.deepEqual(

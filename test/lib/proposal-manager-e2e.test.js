@@ -10,13 +10,14 @@ const assert = require('node:assert');
 
 const { createAdcpServerFromPlatform, InMemoryProposalStore } = require('../../dist/lib/server/index.js');
 
-function buildPlatform({ proposalManager, sales }) {
+function buildPlatform({ proposalManager, sales, capabilities = {} }) {
   return {
     capabilities: {
       specialisms: ['sales-guaranteed'],
       adcp_version: '3.0.6',
       channels: ['display'],
       pricingModels: ['cpm'],
+      ...capabilities,
     },
     accounts: {
       resolution: 'derived',
@@ -28,6 +29,46 @@ function buildPlatform({ proposalManager, sales }) {
 }
 
 const authInfo = { token: 'tok', clientId: 'client', scopes: [] };
+
+test('e2e: proposal capability is auto-derived when ProposalManager is wired', async () => {
+  const proposalManager = {
+    capabilities: { salesSpecialism: 'sales-guaranteed' },
+    getProducts: async () => ({ products: [], proposals: [] }),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager, sales: {} }), {
+    name: 'e2e',
+    version: '1.0',
+    proposalStore: new InMemoryProposalStore(),
+    validation: { requests: 'off', responses: 'off' },
+  });
+
+  const res = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_adcp_capabilities', arguments: {} } },
+    { authInfo }
+  );
+  assert.strictEqual(res.structuredContent.media_buy.supports_proposals, true);
+});
+
+test('e2e: explicit proposal capability false is projected for direct-buy sellers', async () => {
+  const sales = {
+    getProducts: async () => ({ products: [] }),
+    createMediaBuy: async () => ({ media_buy_id: 'mb_x', packages: [] }),
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({ proposalManager: undefined, sales, capabilities: { supportsProposals: false } }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+
+  const res = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'get_adcp_capabilities', arguments: {} } },
+    { authInfo }
+  );
+  assert.strictEqual(res.structuredContent.media_buy.supports_proposals, false);
+});
 
 test('e2e: getProducts routes through ProposalManager when wired', async () => {
   const calls = { manager: 0, sales: 0 };

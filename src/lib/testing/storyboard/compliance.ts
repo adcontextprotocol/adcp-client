@@ -63,6 +63,7 @@ export const PROTOCOL_TO_PATH: Readonly<Record<string, string>> = Object.freeze(
   governance: 'governance',
   brand: 'brand',
   sponsored_intelligence: 'sponsored-intelligence',
+  measurement: 'measurement',
 });
 
 export const UNBASELINED_SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set([

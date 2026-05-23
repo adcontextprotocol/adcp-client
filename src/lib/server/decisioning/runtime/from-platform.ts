@@ -983,17 +983,27 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const som = platform.capabilities.supported_optimization_metrics;
   const fc = platform.capabilities.frequency_capping;
   const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;
-  const hasMediaBuyProjection = hasSalesPlatform || at != null || ct != null || cs != null || som != null || fc != null;
+  const supportsProposals =
+    platform.capabilities.supportsProposals ??
+    (platform.proposalManager != null ? true : hasSalesPlatform ? false : undefined);
+  const hasMediaBuyProjection =
+    hasSalesPlatform ||
+    at != null ||
+    ct != null ||
+    cs != null ||
+    som != null ||
+    fc != null ||
+    supportsProposals !== undefined;
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
     ...(hasSalesPlatform && {
-      supports_proposals: platform.proposalManager != null,
-      buying_modes: platform.proposalManager != null ? (['brief', 'refine'] as const) : (['brief'] as const),
+      buying_modes: supportsProposals ? (['brief', 'refine'] as const) : (['brief'] as const),
     }),
     ...(at != null && { audience_targeting: at }),
     ...(ct != null && { conversion_tracking: ct }),
     ...(cs != null && { content_standards: cs }),
     ...(som != null && { supported_optimization_metrics: som }),
     ...(fc != null && { frequency_capping: fc }),
+    ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
     ...(hasMediaBuyProjection && {
       features: {
         ...(at != null && { audience_targeting: true }),

@@ -248,10 +248,10 @@ function projectFinalizeResponse(args: {
   // `proposals[0].allocations[].product_id`.
   return {
     status: 'completed',
+    cache_scope: 'account',
     products: [],
     proposals: [args.committedProposal as unknown as Proposal],
     refinement_applied: refinementApplied,
-    cache_scope: 'account',
   } as unknown as GetProductsResponse;
 }
 

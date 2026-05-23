@@ -165,7 +165,8 @@ describe('ProgrammaticSeller — sync first, status-change for post-commit lifec
     });
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.strictEqual(result.structuredContent.status, 'pending_creatives');
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.media_buy_status, 'pending_creatives');
     assert.ok(result.structuredContent.media_buy_id.startsWith('mb_NET_42_'));
   });
 

@@ -141,7 +141,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     instance.server.close();
   });
 
-  test('grades the 17 non-stateful + 2 non-rate vectors on a covers_content_digest=either verifier', async () => {
+  test('grades non-rate vectors on a covers_content_digest=either verifier', async () => {
     const report = await gradeRequestSigning(instance.url, {
       allowPrivateIp: true,
       skipRateAbuse: true, // 020 has its own test below with matched caps.

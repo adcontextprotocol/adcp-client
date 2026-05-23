@@ -5,12 +5,6 @@ export interface VerifierCapability {
   covers_content_digest: ContentDigestPolicy;
   required_for: string[];
   /**
-   * JSON-RPC protocol method names (for example `tasks/cancel`) that MUST
-   * arrive signed. This is intentionally separate from `required_for`, which
-   * names AdCP tools carried inside `tools/call.params.name`.
-   */
-  protocol_methods_required_for?: string[];
-  /**
    * Shadow-mode bridge between `supported_for` and `required_for`: the seller
    * verifies signatures when present and logs failures but does NOT reject
    * unsigned requests. Counterparties SHOULD sign ops in this list so sellers
@@ -19,6 +13,12 @@ export interface VerifierCapability {
    */
   warn_for?: string[];
   supported_for?: string[];
+  /**
+   * JSON-RPC protocol methods (for example `tasks/cancel`) that require
+   * request signatures. Kept separate from `required_for`, whose namespace is
+   * AdCP tool names such as `create_media_buy`.
+   */
+  protocol_methods_required_for?: string[];
 }
 
 export interface AdcpJsonWebKey {
