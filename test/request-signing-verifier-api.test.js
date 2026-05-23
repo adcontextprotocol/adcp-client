@@ -109,6 +109,43 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     );
   });
 
+  it('oversized unsigned JSON-RPC body skips protocol method parsing and hits the body-size gate', async () => {
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tasks/cancel',
+      params: { padding: 'x'.repeat(1_048_576) },
+      id: 1,
+    });
+    assert.ok(body.length > 1_048_576, 'body exceeds 1 MB cap');
+
+    await assert.rejects(
+      () =>
+        verifyRequestSignature(
+          {
+            method: 'POST',
+            url: 'https://seller.example.com/mcp',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+          },
+          {
+            ...baseStores(),
+            capability: {
+              supported: true,
+              covers_content_digest: 'either',
+              required_for: [],
+              protocol_methods_required_for: ['tasks/cancel'],
+            },
+            now: () => 1_776_520_800,
+          }
+        ),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_required' &&
+        err.failedStep === 0 &&
+        /push_notification_config\.authentication/.test(err.message)
+    );
+  });
+
   it('unsigned request with operation NOT in required_for returns { status: "unsigned" }', async () => {
     const result = await verifyRequestSignature(
       {

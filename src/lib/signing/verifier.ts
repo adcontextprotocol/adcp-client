@@ -52,9 +52,10 @@ export async function verifyRequestSignature(
   if (!sigInputHeader && !sigHeader) {
     const operation = options.operation;
     const protocolMethod = jsonRpcProtocolMethod(request.body);
-    // `required_for` takes precedence over the webhook-auth elevation below
-    // so the more specific error message ("Operation X requires...") wins
-    // when the op is already on the always-sign list.
+    // Precedence is intentionally fail-specific: AdCP tool required_for,
+    // raw JSON-RPC protocol methods, then payload-driven webhook-auth
+    // elevation. The specific signed-only contract should win before the
+    // generic body scan runs.
     if (operation && options.capability.required_for.includes(operation)) {
       throw new RequestSignatureError(
         'request_signature_required',
@@ -240,6 +241,7 @@ export async function verifyRequestSignature(
 
 function jsonRpcProtocolMethod(body: string | undefined): string | undefined {
   if (!body) return undefined;
+  if (body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES) return undefined;
   try {
     const parsed = JSON.parse(body) as { method?: unknown };
     return typeof parsed.method === 'string' ? parsed.method : undefined;
