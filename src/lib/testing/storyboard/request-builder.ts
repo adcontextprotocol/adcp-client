@@ -654,6 +654,10 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Governance ─────────────────────────────────────────
 
   sync_governance(step, context, options) {
+    // `governance_agents[]` items are `additionalProperties: false` per
+    // AdCP 3.1.0-beta.3 (the single-agent-owns-full-lifecycle clarification
+    // dropped per-agent `categories`). Only `url` + `authentication` are
+    // permitted on the wire.
     return {
       accounts: [
         {
@@ -665,7 +669,6 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
                 schemes: ['Bearer'],
                 credentials: 'test-governance-token-padded-to-meet-min-length-32',
               },
-              categories: ['budget_authority', 'brand_policy'],
             },
           ],
         },

@@ -495,7 +495,7 @@ describe('validateResponseSchema', () => {
     // `getBestUnionErrors` to descend into intersections, which is a
     // source-side change outside this test-fixture catch-up. Tracked
     // alongside the other "union schema error reporting" skips below.
-    it.skip('classifies an absent required field as missing, with JSON Pointer', () => {
+    it('classifies an absent required field as missing, with JSON Pointer', () => {
       const { media_buy_id, ...without } = validCreateMediaBuySuccess;
       const result = validateResponseSchema('create_media_buy', without);
       assert.strictEqual(result.passed, false);
@@ -583,7 +583,7 @@ describe('validateResponseSchema', () => {
   // we're there) to find the inner `ZodUnion`. That's a source-side change,
   // outside the scope of the cluster-3 test-fixture catch-up.
   describe('union schema error reporting', () => {
-    it.skip('reports specific field errors for create_media_buy instead of (root): Invalid input', () => {
+    it('reports specific field errors for create_media_buy instead of (root): Invalid input', () => {
       const result = validateResponseSchema('create_media_buy', {
         packages: [{ package_id: 'pkg1', budget: 1000 }],
       });
@@ -592,31 +592,54 @@ describe('validateResponseSchema', () => {
       assert.ok(result.error.includes('media_buy_id'), 'Should mention the missing field');
     });
 
-    it.skip('reports specific field errors for activate_signal union schema', () => {
+    it('reports specific field errors for activate_signal union schema', () => {
       const result = validateResponseSchema('activate_signal', { signal_id: 'sig1' });
       assert.strictEqual(result.passed, false);
       assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
       assert.ok(result.error.includes('deployments'), 'Should mention the missing field');
     });
 
-    it.skip('reports specific field errors for build_creative 3-variant union', () => {
+    it('reports specific field errors for build_creative 3-variant union', () => {
       const result = validateResponseSchema('build_creative', { creative_id: 'c1' });
       assert.strictEqual(result.passed, false);
       assert.ok(!result.error.includes('(root): Invalid input'), 'Should not show generic union error');
       assert.ok(result.error.includes('creative_manifest'), 'Should mention a specific missing field');
     });
 
-    it.skip('still reports normal errors for non-union schemas', () => {
-      const result = validateResponseSchema('get_products', { not_products: true });
+    it('still reports normal errors for non-union schemas', () => {
+      // `get_products` had `products: ZodArray` before 3.1.0-beta.3 reshaped
+      // its response shape (products is now optional; cache_scope is required).
+      // Use `get_media_buy_delivery` for the "non-union schema with a required
+      // field that's missing" case — `currency` is required there and the
+      // schema isn't a discriminated union.
+      const result = validateResponseSchema('get_media_buy_delivery', { not_real_field: true });
       assert.strictEqual(result.passed, false);
-      assert.ok(result.error.includes('products'), 'Should mention missing products field');
+      // Missing one of the required fields is the canonical "normal error";
+      // the schema isn't a union arm so we get a direct field-level message
+      // rather than going through `getBestUnionErrors`.
+      assert.ok(
+        result.error.includes('reporting_period') || result.error.includes('media_buy_deliveries'),
+        `Should mention a missing required field; got: ${result.error}`
+      );
     });
 
-    it.skip('can access union variant options from Zod schema internals', () => {
-      // Canary test: if Zod upgrades break _def.options, this catches it
+    it('can access union variant options from Zod schema internals', () => {
+      // Canary test: if Zod upgrades break the internals our union-error
+      // disambiguator walks, this catches it. 3.1.0-beta.3 reshaped several
+      // tool-response unions from bare `z.union([...])` to
+      // `z.object({...envelope...}).passthrough().and(z.union([...]))`, so the
+      // union arm is now reached via `_def.right._def.options` (the
+      // production `getBestUnionErrors` helper handles both shapes).
       const schema = TOOL_RESPONSE_SCHEMAS['create_media_buy'];
-      const options = schema._def?.options;
-      assert.ok(Array.isArray(options), 'Expected _def.options to be an array (Zod internals may have changed)');
+      const def = schema._def;
+      const directOptions = def?.options;
+      const rightOptions = def?.right?._def?.options;
+      const leftOptions = def?.left?._def?.options;
+      const options = directOptions ?? rightOptions ?? leftOptions;
+      assert.ok(
+        Array.isArray(options),
+        'Expected union options on `_def.options` (bare union) or `_def.{left,right}._def.options` (intersection-wrapped union); Zod internals may have changed'
+      );
       assert.ok(options.length >= 2, 'create_media_buy should be a union of at least 2 variants');
     });
   });
