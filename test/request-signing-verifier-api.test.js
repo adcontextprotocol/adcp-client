@@ -109,7 +109,7 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     );
   });
 
-  it('oversized unsigned JSON-RPC body skips protocol method parsing and hits the body-size gate', async () => {
+  it('oversized unsigned body with protocol method requirements fails closed before method parsing', async () => {
     const body = JSON.stringify({
       jsonrpc: '2.0',
       method: 'tasks/cancel',
@@ -142,7 +142,7 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
         err instanceof RequestSignatureError &&
         err.code === 'request_signature_required' &&
         err.failedStep === 0 &&
-        /push_notification_config\.authentication/.test(err.message)
+        /protocol method inspection cap/.test(err.message)
     );
   });
 
