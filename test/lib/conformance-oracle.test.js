@@ -195,7 +195,11 @@ describe('conformance: oracle', () => {
     const out = evaluate({
       tool: 'get_signals',
       request: { signal_spec: 'x', context: ctx },
-      result: { success: true, status: 'completed', data: { status: 'completed', cache_scope: 'public', signals: [], context: ctx } },
+      result: {
+        success: true,
+        status: 'completed',
+        data: { status: 'completed', cache_scope: 'public', signals: [], context: ctx },
+      },
     });
     assert.equal(out.verdict, 'accepted');
   });

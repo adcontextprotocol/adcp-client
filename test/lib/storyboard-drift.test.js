@@ -447,15 +447,19 @@ describe('storyboard schema drift', () => {
 
       const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
       const skip = skipReason(key);
-      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`, { skip }, () => {
-        const segments = parsePath(entry.path);
-        const required = isPathRequired(schema, segments);
-        assert.ok(
-          !required,
-          `Path "${entry.path}" is required in ${entry.task} response schema — ` +
-            `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
-        );
-      });
+      it(
+        `${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`,
+        { skip },
+        () => {
+          const segments = parsePath(entry.path);
+          const required = isPathRequired(schema, segments);
+          assert.ok(
+            !required,
+            `Path "${entry.path}" is required in ${entry.task} response schema — ` +
+              `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
+          );
+        }
+      );
     }
   });
 

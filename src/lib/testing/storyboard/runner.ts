@@ -4331,7 +4331,10 @@ async function executeProbeStep(
   };
 }
 
-async function probeBrandJwks(rawCapabilities: unknown, options: { allowPrivateIp?: boolean }): Promise<HttpProbeResult> {
+async function probeBrandJwks(
+  rawCapabilities: unknown,
+  options: { allowPrivateIp?: boolean }
+): Promise<HttpProbeResult> {
   const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
   if (!brandJsonUrl) {
     return {
