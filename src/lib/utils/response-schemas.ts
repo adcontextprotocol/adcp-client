@@ -105,4 +105,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
     z.object({ decision: z.string() }).passthrough(),
     z.object({ errors: z.array(schemas.ErrorSchema) }).passthrough(),
   ]),
+  verify_brand_claim: schemas.VerifyBrandClaimResponseSchema,
+  verify_brand_claims: schemas.VerifyBrandClaimsResponseBulkSchema,
+  search_brands: schemas.SearchBrandsResponseSchema,
 };

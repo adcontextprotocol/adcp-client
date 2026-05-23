@@ -430,19 +430,44 @@ describe('storyboard schema drift', () => {
   describe('field_value_or_absent is not redundantly applied to schema-required fields', () => {
     const tolerantValidations = fieldValidations.filter(v => v.check === 'field_value_or_absent');
 
+    // Storyboard YAMLs in the compliance bundle where the drift walker
+    // collides envelope `status` with the deprecating payload `status`. Per
+    // adcp#4908, `media_buy_seller/pending_creatives_to_start` is annotating
+    // the *payload* legacy `status` field (the lifecycle field being
+    // supplanted by `media_buy_status` during the 3.1 deprecation window) —
+    // NOT the envelope task `status`. The walker resolves both to the same
+    // top-level path `status` and matches against the schema-required
+    // envelope field, surfacing a false-positive redundancy. The proper
+    // upstream fix is a path qualifier in the YAML (or splitting envelope
+    // vs payload paths in the drift walker). Skip here until either lands;
+    // the sibling `field_value_or_absent paths are reachable in response
+    // schemas` describe (~line 405) still runs on these entries, so
+    // reachability regressions are still caught.
+    const KNOWN_REDUNDANT_TOLERANCE_PENDING_SPEC_UPDATE = new Set([
+      'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
+      'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
+    ]);
+
     for (const entry of tolerantValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 
-      it(`${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`, () => {
-        const segments = parsePath(entry.path);
-        const required = isPathRequired(schema, segments);
-        assert.ok(
-          !required,
-          `Path "${entry.path}" is required in ${entry.task} response schema — ` +
-            `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
-        );
-      });
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = KNOWN_REDUNDANT_TOLERANCE_PENDING_SPEC_UPDATE.has(key);
+
+      it(
+        `${entry.storyboard}/${entry.step}: ${entry.path} is not schema-required (use \`field_value\` if it is)`,
+        { skip },
+        () => {
+          const segments = parsePath(entry.path);
+          const required = isPathRequired(schema, segments);
+          assert.ok(
+            !required,
+            `Path "${entry.path}" is required in ${entry.task} response schema — ` +
+              `the tolerance in \`field_value_or_absent\` is meaningless. Use \`field_value\` instead.`
+          );
+        }
+      );
     }
   });
 
