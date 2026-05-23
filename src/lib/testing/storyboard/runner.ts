@@ -73,6 +73,7 @@ import type {
   BranchSetSpec,
   ContextProvenanceEntry,
   HttpProbeResult,
+  ResponseNotApplicableGate,
   RunnerDetailedSkipReason,
   RunnerExtractionRecord,
   RunnerRequestRecord,
@@ -1929,6 +1930,44 @@ async function executeStoryboardPass(
         duration_ms: 0,
       });
       continue;
+    }
+
+    // Response-derived not_applicable gate (adcp-client#1959). Fires when a
+    // prior step's context_outputs proves this phase is not applicable —
+    // e.g. a single-page list_accounts response proves the cursor-walk phase
+    // cannot meaningfully run. Evaluated after `shouldSkipPhase` (opt-out
+    // gates run first) and before steps execute. Context is populated by
+    // prior steps' context_outputs; a gate on a key not yet captured is
+    // treated as absent.
+    if (phase.not_applicable_if_response) {
+      const gateDetail = evaluateResponseNotApplicableGate(phase.not_applicable_if_response, context);
+      if (gateDetail !== null) {
+        const gateSteps: StoryboardStepResult[] = phase.steps.map(step => ({
+          storyboard_id: storyboard.id,
+          step_id: step.id,
+          phase_id: phase.id,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'not_applicable' as const,
+          skip: buildSkip('not_applicable', gateDetail),
+          duration_ms: 0,
+          validations: [],
+          context,
+          extraction: { path: 'none' },
+        }));
+        phaseResults.push({
+          phase_id: phase.id,
+          phase_title: phase.title,
+          passed: true,
+          steps: gateSteps,
+          duration_ms: 0,
+        });
+        skippedCount += gateSteps.length;
+        priorPhaseIds.push(phase.id);
+        continue;
+      }
     }
 
     // Pre-empt OAuth-metadata probes when the agent's capabilities never
@@ -4264,6 +4303,47 @@ function shouldSkipPhase(phase: StoryboardPhase, options: StoryboardRunOptions):
   }
   const truthy = Boolean(value);
   return negated ? !truthy : truthy;
+}
+
+/**
+ * Evaluate a phase's `not_applicable_if_response` gate against the current
+ * storyboard context (adcp-client#1959). Returns a non-null detail string when
+ * the gate fires (phase should be graded `not_applicable`), or null when the
+ * gate does not fire (phase runs normally).
+ *
+ * The gate is fail-open: unknown predicate shapes return null so future
+ * predicate forms added to the type but not yet handled here do not silently
+ * suppress phases.
+ *
+ * Exported for direct testing — unit tests pin the predicate semantics
+ * without a full runStoryboard() roundtrip.
+ */
+export function evaluateResponseNotApplicableGate(
+  gate: ResponseNotApplicableGate,
+  context: StoryboardContext
+): string | null {
+  const value = context[gate.context_key];
+  const isAbsent = value === undefined || value === null;
+
+  let fires: boolean;
+  if (gate.predicate === 'absent') {
+    fires = isAbsent;
+  } else if (gate.predicate === 'present') {
+    fires = !isAbsent;
+  } else if (typeof gate.predicate === 'object' && 'equals' in gate.predicate) {
+    fires = value === gate.predicate.equals;
+  } else {
+    return null; // unknown predicate — fail open
+  }
+
+  if (!fires) return null;
+
+  return (
+    gate.reason ??
+    `not_applicable_if_response: context key '${gate.context_key}' matched predicate '${
+      typeof gate.predicate === 'object' ? JSON.stringify(gate.predicate) : gate.predicate
+    }' — phase not applicable`
+  );
 }
 
 /**

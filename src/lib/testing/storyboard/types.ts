@@ -329,6 +329,61 @@ export interface StoryboardPhase {
    * downstream runner code continues to read `step.contributes_to`.
    */
   branch_set?: BranchSetSpec;
+  /**
+   * Response-derived `not_applicable` gate (adcp-client#1959).
+   *
+   * Evaluated **before** this phase's steps run. If the predicate matches,
+   * every step in the phase is graded `not_applicable` (passed: true, skipped:
+   * true) rather than executed. The gate fires based on a context key
+   * previously populated by a prior step's `context_outputs` extraction —
+   * it does NOT fire before the context key could have been set.
+   *
+   * Use when a phase is only applicable based on what a prior step returned
+   * (e.g., cursor-walk pagination phases are not applicable when the first
+   * page proves there is no second page — the probe fires after `list_accounts`
+   * and the result is visible in the extracted context).
+   *
+   * The paired storyboard step declares:
+   * ```yaml
+   * context_outputs:
+   *   - path: pagination.cursor
+   *     key: page1_cursor
+   * ```
+   * And this phase declares:
+   * ```yaml
+   * not_applicable_if_response:
+   *   context_key: page1_cursor
+   *   predicate: absent
+   *   reason: "single_page_result: list_accounts response is terminal; cursor-walk not applicable"
+   * ```
+   */
+  not_applicable_if_response?: ResponseNotApplicableGate;
+}
+
+/**
+ * Predicate for a response-derived `not_applicable` phase gate.
+ * Evaluated against a context key populated by a prior step's `context_outputs`.
+ */
+export interface ResponseNotApplicableGate {
+  /**
+   * Key in `StoryboardContext` populated by a prior step's `context_outputs`
+   * extraction. The gate evaluates the value at this key against `predicate`.
+   */
+  context_key: string;
+  /**
+   * Predicate to evaluate:
+   * - `'absent'` — gate fires when the key is `undefined` or `null` (extraction
+   *   failed, the field was missing from the response, or the step hasn't run yet).
+   * - `'present'` — gate fires when the key is defined and non-null.
+   * - `{ equals: V }` — gate fires when the value strictly equals `V`.
+   */
+  predicate: 'absent' | 'present' | { equals: boolean | string | number | null };
+  /**
+   * Human-readable reason included in `skip.detail` when the gate fires.
+   * Should name the skipped phase and explain why it is not applicable.
+   * Defaults to a generic message referencing `context_key` when absent.
+   */
+  reason?: string;
 }
 
 export interface BranchSetSpec {

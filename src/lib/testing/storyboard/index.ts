@@ -19,6 +19,7 @@ import './default-invariants';
 export type {
   A2ATaskEnvelope,
   AgentEntry,
+  ResponseNotApplicableGate,
   Storyboard,
   StoryboardInvariants,
   StoryboardInvariantsObject,
@@ -97,6 +98,7 @@ export {
   listStrictOnlyFailures,
   resolveCapabilityPath,
   evaluateCapabilityPredicate,
+  evaluateResponseNotApplicableGate,
   buildDiscoveryFailedResult,
 } from './runner';
 
