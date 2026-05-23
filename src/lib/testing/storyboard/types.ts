@@ -1170,6 +1170,14 @@ export interface StoryboardRunOptions extends TestOptions {
    * adcp-client#880.
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
+  /**
+   * Context keys whose producer step was skipped as response-derived
+   * `not_applicable`, typically threaded from a prior `runStoryboardStep`
+   * invocation's `StoryboardStepResult.response_derived_not_applicable_context_keys`.
+   * Lets stateless step-by-step callers preserve the same cursor-consumer skip
+   * semantics as full `runStoryboard` runs.
+   */
+  response_derived_not_applicable_context_keys?: Record<string, string>;
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
   /** Agent's available tools (for requires_tool filtering) */
@@ -1867,6 +1875,13 @@ export interface StoryboardStepResult {
    * same way they do inside `runStoryboard`. adcp-client#880.
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
+  /**
+   * Accumulated response-derived `not_applicable` context-key map after this
+   * step. Thread back into `StoryboardRunOptions.response_derived_not_applicable_context_keys`
+   * on the next `runStoryboardStep` invocation so cursor consumers skip as
+   * `not_applicable` rather than `prerequisite_failed`.
+   */
+  response_derived_not_applicable_context_keys?: Record<string, string>;
   error?: string;
   /**
    * Structured AdCP error forwarded from the transport layer when the step failed.

@@ -222,6 +222,18 @@ describe('response-derived not_applicable pagination gates', () => {
     assert.match(first.skip.detail, /single_page_result/);
   });
 
+  test('short page with total_count above returned accounts does not skip', async () => {
+    const { result } = await run({
+      accounts: [account('acc_1')],
+      pagination: { has_more: false, total_count: 5 },
+    });
+
+    const first = result.phases[0].steps[0];
+    assert.notEqual(first.skipped, true);
+    assert.equal(first.passed, false);
+    assert.ok(first.validations.some(v => v.check === 'field_value' && v.passed === false));
+  });
+
   test('has_more=false at max_results without total_count still fails', async () => {
     const { result } = await run({
       accounts: [account('acc_1'), account('acc_2')],
@@ -297,6 +309,39 @@ describe('response-derived not_applicable pagination gates', () => {
     assert.notEqual(result.skipped, true);
     assert.equal(result.passed, false);
     assert.ok(result.validations.some(v => v.check === 'field_value' && v.passed === false));
+  });
+
+  test('runStoryboardStep preserves response-derived skip provenance for cursor consumers', async () => {
+    const client = createClient({ accounts: [account('acc_1')] });
+    const sb = storyboard();
+
+    const first = await runStoryboardStep('http://127.0.0.1:1/mcp', sb, 'first_page', {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ['list_accounts'],
+      _client: client,
+      _profile: { name: 'fake', tools: ['list_accounts'], raw_capabilities: {} },
+    });
+
+    assert.equal(first.skip_reason, 'not_applicable');
+    assert.equal(
+      first.response_derived_not_applicable_context_keys.next_cursor,
+      'single_page_result: list_accounts response is terminal; cursor-walk not applicable'
+    );
+
+    const terminal = await runStoryboardStep('http://127.0.0.1:1/mcp', sb, 'terminal_page', {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ['list_accounts'],
+      _client: client,
+      _profile: { name: 'fake', tools: ['list_accounts'], raw_capabilities: {} },
+      context: first.context,
+      response_derived_not_applicable_context_keys: first.response_derived_not_applicable_context_keys,
+    });
+
+    assert.equal(terminal.skip_reason, 'not_applicable');
+    assert.deepEqual(terminal.validations, []);
+    assert.equal(client.calls.filter(c => c.tool === 'list_accounts').length, 1);
   });
 
   test('reused context key clears stale response-derived not_applicable provenance', async () => {

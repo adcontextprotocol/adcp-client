@@ -377,8 +377,9 @@ function terminalPageGateMatches(
   const p = pagination as Record<string, unknown>;
   if (p.has_more === true) return false;
   if (p.has_more !== false) return false;
+  if (typeof p.total_count === 'number' && p.total_count > items.length) return false;
   if (items.length < maxResults) return true;
-  return p.has_more === false && typeof p.total_count === 'number' && p.total_count <= items.length;
+  return typeof p.total_count === 'number' && p.total_count <= items.length;
 }
 
 function responseNotApplicableContextKeys(
@@ -390,6 +391,15 @@ function responseNotApplicableContextKeys(
     .filter(o => o.path === 'pagination.cursor')
     .map(o => o.key)
     .filter((key): key is string => typeof key === 'string' && key.length > 0);
+}
+
+function responseDerivedContextResult(
+  runState: ExecutionState
+): Pick<StoryboardStepResult, 'response_derived_not_applicable_context_keys'> {
+  const entries = runState.responseDerivedNotApplicableContextKeys;
+  return entries && entries.size > 0
+    ? { response_derived_not_applicable_context_keys: Object.fromEntries(entries) }
+    : {};
 }
 
 /**
@@ -3044,6 +3054,9 @@ export async function runStoryboardStep(
   // previous step's result). Storyboard-level runs build this internally;
   // here the caller owns accumulation across stateless invocations.
   const contextProvenance = new Map<string, ContextProvenanceEntry>(Object.entries(options.context_provenance ?? {}));
+  const responseDerivedNotApplicableContextKeys = new Map<string, string>(
+    Object.entries(options.response_derived_not_applicable_context_keys ?? {})
+  );
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
     contributions: new Set(),
     priorStepResults: new Map(),
@@ -3054,7 +3067,7 @@ export async function runStoryboardStep(
     contextProvenance,
     priorA2aEnvelopes: new Map(),
     stepRequestStarts: new Map(),
-    responseDerivedNotApplicableContextKeys: new Map(),
+    responseDerivedNotApplicableContextKeys,
     agentLibraryVersion: profile?.library_version,
   });
 
@@ -3365,6 +3378,7 @@ async function executeStep(
       duration_ms: 0,
       validations: synthesized,
       context,
+      ...responseDerivedContextResult(runState),
       ...(!allResponseDerived && { error: detail }),
       next,
       extraction: { path: 'none' },
@@ -3754,6 +3768,7 @@ async function executeStep(
       duration_ms: stepResult.duration_ms,
       validations: [],
       context,
+      ...responseDerivedContextResult(runState),
       response: redactSecrets(taskResult?.data),
       next,
       request: requestRecord,
@@ -4142,6 +4157,7 @@ async function executeStep(
       runState.contextProvenance.size > 0 && {
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
+    ...responseDerivedContextResult(runState),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
     ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
