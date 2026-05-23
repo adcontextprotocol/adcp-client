@@ -171,7 +171,13 @@ export function unwrapProtocolResponse(
         if (options?.filterInvalidProducts && toolName === 'get_products') {
           const filtered = filterInvalidProducts(schema, dataToValidate);
           if (filtered) {
-            const validated = filtered as unknown as AdCPResponse & { _message?: string };
+            let validated = filtered as unknown as AdCPResponse & { _message?: string };
+            // Strip compat-injected `status` before returning — same rationale as
+            // the main success path below. See adcp-client#1961.
+            if (!('status' in stripped)) {
+              const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
+              validated = rest as unknown as typeof validated;
+            }
             if (_msg) validated._message = _msg as string;
             return retag(validated);
           }
@@ -193,8 +199,17 @@ export function unwrapProtocolResponse(
         throw new ResponseSchemaValidationError(toolName, result.error.issues, dataToValidate, result.error.message);
       }
 
-      // Re-attach _message after validation so it's available for text summaries
-      const validated = result.data as AdCPResponse & { _message?: string };
+      // Re-attach _message after validation so it's available for text summaries.
+      // Strip any compat-injected `status` before returning: the injection was
+      // purely to let a 3.0.x seller pass the 3.1 envelope schema; propagating
+      // it into taskResult.data causes storyboard field_value_or_absent checks
+      // on the deprecated legacy `status` field to fail with a false positive
+      // (sees injected "completed" instead of absent). See adcp-client#1961.
+      let validated = result.data as AdCPResponse & { _message?: string };
+      if (!('status' in stripped)) {
+        const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
+        validated = rest as unknown as typeof validated;
+      }
       if (_msg) validated._message = _msg as string;
       return retag(validated);
     }

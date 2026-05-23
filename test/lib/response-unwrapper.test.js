@@ -1169,4 +1169,56 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.someField, 'value');
     });
   });
+
+  describe('legacy envelope-status compat: injected status must not leak into returned data', () => {
+    // Regression test for adcp-client#1961.
+    // A 3.0.x seller emits media_buy_status without a top-level `status`.
+    // The compat shim injects status:"completed" so the 3.1 Zod schema accepts
+    // the payload, but that synthetic field must not appear in the data returned
+    // to callers — storyboard field_value_or_absent checks on the deprecated
+    // `status` field must observe absent, not the injected value.
+
+    test('unwrapProtocolResponse strips compat-injected status for a 3.0.x create_media_buy response', () => {
+      // Seller payload: no `status`, no `adcp_version` — triggers leniency shim
+      const mcpResponse = {
+        structuredContent: {
+          media_buy_id: 'mb-97b30f1a',
+          buyer_ref: 'buyer-ref-1',
+          packages: [createTestPackage({ package_id: 'pkg-1' })],
+          media_buy_status: 'pending_creatives',
+          // Deliberately no `status` field — 3.0.x omission
+        },
+        content: [{ type: 'text', text: 'Media buy created' }],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
+
+      // The synthetic status must NOT be present in the returned data
+      assert.ok(!('status' in result), `Returned data must not carry compat-injected status; got: ${JSON.stringify(result.status)}`);
+      // The real fields must be intact
+      assert.strictEqual(result.media_buy_id, 'mb-97b30f1a');
+      assert.strictEqual(result.media_buy_status, 'pending_creatives');
+    });
+
+    test('unwrapProtocolResponse preserves seller-emitted status when present', () => {
+      // A 3.1 seller that correctly emits status alongside media_buy_status
+      const mcpResponse = {
+        structuredContent: {
+          media_buy_id: 'mb-abc123',
+          buyer_ref: 'buyer-ref-2',
+          packages: [createTestPackage({ package_id: 'pkg-2' })],
+          status: 'completed',
+          media_buy_status: 'completed',
+          adcp_version: '3.1.0-beta.3',
+        },
+        content: [],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
+
+      // Seller-emitted status must be preserved
+      assert.strictEqual(result.status, 'completed');
+      assert.strictEqual(result.media_buy_status, 'completed');
+    });
+  });
 });
