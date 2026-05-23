@@ -144,22 +144,14 @@ describe('schema-driven validation', () => {
     });
   });
 
-  describe('validateRequest envelope strictness', () => {
-    test('request schemas stay strict — unknown top-level fields are rejected', () => {
-      // The fix explicitly preserves request strictness so outgoing drift
-      // fails at the edge. Regression guard: if relaxResponseRoot ever leaks
-      // to requests, this test catches it.
-      const outcome = validateRequest('create_property_list', {
-        name: 'Test',
-        unknown_request_field: { should: 'reject' },
-      });
-      const additional = outcome.issues.filter(i => i.keyword === 'additionalProperties');
-      assert.ok(
-        additional.length > 0,
-        `request validation should still reject unknown top-level fields: ${JSON.stringify(outcome.issues)}`
-      );
-    });
-  });
+  // The previous "request schemas stay strict" guard was removed in
+  // 3.1.0-beta.3: the AdCP spec now declares `additionalProperties: true`
+  // on mutating request schemas (e.g. create-property-list-request.json)
+  // to allow vendor extensions on outgoing requests. The SDK respects the
+  // spec — `validateRequest` no longer rejects unknown top-level fields.
+  // If outbound-extension hygiene ever needs to be re-enforced, that
+  // belongs in an SDK linter or a per-tool override, not in core request
+  // validation.
 
   describe('formatIssues', () => {
     test('caps verbose failures and notes how many more there are', () => {
@@ -579,7 +571,7 @@ describe('schema-driven validation', () => {
       });
       assert.match(
         outcome.schemaId ?? '',
-        /^\/schemas\/3\.0\.\d+\/bundled\/signals\/activate-signal-response\.json$/,
+        /^\/schemas\/3\.\d+(?:\.\d+(?:-[\w.]+)?)?\/bundled\/signals\/activate-signal-response\.json$/,
         `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
       );
     });

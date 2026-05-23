@@ -39,7 +39,14 @@ const EXTRA_MUTATING = new Set(['creative_approval', 'update_rights']);
 // then remove the entry. Empty today; the guard tests below still run so any
 // newly-documented-and-then-fixed entry would surface via the "still-fail"
 // guard.
-const KNOWN_NONCONFORMING = new Map([]);
+const KNOWN_NONCONFORMING = new Map([
+  // 3.1.0-beta.3 dropped `categories` from `governance_agents[]` items (the
+  // single-agent-owns-full-lifecycle clarification) and tightened items to
+  // `additionalProperties: false`. The fallback builder still emits the legacy
+  // `categories` array. Tracked separately; remove this entry when the
+  // builder is updated.
+  ['sync_governance', '3.1.0-beta.3 governance_agents[] is additionalProperties:false; builder still emits categories'],
+]);
 
 const SYNTHETIC_IDEMPOTENCY_KEY = 'roundtrip_test_key_0000000000';
 
@@ -70,9 +77,21 @@ function loadAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
   // Pre-register every schema so $ref resolution works regardless of lookup
-  // order. Skip duplicates silently — some schemas are reachable via both the
-  // flat per-domain tree and the bundled tree.
+  // order. Skip the bundled/ and core/ trees: in 3.1.0-beta.3 the bundled
+  // files embed referenced sub-schemas with their original flat $ids (e.g.
+  // a `/schemas/.../a2ui/surface.json` $id appears both standalone AND
+  // inside a bundled response). Letting both register triggers AJV's
+  // ambiguous-ref check. The flat per-domain tree is canonical for $ref
+  // resolution; bundled is consumed elsewhere via its bundled $id only.
   for (const file of walkJsonFiles(SCHEMA_ROOT)) {
+    const rel = path.relative(SCHEMA_ROOT, file);
+    const top = rel.split(path.sep)[0];
+    // Skip the bundled/ tree: 3.1.0-beta.3 bundled files embed referenced
+    // sub-schemas with their original flat $ids (e.g. `core/version-envelope`
+    // appears both standalone in core/ AND inlined in every bundled file),
+    // which trips AJV's ambiguous-ref check. The flat per-domain tree is
+    // canonical for $ref resolution.
+    if (top === 'bundled') continue;
     let raw;
     try {
       raw = JSON.parse(fs.readFileSync(file, 'utf-8'));

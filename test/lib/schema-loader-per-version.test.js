@@ -71,14 +71,18 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
   });
 
-  test('stable patch pins share a compiled validator (3.0.0 ≡ 3.0.1 ≡ 3.0)', () => {
+  test('stable patch pins share a compiled validator (1.0.0 ≡ 1.0.1 ≡ 1.0 via fixture)', () => {
+    // 3.1.0-beta.3 is the only currently-shipped bundle (prerelease, kept exact)
+    // so the stable-patch-collapse invariant is exercised against the synthetic
+    // 1.0 fixture this suite creates in before(). Pre-3.1.0-beta.3 this test
+    // used the (then-shipped) 3.0.x bundle directly.
     _resetValidationLoader();
-    const v300 = getValidator('get_products', 'request', '3.0.0');
-    const v301 = getValidator('get_products', 'request', '3.0.1');
-    const vMinor = getValidator('get_products', 'request', '3.0');
-    assert.ok(v300, '3.0.0 resolves to a compiled validator');
-    assert.strictEqual(v300, v301, 'patch pins in same minor share a state');
-    assert.strictEqual(v301, vMinor, 'minor pin shares the same state');
+    const v100 = getValidator('get_products', 'request', '1.0.0');
+    const v101 = getValidator('get_products', 'request', '1.0.1');
+    const vMinor = getValidator('get_products', 'request', '1.0');
+    assert.ok(v100, '1.0.0 resolves to a compiled validator');
+    assert.strictEqual(v100, v101, 'patch pins in same minor share a state');
+    assert.strictEqual(v101, vMinor, 'minor pin shares the same state');
   });
 
   test('distinct minors produce distinct compiled validators', () => {
@@ -131,17 +135,23 @@ describe('schema-loader per-version state', () => {
   });
 
   test('reset by stable patch pin clears the same bundle as the minor pin', () => {
+    // Uses the synthetic 1.0 fixture (see top of file) because no stable 3.x
+    // bundle ships on 3.1.0-beta.3; the invariant under test is generic.
     _resetValidationLoader();
-    const beforeReset = getValidator('get_products', 'request', '3.0');
-    _resetValidationLoader('3.0.1'); // patch-pinned reset must clear the '3.0' bundle
-    const afterReset = getValidator('get_products', 'request', '3.0');
+    const beforeReset = getValidator('get_products', 'request', '1.0');
+    _resetValidationLoader('1.0.1'); // patch-pinned reset must clear the '1.0' bundle
+    const afterReset = getValidator('get_products', 'request', '1.0');
     assert.notStrictEqual(beforeReset, afterReset, 'resetting via a patch-pin clears the resolved minor bundle');
   });
 
   test('hasSchemaBundle returns true for shipped versions', () => {
+    // 3.1.0-beta.3 is a prerelease bundle (kept exact, no patch-collapse).
+    // The stable-bundle-collapse behavior is covered against the synthetic
+    // 1.0 fixture in the patch-pin-share test above; no stable 3.x bundle
+    // ships today, so we assert directly against the shipped prerelease key.
     assert.strictEqual(hasSchemaBundle(ADCP_VERSION), true);
-    assert.strictEqual(hasSchemaBundle('3.0.0'), true, '3.0.0 collapses to the 3.0 bundle');
-    assert.strictEqual(hasSchemaBundle('3.0'), true, 'bare minor resolves to the same bundle');
+    assert.strictEqual(hasSchemaBundle('1.0.0'), true, '1.0.0 (fixture) collapses to the 1.0 bundle');
+    assert.strictEqual(hasSchemaBundle('1.0'), true, 'bare minor resolves to the same bundle');
   });
 
   test('hasSchemaBundle returns false for unshipped versions', () => {
@@ -288,10 +298,11 @@ describe('schema-loader per-version state', () => {
     // files" so v2.5 flat-tree fragments register, v3's bundled-path
     // validators must still resolve through getValidator unchanged. Bundled
     // and flat-tree request schemas have distinct $ids (bundled has
-    // `/schemas/3.0.1/bundled/...` vs flat `/schemas/3.0.1/...`), so no
-    // AJV-side collision; this test pins that invariant.
-    _resetValidationLoader('3.0.1');
-    const v = getValidator('create_media_buy', 'request', '3.0.1');
+    // `/schemas/<v>/bundled/...` vs flat `/schemas/<v>/...`), so no
+    // AJV-side collision; this test pins that invariant. Targets the
+    // currently-shipped bundle (3.1.0-beta.3); on 3.0.x it pinned '3.0.1'.
+    _resetValidationLoader(ADCP_VERSION);
+    const v = getValidator('create_media_buy', 'request', ADCP_VERSION);
     assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');
     // Schema reference should point at the bundled file (the path the loader
     // selects when the bundled tree exists).
