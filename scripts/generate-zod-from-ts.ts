@@ -81,8 +81,8 @@ const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boole
   // 3.1.0-beta.2 pin flip — `.and(z.union([...]))` compound patterns push
   // inferred types past TS7056's .d.ts serialization limit. Carry the TS
   // type so callers' `params` keep narrowing.
-  { name: 'PreviewCreativeRequestSchema', tsType: 'PreviewCreativeRequest' },
-  { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest' },
+  { name: 'PreviewCreativeRequestSchema', tsType: 'PreviewCreativeRequest', objectShape: true },
+  { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest', objectShape: true },
   { name: 'UpdateMediaBuyResponseSchema', tsType: 'UpdateMediaBuyResponse' },
   { name: 'BuildCreativeResponseSchema', tsType: 'BuildCreativeResponse' },
   { name: 'SyncEventSourcesResponseSchema', tsType: 'SyncEventSourcesResponse' },
@@ -100,11 +100,10 @@ function postProcessTS7056Annotations(content: string): string {
       );
     }
     // Object-shaped schemas (pure `z.object({...}).passthrough()`) are
-    // annotated `z.ZodObject<any>` so call sites that constrain to
-    // ZodObject (e.g. `withOptionalAccount<T extends z.ZodObject<any>>`)
-    // keep working. The `any` shape parameter erases inner-field inference
-    // — that's the trade-off TS7056 forces on us, and it's what these call
-    // sites already accept for the in-bound `z.ZodObject<any>` constraint.
+    // annotated as ZodObjects so call sites that use `.shape`, `.extend()`,
+    // `.pick()`, or `.omit()` keep working. When a TS type is available,
+    // keep the shape keys and field value types tied to that type so
+    // downstream helpers like customToolFor() still infer typed args.
     //
     // Intersection-shaped schemas (`z.object().passthrough().and(z.union(...))`)
     // use the 2-type-param `z.ZodType<Output, Input>` form. `z.input<typeof X>`
@@ -113,7 +112,14 @@ function postProcessTS7056Annotations(content: string): string {
     // keep their narrowing.
     let annotation: string;
     if (objectShape) {
-      annotation = 'z.ZodObject<any>';
+      if (tsType) {
+        const widened = `${tsType} & Record<string, unknown>`;
+        const objectShapeType = `{ [K in keyof ${tsType}]-?: z.ZodType<${tsType}[K], ${tsType}[K]> }`;
+        annotation = `z.ZodObject<${objectShapeType}, any> & z.ZodType<${widened}, ${widened}>`;
+        typesToImport.push(tsType);
+      } else {
+        annotation = 'z.ZodObject<any>';
+      }
     } else if (tsType) {
       const widened = `${tsType} & Record<string, unknown>`;
       annotation = `z.ZodType<${widened}, ${widened}>`;
@@ -798,6 +804,164 @@ function schemaShapeForExpression(
   return undefined;
 }
 
+function splitTopLevelList(body: string): string[] | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let partStart = 0;
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    const literalEnd = skipQuotedOrRegexLiteral(body, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      const part = body.slice(partStart, i).trim();
+      if (!part) return undefined;
+      parts.push(part);
+      partStart = i + 1;
+    }
+  }
+
+  const last = body.slice(partStart).trim();
+  if (!last) return undefined;
+  parts.push(last);
+  return parts;
+}
+
+function unionArmsForExpression(expression: string): string[] | undefined {
+  const trimmed = expression.trim();
+  if (!trimmed.startsWith('z.union(')) return undefined;
+
+  const call = scanBalanced(trimmed, 'z.union'.length);
+  if (!call || trimmed.slice(call.end).trim()) return undefined;
+
+  const arg = call.body.trim();
+  if (!arg.startsWith('[')) return undefined;
+
+  const array = scanBalanced(arg, 0, '[', ']');
+  if (!array || arg.slice(array.end).trim()) return undefined;
+
+  return splitTopLevelList(array.body);
+}
+
+function isOpaqueRecordMarkerExpression(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  cache: Map<string, boolean>,
+  visiting = new Set<string>()
+): boolean {
+  const trimmed = normalizeSchemaExpression(expression);
+  if (trimmed === 'z.record(z.string(), z.unknown())') return true;
+
+  const named = trimmed.match(/^(\w+Schema)$/)?.[1];
+  if (!named) return false;
+  if (cache.has(named)) return cache.get(named) ?? false;
+  if (visiting.has(named)) return false;
+
+  const namedExpression = schemaExpressions.get(named);
+  if (!namedExpression) return false;
+
+  visiting.add(named);
+  const result = isOpaqueRecordMarkerExpression(namedExpression, schemaExpressions, cache, visiting);
+  visiting.delete(named);
+  cache.set(named, result);
+  return result;
+}
+
+function isOpaqueMarkerUnion(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  markerCache: Map<string, boolean>,
+  visiting = new Set<string>()
+): boolean {
+  const trimmed = normalizeSchemaExpression(expression);
+  const named = trimmed.match(/^(\w+Schema)$/)?.[1];
+  if (named) {
+    if (visiting.has(named)) return false;
+    const namedExpression = schemaExpressions.get(named);
+    if (!namedExpression) return false;
+
+    visiting.add(named);
+    const result = isOpaqueMarkerUnion(namedExpression, schemaExpressions, markerCache, visiting);
+    visiting.delete(named);
+    return result;
+  }
+
+  const arms = unionArmsForExpression(trimmed);
+  return (
+    arms !== undefined &&
+    arms.length > 0 &&
+    arms.every(arm => isOpaqueRecordMarkerExpression(arm, schemaExpressions, markerCache))
+  );
+}
+
+function rewriteLeadingMarkerUnionObjectAnd(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  shapeCache: Map<string, ObjectShape | undefined>,
+  markerCache: Map<string, boolean>
+): string {
+  let depth = 0;
+
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i];
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (depth === 0 && expression.startsWith('.and(', i)) {
+      const base = expression.slice(0, i);
+      const arg = scanBalanced(expression, i + '.and'.length);
+      if (!arg) return expression;
+
+      if (isOpaqueMarkerUnion(base, schemaExpressions, markerCache)) {
+        const argShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
+        if (argShape) return arg.body + expression.slice(arg.end);
+      }
+
+      return expression;
+    }
+  }
+
+  return expression;
+}
+
+function postProcessMarkerUnionObjectIntersections(content: string): string {
+  const schemaExpressions = extractSchemaExports(content);
+  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const markerCache = new Map<string, boolean>();
+  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1];
+    const expressionStart = exportRegex.lastIndex;
+    const expression = schemaExpressions.get(name);
+    if (!expression) continue;
+
+    const expressionEnd = expressionStart + expression.length;
+    const rewritten = rewriteLeadingMarkerUnionObjectAnd(expression, schemaExpressions, shapeCache, markerCache);
+
+    result += content.slice(lastIndex, expressionStart) + rewritten;
+    lastIndex = expressionEnd;
+    exportRegex.lastIndex = expressionEnd;
+  }
+
+  result += content.slice(lastIndex);
+  return result;
+}
+
 function postProcessObjectIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
@@ -1039,6 +1203,14 @@ async function generateZodSchemas() {
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
 
+    // Post-process: Collapse marker-only union/object intersections.
+    // ProductSchema currently intersects opaque V1/V2 marker records with its real object shape.
+    // While those marker schemas are just z.record(z.string(), z.unknown()), the union adds no
+    // validation beyond passthrough object semantics and only removes .extend/.omit/.pick helpers.
+    // When the marker schemas gain real fields, this pass stops firing and preserves the richer
+    // intersection for maintainers to handle deliberately.
+    zodSchemas = postProcessMarkerUnionObjectIntersections(zodSchemas);
+
     // Post-process: Turn safe object/object intersections into ZodObject merges.
     // ts-to-zod emits `.and()` for TypeScript object intersections, but ZodIntersection
     // does not expose object helpers like .shape/.extend/.omit/.pick. This keeps the
@@ -1104,6 +1276,10 @@ if (require.main === module) {
   });
 }
 
-export const __test__ = { postProcessForNullish, postProcessObjectIntersections };
+export const __test__ = {
+  postProcessForNullish,
+  postProcessMarkerUnionObjectIntersections,
+  postProcessObjectIntersections,
+};
 
 export { generateZodSchemas };

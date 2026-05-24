@@ -3458,7 +3458,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
 
       const meta = TOOL_META[toolName];
-      const schema = TOOL_REQUEST_SCHEMAS[toolName] as { shape: Record<string, unknown> } | undefined;
+      const schema = (TOOL_REQUEST_SCHEMAS as Readonly<Record<string, { shape: Record<string, unknown> }>>)[toolName];
       if (!schema?.shape) {
         logger.warn(`No schema found for tool "${toolName}" in TOOL_REQUEST_SCHEMAS, skipping`);
         continue;

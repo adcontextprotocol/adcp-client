@@ -16,6 +16,11 @@ describe('Zod Schema Validation', () => {
 
     assert.ok(schemas.ProductSchema, 'ProductSchema should exist');
     assert.ok(typeof schemas.ProductSchema.safeParse === 'function', 'ProductSchema should have safeParse method');
+    assert.ok(schemas.ProductSchema.shape.product_id, 'ProductSchema should expose object shape');
+    assert.equal(typeof schemas.ProductSchema.extend, 'function', 'ProductSchema should support extend');
+    assert.equal(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should support omit');
+    assert.equal(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should support pick');
+    assert.ok(schemas.CanonicalFormatImageSchema.shape.image_formats, 'canonical formats should expose object shape');
   });
 
   test('MediaBuySchema validates valid media buy', async () => {
