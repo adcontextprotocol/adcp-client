@@ -356,7 +356,14 @@ function updatePackageJsonVersion(adcpVersion: string, autoUpdate: boolean = fal
     // Auto-increment library version when AdCP version changes
     const [major, minor, patch] = currentLibraryVersion.split('.').map(Number);
 
-    // Determine version bump strategy based on AdCP version change
+    // Determine version bump strategy based on AdCP version change.
+    // Note: `'3.1.0-beta.3'.split('.').map(Number)` produces
+    // `[3, 1, NaN, NaN, 3]` for prerelease versions because `'0-beta'`
+    // and `'beta'` aren't numeric. We only destructure `[major, minor]`,
+    // so the NaN at index 2 is intentionally discarded. If a future
+    // edit adds `newPatch` here, it will be `NaN` for prereleases and
+    // needs explicit prerelease handling (see semverMatch above) — do
+    // NOT extend this destructure without that fix.
     const [currentMajor, currentMinor] = (currentAdcpVersion || '0.0.0').split('.').map(Number);
     const [newMajor, newMinor] = adcpVersion.split('.').map(Number);
 
