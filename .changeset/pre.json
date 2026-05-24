@@ -16,15 +16,20 @@
     "context-extractors-verdict-outcome-state-fixtures",
     "cut-8-0-beta",
     "enter-pre-mode-beta",
+    "field-value-or-absent-media-buy-status",
+    "fix-unwrapper-injected-status-leak",
     "fix-zod-schemas-test-envelope-status",
     "governance-agents-categories-removed",
     "governance-fixtures-verdict-rename",
+    "main-ci-3-1-beta-compat",
     "outcome-measurement-rename",
     "product-card-self-rendering",
     "promote-query-upstream-traffic",
+    "request-signing-conformance-cache",
     "schema-loader-strip-nested-ids",
     "source-fixes-1950-union-products-governance",
     "storyboard-brand-invariant-fix",
+    "terminal-account-pagination",
     "test-agents-envelope-status"
   ]
 }

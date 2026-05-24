@@ -1,5 +1,45 @@
 # Changelog
 
+## 8.1.0-beta.7
+
+### Patch Changes
+
+- 9a81824: fix(storyboard): treat flat MCP envelope `status: "completed"` as absent for media-buy legacy status tolerance (#1961)
+
+  `field_value_or_absent` now distinguishes the AdCP 3.1 task-envelope `status` from the deprecated media-buy body `status` when `media_buy_status` is present. This lets `pending_creatives_to_start` pass for sellers that correctly emit `media_buy_status: "pending_creatives"` without the deprecated legacy field, while preserving failures for actual mismatched legacy media-buy statuses and leaving `envelope_field_*` checks unchanged.
+
+- 84c648b: fix(conformance): strip compat-injected envelope status from unwrapped response data
+
+  `unwrapProtocolResponse` injected a synthetic `status: "completed"` field (via
+  the 3.0.x back-compat shim) into the Zod-validated data object that was returned
+  to callers. Because the Zod schemas use `.passthrough()`, the injected field
+  survived validation and appeared in `taskResult.data`, causing storyboard
+  `field_value_or_absent` checks on the deprecated legacy `status` field to fail
+  with a false positive — the runner observed the injected `"completed"` instead of
+  the seller's actual absent field.
+
+  The fix strips the injected `status` from the returned data when the seller's
+  original payload did not include it. The validation leniency itself is unchanged:
+  the shim still injects during `safeParse` so 3.0.x responses satisfy the 3.1
+  envelope schema. The fix applies to both the main success path and the
+  `filterInvalidProducts` early-return path.
+
+  Fixes #1961.
+
+- 9a81824: fix: restore 3.1.0-beta.3 CI compatibility across conformance, request signing, and storyboard validation
+
+  Aligns conformance sample generation and response validation with the latest schemas, carries `protocol_methods_required_for` through the request-signing verifier/server test harness, and updates storyboard/codegen drift guards for the current compliance cache.
+
+- d28855e: Align the conformance/storyboard harness with the 3.1 beta compliance cache and request-signing vectors.
+
+  Adds request-signing enforcement for raw JSON-RPC protocol methods such as `tasks/cancel`, updates generated schema aliases, and teaches the storyboard runner about the latest compliance probe pseudo-steps.
+
+- d28855e: fix(storyboard): mark terminal `list_accounts` pagination walks not applicable
+
+  The storyboard runner can now treat a `list_accounts` first page as a response-derived `not_applicable` result when the response proves the cursor walk is terminal, such as a short single-account page without pagination or an explicit `has_more: false` page with trustworthy `total_count`.
+
+  Malformed or ambiguous pagination still fails the authored continuation assertions, and seeded multi-account pagination walks keep their continuation requirements live.
+
 ## 8.1.0-beta.6
 
 ### Patch Changes
