@@ -1,0 +1,111 @@
+name: Python Reference Seller Interop
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      python_ref:
+        description: 'adcp-client-python tag, branch, or commit SHA to test against'
+        required: false
+        default: 'v6.1.0-beta.2'
+  workflow_call:
+    inputs:
+      python_ref:
+        description: 'adcp-client-python tag, branch, or commit SHA to test against'
+        required: false
+        type: string
+        default: 'v6.1.0-beta.2'
+
+permissions:
+  contents: read
+
+jobs:
+  python-reference-seller:
+    name: Python reference seller
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ADCP_CLIENT_PYTHON_REF: ${{ inputs.python_ref || 'v6.1.0-beta.2' }}
+      STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result.json
+      SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller.log
+
+    steps:
+      - name: Checkout @adcp/sdk
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build candidate SDK
+        run: npm run build:lib
+
+      - name: Pack candidate SDK
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack_dir="$RUNNER_TEMP/adcp-sdk-pack"
+          mkdir -p "$pack_dir"
+          npm pack --pack-destination "$pack_dir" --silent
+          mapfile -t tarballs < <(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "::error::Expected one packed SDK tarball in $pack_dir, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          tarball_path="${tarballs[0]}"
+          test -f "$tarball_path"
+          echo "tarball=$tarball_path" >> "$GITHUB_OUTPUT"
+          echo "Packed candidate SDK at $tarball_path"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Checkout Python reference seller
+        uses: actions/checkout@v5
+        with:
+          repository: adcontextprotocol/adcp-client-python
+          ref: ${{ env.ADCP_CLIENT_PYTHON_REF }}
+          path: reference-python
+
+      - name: Verify Python storyboard harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness="reference-python/scripts/ci/run_storyboard_reference_seller.sh"
+          if [[ ! -f "$harness" ]]; then
+            echo "::error::Pinned adcp-client-python ref '$ADCP_CLIENT_PYTHON_REF' does not contain $harness."
+            echo "::error::Pin a tag or commit that includes adcontextprotocol/adcp-client-python#818."
+            exit 1
+          fi
+          chmod +x "$harness"
+
+      - name: Run Python reference seller storyboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd reference-python
+          ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
+            ADCP_PORT=3001 \
+            STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
+            SELLER_LOG_PATH="$SELLER_LOG_PATH" \
+            ./scripts/ci/run_storyboard_reference_seller.sh
+
+      - name: Upload storyboard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-reference-seller-storyboard
+          if-no-files-found: ignore
+          path: |
+            storyboard-result.json
+            storyboard-seller.log
