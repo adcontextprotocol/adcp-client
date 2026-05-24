@@ -6,7 +6,8 @@ const { spawnSync } = require('node:child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-function loadStripComments() {
+// Run the harness once; all tests share the results array.
+const RESULTS = (() => {
   const harnessDir = fs.mkdtempSync(path.join(REPO_ROOT, '.per-tool-collision-'));
   const scriptPath = path.join(harnessDir, 'harness.ts');
   const outPath = path.join(harnessDir, 'out.json');
@@ -28,6 +29,13 @@ function loadStripComments() {
       a: "/**\n * Same doc.\n */\nexport type Foo = 'a' | 'b';",
       b: "/**\n * Same doc.\n */\nexport type Foo = 'a' | 'b';",
     },
+    {
+      // One source has JSDoc, other doesn't — asymmetric case; .trim() handles the
+      // leading newline left behind after stripping the block comment.
+      label: 'asymmetric-jsdoc',
+      a: "/**\n * Description only in tools.generated.\n */\nexport type Foo = 'x' | 'y';",
+      b: "export type Foo = 'x' | 'y';",
+    },
   ];
 
   fs.writeFileSync(
@@ -40,7 +48,7 @@ const { stripComments } = __test__;
 const cases = ${JSON.stringify(cases)};
 const results = cases.map(({ label, a, b }) => ({
   label,
-  strippedDiffer: stripComments(a) !== stripComments(b),
+  strippedDiffer: stripComments(a).trim() !== stripComments(b).trim(),
 }));
 writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(results));
 `
@@ -50,7 +58,9 @@ writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(results));
     const result = spawnSync('npx', ['tsx', scriptPath], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
+      timeout: 30_000,
     });
+    if (result.error) throw result.error;
     if (result.status !== 0) {
       throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
     }
@@ -58,11 +68,10 @@ writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(results));
   } finally {
     fs.rmSync(harnessDir, { recursive: true, force: true });
   }
-}
+})();
 
 test('stripComments: JSDoc-only difference does not make stripped bodies differ', () => {
-  const results = loadStripComments();
-  const jsdocCase = results.find(r => r.label === 'jsdoc-only-difference');
+  const jsdocCase = RESULTS.find(r => r.label === 'jsdoc-only-difference');
   assert.ok(jsdocCase, 'jsdoc-only-difference case should exist');
   assert.strictEqual(
     jsdocCase.strippedDiffer,
@@ -72,8 +81,7 @@ test('stripComments: JSDoc-only difference does not make stripped bodies differ'
 });
 
 test('stripComments: structural type difference still makes stripped bodies differ', () => {
-  const results = loadStripComments();
-  const structCase = results.find(r => r.label === 'structural-difference');
+  const structCase = RESULTS.find(r => r.label === 'structural-difference');
   assert.ok(structCase, 'structural-difference case should exist');
   assert.strictEqual(
     structCase.strippedDiffer,
@@ -83,8 +91,17 @@ test('stripComments: structural type difference still makes stripped bodies diff
 });
 
 test('stripComments: identical bodies produce no difference', () => {
-  const results = loadStripComments();
-  const identCase = results.find(r => r.label === 'identical');
+  const identCase = RESULTS.find(r => r.label === 'identical');
   assert.ok(identCase, 'identical case should exist');
   assert.strictEqual(identCase.strippedDiffer, false, 'Identical bodies should compare equal');
+});
+
+test('stripComments: asymmetric JSDoc (one body has it, other does not) produces no difference', () => {
+  const asymCase = RESULTS.find(r => r.label === 'asymmetric-jsdoc');
+  assert.ok(asymCase, 'asymmetric-jsdoc case should exist');
+  assert.strictEqual(
+    asymCase.strippedDiffer,
+    false,
+    'Bodies where only one has JSDoc should compare equal after stripComments + trim'
+  );
 });
