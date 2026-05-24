@@ -46,7 +46,18 @@ describe('Zod Schema Validation', () => {
     );
   });
 
-  test('generated declarations do not expose record-union object intersections', () => {
+  test('generated declarations do not expose record-union object intersections', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Runtime check so the test fails closed even if Zod adjusts its tuple stringification.
+    assert.strictEqual(
+      schemas.ProductSchema._def.typeName,
+      'ZodObject',
+      'ProductSchema._def.typeName should be ZodObject, not ZodIntersection'
+    );
+
     const declarations = readFileSync(path.join(__dirname, '../../dist/lib/types/schemas.generated.d.ts'), 'utf8');
     const matches = declarations.match(/z\.ZodIntersection<z\.ZodUnion<readonly \[z\.ZodRecord/g) ?? [];
 

@@ -580,6 +580,7 @@ function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNam
     if (!afterUnion.startsWith(';')) continue;
 
     const members = splitTopLevelCommaList(unionBody.body);
+    // TODO: one-level only — arms that are themselves z.union(...) are not collected
     if (members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames))) {
       names.add(name);
     }
@@ -589,7 +590,9 @@ function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNam
 }
 
 /**
- * Replace `z.union([RecordUnknownA, RecordUnknownB]).and(CONTENT)` with CONTENT.
+ * Replace `z.union([RecordUnknownA, RecordUnknownB]).and(CONTENT)` with CONTENT,
+ * but only when CONTENT begins with `z.object(`. Non-object right-hand sides are
+ * preserved byte-for-byte so richer constraints survive.
  *
  * Some schema variants are intentionally opaque because TypeScript represents
  * sibling-field constraints as `Record<string, unknown>` marker arms. Intersecting
@@ -641,7 +644,9 @@ function unwrapRecordUnionIntersections(content: string): string {
 }
 
 /**
- * Replace `NamedRecordUnion.and(z.object({...}))` with just the object side.
+ * Replace `NamedRecordUnion.and(z.object({...}))` with just the object side,
+ * but only when the right-hand side begins with `z.object(`. Non-object right-hand
+ * sides are preserved byte-for-byte so richer constraints survive.
  *
  * This is the named-schema counterpart to `unwrapRecordUnionIntersections`.
  * It intentionally applies only during the marker-only era, where the named
