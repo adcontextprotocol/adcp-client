@@ -38,6 +38,49 @@ writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessObjectIntersection
   }
 }
 
+function postProcessForNullish(input) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-nullish-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.txt');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+
+const input = ${JSON.stringify(input)};
+writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessForNullish(input));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return fs.readFileSync(outPath, 'utf8');
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+test('postProcessForNullish keeps never optional constraints strict', () => {
+  const output = postProcessForNullish(`
+export const ExampleSchema = z.object({
+  forbidden: z.never().optional(),
+  allowed: z.string().optional()
+}).passthrough();
+`);
+
+  assert.match(output, /forbidden: z\.never\(\)\.optional\(\)/);
+  assert.match(output, /allowed: z\.string\(\)\.nullish\(\)/);
+});
+
 test('postProcessObjectIntersections merges safe object intersections', () => {
   const output = postProcessObjectIntersections(`
 export const BaseSchema = z.object({

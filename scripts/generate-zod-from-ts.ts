@@ -30,7 +30,7 @@ function postProcessForNullish(content: string): string {
   // Replace .optional() with .nullish() globally, except when preceded by .never()
   // z.never().optional() must stay as-is: it means "this field must not be provided",
   // and converting to .nullish() would allow null values through, weakening that constraint.
-  return content.replace(/(?<!\.\.never\(\))\.optional\(\)/g, '.nullish()');
+  return content.replace(/(?<!\.never\(\))\.optional\(\)/g, '.nullish()');
 }
 
 /**
@@ -1104,6 +1104,6 @@ if (require.main === module) {
   });
 }
 
-export const __test__ = { postProcessObjectIntersections };
+export const __test__ = { postProcessForNullish, postProcessObjectIntersections };
 
 export { generateZodSchemas };
