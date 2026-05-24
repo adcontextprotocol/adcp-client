@@ -39,6 +39,11 @@ export const AudioAssetRequirements_FormatsValues = ["mp3", "aac", "wav", "ogg",
 /** single | AuthorizationResult.status */
 export const AuthorizationResult_StatusValues = ["authorized", "unauthorized", "unknown"] as const;
 
+// ====== BillingNotSupportedDetails ======
+
+/** single | BillingNotSupportedDetails.scope */
+export const BillingNotSupportedDetails_ScopeValues = ["capability", "account"] as const;
+
 // ====== BriefAsset ======
 
 /** single | BriefAsset.objective */
@@ -49,6 +54,61 @@ export const BriefAsset_ObjectiveValues = ["awareness", "consideration", "conver
 /** single | BuildCreativeAsyncInputRequired.reason */
 export const BuildCreativeAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "CREATIVE_DIRECTION_NEEDED", "ASSET_SELECTION_NEEDED"] as const;
 
+// ====== CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement ======
+
+/** single | CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement.composition_model */
+export const CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues = ["deterministic", "algorithmic"] as const;
+/** single | CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement.output_modality */
+export const CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_OutputModalityValues = ["text", "audio", "card"] as const;
+
+// ====== CanonicalFormatHostedAudio ======
+
+/** single | CanonicalFormatHostedAudio.asset_source */
+export const CanonicalFormatHostedAudio_AssetSourceValues = ["buyer_uploaded", "publisher_host_recorded", "seller_pre_rendered_from_brief", "seller_human_designed", "agent_synthesized"] as const;
+/** array of | CanonicalFormatHostedAudio.audio_codecs */
+export const CanonicalFormatHostedAudio_AudioCodecsValues = ["mp3", "aac", "wav", "opus", "flac"] as const;
+/** single | CanonicalFormatHostedAudio.buyer_asset_acceptance */
+export const CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues = ["accepted", "rejected"] as const;
+
+// ====== CanonicalFormatHostedVideo ======
+
+/** array of | CanonicalFormatHostedVideo.audio_codecs */
+export const CanonicalFormatHostedVideo_AudioCodecsValues = ["aac", "mp3", "opus", "pcm"] as const;
+/** single | CanonicalFormatHostedVideo.captions */
+export const CanonicalFormatHostedVideo_CaptionsValues = ["required", "recommended", "not_required"] as const;
+/** array of | CanonicalFormatHostedVideo.containers */
+export const CanonicalFormatHostedVideo_ContainersValues = ["mp4", "webm", "mov"] as const;
+/** single | CanonicalFormatHostedVideo.orientation */
+export const CanonicalFormatHostedVideo_OrientationValues = ["vertical", "horizontal", "square"] as const;
+/** array of | CanonicalFormatHostedVideo.video_codecs */
+export const CanonicalFormatHostedVideo_VideoCodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
+
+// ====== CanonicalFormatImageCarousel ======
+
+/** array of | CanonicalFormatImageCarousel.allowed_card_asset_types */
+export const CanonicalFormatImageCarousel_AllowedCardAssetTypesValues = ["image", "video"] as const;
+
+// ====== CanonicalFormatNativeInFeed ======
+
+/** single | CanonicalFormatNativeInFeed.asset_source */
+export const CanonicalFormatNativeInFeed_AssetSourceValues = ["buyer_uploaded", "seller_pre_rendered_from_brief", "seller_human_designed", "agent_synthesized"] as const;
+/** array of | CanonicalFormatNativeInFeed.image_formats */
+export const CanonicalFormatNativeInFeed_ImageFormatsValues = ["jpg", "jpeg", "png", "gif", "webp"] as const;
+
+// ====== CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven ======
+
+/** single | CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.fanout_mode */
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_FanoutModeValues = ["per_item", "multi_item_in_creative", "single_item"] as const;
+/** array of | CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.supported_catalog_types */
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_SupportedCatalogTypesValues = ["product", "store", "offering", "hotel", "flight", "vehicle", "real_estate", "education", "destination", "app", "job", "inventory"] as const;
+/** array of | CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.supported_id_types */
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_SupportedIdTypesValues = ["asin", "sku", "gtin", "offering_id", "store_id", "hotel_id", "flight_id", "vehicle_id", "listing_id", "program_id", "destination_id", "app_id", "job_id"] as const;
+
+// ====== CanonicalFormatVASTVideo ======
+
+/** single | CanonicalFormatVASTVideo.vpaid_version */
+export const CanonicalFormatVASTVideo_VpaidVersionValues = ["1.0", "2.0"] as const;
+
 // ====== CatalogFieldMapping ======
 
 /** single | CatalogFieldMapping.transform */
@@ -57,7 +117,7 @@ export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean",
 // ====== ComplyTestControllerRequest ======
 
 /** single | ComplyTestControllerRequest.scenario */
-export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format"] as const;
+export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic"] as const;
 
 // ====== ControllerError ======
 
@@ -69,10 +129,22 @@ export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE
 /** single | CreateMediaBuyAsyncInputRequired.reason */
 export const CreateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "BUDGET_EXCEEDS_LIMIT"] as const;
 
+// ====== CreativePurgedWebhook ======
+
+/** single | CreativePurgedWebhook.initiator */
+export const CreativePurgedWebhook_InitiatorValues = ["seller", "system"] as const;
+/** single | CreativePurgedWebhook.purge_kind */
+export const CreativePurgedWebhook_PurgeKindValues = ["soft", "hard"] as const;
+
 // ====== CreativeVariable ======
 
 /** single | CreativeVariable.variable_type */
 export const CreativeVariable_VariableTypeValues = ["text", "image", "video", "audio", "url", "number", "boolean", "color", "date"] as const;
+
+// ====== DAASTTrackerAsset ======
+
+/** single | DAASTTrackerAsset.target */
+export const DAASTTrackerAsset_TargetValues = ["linear", "companion"] as const;
 
 // ====== DestinationItem ======
 
@@ -102,6 +174,8 @@ export const EducationItem_ModalityValues = ["online", "in_person", "hybrid"] as
 
 /** single | Error.recovery */
 export const Error_RecoveryValues = ["transient", "correctable", "terminal"] as const;
+/** single | Error.source */
+export const Error_SourceValues = ["producer", "sdk"] as const;
 
 // ====== FeatureRequirement ======
 
@@ -126,7 +200,7 @@ export const GetAdCPCapabilitiesRequest_ProtocolsValues = ["media_buy", "signals
 // ====== GetAdCPCapabilitiesResponse ======
 
 /** array of | GetAdCPCapabilitiesResponse.supported_protocols */
-export const GetAdCPCapabilitiesResponse_SupportedProtocolsValues = ["media_buy", "signals", "governance", "sponsored_intelligence", "creative", "brand"] as const;
+export const GetAdCPCapabilitiesResponse_SupportedProtocolsValues = ["media_buy", "signals", "governance", "sponsored_intelligence", "creative", "brand", "measurement"] as const;
 
 // ====== GetBrandIdentityRequest ======
 
@@ -155,6 +229,16 @@ export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refin
 /** array of | GetProductsRequest.fields */
 export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "format_ids", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
+// ====== GetProductsResponse ======
+
+/** single | GetProductsResponse.cache_scope */
+export const GetProductsResponse_CacheScopeValues = ["public", "account"] as const;
+
+// ====== GetSignalsRequest ======
+
+/** single | GetSignalsRequest.discovery_mode */
+export const GetSignalsRequest_DiscoveryModeValues = ["brief", "wholesale"] as const;
+
 // ====== HTMLAssetRequirements ======
 
 /** single | HTMLAssetRequirements.sandbox */
@@ -166,6 +250,11 @@ export const HTMLAssetRequirements_SandboxValues = ["none", "iframe", "safeframe
 export const ImageAssetRequirements_ColorSpaceValues = ["rgb", "cmyk", "grayscale"] as const;
 /** array of | ImageAssetRequirements.formats */
 export const ImageAssetRequirements_FormatsValues = ["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "tiff", "pdf", "eps"] as const;
+
+// ====== Impairment ======
+
+/** single | Impairment.resource_type */
+export const Impairment_ResourceTypeValues = ["audience", "creative", "catalog_item", "event_source", "property"] as const;
 
 // ====== JavaScriptAssetRequirements ======
 
@@ -186,6 +275,11 @@ export const ListCreativeFormatsRequestCreativeAgent_AssetTypesValues = ["image"
 /** single | ListCreativeFormatsRequestCreativeAgent.type */
 export const ListCreativeFormatsRequestCreativeAgent_TypeValues = ["audio", "video", "display", "dooh"] as const;
 
+// ====== ListCreativeFormatsResponse ======
+
+/** single | ListCreativeFormatsResponse.source */
+export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirror", "agent_derived"] as const;
+
 // ====== ListCreativesRequest ======
 
 /** array of | ListCreativesRequest.fields */
@@ -194,12 +288,19 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListScenariosSuccess ======
 
 /** array of | ListScenariosSuccess.scenarios */
-export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format"] as const;
+export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic"] as const;
 
 // ====== PerformanceFeedback ======
 
 /** single | PerformanceFeedback.status */
 export const PerformanceFeedback_StatusValues = ["accepted", "queued", "applied", "rejected"] as const;
+
+// ====== PixelTrackerAsset ======
+
+/** single | PixelTrackerAsset.event */
+export const PixelTrackerAsset_EventValues = ["impression", "viewable_mrc_50", "viewable_mrc_100", "viewable_video_50", "audible_video_complete", "click", "custom"] as const;
+/** single | PixelTrackerAsset.method */
+export const PixelTrackerAsset_MethodValues = ["img", "js"] as const;
 
 // ====== PolicyEntry ======
 
@@ -236,6 +337,13 @@ export const PropertyFeatureResult_CoverageStatusValues = ["covered", "not_cover
 /** single | Provenance.human_oversight */
 export const Provenance_HumanOversightValues = ["none", "prompt_only", "selected", "edited", "directed"] as const;
 
+// ====== PublisherEntry ======
+
+/** single | PublisherEntry.discovery_method */
+export const PublisherEntry_DiscoveryMethodValues = ["direct", "authoritative_location", "adagents_authoritative", "ads_txt_managerdomain"] as const;
+/** single | PublisherEntry.status */
+export const PublisherEntry_StatusValues = ["authorized", "revoked"] as const;
+
 // ====== RateLimitedDetails ======
 
 /** single | RateLimitedDetails.scope */
@@ -265,8 +373,8 @@ export const ReportingCapabilities_DateRangeSupportValues = ["date_range", "life
 
 // ====== ReportPlanOutcomeResponse ======
 
-/** single | ReportPlanOutcomeResponse.status */
-export const ReportPlanOutcomeResponse_StatusValues = ["accepted", "findings"] as const;
+/** single | ReportPlanOutcomeResponse.outcome_state */
+export const ReportPlanOutcomeResponse_OutcomeStateValues = ["accepted", "findings"] as const;
 
 // ====== RightsConstraint ======
 
@@ -315,10 +423,20 @@ export const URLAssetRequirements_ProtocolsValues = ["https", "http"] as const;
 /** single | URLAssetRequirements.role */
 export const URLAssetRequirements_RoleValues = ["clickthrough", "landing_page", "impression_tracker", "click_tracker", "viewability_tracker", "third_party_tracker"] as const;
 
+// ====== ValidateInputResult ======
+
+/** single | ValidateInputResult.result_kind */
+export const ValidateInputResult_ResultKindValues = ["validated_pass", "validated_fail", "unvalidatable_nondeterministic"] as const;
+
 // ====== ValidationResult ======
 
 /** single | ValidationResult.status */
 export const ValidationResult_StatusValues = ["compliant", "non_compliant", "not_covered", "unidentified"] as const;
+
+// ====== VASTTrackerAsset ======
+
+/** single | VASTTrackerAsset.target */
+export const VASTTrackerAsset_TargetValues = ["linear", "non_linear", "companion"] as const;
 
 // ====== VehicleItem ======
 
@@ -330,6 +448,11 @@ export const VehicleItem_ConditionValues = ["new", "used", "certified_pre_owned"
 export const VehicleItem_FuelTypeValues = ["gasoline", "diesel", "electric", "hybrid", "plug_in_hybrid"] as const;
 /** single | VehicleItem.transmission */
 export const VehicleItem_TransmissionValues = ["automatic", "manual", "cvt"] as const;
+
+// ====== VerifyBrandClaimsResultSuccess ======
+
+/** single | VerifyBrandClaimsResultSuccess.claim_type */
+export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = ["subsidiary", "parent", "property", "trademark"] as const;
 
 // ====== VideoAsset ======
 
@@ -344,10 +467,18 @@ export const VideoAsset_HdrFormatValues = ["sdr", "hdr10", "hdr10_plus", "hlg", 
 
 /** array of | VideoAssetRequirements.audio_codecs */
 export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "eac3", "mp3", "opus", "vorbis", "flac"] as const;
-/** array of | VideoAssetRequirements.codecs */
-export const VideoAssetRequirements_CodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
 /** array of | VideoAssetRequirements.containers */
 export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
+
+// ====== WebhookActivityRecord ======
+
+/** single | WebhookActivityRecord.status */
+export const WebhookActivityRecord_StatusValues = ["success", "failed", "timeout", "connection_error", "pending"] as const;
+
+// ====== WholesaleFeedWebhook ======
+
+/** single | WholesaleFeedWebhook.notification_type */
+export const WholesaleFeedWebhook_NotificationTypeValues = ["product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change"] as const;
 
 // ====== Deprecated aliases — duplicate literal sets ======
 // Re-exported under their original parent-prefixed names; resolve
@@ -358,9 +489,107 @@ export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "a
 // --- BriefAsset1 ---
 /** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset1.objective duplicates the canonical export. */
 export const BriefAsset1_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset2 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset2.objective duplicates the canonical export. */
+export const BriefAsset2_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset3 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset3.objective duplicates the canonical export. */
+export const BriefAsset3_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset4 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset4.objective duplicates the canonical export. */
+export const BriefAsset4_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset5 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset5.objective duplicates the canonical export. */
+export const BriefAsset5_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset6 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset6.objective duplicates the canonical export. */
+export const BriefAsset6_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BriefAsset7 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset7.objective duplicates the canonical export. */
+export const BriefAsset7_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- BuildCreativeInputRequired ---
+/** @deprecated use `BuildCreativeAsyncInputRequired_ReasonValues` — same literal set, BuildCreativeInputRequired.reason duplicates the canonical export. */
+export const BuildCreativeInputRequired_ReasonValues = BuildCreativeAsyncInputRequired_ReasonValues;
+// --- CanonicalFormatBase ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatBase.composition_model duplicates the canonical export. */
+export const CanonicalFormatBase_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatDAASTAudio ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatDAASTAudio.composition_model duplicates the canonical export. */
+export const CanonicalFormatDAASTAudio_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatHostedAudio ---
+/** @deprecated use `AudioAssetRequirements_ChannelsValues` — same literal set, CanonicalFormatHostedAudio.audio_channels duplicates the canonical export. */
+export const CanonicalFormatHostedAudio_AudioChannelsValues = AudioAssetRequirements_ChannelsValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatHostedAudio.composition_model duplicates the canonical export. */
+export const CanonicalFormatHostedAudio_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatHostedVideo ---
+/** @deprecated use `CanonicalFormatHostedAudio_AssetSourceValues` — same literal set, CanonicalFormatHostedVideo.asset_source duplicates the canonical export. */
+export const CanonicalFormatHostedVideo_AssetSourceValues = CanonicalFormatHostedAudio_AssetSourceValues;
+/** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, CanonicalFormatHostedVideo.buyer_asset_acceptance duplicates the canonical export. */
+export const CanonicalFormatHostedVideo_BuyerAssetAcceptanceValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatHostedVideo.composition_model duplicates the canonical export. */
+export const CanonicalFormatHostedVideo_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatImageCarousel ---
+/** @deprecated use `CanonicalFormatImageCarousel_AllowedCardAssetTypesValues` — same literal set, CanonicalFormatImageCarousel.allowed_card_media_asset_types duplicates the canonical export. */
+export const CanonicalFormatImageCarousel_AllowedCardMediaAssetTypesValues = CanonicalFormatImageCarousel_AllowedCardAssetTypesValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatImageCarousel.composition_model duplicates the canonical export. */
+export const CanonicalFormatImageCarousel_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatNativeInFeed ---
+/** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, CanonicalFormatNativeInFeed.buyer_asset_acceptance duplicates the canonical export. */
+export const CanonicalFormatNativeInFeed_BuyerAssetAcceptanceValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatNativeInFeed.composition_model duplicates the canonical export. */
+export const CanonicalFormatNativeInFeed_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatResponsiveCreative ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatResponsiveCreative.composition_model duplicates the canonical export. */
+export const CanonicalFormatResponsiveCreative_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+// --- CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.composition_model duplicates the canonical export. */
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+/** @deprecated use `CanonicalFormatNativeInFeed_AssetSourceValues` — same literal set, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven.item_production_model duplicates the canonical export. */
+export const CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven_ItemProductionModelValues = CanonicalFormatNativeInFeed_AssetSourceValues;
+// --- CanonicalFormatVASTVideo ---
+/** @deprecated use `CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues` — same literal set, CanonicalFormatVASTVideo.composition_model duplicates the canonical export. */
+export const CanonicalFormatVASTVideo_CompositionModelValues = CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement_CompositionModelValues;
+/** @deprecated use `CanonicalFormatHostedVideo_OrientationValues` — same literal set, CanonicalFormatVASTVideo.orientation duplicates the canonical export. */
+export const CanonicalFormatVASTVideo_OrientationValues = CanonicalFormatHostedVideo_OrientationValues;
+// --- CanonicalProjectionReference ---
+/** @deprecated use `CanonicalFormatHostedAudio_AssetSourceValues` — same literal set, CanonicalProjectionReference.asset_source duplicates the canonical export. */
+export const CanonicalProjectionReference_AssetSourceValues = CanonicalFormatHostedAudio_AssetSourceValues;
+// --- CreateMediaBuyInputRequired ---
+/** @deprecated use `CreateMediaBuyAsyncInputRequired_ReasonValues` — same literal set, CreateMediaBuyInputRequired.reason duplicates the canonical export. */
+export const CreateMediaBuyInputRequired_ReasonValues = CreateMediaBuyAsyncInputRequired_ReasonValues;
 // --- CreativeBrief ---
 /** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, CreativeBrief.objective duplicates the canonical export. */
 export const CreativeBrief_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- CreativeStatusChangedWebhook ---
+/** @deprecated use `CreativePurgedWebhook_InitiatorValues` — same literal set, CreativeStatusChangedWebhook.initiator duplicates the canonical export. */
+export const CreativeStatusChangedWebhook_InitiatorValues = CreativePurgedWebhook_InitiatorValues;
 // --- GetBrandIdentitySuccess ---
 /** @deprecated use `GetBrandIdentityRequest_FieldsValues` — same literal set, GetBrandIdentitySuccess.available_fields duplicates the canonical export. */
 export const GetBrandIdentitySuccess_AvailableFieldsValues = GetBrandIdentityRequest_FieldsValues;
+// --- GetProductsInputRequired ---
+/** @deprecated use `GetProductsAsyncInputRequired_ReasonValues` — same literal set, GetProductsInputRequired.reason duplicates the canonical export. */
+export const GetProductsInputRequired_ReasonValues = GetProductsAsyncInputRequired_ReasonValues;
+// --- GetSignalsResponse ---
+/** @deprecated use `GetProductsResponse_CacheScopeValues` — same literal set, GetSignalsResponse.cache_scope duplicates the canonical export. */
+export const GetSignalsResponse_CacheScopeValues = GetProductsResponse_CacheScopeValues;
+// --- SearchBrandResult ---
+/** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
+export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;
+// --- SyncCatalogsInputRequired ---
+/** @deprecated use `SyncCatalogsAsyncInputRequired_ReasonValues` — same literal set, SyncCatalogsInputRequired.reason duplicates the canonical export. */
+export const SyncCatalogsInputRequired_ReasonValues = SyncCatalogsAsyncInputRequired_ReasonValues;
+// --- SyncCreativesInputRequired ---
+/** @deprecated use `SyncCreativesAsyncInputRequired_ReasonValues` — same literal set, SyncCreativesInputRequired.reason duplicates the canonical export. */
+export const SyncCreativesInputRequired_ReasonValues = SyncCreativesAsyncInputRequired_ReasonValues;
+// --- UpdateMediaBuyInputRequired ---
+/** @deprecated use `UpdateMediaBuyAsyncInputRequired_ReasonValues` — same literal set, UpdateMediaBuyInputRequired.reason duplicates the canonical export. */
+export const UpdateMediaBuyInputRequired_ReasonValues = UpdateMediaBuyAsyncInputRequired_ReasonValues;
+// --- VerifyBrandClaimSuccess ---
+/** @deprecated use `VerifyBrandClaimsResultSuccess_ClaimTypeValues` — same literal set, VerifyBrandClaimSuccess.claim_type duplicates the canonical export. */
+export const VerifyBrandClaimSuccess_ClaimTypeValues = VerifyBrandClaimsResultSuccess_ClaimTypeValues;
+// --- VideoAssetRequirements ---
+/** @deprecated use `CanonicalFormatHostedVideo_VideoCodecsValues` — same literal set, VideoAssetRequirements.codecs duplicates the canonical export. */
+export const VideoAssetRequirements_CodecsValues = CanonicalFormatHostedVideo_VideoCodecsValues;
+// --- WholesaleFeedWebhook ---
+/** @deprecated use `GetProductsResponse_CacheScopeValues` — same literal set, WholesaleFeedWebhook.cache_scope duplicates the canonical export. */
+export const WholesaleFeedWebhook_CacheScopeValues = GetProductsResponse_CacheScopeValues;
