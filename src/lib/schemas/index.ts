@@ -37,15 +37,24 @@
 import type { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 
 export * from '../types/schemas.generated';
 export { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 
 type InputShape = Record<string, z.ZodType>;
+type ShapeOf<T> = T extends { shape: infer TShape extends InputShape } ? TShape : never;
+type ToolInputShapes = {
+  [K in keyof KnownToolRequestSchemas]: ShapeOf<KnownToolRequestSchemas[K]>;
+} & {
+  creative_approval: typeof schemas.CreativeApprovalRequestSchema.shape;
+  update_rights: typeof schemas.UpdateRightsRequestSchema.shape;
+} & {
+  readonly [toolName: string]: Readonly<InputShape> | undefined;
+};
 
-function shapeOf(s: unknown): InputShape | undefined {
-  if (!s) return undefined;
-  const candidate = (s as { shape?: InputShape }).shape;
+function shapeOf<T extends { shape?: InputShape }>(s: T | undefined): T['shape'] | undefined {
+  const candidate = s?.shape;
   return candidate && typeof candidate === 'object' ? candidate : undefined;
 }
 
@@ -67,7 +76,7 @@ function shapeOf(s: unknown): InputShape | undefined {
  * framework-registrable) — CI's `ci:schema-check` catches missing
  * map entries by diffing against the generated schemas.
  */
-export const TOOL_INPUT_SHAPES: Readonly<Record<string, Readonly<InputShape>>> = Object.freeze({
+export const TOOL_INPUT_SHAPES = Object.freeze({
   ...Object.fromEntries(
     Object.entries(TOOL_REQUEST_SCHEMAS).map(([k, s]) => {
       const shape = shapeOf(s);
@@ -81,7 +90,7 @@ export const TOOL_INPUT_SHAPES: Readonly<Record<string, Readonly<InputShape>>> =
   ),
   creative_approval: schemas.CreativeApprovalRequestSchema.shape,
   update_rights: schemas.UpdateRightsRequestSchema.shape,
-});
+}) as Readonly<ToolInputShapes>;
 
 /**
  * Register a custom tool with MCP-compatible `inputSchema` + handler

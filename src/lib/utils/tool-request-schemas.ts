@@ -14,24 +14,97 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 
+type InputShape = Record<string, z.ZodType>;
+type WithOptionalAccountShape<TShape extends InputShape & { account: z.ZodType }> = Omit<TShape, 'account'> & {
+  account: z.ZodOptional<TShape['account']>;
+};
+
 /**
  * Make `account` optional for MCP tool registration so requests missing it
  * reach the handler, which can return a proper adcpError('INVALID_REQUEST')
  * instead of a raw MCP schema validation error. The schema_validation
  * storyboard sends create_media_buy without account to test error handling.
  */
-function withOptionalAccount<T extends z.ZodObject<any>>(schema: T) {
-  return schema.extend({ account: schema.shape.account.optional() });
+function withOptionalAccount<TShape extends InputShape & { account: z.ZodType }>(
+  schema: z.ZodObject<TShape>
+): z.ZodObject<WithOptionalAccountShape<TShape>, any> {
+  return schema.extend({ account: schema.shape.account.optional() }) as z.ZodObject<
+    WithOptionalAccountShape<TShape>,
+    any
+  >;
 }
 
-export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
+const CreateMediaBuyToolRequestSchema = withOptionalAccount(schemas.CreateMediaBuyRequestSchema);
+const UpdateMediaBuyToolRequestSchema = withOptionalAccount(schemas.UpdateMediaBuyRequestSchema);
+
+export type KnownToolRequestSchemas = {
+  get_products: typeof schemas.GetProductsRequestSchema;
+  create_media_buy: typeof CreateMediaBuyToolRequestSchema;
+  update_media_buy: typeof UpdateMediaBuyToolRequestSchema;
+  get_media_buys: typeof schemas.GetMediaBuysRequestSchema;
+  get_media_buy_delivery: typeof schemas.GetMediaBuyDeliveryRequestSchema;
+  provide_performance_feedback: typeof schemas.ProvidePerformanceFeedbackRequestSchema;
+  list_creative_formats: typeof schemas.ListCreativeFormatsRequestSchema;
+  build_creative: typeof schemas.BuildCreativeRequestSchema;
+  preview_creative: typeof schemas.PreviewCreativeRequestSchema;
+  sync_creatives: typeof schemas.SyncCreativesRequestSchema;
+  list_creatives: typeof schemas.ListCreativesRequestSchema;
+  get_creative_delivery: typeof schemas.GetCreativeDeliveryRequestSchema;
+  get_signals: typeof schemas.GetSignalsRequestSchema;
+  activate_signal: typeof schemas.ActivateSignalRequestSchema;
+  sync_accounts: typeof schemas.SyncAccountsRequestSchema;
+  list_accounts: typeof schemas.ListAccountsRequestSchema;
+  sync_governance: typeof schemas.SyncGovernanceRequestSchema;
+  sync_audiences: typeof schemas.SyncAudiencesRequestSchema;
+  report_usage: typeof schemas.ReportUsageRequestSchema;
+  get_account_financials: typeof schemas.GetAccountFinancialsRequestSchema;
+  sync_catalogs: typeof schemas.SyncCatalogsRequestSchema;
+  sync_event_sources: typeof schemas.SyncEventSourcesRequestSchema;
+  log_event: typeof schemas.LogEventRequestSchema;
+  get_media_buy_artifacts: typeof schemas.GetMediaBuyArtifactsRequestSchema;
+  get_creative_features: typeof schemas.GetCreativeFeaturesRequestSchema;
+  create_property_list: typeof schemas.CreatePropertyListRequestSchema;
+  get_property_list: typeof schemas.GetPropertyListRequestSchema;
+  update_property_list: typeof schemas.UpdatePropertyListRequestSchema;
+  list_property_lists: typeof schemas.ListPropertyListsRequestSchema;
+  delete_property_list: typeof schemas.DeletePropertyListRequestSchema;
+  list_content_standards: typeof schemas.ListContentStandardsRequestSchema;
+  get_content_standards: typeof schemas.GetContentStandardsRequestSchema;
+  create_content_standards: typeof schemas.CreateContentStandardsRequestSchema;
+  update_content_standards: typeof schemas.UpdateContentStandardsRequestSchema;
+  calibrate_content: typeof schemas.CalibrateContentRequestSchema;
+  validate_content_delivery: typeof schemas.ValidateContentDeliveryRequestSchema;
+  validate_property_delivery: typeof schemas.ValidatePropertyDeliveryRequestSchema;
+  sync_plans: typeof schemas.SyncPlansRequestSchema;
+  check_governance: typeof schemas.CheckGovernanceRequestSchema;
+  report_plan_outcome: typeof schemas.ReportPlanOutcomeRequestSchema;
+  get_plan_audit_logs: typeof schemas.GetPlanAuditLogsRequestSchema;
+  create_collection_list: typeof schemas.CreateCollectionListRequestSchema;
+  update_collection_list: typeof schemas.UpdateCollectionListRequestSchema;
+  get_collection_list: typeof schemas.GetCollectionListRequestSchema;
+  list_collection_lists: typeof schemas.ListCollectionListsRequestSchema;
+  delete_collection_list: typeof schemas.DeleteCollectionListRequestSchema;
+  si_get_offering: typeof schemas.SIGetOfferingRequestSchema;
+  si_initiate_session: typeof schemas.SIInitiateSessionRequestSchema;
+  si_send_message: typeof schemas.SISendMessageRequestSchema;
+  si_terminate_session: typeof schemas.SITerminateSessionRequestSchema;
+  get_adcp_capabilities: typeof schemas.GetAdCPCapabilitiesRequestSchema;
+  comply_test_controller: typeof schemas.ComplyTestControllerRequestSchema;
+  get_brand_identity: typeof schemas.GetBrandIdentityRequestSchema;
+  get_rights: typeof schemas.GetRightsRequestSchema;
+  acquire_rights: typeof schemas.AcquireRightsRequestSchema;
+  update_rights: typeof schemas.UpdateRightsRequestSchema;
+};
+
+export type ToolRequestSchemas = Readonly<KnownToolRequestSchemas> & {
+  readonly [toolName: string]: z.ZodObject<any> | undefined;
+};
+
+export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   // Product discovery & media buy
   get_products: schemas.GetProductsRequestSchema,
-  create_media_buy: withOptionalAccount(schemas.CreateMediaBuyRequestSchema),
-  // UpdateMediaBuyRequestSchema is annotated `z.ZodType<...>` (TS7056 workaround
-  // in scripts/generate-zod-from-ts.ts) rather than `z.ZodObject`. Cast back to
-  // ZodObject at the one site that needs it; runtime shape is unchanged.
-  update_media_buy: withOptionalAccount(schemas.UpdateMediaBuyRequestSchema as unknown as z.ZodObject<z.ZodRawShape>),
+  create_media_buy: CreateMediaBuyToolRequestSchema,
+  update_media_buy: UpdateMediaBuyToolRequestSchema,
   get_media_buys: schemas.GetMediaBuysRequestSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
