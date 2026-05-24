@@ -319,6 +319,7 @@ export class TaskExecutor {
        * truth for both validation and wire-level major.
        */
       adcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
       /**
        * Transport-level safeguards applied to every call this executor
        * dispatches. Per-call options can override individual fields.
@@ -331,7 +332,12 @@ export class TaskExecutor {
       this.conversationStorage = new Map();
     }
     if (config.governance) {
-      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity, config.adcpVersion);
+      this.governanceMiddleware = new GovernanceMiddleware(
+        config.governance,
+        config.onActivity,
+        config.adcpVersion,
+        config.versionEnvelope
+      );
     }
     const modes = resolveValidationModes(config.validation);
     this.requestValidationMode = modes.requests;
@@ -585,6 +591,7 @@ export class TaskExecutor {
         serverVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
       });
 
@@ -1333,6 +1340,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
@@ -1394,6 +1402,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
@@ -1683,6 +1692,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
       }
     );

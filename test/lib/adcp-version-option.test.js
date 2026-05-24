@@ -194,5 +194,19 @@ describe('adcpVersion constructor option', () => {
       await wrapper.requireV3('b');
       assert.deepStrictEqual(seen, ['a', 'b']);
     });
+
+    test('SingleAgentClient.requireSupportedMajor accepts release-precision prerelease supported_versions', async () => {
+      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.3' });
+      client.getCapabilities = async () => ({
+        version: 'v3',
+        majorVersions: [3],
+        supportedVersions: ['3.1-beta.3'],
+        protocols: [],
+        features: {},
+        idempotency: { replayTtlSeconds: 86400 },
+      });
+
+      await client.requireSupportedMajor('get_products');
+    });
   });
 });

@@ -13,6 +13,7 @@ import { join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
+import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { Storyboard } from './types';
 
@@ -21,7 +22,11 @@ import type { Storyboard } from './types';
  * surfaces. `unknown_protocol` is reserved for future use — today it emits a
  * `console.warn` rather than throwing.
  */
-export type CapabilityResolutionCode = 'specialism_parent_protocol_missing' | 'unknown_specialism' | 'unknown_protocol';
+export type CapabilityResolutionCode =
+  | 'specialism_parent_protocol_missing'
+  | 'unknown_specialism'
+  | 'unknown_protocol'
+  | 'unsupported_adcp_version';
 
 /**
  * Thrown when the agent's declared capabilities cannot be mapped onto the
@@ -103,6 +108,8 @@ export interface BundleRef {
   id: string;
   /** Path to the bundle directory (or YAML file, for universal bundles). */
   path: string;
+  /** AdCP cache version this bundle came from. */
+  adcp_version?: string;
 }
 
 export interface AgentCapabilities {
@@ -117,6 +124,12 @@ export interface AgentCapabilities {
    * run against an agent that predates them. Unset → no version gating.
    */
   major_versions?: number[];
+  /**
+   * Exact/release-precision AdCP versions the seller supports, from
+   * `get_adcp_capabilities.adcp.supported_versions`. When present, the
+   * runner treats it as more specific than `major_versions`.
+   */
+  supported_versions?: string[];
 }
 
 /** Reason a storyboard was not run against an agent. */
@@ -246,7 +259,11 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
   const raw = ref.kind === 'universal' ? safeLoadUniversal(ref.path) : loadStoryboardsFromDir(ref.path);
-  return raw.map(postProcessStoryboard);
+  return raw.map(sb => annotateStoryboardVersion(postProcessStoryboard(sb), ref.adcp_version));
+}
+
+function annotateStoryboardVersion(storyboard: Storyboard, adcpVersion: string | undefined): Storyboard {
+  return adcpVersion === undefined ? storyboard : { ...storyboard, adcp_version: adcpVersion };
 }
 
 function safeLoadUniversal(path: string): Storyboard[] {
@@ -312,6 +329,7 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
       kind: 'universal',
       id: name,
       path: join(dir, 'universal', `${name}.yaml`),
+      adcp_version: index.adcp_version,
     });
   }
   for (const protocol of index.protocols) {
@@ -320,6 +338,7 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
       kind: 'protocol',
       id: protocol.id,
       path: join(dir, 'protocols', protocol.id),
+      adcp_version: index.adcp_version,
     });
   }
   for (const specialism of index.specialisms) {
@@ -327,6 +346,7 @@ export function listBundles(options: ResolveOptions = {}): BundleRef[] {
       kind: 'specialism',
       id: specialism.id,
       path: join(dir, 'specialisms', specialism.id),
+      adcp_version: index.adcp_version,
     });
   }
   return bundles;
@@ -399,6 +419,7 @@ export function loadSpecialismDetail(slug: string, options: ResolveOptions = {})
     kind: 'specialism',
     id: slug,
     path: join(getComplianceCacheDir(options), 'specialisms', slug),
+    adcp_version: index.adcp_version,
   });
   const storyboard = bundleStoryboards.find(sb => sb.category === entry.id.replace(/-/g, '_')) ?? bundleStoryboards[0];
   if (!storyboard) {
@@ -481,6 +502,7 @@ export function resolveStoryboardsForCapabilities(
   options: ResolveOptions = {}
 ): ResolvedStoryboards {
   const index = loadComplianceIndex(options);
+  assertSupportedComplianceVersion(index.adcp_version, caps.supported_versions);
   const cacheDir = getComplianceCacheDir(options);
   const bundles: ResolvedBundle[] = [];
   const storyboards: Storyboard[] = [];
@@ -512,6 +534,7 @@ export function resolveStoryboardsForCapabilities(
       kind: 'universal',
       id: name,
       path: join(cacheDir, 'universal', `${name}.yaml`),
+      adcp_version: index.adcp_version,
     });
   }
 
@@ -541,6 +564,7 @@ export function resolveStoryboardsForCapabilities(
       kind: 'protocol',
       id: protocolId,
       path: join(cacheDir, 'protocols', protocolId),
+      adcp_version: index.adcp_version,
     });
   }
 
@@ -577,10 +601,27 @@ export function resolveStoryboardsForCapabilities(
       kind: 'specialism',
       id: specialism,
       path: join(cacheDir, 'specialisms', specialism),
+      adcp_version: index.adcp_version,
     });
   }
 
   return { bundles, storyboards, not_applicable: notApplicable };
+}
+
+export function isComplianceVersionSupported(cacheVersion: string, supportedVersions: readonly string[]): boolean {
+  return isAdcpVersionSupported(cacheVersion, supportedVersions);
+}
+
+function assertSupportedComplianceVersion(cacheVersion: string, supportedVersions: string[] | undefined): void {
+  if (!supportedVersions || supportedVersions.length === 0) return;
+  if (isComplianceVersionSupported(cacheVersion, supportedVersions)) return;
+  throw new CapabilityResolutionError({
+    code: 'unsupported_adcp_version',
+    message:
+      `Compliance cache version ${cacheVersion} is not supported by this seller. ` +
+      `Seller advertises adcp.supported_versions [${supportedVersions.join(', ')}]. ` +
+      `Install or select a compatible compliance cache instead of relying on major_versions alone.`,
+  });
 }
 
 /**

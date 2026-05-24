@@ -68,6 +68,9 @@ npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp sales-guaranteed -
 # Specific tracks only (faster feedback when iterating)
 npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --tracks core,products --auth $TOKEN
 
+# Pin a specific compliance cache/spec line
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --compliance-version 3.0.12 --auth $TOKEN
+
 # Ad-hoc YAML (new storyboards under development)
 npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --file ./my-wip.yaml --auth $TOKEN
 
@@ -79,6 +82,8 @@ npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp --json > report.js
 
 - `--tracks <a,b,c>` — limit to named tracks (e.g., `core,products,security_baseline`)
 - `--storyboards <id1,id2>` — limit to specific storyboard IDs
+- `--compliance-version <version>` — select the compliance cache/spec line used for resolution and request version intent; pass the same flag to `storyboard list`, `show`, and `step` when reproducing a pinned run
+- `--compliance-dir <path>` — use a specific compliance cache directory for local protocol/cache development
 - `--webhook-receiver [loopback|proxy]` — host a webhook sink so async steps grade instead of skip
 - `--webhook-receiver-auto-tunnel` — autodetect `ngrok`/`cloudflared` on `PATH`, spawn and plug into proxy mode
 - `--invariants <mod1,mod2>` — load custom cross-step assertion modules

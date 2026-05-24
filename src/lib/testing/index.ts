@@ -230,6 +230,8 @@ export {
   // Runner
   runStoryboard,
   runStoryboardStep,
+  applyAdcpVersionRunOptions,
+  applyStoryboardVersionOptions,
   getFirstStepPreview,
   // Parser (single-file load for spec evolution)
   parseStoryboard,
@@ -244,6 +246,7 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
+  isComplianceVersionSupported,
   CapabilityResolutionError,
   // Task mapping
   TASK_TO_METHOD,

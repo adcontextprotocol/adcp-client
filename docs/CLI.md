@@ -257,6 +257,9 @@ adcp storyboard run myagent --storyboards creative-template
 # Limit to a subset of tracks
 adcp storyboard run myagent --tracks core,products,media_buy
 
+# Pin the compliance cache/spec line used for storyboard resolution
+adcp storyboard run myagent --compliance-version 3.0.12
+
 # Recommended for CI: --json for machine-readable output + --strict-flags
 # so stale flags fail the build instead of passing advisory warnings.
 adcp storyboard run https://agent.example.com/mcp --auth "$ADCP_AUTH_TOKEN" --json --strict-flags
@@ -278,6 +281,8 @@ Useful flags:
 
 - `--storyboards ID,...`: Run specific storyboard or bundle IDs instead of capability-driven selection
 - `--tracks core,products,...`: Restrict the run to specific tracks
+- `--compliance-version VERSION`: Select the compliance cache/spec line, for example `3.0.12` or `3.1.0-beta.3`; use the same flag with `storyboard list`, `show`, and `step` when reproducing a pinned run
+- `--compliance-dir PATH`: Use a specific compliance cache directory, mainly for local protocol/cache development
 - `--brief TEXT`: Override the default sample discovery brief
 - `--dry-run`: Preview steps without executing
 - `--json`: Emit machine-readable output for automation
