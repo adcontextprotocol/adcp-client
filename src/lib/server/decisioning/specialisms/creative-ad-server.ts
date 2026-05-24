@@ -52,6 +52,13 @@ export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
 export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
 export type GetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
+export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
+export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type BuildCreativeReturn =
+  | CreativeManifest
+  | CreativeManifest[]
+  | BuildCreativePayload
+  | BuildCreativeMultiPayload;
 
 export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -77,7 +84,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   buildCreative(
     req: BuildCreativeRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<CreativeManifest | CreativeManifest[] | BuildCreativeSuccess | BuildCreativeMultiSuccess>;
+  ): Promise<BuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always sync.

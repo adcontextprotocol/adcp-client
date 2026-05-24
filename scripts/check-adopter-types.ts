@@ -49,20 +49,45 @@ const ADOPTER_SOURCE = `
 // payload typing surface that adopters consume from a packed SDK tarball.
 import type {
   AdcpServer,
+  ActivateSignalPayload,
+  BuildCreativePayload,
+  BuildCreativeMultiPayload,
   CheckGovernancePayload,
+  CreativeApprovedPayload,
   CreatePropertyListPayload,
+  CreateMediaBuyPayload,
+  CreateMediaBuyHandlerResult,
+  GetMediaBuyDeliveryPayload,
+  GetMediaBuysPayload,
+  GetAccountFinancialsHandlerResult,
+  GetBrandIdentityPayload,
+  GetProductsPayload,
+  GetRightsPayload,
+  ListAccountsHandlerResult,
+  ListAccountsPayload,
+  ListCreativeFormatsPayload,
   ListContentStandardsPayload,
   OperationalContext,
   OperationalPlatform,
+  RightsTerms,
+  ReportUsageHandlerResult,
   SalesCorePlatform,
   SalesIngestionPlatform,
   ServerPayload,
   SIGetOfferingPayload,
+  SyncAudiencesPayload,
+  SyncAccountsHandlerResult,
+  SyncCreativesPayload,
+  SyncCreativesHandlerResult,
+  SyncEventSourcesPayload,
+  SyncGovernanceHandlerResult,
+  UpdateRightsPayload,
+  UpdateMediaBuyPayload,
 } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform, defineOperationalPlatform } from '@adcp/sdk/server';
 import { createAdcpServer as createLegacyAdcpServer } from '@adcp/sdk/server/legacy/v5';
 import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from '@adcp/sdk';
-import type { CreateMediaBuySuccess, ServerPayload as ServerPayloadFromTypes } from '@adcp/sdk/types';
+import type { CreateMediaBuySuccess, CreativeManifest, ServerPayload as ServerPayloadFromTypes } from '@adcp/sdk/types';
 import type { AccountReference } from '@adcp/sdk';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 
@@ -100,6 +125,114 @@ const _sales: SalesCorePlatform & SalesIngestionPlatform = {
   syncCreatives: async () => [],
 };
 void _sales;
+
+const _salesWithHandoff: SalesCorePlatform & SalesIngestionPlatform = {
+  getProducts: async () => ({ products: [], cache_scope: 'account' }),
+  createMediaBuy: async (_req, ctx) =>
+    ctx.handoffToTask(async () => ({ media_buy_id: 'mb_1', packages: [] })),
+  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+  getMediaBuys: async () => ({ media_buys: [] }),
+  getMediaBuyDelivery: async () => ({
+    reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+    media_buy_deliveries: [],
+  }),
+  syncCreatives: async (_creatives, ctx) => ctx.handoffToTask(async () => []),
+};
+void _salesWithHandoff;
+
+type Ok<T> = { ok: true; value: T };
+type Err<E> = { ok: false; error: E };
+type Result<T, E> = Ok<T> | Err<E>;
+const ok = <T,>(value: T): Result<T, Error> => ({ ok: true, value });
+const creativeManifest = {} as CreativeManifest;
+const rightsTerms = {} as RightsTerms;
+
+// Issue #1988: adopter helper layers often wrap handler payloads in their
+// own Result<T, E>. They need named payload types that do not require the
+// protocol task envelope (status, timestamp, context_id, etc.).
+const _payloadResults: [
+  Result<GetProductsPayload, Error>,
+  Result<ListCreativeFormatsPayload, Error>,
+  Result<CreateMediaBuyPayload, Error>,
+  Result<UpdateMediaBuyPayload, Error>,
+  Result<SyncCreativesPayload, Error>,
+  Result<SyncEventSourcesPayload, Error>,
+  Result<ListAccountsPayload, Error>,
+  Result<GetMediaBuysPayload, Error>,
+  Result<GetMediaBuyDeliveryPayload, Error>,
+  Result<BuildCreativePayload, Error>,
+  Result<BuildCreativeMultiPayload, Error>,
+  Result<SyncAudiencesPayload, Error>,
+  Result<ActivateSignalPayload, Error>,
+  Result<GetBrandIdentityPayload, Error>,
+  Result<GetRightsPayload, Error>,
+  Result<UpdateRightsPayload, Error>,
+  Result<CreativeApprovedPayload, Error>,
+  Result<CreateMediaBuyHandlerResult, Error>,
+  Result<SyncCreativesHandlerResult, Error>,
+] = [
+  ok({ products: [], cache_scope: 'account' }),
+  ok({ formats: [] }),
+  ok({ media_buy_id: 'mb_1', packages: [] }),
+  ok({ media_buy_id: 'mb_1' }),
+  ok({ creatives: [] }),
+  ok({ event_sources: [] }),
+  ok({ accounts: [] }),
+  ok({ media_buys: [] }),
+  ok({
+    reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+    media_buy_deliveries: [],
+  }),
+  ok({ creative_manifest: creativeManifest }),
+  ok({ creative_manifests: [] }),
+  ok({ audiences: [] }),
+  ok({ deployments: [] }),
+  ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
+  ok({ rights: [] }),
+  ok({ rights_id: 'rights_1', terms: rightsTerms }),
+  ok({ approval_status: 'approved', rights_id: 'rights_1' }),
+  ok({ media_buy_id: 'mb_1', packages: [] }),
+  ok([]),
+];
+void _payloadResults;
+
+const _accountHandlerResults: [
+  ListAccountsHandlerResult,
+  SyncAccountsHandlerResult,
+  SyncGovernanceHandlerResult,
+  Result<ReportUsageHandlerResult, Error>,
+  Result<GetAccountFinancialsHandlerResult, Error>,
+] = [{ items: [] }, [], [], ok({ accepted: 0 }), ok({} as GetAccountFinancialsHandlerResult)];
+void _accountHandlerResults;
+
+const _safeListAccountsPayload: ListAccountsPayload = {
+  accounts: [
+    {
+      account_id: 'acct_1',
+      name: 'Acme',
+      status: 'active',
+      billing_entity: { legal_name: 'Acme Inc.' },
+      notification_configs: [
+        {
+          subscriber_id: 'buyer-primary',
+          url: 'https://hooks.test/notify',
+          event_types: [],
+          authentication: { schemes: ['Bearer'] },
+        },
+      ],
+    },
+  ],
+};
+const _safeNotificationAuth = _safeListAccountsPayload.accounts[0]?.notification_configs?.[0]?.authentication;
+if (_safeNotificationAuth) {
+  // @ts-expect-error response payload aliases must not expose write-only webhook credentials
+  void _safeNotificationAuth.credentials;
+}
+const _safeBillingEntity = _safeListAccountsPayload.accounts[0]?.billing_entity;
+if (_safeBillingEntity) {
+  // @ts-expect-error response payload aliases must not expose write-only bank coordinates
+  void _safeBillingEntity.bank;
+}
 
 interface OpsCtx extends OperationalContext {
   advertiserId: string;

@@ -33,6 +33,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 // Brand-rights wire types only live in `core.generated`; the other
 // specialism files import from `tools.generated` (where most
 // per-tool wire types are emitted). Don't "consistency-fix" this
@@ -57,6 +58,21 @@ import type {
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
+export type GetBrandIdentityPayload = ServerPayload<GetBrandIdentitySuccess>;
+export type GetRightsPayload = ServerPayload<GetRightsSuccess>;
+export type AcquireRightsAcquiredPayload = ServerPayload<AcquireRightsAcquired>;
+export type AcquireRightsPendingApprovalPayload = ServerPayload<AcquireRightsPendingApproval>;
+export type AcquireRightsRejectedPayload = ServerPayload<AcquireRightsRejected>;
+export type AcquireRightsPayload =
+  | AcquireRightsAcquiredPayload
+  | AcquireRightsPendingApprovalPayload
+  | AcquireRightsRejectedPayload;
+export type UpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
+export type CreativeApprovedPayload = ServerPayload<CreativeApproved>;
+export type CreativeRejectedPayload = ServerPayload<CreativeRejected>;
+export type CreativePendingReviewPayload = ServerPayload<CreativePendingReview>;
+export type CreativeApprovalPayload = CreativeApprovedPayload | CreativeRejectedPayload | CreativePendingReviewPayload;
+
 export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Read brand identity record — `brand_id`, `house`, localized `names`,
@@ -64,7 +80,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * Throw `AdcpError('REFERENCE_NOT_FOUND')` when the brand reference
    * doesn't resolve to an identity the platform tracks.
    */
-  getBrandIdentity(req: GetBrandIdentityRequest, ctx: Ctx<TCtxMeta>): Promise<GetBrandIdentitySuccess>;
+  getBrandIdentity(req: GetBrandIdentityRequest, ctx: Ctx<TCtxMeta>): Promise<GetBrandIdentityPayload>;
 
   /**
    * List rights matching a brand + use query. Sync read; framework
@@ -76,7 +92,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * Note: the wire field is `rights`, NOT `offerings`. Adopters who
    * named their internal model `offerings` translate at this seam.
    */
-  getRights(req: GetRightsRequest, ctx: Ctx<TCtxMeta>): Promise<GetRightsSuccess>;
+  getRights(req: GetRightsRequest, ctx: Ctx<TCtxMeta>): Promise<GetRightsPayload>;
 
   /**
    * Acquire rights — buyer commits to an offering. Four wire-spec arms:
@@ -121,7 +137,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
   acquireRights(
     req: AcquireRightsRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected>;
+  ): Promise<AcquireRightsPayload>;
 
   /**
    * Modify an existing rights grant — extend dates, adjust impression caps,
@@ -133,7 +149,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * grant from `ctx.store` rather than re-fetching it.
    *
    * Return shape:
-   *   - `UpdateRightsSuccess` — change applied. Carries updated `terms`,
+   *   - `UpdateRightsPayload` — change applied. Carries updated `terms`,
    *     re-issued `generation_credentials` (LLM keys reflecting the new
    *     constraint), updated `rights_constraint`, and an
    *     `implementation_date`:
@@ -146,7 +162,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * count, `end_date` earlier than now, switching to an incompatible
    * `pricing_option_id`) throw `AdcpError('INVALID_REQUEST', { details })`
    * — the framework projects the throw into the `UpdateRightsError` wire
-   * arm. The Platform method's return type is `Promise<UpdateRightsSuccess>`
+   * arm. The Platform method's return type is `Promise<UpdateRightsPayload>`
    * by design: error arms are exclusively reachable via thrown `AdcpError`
    * (matching `acquireRights`'s convention — its return type carries only
    * the three success arms; the multi-error `AcquireRightsError` arm is
@@ -157,7 +173,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * the response for replay against the same `idempotency_key`; this
    * handler runs at most once per (key, principal).
    */
-  updateRights(req: UpdateRightsRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateRightsSuccess>;
+  updateRights(req: UpdateRightsRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateRightsPayload>;
 
   /**
    * Review a creative submitted under an existing rights grant.
@@ -196,5 +212,5 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
   reviewCreativeApproval(
     req: CreativeApprovalRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<CreativeApproved | CreativeRejected | CreativePendingReview>;
+  ): Promise<CreativeApprovalPayload>;
 }

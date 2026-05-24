@@ -32,6 +32,14 @@ import type {
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
+type Creative = CreativeAsset;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
+export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+
 /**
  * Adopter return shape for `buildCreative`. Discriminated by the wire
  * spec's Single vs Multi response arms — pick whichever matches the
@@ -45,8 +53,8 @@ import type { SyncCreativesRow } from './sales';
  *     `CreativeManifest[]`. Framework wraps as
  *     `{ creative_manifests: [...] }`. Use this for multi-format
  *     requests (`target_format_ids`) when you don't need rich metadata.
- *   - **Fully-shaped envelope**: return a `BuildCreativeSuccess` (single)
- *     or `BuildCreativeMultiSuccess` (multi) with `sandbox` /
+ *   - **Fully-shaped envelope**: return a `BuildCreativePayload` (single)
+ *     or `BuildCreativeMultiPayload` (multi) with `sandbox` /
  *     `expires_at` / `preview` populated. Framework passes through
  *     unchanged. Detected by the presence of `creative_manifest` (single
  *     envelope) or `creative_manifests` (multi envelope) at the top level.
@@ -60,14 +68,8 @@ import type { SyncCreativesRow } from './sales';
 export type BuildCreativeReturn =
   | CreativeManifest
   | CreativeManifest[]
-  | BuildCreativeSuccess
-  | BuildCreativeMultiSuccess;
-
-type Creative = CreativeAsset;
-type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
-
-export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
-export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+  | BuildCreativePayload
+  | BuildCreativeMultiPayload;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -118,8 +120,8 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    *
    * Return shape is discriminated; see {@link BuildCreativeReturn}:
    * single `CreativeManifest`, `CreativeManifest[]` for multi-format
-   * requests, OR a fully-shaped `BuildCreativeSuccess` /
-   * `BuildCreativeMultiSuccess` envelope when you need to set
+   * requests, OR a fully-shaped `BuildCreativePayload` /
+   * `BuildCreativeMultiPayload` payload when you need to set
    * `sandbox` / `expires_at` / `preview`.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<BuildCreativeReturn>;
