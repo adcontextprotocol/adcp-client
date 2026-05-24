@@ -7,8 +7,8 @@ const { spawnSync } = require('node:child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-function postProcessObjectIntersections(input) {
-  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-object-intersections-'));
+function runPostProcess(methodName, input, tmpPrefix) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), tmpPrefix));
   const scriptPath = path.join(harnessDir, 'harness.ts');
   const outPath = path.join(harnessDir, 'out.txt');
   const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
@@ -20,7 +20,7 @@ import { writeFileSync } from 'fs';
 import { __test__ } from ${JSON.stringify(generateZodPath)};
 
 const input = ${JSON.stringify(input)};
-writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessObjectIntersections(input));
+writeFileSync(${JSON.stringify(outPath)}, __test__[${JSON.stringify(methodName)}](input));
 `
   );
 
@@ -38,35 +38,16 @@ writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessObjectIntersection
   }
 }
 
+function postProcessObjectIntersections(input) {
+  return runPostProcess('postProcessObjectIntersections', input, '.zod-object-intersections-');
+}
+
 function postProcessForNullish(input) {
-  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-nullish-'));
-  const scriptPath = path.join(harnessDir, 'harness.ts');
-  const outPath = path.join(harnessDir, 'out.txt');
-  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+  return runPostProcess('postProcessForNullish', input, '.zod-nullish-');
+}
 
-  fs.writeFileSync(
-    scriptPath,
-    `
-import { writeFileSync } from 'fs';
-import { __test__ } from ${JSON.stringify(generateZodPath)};
-
-const input = ${JSON.stringify(input)};
-writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessForNullish(input));
-`
-  );
-
-  try {
-    const result = spawnSync('npx', ['tsx', scriptPath], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-    });
-    if (result.status !== 0) {
-      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
-    }
-    return fs.readFileSync(outPath, 'utf8');
-  } finally {
-    fs.rmSync(harnessDir, { recursive: true, force: true });
-  }
+function postProcessMarkerUnionObjectIntersections(input) {
+  return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
 
 test('postProcessForNullish keeps never optional constraints strict', () => {
@@ -79,6 +60,54 @@ export const ExampleSchema = z.object({
 
   assert.match(output, /forbidden: z\.never\(\)\.optional\(\)/);
   assert.match(output, /allowed: z\.string\(\)\.nullish\(\)/);
+});
+
+test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {
+  const output = postProcessMarkerUnionObjectIntersections(`
+export const V1MarkerSchema = z.record(z.string(), z.unknown());
+export const V2MarkerSchema = z.record(z.string(), z.unknown());
+
+export const ProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and(z.object({
+  product_id: z.string(),
+  name: z.string()
+}).passthrough());
+`);
+
+  assert.match(output, /export const ProductSchema = z\.object\(/);
+  assert.doesNotMatch(output, /ProductSchema = z\.union\(\[V1MarkerSchema, V2MarkerSchema\]\)\.and/);
+});
+
+test('postProcessMarkerUnionObjectIntersections collapses named opaque marker unions', () => {
+  const output = postProcessMarkerUnionObjectIntersections(`
+export const FixedSchema = z.record(z.string(), z.unknown());
+export const ResponsiveSchema = z.record(z.string(), z.unknown());
+export const SizeModeMutexSchema = z.union([FixedSchema, ResponsiveSchema]);
+
+export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
+  width: z.number().optional(),
+  height: z.number().optional()
+}).passthrough());
+`);
+
+  assert.match(output, /export const CanonicalFormatImageSchema = z\.object\(/);
+  assert.doesNotMatch(output, /CanonicalFormatImageSchema = SizeModeMutexSchema\.and/);
+});
+
+test('postProcessMarkerUnionObjectIntersections keeps unions once markers gain fields', () => {
+  const output = postProcessMarkerUnionObjectIntersections(`
+export const V1MarkerSchema = z.object({
+  format_id: z.string()
+}).passthrough();
+export const V2MarkerSchema = z.record(z.string(), z.unknown());
+
+export const FutureProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and(z.object({
+  product_id: z.string(),
+  name: z.string()
+}).passthrough());
+`);
+
+  assert.match(output, /export const FutureProductSchema = z\.union\(\[V1MarkerSchema, V2MarkerSchema\]\)\.and/);
+  assert.doesNotMatch(output, /FutureProductSchema = z\.object\(/);
 });
 
 test('postProcessObjectIntersections merges safe object intersections', () => {

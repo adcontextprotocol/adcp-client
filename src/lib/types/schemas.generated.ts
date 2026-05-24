@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-24T11:13:30.748Z
+// Generated at: 2026-05-24T13:59:59.954Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -631,7 +631,7 @@ export const NoneSchema = z.record(z.string(), z.unknown());
 
 export const SizeModeMutexSchema = z.union([FixedSchema, MultiSizeSchema, ResponsiveSchema, NoneSchema]);
 
-export const CanonicalFormatDisplayTagSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatDisplayTagSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -660,7 +660,7 @@ export const CanonicalFormatDisplayTagSchema = SizeModeMutexSchema.and(z.object(
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     om_sdk_required: z.boolean().optional()
-}).passthrough());
+}).passthrough();
 
 export const PriceAdjustmentKindSchema = z.union([z.literal("fee"), z.literal("discount"), z.literal("commission"), z.literal("settlement")]);
 
@@ -698,7 +698,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highlight"), z.literal("recap"), z.literal("trailer"), z.literal("bonus")]);
 
-export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatImageSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -729,9 +729,9 @@ export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
     cta_values: z.array(z.string()).optional(),
     asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized")]).optional(),
     buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
-}).passthrough());
+}).passthrough();
 
-export const CanonicalFormatHTML5BannerSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatHTML5BannerSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -765,7 +765,7 @@ export const CanonicalFormatHTML5BannerSchema = SizeModeMutexSchema.and(z.object
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     ssl_required: z.boolean().optional()
-}).passthrough());
+}).passthrough();
 
 export const DisplayTagFormatDeclarationSchema = z.object({
     format_kind: z.literal("display_tag"),
@@ -6070,7 +6070,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const PreviewCreativeRequestSchema: z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
+export const PreviewCreativeRequestSchema: z.ZodObject<{ [K in keyof PreviewCreativeRequest]-?: z.ZodType<PreviewCreativeRequest[K], PreviewCreativeRequest[K]> }, any> & z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     request_type: z.union([z.literal("single"), z.literal("batch"), z.literal("variant")]),
@@ -7898,7 +7898,7 @@ export const CreateMediaBuySuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ProductSchema = z.union([V1ProductNamedFormatReferenceSchema, V2ProductInlineFormatDeclarationsSchema]).and(z.object({
+export const ProductSchema = z.object({
     product_id: z.string(),
     name: z.string(),
     description: z.string(),
@@ -7993,7 +7993,7 @@ export const ProductSchema = z.union([V1ProductNamedFormatReferenceSchema, V2Pro
         ext: ExtensionObjectSchema.optional()
     }).passthrough().optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough());
+}).passthrough();
 
 export const GetProductsAsyncInputRequiredSchema = z.object({
     reason: z.union([z.literal("CLARIFICATION_NEEDED"), z.literal("BUDGET_REQUIRED")]).optional(),
@@ -9000,7 +9000,7 @@ export const CreateMediaBuyResponseSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
 
-export const UpdateMediaBuyRequestSchema: z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
+export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaBuyRequest]-?: z.ZodType<UpdateMediaBuyRequest[K], UpdateMediaBuyRequest[K]> }, any> & z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema,
