@@ -1,6 +1,73 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
+// Canary: verifies that extractObjectSchema and ProductObjectSchema remain
+// functional across Zod minor bumps (they rely on _def.right internals).
+describe('schema-helpers — extractObjectSchema / ProductObjectSchema', () => {
+  test('ProductObjectSchema is exported and is a ZodObject (has .extend)', async () => {
+    const { ProductObjectSchema } = await import('../../dist/lib/index.js');
+    assert.ok(ProductObjectSchema, 'ProductObjectSchema should be exported');
+    assert.strictEqual(
+      typeof ProductObjectSchema.extend,
+      'function',
+      'ProductObjectSchema must be a ZodObject with .extend()'
+    );
+    assert.strictEqual(
+      typeof ProductObjectSchema.omit,
+      'function',
+      'ProductObjectSchema must be a ZodObject with .omit()'
+    );
+    assert.strictEqual(
+      typeof ProductObjectSchema.pick,
+      'function',
+      'ProductObjectSchema must be a ZodObject with .pick()'
+    );
+  });
+
+  test('ProductObjectSchema.extend() produces a working schema', async () => {
+    const { ProductObjectSchema } = await import('../../dist/lib/index.js');
+    const Extended = ProductObjectSchema.extend({ _test_field: (await import('zod')).z.string() });
+    const result = Extended.safeParse({
+      product_id: 'p1',
+      name: 'Test',
+      description: 'A test product',
+      publisher_properties: [],
+      delivery_type: 'guaranteed',
+      pricing_options: [],
+      reporting_capabilities: {
+        available_reporting_frequencies: ['daily'],
+        expected_delay_minutes: 60,
+        timezone: 'UTC',
+        supports_webhooks: false,
+        available_metrics: ['impressions'],
+        date_range_support: 'date_range',
+      },
+      _test_field: 'hello',
+    });
+    assert.ok(
+      result.success,
+      `Extended ProductObjectSchema should parse a valid product: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('extractObjectSchema works on ProductSchema and yields a ZodObject', async () => {
+    const { extractObjectSchema, ProductSchema } = await import('../../dist/lib/index.js');
+    assert.strictEqual(typeof extractObjectSchema, 'function', 'extractObjectSchema should be exported');
+    // Canary: if this assertion fails, ProductSchema is no longer a ZodIntersection with .right
+    // and extractObjectSchema's implementation needs updating (see schema-helpers.ts).
+    assert.ok(
+      ProductSchema._def && ProductSchema._def.right,
+      'ProductSchema must be a ZodIntersection with _def.right — if this fails, schema-helpers.ts needs updating'
+    );
+    const obj = extractObjectSchema(ProductSchema);
+    assert.strictEqual(
+      typeof obj.extend,
+      'function',
+      'extractObjectSchema(ProductSchema) must return a ZodObject with .extend()'
+    );
+  });
+});
+
 describe('Zod Schema Validation', () => {
   let schemas;
 

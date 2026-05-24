@@ -317,6 +317,11 @@ export * from './sync-rows';
 // Re-export Zod schemas for runtime validation
 export * from './schemas.generated';
 
+// Helpers for intersection-shaped schemas (e.g., ProductSchema in 8.1+).
+// Exported separately so they're tree-shakeable and don't pollute the
+// generated-schema namespace.
+export { extractObjectSchema, ProductObjectSchema } from './schema-helpers';
+
 // Re-export const-array enum values (e.g., MediaChannelValues, PacingValues)
 // for consumers that need to enumerate or validate against the spec's
 // literal sets without re-deriving them from Zod schemas.

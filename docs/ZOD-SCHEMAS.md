@@ -103,11 +103,29 @@ const PartialMediaBuy = MediaBuySchema.partial(); // All fields optional
 ```
 
 ### Schema Extension
+
+Some schemas (including `ProductSchema` in 8.1+) are `ZodIntersection` shapes
+rather than plain `ZodObject`, which means `.extend()`, `.omit()`, and `.pick()`
+are not directly available.  Use the exported `ProductObjectSchema` (or the
+generic `extractObjectSchema` helper) instead:
+
 ```typescript
-const ProductWithCache = ProductSchema.extend({
+import { ProductObjectSchema, extractObjectSchema, ProductSchema } from '@adcp/sdk';
+
+// Named export for the most common case:
+const ProductWithCache = ProductObjectSchema.extend({
   _cached_at: z.string().datetime()
 });
+
+// Generic helper for other intersection schemas:
+const MySchema = extractObjectSchema(SomeIntersectionSchema).extend({
+  my_field: z.string()
+});
 ```
+
+If you see `TS2339: Property 'extend' does not exist on type 'ZodIntersection<...>'`,
+use `ProductObjectSchema` (for products) or `extractObjectSchema(schema)` for other
+intersection-shaped schemas.
 
 ### Custom Transforms
 ```typescript
@@ -311,9 +329,11 @@ node -e "console.log(require('@adcp/sdk').MediaBuySchema)"
 **Solution**: Install zod as a peer dependency: `npm install zod`
 
 ### Schema Validation Fails on Valid Data
-Some complex nested schemas may need:
+Some complex nested schemas may need `.passthrough()` to allow extra fields.
+Note that `ProductSchema` is a `ZodIntersection` in 8.1+, so use `ProductObjectSchema`:
 ```typescript
-const FlexibleProduct = ProductSchema.passthrough(); // Allow extra fields
+import { ProductObjectSchema } from '@adcp/sdk';
+const FlexibleProduct = ProductObjectSchema.passthrough(); // Allow extra fields
 ```
 
 ### Schema Updates After Protocol Changes
