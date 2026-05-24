@@ -32,8 +32,8 @@ const REPO_ROOT = join(__dirname, '..');
 const ADOPTER_TSCONFIG = {
   compilerOptions: {
     target: 'ES2022',
-    module: 'commonjs',
-    moduleResolution: 'node',
+    module: 'ESNext',
+    moduleResolution: 'bundler',
     esModuleInterop: true,
     strict: true,
     skipLibCheck: false,
@@ -45,20 +45,163 @@ const ADOPTER_TSCONFIG = {
 };
 
 const ADOPTER_SOURCE = `
-// Mirrors the repro from issue #1236 — minimal adopter import via the
-// subpaths that produced TS2304 leaks (\`stripInternal\` deleted the
-// declaration but consumers kept referencing it). Narrow on purpose:
-// pulling \`@adcp/sdk/server\`'s full transitive surface drags in
-// peerDependency type errors (express, @opentelemetry/api) that are
-// orthogonal to this guard's scope. Widen when those are addressed.
-import type { AdcpServer } from '@adcp/sdk/server';
+// Mirrors the repro from issue #1236 and locks the server-side handler
+// payload typing surface that adopters consume from a packed SDK tarball.
+import type {
+  AdcpServer,
+  CheckGovernancePayload,
+  CreatePropertyListPayload,
+  ListContentStandardsPayload,
+  OperationalContext,
+  OperationalPlatform,
+  SalesCorePlatform,
+  SalesIngestionPlatform,
+  ServerPayload,
+  SIGetOfferingPayload,
+} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, defineOperationalPlatform } from '@adcp/sdk/server';
+import { createAdcpServer as createLegacyAdcpServer } from '@adcp/sdk/server/legacy/v5';
 import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from '@adcp/sdk';
+import type { CreateMediaBuySuccess, ServerPayload as ServerPayloadFromTypes } from '@adcp/sdk/types';
+import type { AccountReference } from '@adcp/sdk';
+import { customToolFor, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 
 declare const _server: AdcpServer;
 void _server;
 void createSingleAgentClient;
 void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
+void createAdcpServerFromPlatform;
+
+const _legacyServer = createLegacyAdcpServer({
+  name: 'packed-adopter',
+  version: '1.0.0',
+  mediaBuy: {
+    getProducts: async () => ({ products: [], cache_scope: 'account' }),
+    createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+  },
+});
+void _legacyServer;
+
+const _sales: SalesCorePlatform & SalesIngestionPlatform = {
+  getProducts: async () => ({ products: [], cache_scope: 'account' }),
+  createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
+  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+  getMediaBuys: async () => ({ media_buys: [] }),
+  getMediaBuyDelivery: async () => ({
+    reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+    media_buy_deliveries: [],
+  }),
+  syncCreatives: async () => [],
+};
+void _sales;
+
+interface OpsCtx extends OperationalContext {
+  advertiserId: string;
+}
+
+const _ops: OperationalPlatform<OpsCtx> = defineOperationalPlatform<OpsCtx>({
+  platformId: 'packed-adopter',
+  extractContext: async () => ({ accessToken: undefined, advertiserId: 'adv_1' }),
+  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+  getMediaBuyDelivery: async () => ({
+    reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+    media_buy_deliveries: [],
+  }),
+  getProducts: async () => ({ products: [], cache_scope: 'account' }),
+});
+void _ops;
+
+const _checkGovernancePayload: CheckGovernancePayload = {
+  check_id: 'check_1',
+  verdict: 'approved',
+  plan_id: 'plan_1',
+  explanation: 'Approved',
+  governance_context: 'gc_123',
+};
+const _propertyListPayload: CreatePropertyListPayload = {
+  list: { list_id: 'list_1', name: 'Test list' },
+  auth_token: 'token_1',
+};
+const _contentStandardsPayload: ListContentStandardsPayload = { standards: [] };
+const _siPayload: SIGetOfferingPayload = { available: true };
+void _checkGovernancePayload;
+void _propertyListPayload;
+void _contentStandardsPayload;
+void _siPayload;
+
+const _serverPayload: ServerPayload<CreateMediaBuySuccess> = {
+  media_buy_id: 'mb_1',
+  packages: [],
+  status: 'active',
+};
+const _typesPayload: ServerPayloadFromTypes<CreateMediaBuySuccess> = _serverPayload;
+void _typesPayload;
+
+// @ts-expect-error ServerPayload must preserve required domain fields.
+const _missingRequiredDomainField: ServerPayload<CreateMediaBuySuccess> = { packages: [] };
+void _missingRequiredDomainField;
+
+void TOOL_REQUEST_SCHEMAS.get_products.shape.brief;
+void TOOL_REQUEST_SCHEMAS.create_media_buy.shape.account;
+// @ts-expect-error known tool request schemas should reject bogus fields
+void TOOL_REQUEST_SCHEMAS.create_media_buy.shape.not_a_real_field;
+void TOOL_REQUEST_SCHEMAS.preview_creative.shape.request_type;
+const previewRequestType: 'single' | 'batch' | 'variant' =
+  TOOL_REQUEST_SCHEMAS.preview_creative.shape.request_type.parse('single');
+void previewRequestType;
+// @ts-expect-error TS7056 object annotations should keep known request fields exact
+void TOOL_REQUEST_SCHEMAS.preview_creative.shape.not_a_real_field;
+void TOOL_INPUT_SHAPES.creative_approval.rights_id;
+void TOOL_INPUT_SHAPES.update_media_buy.media_buy_id;
+// @ts-expect-error update_media_buy input shape should reject bogus fields
+void TOOL_INPUT_SHAPES.update_media_buy.not_a_real_field;
+
+function assertOptionalAccountReference(account: AccountReference | undefined): void {
+  if (account && 'account_id' in account) {
+    const accountId: string = account.account_id;
+    void accountId;
+  }
+}
+
+customToolFor('creative_approval', 'Submit creative for approval', TOOL_INPUT_SHAPES.creative_approval, async args => {
+  const rightsId: string = args.rights_id;
+  void rightsId;
+  // @ts-expect-error unknown creative approval fields should not type-check
+  void args.not_a_real_field;
+});
+
+customToolFor('create_media_buy', 'Create a media buy', TOOL_INPUT_SHAPES.create_media_buy, async args => {
+  assertOptionalAccountReference(args.account);
+});
+
+customToolFor('update_media_buy', 'Update a media buy', TOOL_INPUT_SHAPES.update_media_buy, async args => {
+  const mediaBuyId: string = args.media_buy_id;
+  void mediaBuyId;
+  assertOptionalAccountReference(args.account);
+  // @ts-expect-error customToolFor handler args should reject bogus update fields
+  void args.not_a_real_field;
+});
+
+customToolFor('preview_creative', 'Preview a creative', TOOL_INPUT_SHAPES.preview_creative, async args => {
+  const requestType: 'single' | 'batch' | 'variant' = args.request_type;
+  void requestType;
+});
+
+declare const runtimeToolName: string;
+void TOOL_INPUT_SHAPES[runtimeToolName];
+void TOOL_REQUEST_SCHEMAS[runtimeToolName]?.shape;
+
+// @ts-expect-error unknown tool names are not valid customToolFor shapes without narrowing
+customToolFor('creative_approval', 'x', TOOL_INPUT_SHAPES.typo_tool, async args => args);
+
+// @ts-expect-error unknown fields should not type-check
+void TOOL_INPUT_SHAPES.creative_approval.not_a_real_field;
 `;
 
 function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): void {

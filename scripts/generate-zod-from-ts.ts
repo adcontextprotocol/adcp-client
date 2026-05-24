@@ -74,6 +74,9 @@ function postProcessUndefinedImports(content: string): string {
  * of `z.ZodType<...>` so call sites that need ZodObject methods (like
  * `withOptionalAccount(...)` which constrains to `z.ZodObject<any>`)
  * keep working.
+ *
+ * Generated annotations are intentionally verbose; add new TS7056 cases here
+ * instead of hand-authoring equivalent schema declarations elsewhere.
  */
 const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boolean }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
@@ -81,8 +84,8 @@ const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boole
   // 3.1.0-beta.2 pin flip — `.and(z.union([...]))` compound patterns push
   // inferred types past TS7056's .d.ts serialization limit. Carry the TS
   // type so callers' `params` keep narrowing.
-  { name: 'PreviewCreativeRequestSchema', tsType: 'PreviewCreativeRequest' },
-  { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest' },
+  { name: 'PreviewCreativeRequestSchema', tsType: 'PreviewCreativeRequest', objectShape: true },
+  { name: 'UpdateMediaBuyRequestSchema', tsType: 'UpdateMediaBuyRequest', objectShape: true },
   { name: 'UpdateMediaBuyResponseSchema', tsType: 'UpdateMediaBuyResponse' },
   { name: 'BuildCreativeResponseSchema', tsType: 'BuildCreativeResponse' },
   { name: 'SyncEventSourcesResponseSchema', tsType: 'SyncEventSourcesResponse' },
@@ -100,11 +103,10 @@ function postProcessTS7056Annotations(content: string): string {
       );
     }
     // Object-shaped schemas (pure `z.object({...}).passthrough()`) are
-    // annotated `z.ZodObject<any>` so call sites that constrain to
-    // ZodObject (e.g. `withOptionalAccount<T extends z.ZodObject<any>>`)
-    // keep working. The `any` shape parameter erases inner-field inference
-    // — that's the trade-off TS7056 forces on us, and it's what these call
-    // sites already accept for the in-bound `z.ZodObject<any>` constraint.
+    // annotated as ZodObjects so call sites that use `.shape`, `.extend()`,
+    // `.pick()`, or `.omit()` keep working. When a TS type is available,
+    // keep the shape keys and field value types tied to that type so
+    // downstream helpers like customToolFor() still infer typed args.
     //
     // Intersection-shaped schemas (`z.object().passthrough().and(z.union(...))`)
     // use the 2-type-param `z.ZodType<Output, Input>` form. `z.input<typeof X>`
@@ -113,7 +115,14 @@ function postProcessTS7056Annotations(content: string): string {
     // keep their narrowing.
     let annotation: string;
     if (objectShape) {
-      annotation = 'z.ZodObject<any>';
+      if (tsType) {
+        const widened = `${tsType} & Record<string, unknown>`;
+        const objectShapeType = `{ [K in keyof ${tsType}]-?: z.ZodType<${tsType}[K], ${tsType}[K]> }`;
+        annotation = `z.ZodObject<${objectShapeType}, any> & z.ZodType<${widened}, ${widened}>`;
+        typesToImport.push(tsType);
+      } else {
+        annotation = 'z.ZodObject<any>';
+      }
     } else if (tsType) {
       const widened = `${tsType} & Record<string, unknown>`;
       annotation = `z.ZodType<${widened}, ${widened}>`;
@@ -268,7 +277,8 @@ function postProcessUndefinedUnions(content: string): string {
 
 /**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
- * from object schemas that already have .passthrough().
+ * and equivalent record-only union intersections from object schemas that
+ * already have .passthrough().
  *
  * ts-to-zod generates these for TypeScript types with index signatures like
  * `{ field: string } & { [k: string]: unknown }`. Since .passthrough() already
@@ -276,7 +286,9 @@ function postProcessUndefinedUnions(content: string): string {
  * ZodIntersection types that lose .shape access (needed by MCP SDK for tool registration).
  *
  * Also handles z.record(...).and(z.object({...})) patterns (record-first intersections)
- * by extracting just the z.object() portion.
+ * by extracting just the z.object() portion, plus inline or named
+ * z.union([RecordUnknownA, RecordUnknownB]).and(z.object({...})) patterns where
+ * every union member is only a Record<string, unknown> container.
  */
 function postProcessRecordIntersections(content: string): string {
   let result = content;
@@ -287,7 +299,13 @@ function postProcessRecordIntersections(content: string): string {
   // Pass 2: Replace `z.record(...).and(CONTENT)` with CONTENT (only for redundant records)
   result = unwrapRecordIntersections(result);
 
-  // Pass 3: Strip `.and(z.union([...]))` where content contains z.never()
+  // Pass 3: Replace `z.union([RecordUnknown...]).and(CONTENT)` with CONTENT.
+  result = unwrapRecordUnionIntersections(result);
+
+  // Pass 4: Replace `NamedRecordUnion.and(CONTENT)` with CONTENT.
+  result = unwrapNamedRecordUnionIntersections(result);
+
+  // Pass 5: Strip `.and(z.union([...]))` where content contains z.never()
   result = stripNeverUnionIntersections(result);
 
   return result;
@@ -441,6 +459,246 @@ function unwrapRecordIntersections(content: string): string {
       result += content[i];
       i++;
     }
+  }
+
+  return result;
+}
+
+function readBalancedBody(
+  content: string,
+  start: number,
+  openChar: '[' | '(',
+  closeChar: ']' | ')'
+): { body: string; end: number } | undefined {
+  let i = start;
+  let depth = 1;
+  let body = '';
+
+  while (i < content.length && depth > 0) {
+    if (content[i] === '"' || content[i] === "'") {
+      const quote = content[i];
+      body += content[i];
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        if (content[i] === '\\') {
+          body += content[i];
+          i++;
+        }
+        body += content[i];
+        i++;
+      }
+      if (i < content.length) {
+        body += content[i];
+        i++;
+      }
+      continue;
+    }
+
+    if (content[i] === openChar) depth++;
+    else if (content[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        return { body, end: i + 1 };
+      }
+    }
+
+    body += content[i];
+    i++;
+  }
+
+  return undefined;
+}
+
+function splitTopLevelCommaList(content: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+  let i = 0;
+
+  while (i < content.length) {
+    if (content[i] === '"' || content[i] === "'") {
+      const quote = content[i];
+      current += content[i];
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        if (content[i] === '\\') {
+          current += content[i];
+          i++;
+        }
+        current += content[i];
+        i++;
+      }
+      if (i < content.length) {
+        current += content[i];
+        i++;
+      }
+      continue;
+    }
+
+    if (content[i] === '(' || content[i] === '[' || content[i] === '{') depth++;
+    else if (content[i] === ')' || content[i] === ']' || content[i] === '}') depth--;
+    else if (content[i] === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += content[i];
+    i++;
+  }
+
+  const finalPart = current.trim();
+  if (finalPart) parts.push(finalPart);
+  return parts;
+}
+
+function collectRedundantRecordSchemaNames(content: string): Set<string> {
+  const names = new Set<string>();
+  const recordSchemaPattern =
+    /(?:export\s+)?const\s+(\w+)\s*=\s*z\.record\(\s*z\.string\(\),\s*z\.unknown\(\)\s*\)\s*;?/g;
+  for (const match of content.matchAll(recordSchemaPattern)) {
+    names.add(match[1]!);
+  }
+  return names;
+}
+
+function isRedundantRecordMember(member: string, recordSchemaNames: Set<string>): boolean {
+  const trimmed = member.trim();
+  return trimmed === 'z.record(z.string(), z.unknown())' || recordSchemaNames.has(trimmed);
+}
+
+function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNames: Set<string>): Set<string> {
+  const names = new Set<string>();
+  const unionDeclPattern = /(?:export\s+)?const\s+(\w+)\s*=\s*z\.union\(\[/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = unionDeclPattern.exec(content)) !== null) {
+    const name = match[1]!;
+    const unionBodyStart = unionDeclPattern.lastIndex;
+    const unionBody = readBalancedBody(content, unionBodyStart, '[', ']');
+    if (!unionBody || content[unionBody.end] !== ')') continue;
+
+    const afterUnion = content.slice(unionBody.end + 1).trimStart();
+    if (!afterUnion.startsWith(';')) continue;
+
+    const members = splitTopLevelCommaList(unionBody.body);
+    // TODO: one-level only — arms that are themselves z.union(...) are not collected
+    if (members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames))) {
+      names.add(name);
+    }
+  }
+
+  return names;
+}
+
+/**
+ * Replace `z.union([RecordUnknownA, RecordUnknownB]).and(CONTENT)` with CONTENT,
+ * but only when CONTENT begins with `z.object(`. Non-object right-hand sides are
+ * preserved byte-for-byte so richer constraints survive.
+ *
+ * Some schema variants are intentionally opaque because TypeScript represents
+ * sibling-field constraints as `Record<string, unknown>` marker arms. Intersecting
+ * a union of those arms with the real object shape only removes ZodObject methods;
+ * the later `.passthrough()` object already accepts the same unknown keys.
+ */
+function unwrapRecordUnionIntersections(content: string): string {
+  const MARKER = 'z.union([';
+  const recordSchemaNames = collectRedundantRecordSchemaNames(content);
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const unionStart = i;
+      const unionBodyStart = i + MARKER.length;
+      const unionBody = readBalancedBody(content, unionBodyStart, '[', ']');
+
+      if (!unionBody || content[unionBody.end] !== ')') {
+        result += content[i];
+        i++;
+        continue;
+      }
+
+      const unionEnd = unionBody.end + 1;
+      const members = splitTopLevelCommaList(unionBody.body);
+      const isRedundantUnion =
+        members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames));
+
+      if (isRedundantUnion && content.startsWith('.and(', unionEnd)) {
+        const andBodyStart = unionEnd + '.and('.length;
+        const andBody = readBalancedBody(content, andBodyStart, '(', ')');
+        if (andBody && andBody.body.trimStart().startsWith('z.object(')) {
+          result += andBody.body;
+          i = andBody.end;
+          continue;
+        }
+      }
+
+      result += content.substring(unionStart, unionEnd);
+      i = unionEnd;
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Replace `NamedRecordUnion.and(z.object({...}))` with just the object side,
+ * but only when the right-hand side begins with `z.object(`. Non-object right-hand
+ * sides are preserved byte-for-byte so richer constraints survive.
+ *
+ * This is the named-schema counterpart to `unwrapRecordUnionIntersections`.
+ * It intentionally applies only during the marker-only era, where the named
+ * union is composed exclusively of `Record<string, unknown>` marker arms. If a
+ * future spec version adds real fields to those variants, they will no longer
+ * be collected here and the generated schema will correctly remain a
+ * ZodIntersection until the richer constraints are modeled another way.
+ */
+function unwrapNamedRecordUnionIntersections(content: string): string {
+  const recordSchemaNames = collectRedundantRecordSchemaNames(content);
+  const unionSchemaNames = collectRedundantRecordUnionSchemaNames(content, recordSchemaNames);
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    let matchedName: string | undefined;
+    for (const name of unionSchemaNames) {
+      if (!content.startsWith(`${name}.and(`, i)) continue;
+      // Left identifier boundary: don't match `FooSizeModeMutexSchema` as `SizeModeMutexSchema`.
+      if (i > 0 && /[A-Za-z0-9_$]/.test(content[i - 1])) continue;
+      matchedName = name;
+      break;
+    }
+
+    if (!matchedName) {
+      result += content[i];
+      i++;
+      continue;
+    }
+
+    const andBodyStart = i + `${matchedName}.and(`.length;
+    const andBody = readBalancedBody(content, andBodyStart, '(', ')');
+    if (!andBody) {
+      // A collected union name followed by `.and(` with no balanced body means
+      // the ts-to-zod output is malformed. Crash rather than silently corrupt.
+      throw new Error(
+        `unwrapNamedRecordUnionIntersections: unbalanced \`.and(\` at offset ${andBodyStart} for ${matchedName}`
+      );
+    }
+    if (andBody.body.trimStart().startsWith('z.object(')) {
+      result += andBody.body;
+      i = andBody.end;
+      continue;
+    }
+
+    // Right-hand side isn't a plain `z.object(...)` — preserve the original
+    // intersection byte-for-byte so any non-marker constraints survive.
+    result += content.substring(i, andBody.end);
+    i = andBody.end;
   }
 
   return result;
@@ -798,6 +1056,164 @@ function schemaShapeForExpression(
   return undefined;
 }
 
+function splitTopLevelList(body: string): string[] | undefined {
+  const parts: string[] = [];
+  let depth = 0;
+  let partStart = 0;
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    const literalEnd = skipQuotedOrRegexLiteral(body, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      const part = body.slice(partStart, i).trim();
+      if (!part) return undefined;
+      parts.push(part);
+      partStart = i + 1;
+    }
+  }
+
+  const last = body.slice(partStart).trim();
+  if (!last) return undefined;
+  parts.push(last);
+  return parts;
+}
+
+function unionArmsForExpression(expression: string): string[] | undefined {
+  const trimmed = expression.trim();
+  if (!trimmed.startsWith('z.union(')) return undefined;
+
+  const call = scanBalanced(trimmed, 'z.union'.length);
+  if (!call || trimmed.slice(call.end).trim()) return undefined;
+
+  const arg = call.body.trim();
+  if (!arg.startsWith('[')) return undefined;
+
+  const array = scanBalanced(arg, 0, '[', ']');
+  if (!array || arg.slice(array.end).trim()) return undefined;
+
+  return splitTopLevelList(array.body);
+}
+
+function isOpaqueRecordMarkerExpression(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  cache: Map<string, boolean>,
+  visiting = new Set<string>()
+): boolean {
+  const trimmed = normalizeSchemaExpression(expression);
+  if (trimmed === 'z.record(z.string(), z.unknown())') return true;
+
+  const named = trimmed.match(/^(\w+Schema)$/)?.[1];
+  if (!named) return false;
+  if (cache.has(named)) return cache.get(named) ?? false;
+  if (visiting.has(named)) return false;
+
+  const namedExpression = schemaExpressions.get(named);
+  if (!namedExpression) return false;
+
+  visiting.add(named);
+  const result = isOpaqueRecordMarkerExpression(namedExpression, schemaExpressions, cache, visiting);
+  visiting.delete(named);
+  cache.set(named, result);
+  return result;
+}
+
+function isOpaqueMarkerUnion(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  markerCache: Map<string, boolean>,
+  visiting = new Set<string>()
+): boolean {
+  const trimmed = normalizeSchemaExpression(expression);
+  const named = trimmed.match(/^(\w+Schema)$/)?.[1];
+  if (named) {
+    if (visiting.has(named)) return false;
+    const namedExpression = schemaExpressions.get(named);
+    if (!namedExpression) return false;
+
+    visiting.add(named);
+    const result = isOpaqueMarkerUnion(namedExpression, schemaExpressions, markerCache, visiting);
+    visiting.delete(named);
+    return result;
+  }
+
+  const arms = unionArmsForExpression(trimmed);
+  return (
+    arms !== undefined &&
+    arms.length > 0 &&
+    arms.every(arm => isOpaqueRecordMarkerExpression(arm, schemaExpressions, markerCache))
+  );
+}
+
+function rewriteLeadingMarkerUnionObjectAnd(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  shapeCache: Map<string, ObjectShape | undefined>,
+  markerCache: Map<string, boolean>
+): string {
+  let depth = 0;
+
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i];
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (depth === 0 && expression.startsWith('.and(', i)) {
+      const base = expression.slice(0, i);
+      const arg = scanBalanced(expression, i + '.and'.length);
+      if (!arg) return expression;
+
+      if (isOpaqueMarkerUnion(base, schemaExpressions, markerCache)) {
+        const argShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
+        if (argShape) return arg.body + expression.slice(arg.end);
+      }
+
+      return expression;
+    }
+  }
+
+  return expression;
+}
+
+function postProcessMarkerUnionObjectIntersections(content: string): string {
+  const schemaExpressions = extractSchemaExports(content);
+  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const markerCache = new Map<string, boolean>();
+  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1];
+    const expressionStart = exportRegex.lastIndex;
+    const expression = schemaExpressions.get(name);
+    if (!expression) continue;
+
+    const expressionEnd = expressionStart + expression.length;
+    const rewritten = rewriteLeadingMarkerUnionObjectAnd(expression, schemaExpressions, shapeCache, markerCache);
+
+    result += content.slice(lastIndex, expressionStart) + rewritten;
+    lastIndex = expressionEnd;
+    exportRegex.lastIndex = expressionEnd;
+  }
+
+  result += content.slice(lastIndex);
+  return result;
+}
+
 function postProcessObjectIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
@@ -1039,6 +1455,14 @@ async function generateZodSchemas() {
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
 
+    // Post-process: Collapse marker-only union/object intersections.
+    // ProductSchema currently intersects opaque V1/V2 marker records with its real object shape.
+    // While those marker schemas are just z.record(z.string(), z.unknown()), the union adds no
+    // validation beyond passthrough object semantics and only removes .extend/.omit/.pick helpers.
+    // When the marker schemas gain real fields, this pass stops firing and preserves the richer
+    // intersection for maintainers to handle deliberately.
+    zodSchemas = postProcessMarkerUnionObjectIntersections(zodSchemas);
+
     // Post-process: Turn safe object/object intersections into ZodObject merges.
     // ts-to-zod emits `.and()` for TypeScript object intersections, but ZodIntersection
     // does not expose object helpers like .shape/.extend/.omit/.pick. This keeps the
@@ -1104,6 +1528,10 @@ if (require.main === module) {
   });
 }
 
-export const __test__ = { postProcessForNullish, postProcessObjectIntersections };
+export const __test__ = {
+  postProcessForNullish,
+  postProcessMarkerUnionObjectIntersections,
+  postProcessObjectIntersections,
+};
 
 export { generateZodSchemas };

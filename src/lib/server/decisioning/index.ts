@@ -22,6 +22,7 @@
 // `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
 export type { TaskHandoffOptions } from './async-outcome';
+export type { ServerPayload } from '../../types/server-payload';
 
 // Typed `AdcpError` subclasses — adopter convenience for the highest-traffic
 // error codes. Each class encodes the canonical code/recovery/field shape.
@@ -155,6 +156,8 @@ export type { ResolveAccountHooks, ResolveGuardOptions } from './resolve-presets
 export type {
   CreativeBuilderPlatform,
   BuildCreativeReturn,
+  PreviewCreativePayload as CreativePreviewCreativePayload,
+  ListCreativeFormatsPayload as CreativeListCreativeFormatsPayload,
   // Deprecated aliases — kept for one-release source compat. Both
   // resolve to CreativeBuilderPlatform; see specialisms/creative.ts.
   CreativeTemplatePlatform,
@@ -163,21 +166,71 @@ export type {
   SyncCreativesRow,
 } from './specialisms/creative';
 
-export type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
+export type {
+  CreativeAdServerPlatform,
+  PreviewCreativePayload as CreativeAdServerPreviewCreativePayload,
+  ListCreativeFormatsPayload as CreativeAdServerListCreativeFormatsPayload,
+  ListCreativesPayload as CreativeAdServerListCreativesPayload,
+  GetCreativeDeliveryPayload as CreativeAdServerGetCreativeDeliveryPayload,
+} from './specialisms/creative-ad-server';
 
-export type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
+export type {
+  CampaignGovernancePlatform,
+  CheckGovernancePayload,
+  SyncPlansPayload,
+  ReportPlanOutcomePayload,
+  GetPlanAuditLogsPayload,
+} from './specialisms/campaign-governance';
 
-export type { ContentStandardsPlatform } from './specialisms/content-standards';
+export type {
+  ContentStandardsPlatform,
+  ListContentStandardsPayload,
+  GetContentStandardsPayload,
+  CreateContentStandardsPayload,
+  UpdateContentStandardsPayload,
+  CalibrateContentPayload,
+  ValidateContentDeliveryPayload,
+  GetMediaBuyArtifactsPayload,
+  GetCreativeFeaturesPayload,
+} from './specialisms/content-standards';
 
-export type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
+export type {
+  PropertyListsPlatform,
+  CollectionListsPlatform,
+  CreatePropertyListPayload,
+  UpdatePropertyListPayload,
+  GetPropertyListPayload,
+  ListPropertyListsPayload,
+  DeletePropertyListPayload,
+  CreateCollectionListPayload,
+  UpdateCollectionListPayload,
+  GetCollectionListPayload,
+  ListCollectionListsPayload,
+  DeleteCollectionListPayload,
+} from './specialisms/lists';
 
-export type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
+export type {
+  SalesPlatform,
+  SalesCorePlatform,
+  SalesIngestionPlatform,
+  GetProductsPayload,
+  GetMediaBuyDeliveryPayload,
+  GetMediaBuysPayload,
+  ListCreativeFormatsPayload,
+  ListCreativesPayload,
+} from './specialisms/sales';
 
 export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
 
-export type { SignalsPlatform } from './specialisms/signals';
+export type { SignalsPlatform, GetSignalsPayload } from './specialisms/signals';
 
-export type { SponsoredIntelligencePlatform } from './specialisms/sponsored-intelligence';
+export type {
+  SponsoredIntelligencePlatform,
+  SIGetOfferingPayload,
+  SIInitiateSessionPayload,
+  SISendMessagePayload,
+  SITerminateSessionPayload,
+} from './specialisms/sponsored-intelligence';
 
 export type { BrandRightsPlatform } from './specialisms/brand-rights';
 

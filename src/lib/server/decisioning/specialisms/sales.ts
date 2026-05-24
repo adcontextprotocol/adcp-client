@@ -63,6 +63,7 @@
 import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -92,6 +93,12 @@ import type {
 
 type Creative = CreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type GetProductsPayload = ServerPayload<GetProductsResponse>;
+export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
+export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
+export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
 
 /**
  * Wire success-row shape for `sync_creatives`. Returning the array of these
@@ -142,7 +149,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // workflows declare it via `capabilities` so buyers can route
   // appropriately before the first call.
   /** Sync catalog lookup: filters in, products out. NOT for proposal generation. */
-  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsResponse>;
+  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsPayload>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
 
@@ -301,7 +308,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * defaults to `['active']` when omitted; honor the filter in your
    * iteration.
    */
-  getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
+  getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryPayload>;
 
   // ── get_media_buys: sync only — REQUIRED ──────────────────────────────
   // Read tool — buyers fetch a list of their media buys (often filtered by
@@ -331,7 +338,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * When `media_buy_ids` is omitted, return a paginated set of accessible
    * buys filtered by `status_filter` (defaults to `['active']`).
    */
-  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
+  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysPayload>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
   // Write tool — buyers report aggregate creative-level performance
@@ -363,7 +370,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   listCreativeFormats?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsResponse>;
+  ): Promise<ListCreativeFormatsPayload>;
 
   // ── list_creatives: sync only ───────────────────────────────────────
   // Read tool — buyers query the seller's creative library. Optional
@@ -371,7 +378,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // `creative_agents` declared in capabilities; ad-server-style sales
   // platforms implement directly. Note: also lives on `CreativeAdServerPlatform.listCreatives`
   // for the standalone-creative-agent shape.
-  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesResponse>;
+  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
 
   // ── sync_catalogs: sync only ────────────────────────────────────────
   // Retail-media catalog sync. Buyers push product catalogs (SKUs, ASINs,

@@ -33,6 +33,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   ListContentStandardsRequest,
   ListContentStandardsResponse,
@@ -54,12 +55,21 @@ import type {
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
+export type ListContentStandardsPayload = ServerPayload<ListContentStandardsResponse>;
+export type GetContentStandardsPayload = ServerPayload<GetContentStandardsResponse>;
+export type CreateContentStandardsPayload = ServerPayload<CreateContentStandardsResponse>;
+export type UpdateContentStandardsPayload = ServerPayload<UpdateContentStandardsResponse>;
+export type CalibrateContentPayload = ServerPayload<CalibrateContentResponse>;
+export type ValidateContentDeliveryPayload = ServerPayload<ValidateContentDeliveryResponse>;
+export type GetMediaBuyArtifactsPayload = ServerPayload<GetMediaBuyArtifactsResponse>;
+export type GetCreativeFeaturesPayload = ServerPayload<GetCreativeFeaturesResponse>;
+
 export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
   /** Discover content standards published by this agent. */
-  listContentStandards(req: ListContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<ListContentStandardsResponse>;
+  listContentStandards(req: ListContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<ListContentStandardsPayload>;
 
   /** Read a single content standard by id. */
-  getContentStandards(req: GetContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<GetContentStandardsResponse>;
+  getContentStandards(req: GetContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<GetContentStandardsPayload>;
 
   /**
    * Create a new content standard. Adopter validates the policy schema
@@ -69,20 +79,20 @@ export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
   createContentStandards(
     req: CreateContentStandardsRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<CreateContentStandardsResponse>;
+  ): Promise<CreateContentStandardsPayload>;
 
   /** Update an existing content standard. */
   updateContentStandards(
     req: UpdateContentStandardsRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<UpdateContentStandardsResponse>;
+  ): Promise<UpdateContentStandardsPayload>;
 
   /**
    * Calibrate content against the published standards. Returns the
    * standard's current calibration profile + any flags raised against
    * the submitted content.
    */
-  calibrateContent(req: CalibrateContentRequest, ctx: Ctx<TCtxMeta>): Promise<CalibrateContentResponse>;
+  calibrateContent(req: CalibrateContentRequest, ctx: Ctx<TCtxMeta>): Promise<CalibrateContentPayload>;
 
   /**
    * Validate that a delivered media-buy / creative meets the buyer's
@@ -93,7 +103,7 @@ export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
   validateContentDelivery(
     req: ValidateContentDeliveryRequest,
     ctx: Ctx<TCtxMeta>
-  ): Promise<ValidateContentDeliveryResponse>;
+  ): Promise<ValidateContentDeliveryPayload>;
 
   /**
    * Read content artifacts produced during a media buy's flight (creative
@@ -101,12 +111,12 @@ export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
    * who don't expose artifact archival omit. Required by governance
    * receivers running adjacency validation.
    */
-  getMediaBuyArtifacts?(req: GetMediaBuyArtifactsRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyArtifactsResponse>;
+  getMediaBuyArtifacts?(req: GetMediaBuyArtifactsRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyArtifactsPayload>;
 
   /**
    * Read per-creative analyzed features (object detection, scene
    * classification, transcript) the agent extracted during calibration.
    * Optional — adopters without analyzer pipelines omit.
    */
-  getCreativeFeatures?(req: GetCreativeFeaturesRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeFeaturesResponse>;
+  getCreativeFeatures?(req: GetCreativeFeaturesRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeFeaturesPayload>;
 }

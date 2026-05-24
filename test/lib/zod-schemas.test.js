@@ -1,5 +1,8 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const { z } = require('zod');
 
 describe('Zod Schema Validation', () => {
   let schemas;
@@ -16,6 +19,54 @@ describe('Zod Schema Validation', () => {
 
     assert.ok(schemas.ProductSchema, 'ProductSchema should exist');
     assert.ok(typeof schemas.ProductSchema.safeParse === 'function', 'ProductSchema should have safeParse method');
+    assert.ok(schemas.ProductSchema.shape.product_id, 'ProductSchema should expose object shape');
+    assert.equal(typeof schemas.ProductSchema.extend, 'function', 'ProductSchema should support extend');
+    assert.equal(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should support omit');
+    assert.equal(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should support pick');
+    assert.ok(schemas.CanonicalFormatImageSchema.shape.image_formats, 'canonical formats should expose object shape');
+  });
+
+  test('ProductSchema exposes ZodObject composition helpers', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.strictEqual(typeof schemas.ProductSchema.extend, 'function', 'ProductSchema should expose .extend()');
+    assert.strictEqual(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should expose .omit()');
+    assert.strictEqual(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should expose .pick()');
+
+    const extended = schemas.ProductSchema.extend({ _cached_at: z.string().datetime() });
+    const omitted = schemas.ProductSchema.omit({ description: true });
+    const picked = schemas.ProductSchema.pick({ product_id: true });
+    assert.ok(extended.shape._cached_at, 'extended ProductSchema should include the extension field');
+    assert.ok(!('description' in omitted.shape), 'omitted ProductSchema should remove the omitted field');
+    assert.ok(
+      picked.safeParse({ product_id: 'prod_123' }).success,
+      'picked ProductSchema should validate picked shape'
+    );
+  });
+
+  test('generated declarations do not expose record-union object intersections', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Runtime check so the test fails closed even if Zod adjusts its tuple stringification.
+    // Zod 4 dropped `_def.typeName`; constructor name is the stable cross-version probe.
+    assert.strictEqual(
+      schemas.ProductSchema.constructor.name,
+      'ZodObject',
+      'ProductSchema should be a ZodObject, not a ZodIntersection'
+    );
+
+    const declarations = readFileSync(path.join(__dirname, '../../dist/lib/types/schemas.generated.d.ts'), 'utf8');
+    const matches = declarations.match(/z\.ZodIntersection<z\.ZodUnion<readonly \[z\.ZodRecord/g) ?? [];
+
+    assert.strictEqual(
+      matches.length,
+      0,
+      'record-only union markers intersected with object schemas should emit as ZodObject declarations'
+    );
   });
 
   test('MediaBuySchema validates valid media buy', async () => {
