@@ -30,7 +30,7 @@ function postProcessForNullish(content: string): string {
   // Replace .optional() with .nullish() globally, except when preceded by .never()
   // z.never().optional() must stay as-is: it means "this field must not be provided",
   // and converting to .nullish() would allow null values through, weakening that constraint.
-  return content.replace(/(?<!\.never\(\))\.optional\(\)/g, '.nullish()');
+  return content.replace(/(?<!\.\.never\(\))\.optional\(\)/g, '.nullish()');
 }
 
 /**
@@ -619,6 +619,7 @@ function extractObjectLiteralBody(zObjectExpression: string): string | undefined
   return objectLiteral?.body;
 }
 
+// Watch: ts-to-zod emits .catchall(z.unknown()) on some schemas; add it here if the generator ever produces it.
 function isPlainZodObjectTail(tail: string): boolean {
   let remaining = tail.trim();
   const objectPreservingMethods = ['.passthrough()', '.strict()', '.strip()'];
@@ -965,7 +966,7 @@ async function generateZodSchemas() {
     // and emits `z.any()` stubs even when the actual interfaces are present in
     // the combined source. Strip cross-file imports before merging.
     const toolsWithoutCrossImports = toolsContent.replace(
-      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"];?\n+/gm,
+      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"]; ?\n+/gm,
       ''
     );
     // Defensive: if the injector in scripts/generate-types.ts ever changes shape
@@ -1073,16 +1074,7 @@ async function generateZodSchemas() {
     }
 
     // Create header with metadata
-    const header = `// Generated Zod v4 schemas from TypeScript types
-// Generated at: ${new Date().toISOString()}
-// Sources:
-//   - ${path.basename(CORE_SOURCE_FILE)} (core types)
-//   - ${path.basename(TOOLS_SOURCE_FILE)} (tool types)
-//
-// These schemas provide runtime validation for AdCP data structures
-// Generated using ts-to-zod from TypeScript type definitions
-
-`;
+    const header = `// Generated Zod v4 schemas from TypeScript types\n// Generated at: ${new Date().toISOString()}\n// Sources:\n//   - ${path.basename(CORE_SOURCE_FILE)} (core types)\n//   - ${path.basename(TOOLS_SOURCE_FILE)} (tool types)\n//\n// These schemas provide runtime validation for AdCP data structures\n// Generated using ts-to-zod from TypeScript type definitions\n\n`;
 
     const finalContent = header + zodSchemas;
 

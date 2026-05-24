@@ -1,13 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 function postProcessObjectIntersections(input) {
-  const harnessDir = fs.mkdtempSync(path.join(REPO_ROOT, '.zod-object-intersections-'));
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-object-intersections-'));
   const scriptPath = path.join(harnessDir, 'harness.ts');
   const outPath = path.join(harnessDir, 'out.txt');
   const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
