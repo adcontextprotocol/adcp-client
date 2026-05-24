@@ -50,6 +50,10 @@ function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
 
+function postProcessObjectUnionIntersections(input) {
+  return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
+}
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({
@@ -108,6 +112,46 @@ export const FutureProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and
 
   assert.match(output, /export const FutureProductSchema = z\.union\(\[V1MarkerSchema, V2MarkerSchema\]\)\.and/);
   assert.doesNotMatch(output, /FutureProductSchema = z\.object\(/);
+});
+
+test('postProcessObjectUnionIntersections distributes object envelope over union arms', () => {
+  const output = postProcessObjectUnionIntersections(`
+export const EnvelopeSchema = z.object({
+  adcp_version: z.string().optional()
+}).passthrough();
+
+export const VariantASchema = z.object({
+  kind: z.literal("a"),
+  value: z.string()
+}).passthrough();
+
+export const VariantBSchema = z.object({
+  kind: z.literal("b"),
+  amount: z.number()
+}).passthrough();
+
+export const RequestSchema = EnvelopeSchema.and(z.union([VariantASchema, VariantBSchema]));
+`);
+
+  assert.match(output, /export const RequestSchema = z\.union\(\[EnvelopeSchema\.merge\(VariantASchema\), EnvelopeSchema\.merge\(VariantBSchema\)\]\)/);
+  assert.doesNotMatch(output, /RequestSchema = EnvelopeSchema\.and\(z\.union/);
+});
+
+test('postProcessObjectUnionIntersections keeps conflicting arms as intersections', () => {
+  const output = postProcessObjectUnionIntersections(`
+export const EnvelopeSchema = z.object({
+  kind: z.string()
+}).passthrough();
+
+export const VariantASchema = z.object({
+  kind: z.literal("a")
+}).passthrough();
+
+export const RequestSchema = EnvelopeSchema.and(z.union([VariantASchema]));
+`);
+
+  assert.match(output, /export const RequestSchema = EnvelopeSchema\.and\(z\.union\(\[VariantASchema\]\)\)/);
+  assert.doesNotMatch(output, /RequestSchema = z\.union/);
 });
 
 test('postProcessObjectIntersections merges safe object intersections', () => {

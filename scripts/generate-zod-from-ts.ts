@@ -997,6 +997,77 @@ function postProcessObjectIntersections(content: string): string {
   }
 }
 
+function postProcessObjectUnionIntersections(content: string): string {
+  const schemaExpressions = extractSchemaExports(content);
+  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1];
+    const expressionStart = exportRegex.lastIndex;
+    const expression = schemaExpressions.get(name);
+    if (!expression) continue;
+
+    const expressionEnd = expressionStart + expression.length;
+    const rewritten = name.endsWith('RequestSchema')
+      ? rewriteObjectUnionIntersection(expression, schemaExpressions, shapeCache)
+      : expression;
+
+    result += content.slice(lastIndex, expressionStart) + rewritten;
+    lastIndex = expressionEnd;
+    exportRegex.lastIndex = expressionEnd;
+  }
+
+  result += content.slice(lastIndex);
+  return result;
+}
+
+function rewriteObjectUnionIntersection(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  shapeCache: Map<string, ObjectShape | undefined>
+): string {
+  let depth = 0;
+
+  for (let i = 0; i < expression.length; i++) {
+    const ch = expression[i];
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (depth === 0 && expression.startsWith('.and(', i)) {
+      const base = expression.slice(0, i);
+      const arg = scanBalanced(expression, i + '.and'.length);
+      if (!arg) return expression;
+
+      const trailing = expression.slice(arg.end).trim();
+      if (trailing) return expression;
+
+      const baseShape = schemaShapeForExpression(base, schemaExpressions, shapeCache);
+      const arms = unionArmsForExpression(arg.body);
+      if (!baseShape || !arms?.length) return expression;
+
+      const mergedArms: string[] = [];
+      for (const arm of arms) {
+        const armShape = schemaShapeForExpression(arm, schemaExpressions, shapeCache);
+        if (!armShape || !canSafelyMerge(baseShape, armShape)) return expression;
+        mergedArms.push(`${base}.merge(${arm})`);
+      }
+
+      return `z.union([${mergedArms.join(', ')}])`;
+    }
+  }
+
+  return expression;
+}
+
 function rewriteTopLevelObjectAnds(
   expression: string,
   schemaExpressions: Map<string, string>,
@@ -1214,6 +1285,13 @@ async function generateZodSchemas() {
     // intersection for maintainers to handle deliberately.
     zodSchemas = postProcessMarkerUnionObjectIntersections(zodSchemas);
 
+    // Post-process: Distribute object-envelope intersections over union object arms.
+    // A schema like `Envelope.and(z.union([VariantA, VariantB]))` is equivalent to
+    // `z.union([Envelope.merge(VariantA), Envelope.merge(VariantB)])` when the
+    // envelope and every arm are merge-safe ZodObjects. The distributed form
+    // preserves discriminated-union inference for custom tool handlers.
+    zodSchemas = postProcessObjectUnionIntersections(zodSchemas);
+
     // Post-process: Turn safe object/object intersections into ZodObject merges.
     // ts-to-zod emits `.and()` for TypeScript object intersections, but ZodIntersection
     // does not expose object helpers like .shape/.extend/.omit/.pick. This keeps the
@@ -1282,6 +1360,7 @@ if (require.main === module) {
 export const __test__ = {
   postProcessForNullish,
   postProcessMarkerUnionObjectIntersections,
+  postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
 };
 

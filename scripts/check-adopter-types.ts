@@ -54,7 +54,7 @@ const ADOPTER_SOURCE = `
 import type { AdcpServer } from '@adcp/sdk/server';
 import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from '@adcp/sdk';
 import type { AccountReference } from '@adcp/sdk';
-import { customToolFor, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
+import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 
 declare const _server: AdcpServer;
 void _server;
@@ -76,6 +76,9 @@ void TOOL_INPUT_SHAPES.creative_approval.rights_id;
 void TOOL_INPUT_SHAPES.update_media_buy.media_buy_id;
 // @ts-expect-error update_media_buy input shape should reject bogus fields
 void TOOL_INPUT_SHAPES.update_media_buy.not_a_real_field;
+void TOOL_INPUT_SHAPES.search_brands.query;
+void TOOL_INPUT_SHAPES.verify_brand_claims.claims;
+void TOOL_INPUT_SCHEMAS.verify_brand_claim.parse;
 
 function assertOptionalAccountReference(account: AccountReference | undefined): void {
   if (account && 'account_id' in account) {
@@ -108,12 +111,39 @@ customToolFor('preview_creative', 'Preview a creative', TOOL_INPUT_SHAPES.previe
   void requestType;
 });
 
+customToolFor('search_brands', 'Search brands', TOOL_INPUT_SHAPES.search_brands, async args => {
+  const query: string = args.query;
+  void query;
+});
+
+customToolFor('verify_brand_claims', 'Verify brand claims', TOOL_INPUT_SHAPES.verify_brand_claims, async args => {
+  const firstClaim = args.claims[0];
+  if (firstClaim) {
+    const claimType: 'subsidiary' | 'parent' | 'property' | 'trademark' = firstClaim.claim_type;
+    void claimType;
+  }
+});
+
+customToolForSchema('verify_brand_claim', 'Verify a brand claim', TOOL_INPUT_SCHEMAS.verify_brand_claim, async args => {
+  if (args.claim_type === 'subsidiary') {
+    const domain: string = args.claim.subsidiary_domain;
+    void domain;
+  }
+  // @ts-expect-error passthrough allows extra keys as unknown, not as typed sibling-variant fields
+  const parentDomain: string = args.claim.parent_domain;
+  void parentDomain;
+});
+
 declare const runtimeToolName: string;
 void TOOL_INPUT_SHAPES[runtimeToolName];
+void TOOL_INPUT_SCHEMAS[runtimeToolName]?.parse;
 void TOOL_REQUEST_SCHEMAS[runtimeToolName]?.shape;
 
 // @ts-expect-error unknown tool names are not valid customToolFor shapes without narrowing
 customToolFor('creative_approval', 'x', TOOL_INPUT_SHAPES.typo_tool, async args => args);
+
+// @ts-expect-error verify_brand_claim is union-shaped, so callers must use customToolForSchema
+customToolFor('verify_brand_claim', 'x', TOOL_INPUT_SHAPES.verify_brand_claim, async args => args);
 
 // @ts-expect-error unknown fields should not type-check
 void TOOL_INPUT_SHAPES.creative_approval.not_a_real_field;

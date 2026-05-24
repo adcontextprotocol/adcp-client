@@ -23,7 +23,7 @@ const {
   getComplianceFixture,
 } = require('../../dist/lib/compliance-fixtures/index.js');
 
-const { TOOL_INPUT_SHAPES, customToolFor } = require('../../dist/lib/schemas/index.js');
+const { TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, customToolFor, customToolForSchema } = require('../../dist/lib/schemas/index.js');
 
 const { RequestSignatureError } = require('../../dist/lib/signing/index.js');
 
@@ -619,6 +619,9 @@ describe('#667 TOOL_INPUT_SHAPES', () => {
     assert.ok(TOOL_INPUT_SHAPES.comply_test_controller);
     assert.ok(TOOL_INPUT_SHAPES.check_governance);
     assert.ok(TOOL_INPUT_SHAPES.acquire_rights);
+    assert.ok(TOOL_INPUT_SHAPES.search_brands);
+    assert.ok(TOOL_INPUT_SHAPES.verify_brand_claims);
+    assert.ok(TOOL_INPUT_SCHEMAS.verify_brand_claim);
   });
 
   it('each entry is a raw shape object (Record<string, ZodType>)', () => {
@@ -639,6 +642,32 @@ describe('#667 TOOL_INPUT_SHAPES', () => {
     assert.strictEqual(reg.description, 'Submit creative for approval');
     assert.strictEqual(reg.inputSchema, shape);
     assert.strictEqual(typeof reg.handler, 'function');
+  });
+
+  it('customToolForSchema preserves full union-shaped schemas', () => {
+    const schema = TOOL_INPUT_SCHEMAS.verify_brand_claim;
+    const reg = customToolForSchema('verify_brand_claim', 'Verify a brand claim', schema, async args => ({
+      content: [{ type: 'text', text: args.claim_type }],
+    }));
+
+    assert.strictEqual(reg.description, 'Verify a brand claim');
+    assert.strictEqual(reg.inputSchema, schema);
+    assert.strictEqual(typeof reg.handler, 'function');
+    assert.ok(
+      reg.inputSchema.safeParse({
+        adcp_major_version: 3,
+        claim_type: 'subsidiary',
+        claim: { subsidiary_domain: 'example.com' },
+      }).success
+    );
+    assert.strictEqual(
+      reg.inputSchema.safeParse({
+        adcp_major_version: 3,
+        claim_type: 'subsidiary',
+        claim: { parent_domain: 'example.com' },
+      }).success,
+      false
+    );
   });
 });
 

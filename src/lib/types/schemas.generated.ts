@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-24T13:59:59.954Z
+// Generated at: 2026-05-24T15:29:22.144Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -8131,7 +8131,7 @@ export const UpdateRightsResponseSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([UpdateRightsSuccessSchema, UpdateRightsErrorSchema]));
 
-export const VerifyBrandClaimRequestSchema = AdCPVersionEnvelopeSchema.and(z.union([VerifySubsidiaryClaimSchema, VerifyParentClaimSchema, VerifyPropertyClaimSchema, VerifyTrademarkClaimSchema]));
+export const VerifyBrandClaimRequestSchema = z.union([AdCPVersionEnvelopeSchema.merge(VerifySubsidiaryClaimSchema), AdCPVersionEnvelopeSchema.merge(VerifyParentClaimSchema), AdCPVersionEnvelopeSchema.merge(VerifyPropertyClaimSchema), AdCPVersionEnvelopeSchema.merge(VerifyTrademarkClaimSchema)]);
 
 export const VerifyBrandClaimResponseSchema = z.object({
     context_id: z.string().optional(),
