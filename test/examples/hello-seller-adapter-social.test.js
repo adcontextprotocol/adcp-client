@@ -37,8 +37,9 @@ runHelloAdapterGates({
     'POST /v1.3/advertiser/{id}/creative/create',
     'POST /v1.3/advertiser/{id}/catalog/create',
     'POST /v1.3/advertiser/{id}/catalog/upload',
-    'POST /v1.3/advertiser/{id}/pixel/create',
-    'POST /v1.3/advertiser/{id}/event/track',
-    'GET /v1.3/advertiser/{id}/info',
+    // 3.1.0-beta.3's sales_social storyboard skips event_setup,
+    // event_logging, and financials after the optional preview_creative
+    // stateful step is skipped, so those upstream routes are not part of
+    // this façade gate until the storyboard executes those steps again.
   ],
 });

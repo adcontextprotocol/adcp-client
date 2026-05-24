@@ -37,7 +37,7 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { bundleSupportsAdcpVersionField } from '../protocols';
@@ -1062,6 +1062,11 @@ export interface SignedRequestsConfig {
    * accepts unsigned traffic outside this list.
    */
   required_for?: string[];
+  /**
+   * JSON-RPC protocol method names that MUST arrive signed. Separate from
+   * AdCP tool names in `required_for`; examples include `tasks/cancel`.
+   */
+  protocol_methods_required_for?: string[];
   /** Default `'either'` — accept signatures with or without Content-Digest. */
   covers_content_digest?: ContentDigestPolicy;
   /**
@@ -2676,18 +2681,25 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
  *   destroy payload semantics until the spec disambiguates.
  */
 function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
-  if (response.isError === true) return;
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (!sc || typeof sc !== 'object') return;
   if ('status' in sc) return;
-  sc.status = 'completed';
+  // AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response, error
+  // or otherwise. Map MCP's `isError` to the wire-level task state:
+  //   - `isError: true`           → `'failed'`  (task explicitly failed)
+  //   - `isError: false`/absent   → `'completed'` (default for success path)
+  // Tools that need richer states (`submitted`, `working`, `input-required`)
+  // should set `status` themselves; this injector only fills in the default
+  // when the handler hasn't.
+  const status = response.isError === true ? 'failed' : 'completed';
+  sc.status = status;
   if (Array.isArray(response.content)) {
     const first = response.content[0];
     if (first && first.type === 'text' && typeof first.text === 'string') {
       try {
         const parsed = JSON.parse(first.text);
         if (parsed && typeof parsed === 'object' && !('status' in parsed)) {
-          parsed.status = 'completed';
+          parsed.status = status;
           first.text = JSON.stringify(parsed);
         }
       } catch {
@@ -2697,18 +2709,53 @@ function injectEnvelopeStatusIntoResponse(response: McpToolResponse): void {
   }
 }
 
+const MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT = new Set([
+  'create_media_buy',
+  'update_media_buy',
+  'cancel_media_buy',
+]);
+
+const MEDIA_BUY_STATUS_VALUES = new Set([
+  'pending_creatives',
+  'pending_start',
+  'active',
+  'paused',
+  'completed',
+  'rejected',
+  'canceled',
+]);
+
+function normalizeMediaBuyStatusCollision(response: McpToolResponse, toolName: string): void {
+  if (!MEDIA_BUY_RESPONSE_TOOLS_REQUIRING_STATUS_SPLIT.has(toolName)) return;
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return;
+  const status = sc.status;
+  if (typeof status !== 'string' || !MEDIA_BUY_STATUS_VALUES.has(status)) return;
+  const looksLikeMediaBuyPayload =
+    typeof sc.media_buy_id === 'string' || 'media_buy_status' in sc || Array.isArray(sc.packages);
+  if (!looksLikeMediaBuyPayload) return;
+  if (sc.media_buy_status === undefined) sc.media_buy_status = status;
+  delete sc.status;
+  syncContentJsonText(response, sc);
+}
+
 function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
   if (!servedVersion) return;
+  // Normalize to release-precision (`3.1-beta.3`) before emitting — the wire
+  // regex rejects full-semver (`3.1.0-beta.3`). Bundle metadata is published
+  // with the patch digit; on-the-wire `adcp_version` is not. See the spec
+  // note on `adcp_version` in `core.generated.ts` and the helper itself.
+  const wireVersion = toReleasePrecisionVersion(servedVersion);
   const sc = response.structuredContent as Record<string, unknown> | undefined;
   if (sc && typeof sc === 'object' && !('adcp_version' in sc)) {
-    sc.adcp_version = servedVersion;
+    sc.adcp_version = wireVersion;
     if (Array.isArray(response.content)) {
       const first = response.content[0];
       if (first && first.type === 'text' && typeof first.text === 'string') {
         try {
           const parsed = JSON.parse(first.text);
           if (parsed && typeof parsed === 'object' && !('adcp_version' in parsed)) {
-            parsed.adcp_version = servedVersion;
+            parsed.adcp_version = wireVersion;
             first.text = JSON.stringify(parsed);
           }
         } catch {
@@ -2738,7 +2785,7 @@ function injectVersionIntoResponse(response: McpToolResponse, servedVersion: str
  */
 function buildSignedRequestsPreTransport(
   signedRequests: SignedRequestsConfig,
-  capabilityRequiredFor?: string[]
+  capabilityRequestSigning?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>
 ): AdcpPreTransport {
   // Precedence: explicit signedRequests.required_for > capabilities.request_signing.required_for
   // > fallback to every mutating task. Buyers read required_for from
@@ -2746,12 +2793,15 @@ function buildSignedRequestsPreTransport(
   // MUTATING_TASKS when the seller advertised a narrower list would cause
   // buyers to get request_signature_required on tools they had no contractual
   // duty to sign.
-  const requiredFor = signedRequests.required_for ?? capabilityRequiredFor ?? [...MUTATING_TASKS];
+  const requiredFor = signedRequests.required_for ?? capabilityRequestSigning?.required_for ?? [...MUTATING_TASKS];
+  const protocolMethodsRequiredFor =
+    signedRequests.protocol_methods_required_for ?? capabilityRequestSigning?.protocol_methods_required_for;
   const verifier = createExpressVerifier({
     capability: {
       supported: true,
       covers_content_digest: signedRequests.covers_content_digest ?? 'either',
       required_for: requiredFor,
+      ...(protocolMethodsRequiredFor ? { protocol_methods_required_for: protocolMethodsRequiredFor } : {}),
     },
     jwks: signedRequests.jwks,
     replayStore: signedRequests.replayStore,
@@ -3456,6 +3506,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // the allowlist-filtered envelope; BEFORE context/version
           // injection so those run on the final two-layer payload.
           enrichErrorTwoLayer(response, toolName, toolsWithErrorArm);
+          normalizeMediaBuyStatusCollision(response, toolName);
           injectEnvelopeStatusIntoResponse(response);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
@@ -4669,6 +4720,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
 
+          if (!isErrorResponse(formatted)) {
+            normalizeMediaBuyStatusCollision(formatted, toolName);
+            injectEnvelopeStatusIntoResponse(formatted);
+          }
+
           // --- Response schema validation (opt-in) ---
           // Runs on the structured payload the handler produced. Errors
           // have their own envelope (`adcp_error`) and are skipped here —
@@ -5200,7 +5256,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // on the wrapper — it's a private contract between this function and
   // `serve()` for wiring, not part of the AdcpServer public API.
   if (signedRequests) {
-    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing?.required_for);
+    const preTransport = buildSignedRequestsPreTransport(signedRequests, capConfig?.request_signing);
     Object.defineProperty(wrapped, ADCP_PRE_TRANSPORT, {
       value: preTransport,
       enumerable: false,

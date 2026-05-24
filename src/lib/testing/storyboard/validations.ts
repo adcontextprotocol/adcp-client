@@ -99,9 +99,10 @@ export interface ValidationContext {
    */
   upstreamTraffic?: UpstreamTrafficValidationContext;
   /**
-   * Storyboard step (raw YAML) — used by `upstream_traffic` to scan
-   * `sample_request` for buyer-identifier vectors when
-   * `buyer_identifier_echo: true` is asserted.
+   * Storyboard step (raw YAML) — legacy fallback for direct validation
+   * callers. The runner's resolved `request.payload` is preferred for
+   * `upstream_traffic.identifier_paths` so context/generated tokens compare
+   * against values actually sent on the wire.
    */
   storyboardStep?: { sample_request?: Record<string, unknown> };
   /**
@@ -864,8 +865,16 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     };
   }
 
-  const actual = resolvePath(taskResult.data, validation.path);
+  const rawActual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
+  const actual =
+    validation.check === 'field_value_or_absent' &&
+    validation.path === 'status' &&
+    rawActual !== undefined &&
+    isTaskEnvelopeStatus(rawActual) &&
+    resolvePath(taskResult.data, 'media_buy_status') !== undefined
+      ? undefined
+      : rawActual;
 
   // Absent → pass. The check only fires when the field is present.
   if (actual === undefined) {
@@ -922,6 +931,22 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     expected: validation.value,
     actual,
   };
+}
+
+const TASK_ENVELOPE_STATUSES = new Set([
+  'submitted',
+  'working',
+  'input-required',
+  'completed',
+  'canceled',
+  'failed',
+  'rejected',
+  'auth-required',
+  'unknown',
+]);
+
+function isTaskEnvelopeStatus(value: unknown): boolean {
+  return typeof value === 'string' && TASK_ENVELOPE_STATUSES.has(value);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -2671,7 +2696,11 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   // boolean shorthand per spec PR adcp#3816.
   const missingIdentifierValues: unknown[] = [];
   if (validation.identifier_paths && validation.identifier_paths.length > 0) {
-    const sample = ctx.storyboardStep?.sample_request;
+    const requestPayload = ctx.request?.payload;
+    const sample =
+      requestPayload && typeof requestPayload === 'object' && !Array.isArray(requestPayload)
+        ? (requestPayload as Record<string, unknown>)
+        : ctx.storyboardStep?.sample_request;
     for (const path of validation.identifier_paths) {
       const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
       for (const vector of vectors) {

@@ -540,6 +540,18 @@ export interface StoryboardStep {
   expected?: string;
   sample_request?: Record<string, unknown>;
   sample_response?: Record<string, unknown>;
+  /**
+   * Response-derived gates evaluated after the step's request completes but
+   * before validations/context captures run. Use when applicability is only
+   * knowable from the observed response, not from static capabilities.
+   *
+   * Current gate kind:
+   *   - `terminal_page`: if the response proves the requested page is terminal,
+   *     grade the step `not_applicable` instead of failing continuation-only
+   *     assertions. This supports pagination-walk storyboards for sellers whose
+   *     full result set fits in one page.
+   */
+  not_applicable_if?: ResponseNotApplicableGate | ResponseNotApplicableGate[];
   validations?: StoryboardValidation[];
   /** Override auth for this step only (see `StepAuthDirective`). */
   auth?: StepAuthDirective;
@@ -807,6 +819,40 @@ export interface ParallelDispatchSpec {
    * `'process_local'`.
    */
   mode?: 'process_local' | 'distributed';
+}
+
+/**
+ * A response-derived step-level not-applicable gate. Kept data-driven so new
+ * storyboards can opt in without runner-specific hardcoding.
+ */
+export type ResponseNotApplicableGate = TerminalPageNotApplicableGate;
+
+export interface TerminalPageNotApplicableGate {
+  kind: 'terminal_page';
+  /**
+   * Array path in the response whose length is compared to the request page
+   * size, e.g. `accounts`, `creatives`, or `formats`.
+   */
+  items_path: string;
+  /**
+   * Path in the request that carries the requested page size. Defaults to
+   * `pagination.max_results`.
+   */
+  request_max_results_path?: string;
+  /**
+   * Optional label prefixed onto skip.detail. Defaults to
+   * `single_page_result`.
+   */
+  reason?: string;
+  /** Optional human-readable detail override for skip.detail. */
+  detail?: string;
+  /**
+   * Context keys whose missing captures should cause downstream consumer
+   * steps to skip as `not_applicable` instead of `prerequisite_failed`.
+   * When omitted, the runner infers keys from context_outputs whose paths
+   * read `pagination.cursor`.
+   */
+  context_keys?: string[];
 }
 
 /**
@@ -1124,6 +1170,14 @@ export interface StoryboardRunOptions extends TestOptions {
    * adcp-client#880.
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
+  /**
+   * Context keys whose producer step was skipped as response-derived
+   * `not_applicable`, typically threaded from a prior `runStoryboardStep`
+   * invocation's `StoryboardStepResult.response_derived_not_applicable_context_keys`.
+   * Lets stateless step-by-step callers preserve the same cursor-consumer skip
+   * semantics as full `runStoryboard` runs.
+   */
+  response_derived_not_applicable_context_keys?: Record<string, string>;
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
   /** Agent's available tools (for requires_tool filtering) */
@@ -1821,6 +1875,13 @@ export interface StoryboardStepResult {
    * same way they do inside `runStoryboard`. adcp-client#880.
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
+  /**
+   * Accumulated response-derived `not_applicable` context-key map after this
+   * step. Thread back into `StoryboardRunOptions.response_derived_not_applicable_context_keys`
+   * on the next `runStoryboardStep` invocation so cursor consumers skip as
+   * `not_applicable` rather than `prerequisite_failed`.
+   */
+  response_derived_not_applicable_context_keys?: Record<string, string>;
   error?: string;
   /**
    * Structured AdCP error forwarded from the transport layer when the step failed.

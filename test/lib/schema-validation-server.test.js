@@ -180,6 +180,27 @@ describe('createAdcpServer validation middleware', () => {
       const res = await callTool(server, 'get_products', VALID_GET_PRODUCTS);
       assert.notStrictEqual(res.isError, true);
     });
+
+    test('strict: media-buy payload status is split from envelope status before validation', async () => {
+      const server = createAdcpServer({
+        name: 'test',
+        version: '0.0.1',
+        stateStore: new InMemoryStateStore(),
+        validation: { requests: 'off', responses: 'strict' },
+        mediaBuy: {
+          createMediaBuy: async () => ({
+            media_buy_id: 'mb_1',
+            status: 'pending_creatives',
+            packages: [],
+          }),
+        },
+      });
+
+      const res = await callTool(server, 'create_media_buy', {});
+      assert.notStrictEqual(res.isError, true);
+      assert.strictEqual(res.structuredContent.status, 'completed');
+      assert.strictEqual(res.structuredContent.media_buy_status, 'pending_creatives');
+    });
   });
 
   // Default selector: no `validation` config at all — the dispatcher

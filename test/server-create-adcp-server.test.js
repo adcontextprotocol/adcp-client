@@ -473,12 +473,10 @@ describe('createAdcpServer', () => {
       assert.strictEqual(caps.status, 'completed');
     });
 
-    it('preserves MediaBuyStatus on create_media_buy (does NOT clobber payload status)', async () => {
-      // `CreateMediaBuySuccess.status` carries MediaBuyStatus, which partly
-      // overlaps but is not equal to TaskStatus. The chokepoint must NOT
-      // overwrite a handler-declared payload `status` — until the spec
-      // disambiguates envelope vs payload status at the same key, the
-      // MediaBuy lifecycle value wins.
+    it('splits MediaBuyStatus on create_media_buy into media_buy_status', async () => {
+      // Legacy handlers may still return the media-buy lifecycle in `status`.
+      // The server response must expose the AdCP envelope status at `status`
+      // and carry the lifecycle value at `media_buy_status`.
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -493,7 +491,8 @@ describe('createAdcpServer', () => {
         start_time: '2026-01-01T00:00:00Z',
         end_time: '2026-02-01T00:00:00Z',
       });
-      assert.strictEqual(caps.status, 'active');
+      assert.strictEqual(caps.status, 'completed');
+      assert.strictEqual(caps.media_buy_status, 'active');
     });
 
     it('uses generic wrapper for tools without dedicated builders', async () => {

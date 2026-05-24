@@ -34,7 +34,7 @@
  * server.registerTool(
  *   'get_products',
  *   { inputSchema: GetProductsRequestSchema.shape },
- *   async (params) => productsResponse({ products: myProducts })
+ *   async (params) => productsResponse({ products: myProducts, cache_scope: 'account' })
  * );
  * ```
  */
@@ -184,9 +184,11 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
+  const structured = toStructuredContent(data) as Record<string, unknown>;
+  if (structured.status === undefined) structured.status = 'completed';
   return {
     content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: structured,
   };
 }
 

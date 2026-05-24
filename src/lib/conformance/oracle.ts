@@ -140,7 +140,8 @@ export function evaluate(input: OracleInput): OracleOutput {
   }
 
   const validate = responseValidator(tool);
-  if (!validate(result.data)) {
+  const payloadForValidation = responsePayloadForValidation(result);
+  if (!validate(payloadForValidation)) {
     const errors = (validate.errors ?? []).slice(0, 3).map(formatAjvError);
     invariantFailures.push(`response schema mismatch: ${errors.join('; ')}`);
     return { verdict: 'invalid', invariantFailures };
@@ -150,6 +151,12 @@ export function evaluate(input: OracleInput): OracleOutput {
     verdict: invariantFailures.length === 0 ? 'accepted' : 'invalid',
     invariantFailures,
   };
+}
+
+function responsePayloadForValidation(result: TaskResult<unknown>): unknown {
+  if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return result.data;
+  const data = result.data as Record<string, unknown>;
+  return data.status === undefined ? { status: result.status, ...data } : data;
 }
 
 /**

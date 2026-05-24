@@ -19,7 +19,7 @@ function makeAjv() {
   return ajv;
 }
 
-describe('conformance: schemaToArbitrary', () => {
+describe('conformance: schemaToArbitrary', { concurrency: false }, () => {
   // Tools whose schemas the generator can satisfy almost all the time. The
   // remaining tools lean on constructs (not, allOf+not, deep oneOf) that are
   // out of scope — their imperfect validity is compensated by the two-path

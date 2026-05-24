@@ -593,7 +593,11 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      return { status: 'completed', products: products.map(p => projectProduct(p, publisherDomain)) };
+      return {
+        status: 'completed',
+        products: products.map(p => projectProduct(p, publisherDomain)),
+        cache_scope: 'account',
+      };
     },
 
     /**
@@ -706,7 +710,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         media_buy_id: order.order_id,
         // pending_creatives — buy is auction-confirmed but no creatives
         // attached yet. Buyer transitions to `active` after sync_creatives.
-        status: 'pending_creatives',
+        media_buy_status: 'pending_creatives',
         confirmed_at: order.created_at ?? new Date().toISOString(),
         packages: packagesOut,
       };
@@ -782,7 +786,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       }
       return {
         media_buy_id: existing.order_id,
-        status: nextStatus,
+        media_buy_status: nextStatus,
       };
     },
 
