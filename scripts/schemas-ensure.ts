@@ -27,8 +27,8 @@ const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 function hasV3Cache(): boolean {
   if (!existsSync(CACHE_ROOT)) return false;
   // Any `<major>.<minor>.<patch>` directory under cache satisfies the v3
-  // bundle. Pre-release pins such as `3.1.0-beta.3` are valid while the SDK
-  // tracks protocol beta bundles, so accept full semver directory names.
+  // bundle — `sync-schemas` writes the exact upstream version, currently
+  // 3.1.0-beta.3, but pin updates land here without needing a script change.
   return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(
     e => e.isDirectory() && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e.name)
   );
