@@ -9,6 +9,7 @@
   "changesets": [
     "1853-1818-capability-projection",
     "asset-variant-array-slots",
+    "brand-rights-input-schemas",
     "cluster-3-schema-validation-sweep",
     "cluster-4-completeness-security-drift",
     "cluster-7-server-decisioning",
@@ -22,15 +23,23 @@
     "governance-agents-categories-removed",
     "governance-fixtures-verdict-rename",
     "main-ci-3-1-beta-compat",
+    "migration-v8-guide",
+    "object-schema-intersections",
     "outcome-measurement-rename",
     "per-tool-types-bundle-split",
+    "post-1902-cleanup",
     "product-card-self-rendering",
+    "product-schema-object-helpers",
+    "product-schema-zodobject-ergonomics",
     "promote-query-upstream-traffic",
+    "python-reference-seller-interop",
     "request-signing-conformance-cache",
     "schema-loader-strip-nested-ids",
+    "server-handler-payload-types",
     "source-fixes-1950-union-products-governance",
     "storyboard-brand-invariant-fix",
     "terminal-account-pagination",
-    "test-agents-envelope-status"
+    "test-agents-envelope-status",
+    "triage-agent-routing-briefs"
   ]
 }
