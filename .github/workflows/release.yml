@@ -13,8 +13,13 @@ permissions:
   id-token: write
 
 jobs:
+  python-interop:
+    name: Python reference seller interop
+    uses: ./.github/workflows/interop-python.yml
+
   release:
     name: Release
+    needs: python-interop
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repo
