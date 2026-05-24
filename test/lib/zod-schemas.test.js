@@ -606,6 +606,44 @@ describe('Zod Schema Validation', () => {
     }
   });
 
+  test('schemas with object intersections have object helper access', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const schemasToCheck = [
+      'ValidatePropertyDeliveryRequestSchema',
+      'TasksGetRequestSchema',
+      'TasksGetResponseSchema',
+      'ValidatePropertyDeliveryResponseSchema',
+      'IndividualImageAssetSchema',
+      'GroupVideoAssetSchema',
+      'CreativeVariantSchema',
+    ];
+
+    for (const name of schemasToCheck) {
+      const schema = schemas[name];
+      assert.ok(schema, `${name} should exist in generated schemas`);
+      assert.ok(schema.shape !== undefined, `${name} should expose .shape`);
+      assert.strictEqual(typeof schema.extend, 'function', `${name} should expose .extend()`);
+      assert.strictEqual(typeof schema.omit, 'function', `${name} should expose .omit()`);
+      assert.strictEqual(typeof schema.pick, 'function', `${name} should expose .pick()`);
+    }
+  });
+
+  test('every generated tool request schema has an MCP input shape', async () => {
+    const { TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } = await import('../../dist/lib/schemas/index.js');
+
+    const missing = Object.keys(TOOL_REQUEST_SCHEMAS).filter(toolName => !TOOL_INPUT_SHAPES[toolName]);
+
+    assert.deepStrictEqual(missing, []);
+    assert.ok(TOOL_INPUT_SHAPES.validate_property_delivery, 'validate_property_delivery should be registered');
+    assert.ok(
+      TOOL_INPUT_SHAPES.validate_property_delivery.list_id,
+      'validate_property_delivery should expose its request fields'
+    );
+  });
+
   // ---- Audience governance schemas ----
 
   test('AudienceSelectorSchema validates signal-type selector', async () => {

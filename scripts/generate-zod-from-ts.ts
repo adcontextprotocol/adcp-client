@@ -517,6 +517,400 @@ function stripNeverUnionIntersections(content: string): string {
   return result;
 }
 
+type ObjectShape = Map<string, string>;
+
+function normalizeSchemaExpression(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function skipQuotedOrRegexLiteral(content: string, start: number): number | undefined {
+  const ch = content[start];
+  if (ch === '"' || ch === "'" || ch === '`') {
+    const quote = ch;
+    let i = start + 1;
+    while (i < content.length) {
+      if (content[i] === '\\') {
+        i += 2;
+        continue;
+      }
+      if (content[i] === quote) return i + 1;
+      i++;
+    }
+    return content.length;
+  }
+
+  if (ch !== '/') return undefined;
+
+  let previous = start - 1;
+  while (previous >= 0 && /\s/.test(content[previous])) previous--;
+  if (previous >= 0 && !'([{,:='.includes(content[previous])) return undefined;
+
+  let i = start + 1;
+  let inCharacterClass = false;
+  while (i < content.length) {
+    if (content[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (content[i] === '[') inCharacterClass = true;
+    else if (content[i] === ']') inCharacterClass = false;
+    else if (content[i] === '/' && !inCharacterClass) {
+      i++;
+      while (i < content.length && /[a-z]/i.test(content[i])) i++;
+      return i;
+    }
+    i++;
+  }
+
+  return undefined;
+}
+
+function scanBalanced(
+  content: string,
+  start: number,
+  openChar: '(' | '{' | '[' = '(',
+  closeChar: ')' | '}' | ']' = ')'
+): { body: string; end: number } | undefined {
+  if (content[start] !== openChar) return undefined;
+
+  let depth = 1;
+  let i = start + 1;
+  let body = '';
+
+  while (i < content.length && depth > 0) {
+    const ch = content[i];
+    const literalEnd = skipQuotedOrRegexLiteral(content, i);
+    if (literalEnd !== undefined) {
+      body += content.slice(i, literalEnd);
+      i = literalEnd;
+      continue;
+    }
+
+    if (ch === openChar) {
+      depth++;
+    } else if (ch === closeChar) {
+      depth--;
+      if (depth === 0) {
+        i++;
+        break;
+      }
+    }
+
+    if (depth > 0) body += ch;
+    i++;
+  }
+
+  return depth === 0 ? { body, end: i } : undefined;
+}
+
+function extractObjectLiteralBody(zObjectExpression: string): string | undefined {
+  const trimmed = zObjectExpression.trim();
+  if (!trimmed.startsWith('z.object(')) return undefined;
+
+  const call = scanBalanced(trimmed, 'z.object'.length);
+  if (!call) return undefined;
+
+  if (!isPlainZodObjectTail(trimmed.slice(call.end))) return undefined;
+
+  const arg = call.body.trim();
+  if (!arg.startsWith('{')) return undefined;
+
+  const objectLiteral = scanBalanced(arg, 0, '{', '}');
+  return objectLiteral?.body;
+}
+
+function isPlainZodObjectTail(tail: string): boolean {
+  let remaining = tail.trim();
+  const objectPreservingMethods = ['.passthrough()', '.strict()', '.strip()'];
+
+  while (remaining) {
+    const method = objectPreservingMethods.find(value => remaining.startsWith(value));
+    if (!method) return false;
+    remaining = remaining.slice(method.length).trim();
+  }
+
+  return true;
+}
+
+function readPropertyKey(part: string): string | undefined {
+  const trimmed = part.trim();
+  if (!trimmed) return undefined;
+
+  if (trimmed[0] === '"' || trimmed[0] === "'") {
+    const quote = trimmed[0];
+    let i = 1;
+    let key = '';
+    while (i < trimmed.length) {
+      if (trimmed[i] === '\\') {
+        key += trimmed[i];
+        i++;
+        if (i < trimmed.length) key += trimmed[i];
+        i++;
+        continue;
+      }
+      if (trimmed[i] === quote) break;
+      key += trimmed[i];
+      i++;
+    }
+    return key;
+  }
+
+  const match = trimmed.match(/^([A-Za-z_$][A-Za-z0-9_$-]*)\s*:/);
+  return match?.[1];
+}
+
+function parseObjectShape(body: string): ObjectShape | undefined {
+  const shape: ObjectShape = new Map();
+  let depth = 0;
+  let partStart = 0;
+
+  const readPart = (end: number) => {
+    const part = body.slice(partStart, end);
+    const key = readPropertyKey(part);
+    if (!key) return;
+
+    let colonIndex = -1;
+    let localDepth = 0;
+    for (let i = 0; i < part.length; i++) {
+      const ch = part[i];
+      const literalEnd = skipQuotedOrRegexLiteral(part, i);
+      if (literalEnd !== undefined) {
+        i = literalEnd - 1;
+        continue;
+      }
+      if (ch === '(' || ch === '{' || ch === '[') localDepth++;
+      else if (ch === ')' || ch === '}' || ch === ']') localDepth--;
+      else if (ch === ':' && localDepth === 0) {
+        colonIndex = i;
+        break;
+      }
+    }
+
+    if (colonIndex >= 0) {
+      shape.set(key, normalizeSchemaExpression(part.slice(colonIndex + 1)));
+    }
+  };
+
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    const literalEnd = skipQuotedOrRegexLiteral(body, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+      continue;
+    }
+    if (ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      readPart(i);
+      partStart = i + 1;
+    }
+  }
+
+  readPart(body.length);
+  return shape;
+}
+
+function mergeShapes(left: ObjectShape, right: ObjectShape): ObjectShape {
+  const merged = new Map(left);
+  for (const [key, value] of right) {
+    merged.set(key, value);
+  }
+  return merged;
+}
+
+function canSafelyMerge(left: ObjectShape, right: ObjectShape): boolean {
+  for (const [key, rightValue] of right) {
+    const leftValue = left.get(key);
+    if (
+      leftValue !== undefined &&
+      leftValue !== rightValue &&
+      leftValue !== `${rightValue}.optional()` &&
+      leftValue !== `${rightValue}.nullish()`
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function extractSchemaExports(content: string): Map<string, string> {
+  const schemas = new Map<string, string>();
+  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1];
+    const expressionStart = exportRegex.lastIndex;
+    let depth = 0;
+    let i = expressionStart;
+
+    while (i < content.length) {
+      const ch = content[i];
+      const literalEnd = skipQuotedOrRegexLiteral(content, i);
+      if (literalEnd !== undefined) {
+        i = literalEnd - 1;
+      } else if (ch === '(' || ch === '{' || ch === '[') {
+        depth++;
+      } else if (ch === ')' || ch === '}' || ch === ']') {
+        depth--;
+      } else if (ch === ';' && depth === 0) {
+        schemas.set(name, content.slice(expressionStart, i));
+        break;
+      }
+      i++;
+    }
+
+    exportRegex.lastIndex = i;
+  }
+
+  return schemas;
+}
+
+function schemaShapeForExpression(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  cache: Map<string, ObjectShape | undefined>,
+  visiting = new Set<string>()
+): ObjectShape | undefined {
+  const trimmed = expression.trim();
+
+  const inlineBody = extractObjectLiteralBody(trimmed);
+  if (inlineBody !== undefined) {
+    return parseObjectShape(inlineBody);
+  }
+
+  const named = trimmed.match(/^(\w+Schema)$/)?.[1];
+  if (named) {
+    if (cache.has(named)) return cache.get(named);
+    if (visiting.has(named)) return undefined;
+
+    const namedExpression = schemaExpressions.get(named);
+    if (!namedExpression) return undefined;
+
+    visiting.add(named);
+    const shape = schemaShapeForExpression(namedExpression, schemaExpressions, cache, visiting);
+    visiting.delete(named);
+    cache.set(named, shape);
+    return shape;
+  }
+
+  return undefined;
+}
+
+function postProcessObjectIntersections(content: string): string {
+  const schemaExpressions = extractSchemaExports(content);
+  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1];
+    const expressionStart = exportRegex.lastIndex;
+    const expression = schemaExpressions.get(name);
+    if (!expression) continue;
+
+    const expressionEnd = expressionStart + expression.length;
+    const rewritten = rewriteTopLevelObjectAnds(expression, schemaExpressions, shapeCache);
+
+    result += content.slice(lastIndex, expressionStart) + rewritten;
+    lastIndex = expressionEnd;
+    exportRegex.lastIndex = expressionEnd;
+  }
+
+  result += content.slice(lastIndex);
+
+  let rewritten = result;
+  while (true) {
+    const next = rewriteNamedObjectAnds(rewritten);
+    if (next === rewritten) return rewritten;
+    rewritten = next;
+  }
+}
+
+function rewriteTopLevelObjectAnds(
+  expression: string,
+  schemaExpressions: Map<string, string>,
+  shapeCache: Map<string, ObjectShape | undefined>
+): string {
+  let result = '';
+  let depth = 0;
+  let i = 0;
+  let currentShape: ObjectShape | undefined;
+  let baseStart = 0;
+
+  while (i < expression.length) {
+    const ch = expression[i];
+    const literalEnd = skipQuotedOrRegexLiteral(expression, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+    } else if (ch === '(' || ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === ')' || ch === '}' || ch === ']') {
+      depth--;
+    } else if (depth === 0 && expression.startsWith('.and(', i)) {
+      if (!result) {
+        const base = expression.slice(baseStart, i);
+        result = base;
+        currentShape = schemaShapeForExpression(base, schemaExpressions, shapeCache);
+      }
+
+      const arg = scanBalanced(expression, i + '.and'.length);
+      if (!arg) break;
+
+      const argShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
+      if (currentShape && argShape && canSafelyMerge(currentShape, argShape)) {
+        result += `.merge(${arg.body})`;
+        currentShape = mergeShapes(currentShape, argShape);
+      } else {
+        result += `.and(${arg.body})`;
+        currentShape = undefined;
+      }
+      i = arg.end;
+      baseStart = i;
+      continue;
+    }
+    i++;
+  }
+
+  if (!result) return expression;
+  result += expression.slice(baseStart);
+  return result;
+}
+
+function rewriteNamedObjectAnds(content: string): string {
+  const schemaExpressions = extractSchemaExports(content);
+  const shapeCache = new Map<string, ObjectShape | undefined>();
+  const namedAndRegex = /\b(\w+Schema)\.and\(/g;
+  let result = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = namedAndRegex.exec(content))) {
+    const schemaName = match[1];
+    const openIndex = match.index + `${schemaName}.and`.length;
+    const arg = scanBalanced(content, openIndex);
+    if (!arg) continue;
+
+    const leftShape = schemaShapeForExpression(schemaName, schemaExpressions, shapeCache);
+    const rightShape = schemaShapeForExpression(arg.body, schemaExpressions, shapeCache);
+
+    result += content.slice(lastIndex, match.index);
+    if (leftShape && rightShape && canSafelyMerge(leftShape, rightShape)) {
+      result += `${schemaName}.merge(${arg.body})`;
+    } else {
+      result += content.slice(match.index, arg.end);
+    }
+
+    lastIndex = arg.end;
+    namedAndRegex.lastIndex = arg.end;
+  }
+
+  result += content.slice(lastIndex);
+  return result;
+}
+
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) => {
@@ -644,6 +1038,13 @@ async function generateZodSchemas() {
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
 
+    // Post-process: Turn safe object/object intersections into ZodObject merges.
+    // ts-to-zod emits `.and()` for TypeScript object intersections, but ZodIntersection
+    // does not expose object helpers like .shape/.extend/.omit/.pick. This keeps the
+    // intersected object validation when fields are disjoint or identical, and leaves
+    // richer/conflicting intersections alone so future schema changes do not weaken checks.
+    zodSchemas = postProcessObjectIntersections(zodSchemas);
+
     // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
     // ts-to-zod generates this union for TypeScript's Record<string, unknown>, but
     // z.undefined() cannot be converted to JSON Schema (it has no representation).
@@ -710,5 +1111,7 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+export const __test__ = { postProcessObjectIntersections };
 
 export { generateZodSchemas };
