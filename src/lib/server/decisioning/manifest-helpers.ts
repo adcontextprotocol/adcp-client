@@ -57,8 +57,14 @@ export function getAsset<T extends AssetInstanceType>(
  * array — every element must match `assetType`; mixed-type slots are
  * the adopter's responsibility to discriminate per-element.
  *
- * Returns `undefined` if the slot is missing or empty. Returns `[]` if
- * the slot is present but every element fails the asset_type check.
+ * Returns `undefined` only when the slot is missing from the manifest
+ * (`manifest.assets[assetId]` is absent). Returns `[]` when the slot
+ * is present but empty, or present and non-empty with no elements
+ * matching `assetType`. Empty arrays are spec-invalid per the
+ * `minItems: 1` constraint on slot arrays, but the helper accepts
+ * malformed input defensively — returning `[]` is more consistent
+ * with the "filter result on the slot" contract than collapsing it
+ * to `undefined`.
  *
  * @since AdCP 3.1.0-beta.2 (slot widening to `AssetVariant | AssetVariant[]`).
  */
