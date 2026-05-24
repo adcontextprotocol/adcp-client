@@ -1,5 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
 const { z } = require('zod');
 
 describe('Zod Schema Validation', () => {
@@ -39,6 +41,17 @@ describe('Zod Schema Validation', () => {
     assert.ok(
       picked.safeParse({ product_id: 'prod_123' }).success,
       'picked ProductSchema should validate picked shape'
+    );
+  });
+
+  test('generated declarations do not expose record-union object intersections', () => {
+    const declarations = readFileSync(path.join(__dirname, '../../dist/lib/types/schemas.generated.d.ts'), 'utf8');
+    const matches = declarations.match(/z\.ZodIntersection<z\.ZodUnion<readonly \[z\.ZodRecord/g) ?? [];
+
+    assert.strictEqual(
+      matches.length,
+      0,
+      'record-only union markers intersected with object schemas should emit as ZodObject declarations'
     );
   });
 

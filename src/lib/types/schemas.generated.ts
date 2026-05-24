@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-24T01:31:36.131Z
+// Generated at: 2026-05-24T10:55:14.077Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -631,7 +631,7 @@ export const NoneSchema = z.record(z.string(), z.unknown());
 
 export const SizeModeMutexSchema = z.union([FixedSchema, MultiSizeSchema, ResponsiveSchema, NoneSchema]);
 
-export const CanonicalFormatDisplayTagSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatDisplayTagSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -660,7 +660,7 @@ export const CanonicalFormatDisplayTagSchema = SizeModeMutexSchema.and(z.object(
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     om_sdk_required: z.boolean().optional()
-}).passthrough());
+}).passthrough();
 
 export const PriceAdjustmentKindSchema = z.union([z.literal("fee"), z.literal("discount"), z.literal("commission"), z.literal("settlement")]);
 
@@ -698,7 +698,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highlight"), z.literal("recap"), z.literal("trailer"), z.literal("bonus")]);
 
-export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatImageSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -729,9 +729,9 @@ export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
     cta_values: z.array(z.string()).optional(),
     asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized")]).optional(),
     buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
-}).passthrough());
+}).passthrough();
 
-export const CanonicalFormatHTML5BannerSchema = SizeModeMutexSchema.and(z.object({
+export const CanonicalFormatHTML5BannerSchema = z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -765,7 +765,7 @@ export const CanonicalFormatHTML5BannerSchema = SizeModeMutexSchema.and(z.object
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     ssl_required: z.boolean().optional()
-}).passthrough());
+}).passthrough();
 
 export const DisplayTagFormatDeclarationSchema = z.object({
     format_kind: z.literal("display_tag"),

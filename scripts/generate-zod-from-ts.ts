@@ -283,9 +283,9 @@ function postProcessUndefinedUnions(content: string): string {
  * ZodIntersection types that lose .shape access (needed by MCP SDK for tool registration).
  *
  * Also handles z.record(...).and(z.object({...})) patterns (record-first intersections)
- * by extracting just the z.object() portion, plus
- * z.union([RecordUnknownA, RecordUnknownB]).and(z.object({...})) where every
- * union member is only a Record<string, unknown> container.
+ * by extracting just the z.object() portion, plus inline or named
+ * z.union([RecordUnknownA, RecordUnknownB]).and(z.object({...})) patterns where
+ * every union member is only a Record<string, unknown> container.
  */
 function postProcessRecordIntersections(content: string): string {
   let result = content;
@@ -299,7 +299,10 @@ function postProcessRecordIntersections(content: string): string {
   // Pass 3: Replace `z.union([RecordUnknown...]).and(CONTENT)` with CONTENT.
   result = unwrapRecordUnionIntersections(result);
 
-  // Pass 4: Strip `.and(z.union([...]))` where content contains z.never()
+  // Pass 4: Replace `NamedRecordUnion.and(CONTENT)` with CONTENT.
+  result = unwrapNamedRecordUnionIntersections(result);
+
+  // Pass 5: Strip `.and(z.union([...]))` where content contains z.never()
   result = stripNeverUnionIntersections(result);
 
   return result;
@@ -561,6 +564,29 @@ function isRedundantRecordMember(member: string, recordSchemaNames: Set<string>)
   return trimmed === 'z.record(z.string(), z.unknown())' || recordSchemaNames.has(trimmed);
 }
 
+function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNames: Set<string>): Set<string> {
+  const names = new Set<string>();
+  const unionDeclPattern = /(?:export\s+)?const\s+(\w+)\s*=\s*z\.union\(\[/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = unionDeclPattern.exec(content)) !== null) {
+    const name = match[1]!;
+    const unionBodyStart = unionDeclPattern.lastIndex;
+    const unionBody = readBalancedBody(content, unionBodyStart, '[', ']');
+    if (!unionBody || content[unionBody.end] !== ')') continue;
+
+    const afterUnion = content.slice(unionBody.end + 1).trimStart();
+    if (!afterUnion.startsWith(';')) continue;
+
+    const members = splitTopLevelCommaList(unionBody.body);
+    if (members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames))) {
+      names.add(name);
+    }
+  }
+
+  return names;
+}
+
 /**
  * Replace `z.union([RecordUnknownA, RecordUnknownB]).and(CONTENT)` with CONTENT.
  *
@@ -608,6 +634,53 @@ function unwrapRecordUnionIntersections(content: string): string {
       result += content[i];
       i++;
     }
+  }
+
+  return result;
+}
+
+/**
+ * Replace `NamedRecordUnion.and(z.object({...}))` with just the object side.
+ *
+ * This is the named-schema counterpart to `unwrapRecordUnionIntersections`.
+ * It intentionally applies only during the marker-only era, where the named
+ * union is composed exclusively of `Record<string, unknown>` marker arms. If a
+ * future spec version adds real fields to those variants, they will no longer
+ * be collected here and the generated schema will correctly remain a
+ * ZodIntersection until the richer constraints are modeled another way.
+ */
+function unwrapNamedRecordUnionIntersections(content: string): string {
+  const recordSchemaNames = collectRedundantRecordSchemaNames(content);
+  const unionSchemaNames = collectRedundantRecordUnionSchemaNames(content, recordSchemaNames);
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    let matchedName: string | undefined;
+    for (const name of unionSchemaNames) {
+      if (content.startsWith(`${name}.and(`, i)) {
+        matchedName = name;
+        break;
+      }
+    }
+
+    if (!matchedName) {
+      result += content[i];
+      i++;
+      continue;
+    }
+
+    const intersectionStart = i;
+    const andBodyStart = i + `${matchedName}.and(`.length;
+    const andBody = readBalancedBody(content, andBodyStart, '(', ')');
+    if (andBody && andBody.body.trimStart().startsWith('z.object(')) {
+      result += andBody.body;
+      i = andBody.end;
+      continue;
+    }
+
+    result += content.substring(intersectionStart, andBody?.end ?? i + matchedName.length);
+    i = andBody?.end ?? i + matchedName.length;
   }
 
   return result;
