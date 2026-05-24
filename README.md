@@ -29,8 +29,11 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/sdk
+npm install @adcp/sdk        # 7.x (current latest, AdCP 3.0)
+npm install @adcp/sdk@beta   # 8.x beta (AdCP 3.1.0-beta)
 ```
+
+Upgrading from v7? See **[MIGRATION-v8.md](./MIGRATION-v8.md)** — TL;DR is three changes for most adopters; full guide covers wire shape, type shape, and SDK behavior deltas.
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 
