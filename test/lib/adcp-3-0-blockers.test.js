@@ -23,7 +23,12 @@ const {
   getComplianceFixture,
 } = require('../../dist/lib/compliance-fixtures/index.js');
 
-const { TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, customToolFor, customToolForSchema } = require('../../dist/lib/schemas/index.js');
+const {
+  TOOL_INPUT_SCHEMAS,
+  TOOL_INPUT_SHAPES,
+  customToolFor,
+  customToolForSchema,
+} = require('../../dist/lib/schemas/index.js');
 
 const { RequestSignatureError } = require('../../dist/lib/signing/index.js');
 

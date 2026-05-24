@@ -133,7 +133,10 @@ export const VariantBSchema = z.object({
 export const RequestSchema = EnvelopeSchema.and(z.union([VariantASchema, VariantBSchema]));
 `);
 
-  assert.match(output, /export const RequestSchema = z\.union\(\[EnvelopeSchema\.merge\(VariantASchema\), EnvelopeSchema\.merge\(VariantBSchema\)\]\)/);
+  assert.match(
+    output,
+    /export const RequestSchema = z\.union\(\[EnvelopeSchema\.merge\(VariantASchema\), EnvelopeSchema\.merge\(VariantBSchema\)\]\)/
+  );
   assert.doesNotMatch(output, /RequestSchema = EnvelopeSchema\.and\(z\.union/);
 });
 
