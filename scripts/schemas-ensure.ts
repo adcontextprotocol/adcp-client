@@ -28,8 +28,10 @@ function hasV3Cache(): boolean {
   if (!existsSync(CACHE_ROOT)) return false;
   // Any `<major>.<minor>.<patch>` directory under cache satisfies the v3
   // bundle — `sync-schemas` writes the exact upstream version, currently
-  // 3.0.1, but pin updates land here without needing a script change.
-  return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(e => e.isDirectory() && /^\d+\.\d+\.\d+$/.test(e.name));
+  // 3.1.0-beta.3, but pin updates land here without needing a script change.
+  return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(
+    e => e.isDirectory() && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e.name)
+  );
 }
 
 function hasV25Cache(): boolean {

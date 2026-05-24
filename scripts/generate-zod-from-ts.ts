@@ -74,6 +74,9 @@ function postProcessUndefinedImports(content: string): string {
  * of `z.ZodType<...>` so call sites that need ZodObject methods (like
  * `withOptionalAccount(...)` which constrains to `z.ZodObject<any>`)
  * keep working.
+ *
+ * Generated annotations are intentionally verbose; add new TS7056 cases here
+ * instead of hand-authoring equivalent schema declarations elsewhere.
  */
 const TS7056_SCHEMAS: Array<{ name: string; tsType?: string; objectShape?: boolean }> = [
   { name: 'AdCPAsyncResponseDataSchema' },
