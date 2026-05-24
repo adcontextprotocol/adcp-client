@@ -52,10 +52,11 @@ describe('Zod Schema Validation', () => {
     }
 
     // Runtime check so the test fails closed even if Zod adjusts its tuple stringification.
+    // Zod 4 dropped `_def.typeName`; constructor name is the stable cross-version probe.
     assert.strictEqual(
-      schemas.ProductSchema._def.typeName,
+      schemas.ProductSchema.constructor.name,
       'ZodObject',
-      'ProductSchema._def.typeName should be ZodObject, not ZodIntersection'
+      'ProductSchema should be a ZodObject, not a ZodIntersection'
     );
 
     const declarations = readFileSync(path.join(__dirname, '../../dist/lib/types/schemas.generated.d.ts'), 'utf8');
