@@ -37,6 +37,11 @@ function withOptionalAccount<TShape extends InputShape & { account: z.ZodType }>
 const CreateMediaBuyToolRequestSchema = withOptionalAccount(schemas.CreateMediaBuyRequestSchema);
 const UpdateMediaBuyToolRequestSchema = withOptionalAccount(schemas.UpdateMediaBuyRequestSchema);
 
+/**
+ * Exact schema types for tool names known at build time. Prefer this type for
+ * key-preserving helpers; use {@link ToolRequestSchemas} when accepting a
+ * runtime string that may not match a known tool.
+ */
 export type KnownToolRequestSchemas = {
   get_products: typeof schemas.GetProductsRequestSchema;
   create_media_buy: typeof CreateMediaBuyToolRequestSchema;
@@ -97,6 +102,8 @@ export type KnownToolRequestSchemas = {
 };
 
 export type ToolRequestSchemas = Readonly<KnownToolRequestSchemas> & {
+  // Dynamic lookups are supported for callers that receive tool names at
+  // runtime, but they must narrow the result before dereferencing `.shape`.
   readonly [toolName: string]: z.ZodObject<any> | undefined;
 };
 

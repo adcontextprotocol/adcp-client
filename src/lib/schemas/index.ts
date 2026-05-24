@@ -48,7 +48,6 @@ type ToolInputShapes = {
   [K in keyof KnownToolRequestSchemas]: ShapeOf<KnownToolRequestSchemas[K]>;
 } & {
   creative_approval: typeof schemas.CreativeApprovalRequestSchema.shape;
-  update_rights: typeof schemas.UpdateRightsRequestSchema.shape;
 } & {
   readonly [toolName: string]: Readonly<InputShape> | undefined;
 };
@@ -70,6 +69,10 @@ function shapeOf<T extends { shape?: InputShape }>(s: T | undefined): T['shape']
  * et al.) PLUS the two tools the spec models as customTool-only
  * extensions — `creative_approval` and `update_rights` — so sellers
  * don't have to hand-author shapes for those either.
+ *
+ * Known tool names retain exact `.shape` field types for IDE completion and
+ * handler inference. Arbitrary string lookups return `undefined` until callers
+ * narrow the tool name to a known key.
  *
  * If a future AdCP release adds a new tool with a generated request
  * schema, add its entry here (or to `TOOL_REQUEST_SCHEMAS` if it's

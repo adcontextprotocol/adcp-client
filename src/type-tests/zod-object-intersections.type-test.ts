@@ -26,14 +26,17 @@ void productShape.product_id;
 
 const productPick = ProductSchema.pick({ product_id: true, name: true });
 void productPick;
+void productPick.shape.product_id;
 
 const productOmit = ProductSchema.omit({ forecast: true });
 void productOmit;
+void productOmit.shape.product_id;
 
 const productExtend = ProductSchema.extend({
   audit_id: z.string().optional(),
 });
 void productExtend;
+void productExtend.shape.audit_id;
 
 const canonicalFormatImageShape = CanonicalFormatImageSchema.shape;
 void canonicalFormatImageShape.image_formats;
