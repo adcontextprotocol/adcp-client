@@ -659,10 +659,11 @@ function unwrapNamedRecordUnionIntersections(content: string): string {
   while (i < content.length) {
     let matchedName: string | undefined;
     for (const name of unionSchemaNames) {
-      if (content.startsWith(`${name}.and(`, i)) {
-        matchedName = name;
-        break;
-      }
+      if (!content.startsWith(`${name}.and(`, i)) continue;
+      // Left identifier boundary: don't match `FooSizeModeMutexSchema` as `SizeModeMutexSchema`.
+      if (i > 0 && /[A-Za-z0-9_$]/.test(content[i - 1])) continue;
+      matchedName = name;
+      break;
     }
 
     if (!matchedName) {
@@ -671,17 +672,25 @@ function unwrapNamedRecordUnionIntersections(content: string): string {
       continue;
     }
 
-    const intersectionStart = i;
     const andBodyStart = i + `${matchedName}.and(`.length;
     const andBody = readBalancedBody(content, andBodyStart, '(', ')');
-    if (andBody && andBody.body.trimStart().startsWith('z.object(')) {
+    if (!andBody) {
+      // A collected union name followed by `.and(` with no balanced body means
+      // the ts-to-zod output is malformed. Crash rather than silently corrupt.
+      throw new Error(
+        `unwrapNamedRecordUnionIntersections: unbalanced \`.and(\` at offset ${andBodyStart} for ${matchedName}`
+      );
+    }
+    if (andBody.body.trimStart().startsWith('z.object(')) {
       result += andBody.body;
       i = andBody.end;
       continue;
     }
 
-    result += content.substring(intersectionStart, andBody?.end ?? i + matchedName.length);
-    i = andBody?.end ?? i + matchedName.length;
+    // Right-hand side isn't a plain `z.object(...)` — preserve the original
+    // intersection byte-for-byte so any non-marker constraints survive.
+    result += content.substring(i, andBody.end);
+    i = andBody.end;
   }
 
   return result;

@@ -285,13 +285,6 @@ export const JobItem_EmploymentTypeValues = ["full_time", "part_time", "contract
 /** single | JobItem.experience_level */
 export const JobItem_ExperienceLevelValues = ["entry_level", "mid_level", "senior", "director", "executive"] as const;
 
-// ====== ListCreativeFormatsRequestCreativeAgent ======
-
-/** array of | ListCreativeFormatsRequestCreativeAgent.asset_types */
-export const ListCreativeFormatsRequestCreativeAgent_AssetTypesValues = ["image", "video", "audio", "text", "html", "javascript", "url"] as const;
-/** single | ListCreativeFormatsRequestCreativeAgent.type */
-export const ListCreativeFormatsRequestCreativeAgent_TypeValues = ["audio", "video", "display", "dooh"] as const;
-
 // ====== ListCreativeFormatsResponse ======
 
 /** single | ListCreativeFormatsResponse.source */
