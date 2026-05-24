@@ -23,10 +23,14 @@ import type {
   SalesPlatform,
   SalesCorePlatform,
   SalesIngestionPlatform,
+  SponsoredIntelligencePlatform,
   AudiencePlatform,
   CreateAdcpServerFromPlatformOptions,
   ComplianceTestingCapabilities,
+  ServerPayload,
+  CheckGovernancePayload,
 } from './index';
+import type { OperationalContext, OperationalPlatform } from '../operational-platform';
 import {
   AdcpError,
   AccountNotFoundError,
@@ -360,6 +364,81 @@ function _sales_guaranteed_spread_helpers_pattern() {
   return _check;
 }
 
+// Positive: platform handlers return domain payloads. The framework owns
+// protocol envelope fields such as `status: "completed"`, `timestamp`, and
+// `adcp_version`, so these payload returns must compile without status.
+function _sales_platform_payload_returns_do_not_require_protocol_status() {
+  const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
+    getProducts: async () => ({ products: [], cache_scope: 'account' }),
+    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
+    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    listCreativeFormats: async () => ({ formats: [] }),
+    syncCreatives: async () => [],
+  };
+  return sales;
+}
+
+function _server_payload_preserves_domain_status_fields(): void {
+  type CreateMediaBuySuccess = import('../../types/tools.generated').CreateMediaBuySuccess;
+  const payload: ServerPayload<CreateMediaBuySuccess> = {
+    media_buy_id: 'x',
+    packages: [],
+    status: 'active',
+  };
+  void payload;
+}
+
+function _server_payload_keeps_required_domain_fields(): void {
+  type CreateMediaBuySuccess = import('../../types/tools.generated').CreateMediaBuySuccess;
+  // @ts-expect-error — ServerPayload removes framework-owned envelope fields,
+  // but it must not make required domain fields optional.
+  const payload: ServerPayload<CreateMediaBuySuccess> = { packages: [] };
+  void payload;
+}
+
+function _server_payload_preserves_governance_context(): void {
+  const payload: CheckGovernancePayload = {
+    check_id: 'check_1',
+    verdict: 'approved',
+    plan_id: 'plan_1',
+    explanation: 'Approved',
+    governance_context: 'eyJhbGciOiJIUzI1NiJ9.test',
+  };
+  void payload;
+}
+
+function _non_sales_platform_payload_returns_do_not_require_protocol_status() {
+  const sponsoredIntelligence: SponsoredIntelligencePlatform<_SocialMeta> = {
+    getOffering: async () => ({ available: true }),
+    initiateSession: async () => ({ session_id: 'si_1', session_status: 'active' }),
+    sendMessage: async () => ({ session_id: 'si_1', session_status: 'active' }),
+    terminateSession: async () => ({ session_id: 'si_1', terminated: true }),
+  };
+  return sponsoredIntelligence;
+}
+
+interface _OperationalMeta extends OperationalContext {
+  advertiserId: string;
+}
+
+function _operational_platform_payload_returns_do_not_require_protocol_status(): OperationalPlatform<_OperationalMeta> {
+  return {
+    platformId: 'test',
+    extractContext: async () => ({ accessToken: undefined, advertiserId: 'adv_1' }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getProducts: async () => ({ products: [] }),
+  };
+}
+
 // Negative: bare `defineSalesPlatform<Meta>({...})` does NOT preserve the
 // closed shape; its return type is the loose `SalesPlatform<TCtxMeta>`
 // (all-optional after #1341). Adopters claiming `sales-guaranteed` need
@@ -671,6 +750,12 @@ export const _references = [
   _define_sales_platform_identity,
   _sales_guaranteed_field_annotation_pattern,
   _sales_guaranteed_spread_helpers_pattern,
+  _sales_platform_payload_returns_do_not_require_protocol_status,
+  _server_payload_preserves_domain_status_fields,
+  _server_payload_keeps_required_domain_fields,
+  _server_payload_preserves_governance_context,
+  _non_sales_platform_payload_returns_do_not_require_protocol_status,
+  _operational_platform_payload_returns_do_not_require_protocol_status,
   _define_sales_platform_widens_post_1341,
   _define_audience_platform_identity,
   _define_audience_platform_rejects_wrong_shape,

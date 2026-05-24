@@ -89,7 +89,10 @@ describe('updateRightsResponse builder', () => {
       implementation_date: '2026-05-02T19:00:00Z',
     };
     const response = responses.updateRightsResponse(data);
-    assert.deepEqual(response.structuredContent, data);
+    assert.deepEqual(response.structuredContent, {
+      ...data,
+      status: 'completed',
+    });
     assert.match(response.content[0].text, /rights_grant_123 updated/);
   });
 
@@ -114,7 +117,10 @@ describe('updateRightsResponse builder', () => {
       errors: [{ code: 'INVALID_REQUEST', message: 'impression_cap below delivered count' }],
     };
     const response = responses.updateRightsResponse(data);
-    assert.deepEqual(response.structuredContent, data);
+    assert.deepEqual(response.structuredContent, {
+      ...data,
+      status: 'completed',
+    });
     assert.match(response.content[0].text, /update error/i);
   });
 

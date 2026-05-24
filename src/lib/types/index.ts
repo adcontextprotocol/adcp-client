@@ -26,6 +26,7 @@ export type {
 // so SDK consumers don't break across the version bump.
 export type { FormatReferenceStructuredObject } from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
+export type { ServerPayload } from './server-payload';
 /**
  * @deprecated AdCP 3.0.1 renamed this type to `FormatReferenceStructuredObject`
  * (the wire shape is identical — pure documentation rename per the spec). This

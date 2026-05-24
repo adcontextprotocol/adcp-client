@@ -437,13 +437,14 @@ describe('validActionsForStatus', () => {
 });
 
 describe('cancelMediaBuyResponse', () => {
-  it('sets status to canceled and valid_actions to empty', () => {
+  it('sets protocol status, media_buy_status, and valid_actions', () => {
     const result = cancelMediaBuyResponse({
       media_buy_id: 'mb_1',
       canceled_by: 'buyer',
       revision: 3,
     });
-    assert.strictEqual(result.structuredContent.status, 'canceled');
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.media_buy_status, 'canceled');
     assert.deepStrictEqual(result.structuredContent.valid_actions, []);
   });
 

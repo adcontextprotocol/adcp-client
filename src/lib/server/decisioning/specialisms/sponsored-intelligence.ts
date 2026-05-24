@@ -50,6 +50,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -62,6 +63,11 @@ import type {
 } from '../../../types/tools.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type SIGetOfferingPayload = ServerPayload<SIGetOfferingResponse>;
+export type SIInitiateSessionPayload = ServerPayload<SIInitiateSessionResponse>;
+export type SISendMessagePayload = ServerPayload<SISendMessageResponse>;
+export type SITerminateSessionPayload = ServerPayload<SITerminateSessionResponse>;
 
 export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -76,7 +82,7 @@ export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown
    *   - `'EXPIRED'` — offering past its `expires_at`
    *   - `'REGION_RESTRICTED'` — offering not available in caller's region
    */
-  getOffering(req: SIGetOfferingRequest, ctx: Ctx<TCtxMeta>): Promise<SIGetOfferingResponse>;
+  getOffering(req: SIGetOfferingRequest, ctx: Ctx<TCtxMeta>): Promise<SIGetOfferingPayload>;
 
   /**
    * Start a session. Returns `session_id` plus the brand's first response
@@ -96,7 +102,7 @@ export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown
    *   - `'CAPABILITY_UNSUPPORTED'` — host advertised capabilities the
    *     brand cannot fulfill (rare; usually downgrades silently)
    */
-  initiateSession(req: SIInitiateSessionRequest, ctx: Ctx<TCtxMeta>): Promise<SIInitiateSessionResponse>;
+  initiateSession(req: SIInitiateSessionRequest, ctx: Ctx<TCtxMeta>): Promise<SIInitiateSessionPayload>;
 
   /**
    * Send a turn. A small session record is auto-attached at
@@ -119,7 +125,7 @@ export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown
    *   - `'SESSION_TIMEOUT'` — exceeded `session_ttl_seconds` since last
    *     turn (brand may also auto-terminate via `host_terminated`)
    */
-  sendMessage(req: SISendMessageRequest, ctx: Ctx<TCtxMeta>): Promise<SISendMessageResponse>;
+  sendMessage(req: SISendMessageRequest, ctx: Ctx<TCtxMeta>): Promise<SISendMessagePayload>;
 
   /**
    * Terminate a session. Naturally idempotent — `session_id` is the
@@ -134,5 +140,5 @@ export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown
    * Throw `AdcpError` for buyer-fixable rejection:
    *   - `'SESSION_NOT_FOUND'` — unknown `session_id`
    */
-  terminateSession(req: SITerminateSessionRequest, ctx: Ctx<TCtxMeta>): Promise<SITerminateSessionResponse>;
+  terminateSession(req: SITerminateSessionRequest, ctx: Ctx<TCtxMeta>): Promise<SITerminateSessionPayload>;
 }

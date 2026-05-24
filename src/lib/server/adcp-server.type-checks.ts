@@ -6,6 +6,7 @@
 // Run with `npm run typecheck`.
 
 import type { AdcpServer } from './adcp-server';
+import type { MediaBuyHandlers } from './create-adcp-server';
 
 // ── Plain object with same structural shape isn't an AdcpServer ──────────
 
@@ -44,8 +45,20 @@ async function _adcpServerCallSitesStillWork(s: AdcpServer): Promise<void> {
   });
 }
 
+function _legacy_media_buy_handlers_accept_payload_returns(): MediaBuyHandlers {
+  return {
+    getProducts: async () => ({ products: [], cache_scope: 'account' }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+  };
+}
+
 export const _references = [
   _imitationCannotBeAdcpServer,
   _registerToolNotOnAdcpServer,
   _adcpServerCallSitesStillWork,
+  _legacy_media_buy_handlers_accept_payload_returns,
 ] as const;

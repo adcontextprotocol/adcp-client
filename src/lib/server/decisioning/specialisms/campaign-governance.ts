@@ -29,6 +29,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   CheckGovernanceRequest,
   CheckGovernanceResponse,
@@ -41,6 +42,11 @@ import type {
 } from '../../../types/tools.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type CheckGovernancePayload = ServerPayload<CheckGovernanceResponse>;
+export type SyncPlansPayload = ServerPayload<SyncPlansResponse>;
+export type ReportPlanOutcomePayload = ServerPayload<ReportPlanOutcomeResponse>;
+export type GetPlanAuditLogsPayload = ServerPayload<GetPlanAuditLogsResponse>;
 
 export interface CampaignGovernancePlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -57,24 +63,24 @@ export interface CampaignGovernancePlatform<TCtxMeta = Record<string, unknown>> 
    * `status: 'denied'` for governance decisions that ARE the answer
    * (the plan exists and the agent is rejecting the action).
    */
-  checkGovernance(req: CheckGovernanceRequest, ctx: Ctx<TCtxMeta>): Promise<CheckGovernanceResponse>;
+  checkGovernance(req: CheckGovernanceRequest, ctx: Ctx<TCtxMeta>): Promise<CheckGovernancePayload>;
 
   /**
    * Plan CRUD. Buyers sync their campaign plans into the governance
    * agent so the agent can maintain spend authority + delivery context.
    */
-  syncPlans(req: SyncPlansRequest, ctx: Ctx<TCtxMeta>): Promise<SyncPlansResponse>;
+  syncPlans(req: SyncPlansRequest, ctx: Ctx<TCtxMeta>): Promise<SyncPlansPayload>;
 
   /**
    * Outcome reporting. Sellers report what actually happened (impressions
    * delivered, spend incurred, status transitions) so the agent can
    * calibrate future decisions.
    */
-  reportPlanOutcome(req: ReportPlanOutcomeRequest, ctx: Ctx<TCtxMeta>): Promise<ReportPlanOutcomeResponse>;
+  reportPlanOutcome(req: ReportPlanOutcomeRequest, ctx: Ctx<TCtxMeta>): Promise<ReportPlanOutcomePayload>;
 
   /**
    * Audit log read. Returns the chronological history of governance
    * decisions + outcome reports for a plan.
    */
-  getPlanAuditLogs(req: GetPlanAuditLogsRequest, ctx: Ctx<TCtxMeta>): Promise<GetPlanAuditLogsResponse>;
+  getPlanAuditLogs(req: GetPlanAuditLogsRequest, ctx: Ctx<TCtxMeta>): Promise<GetPlanAuditLogsPayload>;
 }

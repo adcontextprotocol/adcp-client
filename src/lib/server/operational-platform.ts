@@ -53,6 +53,7 @@ import type {
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
 } from '../types/tools.generated';
+import type { ServerPayload } from '../types/server-payload';
 import type { AudienceStatus } from './decisioning/specialisms/audiences';
 
 /**
@@ -147,7 +148,7 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
    * Throw `AdcpError` for structured rejection (`NOT_CANCELLABLE`,
    * `CONFLICT`, etc.). Generic thrown errors propagate to the caller.
    */
-  updateMediaBuy(ctx: TCtx, request: UpdateMediaBuyRequest): Promise<UpdateMediaBuyResponse>;
+  updateMediaBuy(ctx: TCtx, request: UpdateMediaBuyRequest): Promise<ServerPayload<UpdateMediaBuyResponse>>;
 
   /**
    * Fetch delivery metrics for one or more media buys. Required for
@@ -171,7 +172,7 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
     startTime: string,
     endTime: string,
     args?: Record<string, unknown>
-  ): Promise<GetMediaBuyDeliveryResponse>;
+  ): Promise<ServerPayload<GetMediaBuyDeliveryResponse>>;
 
   /**
    * Poll upstream for the current status of one or more audiences.
@@ -222,7 +223,7 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
     contextId?: string,
     brand?: Record<string, unknown>,
     sourceChain?: readonly string[]
-  ): Promise<GetProductsResponse>;
+  ): Promise<ServerPayload<GetProductsResponse>>;
 }
 
 /**
