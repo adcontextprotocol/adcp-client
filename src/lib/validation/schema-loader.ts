@@ -737,11 +737,7 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
  *
  * @internal — not part of the public API surface; may change without a major bump.
  */
-export function schemaDeclaresTopLevelField(
-  toolName: string,
-  field: string,
-  version: string = ADCP_VERSION
-): boolean {
+export function schemaDeclaresTopLevelField(toolName: string, field: string, version: string = ADCP_VERSION): boolean {
   try {
     const s = ensureInit(version);
     const cacheKey = `${toolName}::request`;

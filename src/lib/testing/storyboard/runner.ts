@@ -4501,7 +4501,6 @@ export function applyBrandInvariant(
  * those rather than overwriting them.
  */
 export function applyDisableSandboxHint(request: Record<string, unknown>): Record<string, unknown> {
-
   const existingExt = request.ext;
   const existingExtObj =
     existingExt != null && typeof existingExt === 'object' && !Array.isArray(existingExt)

@@ -4,9 +4,10 @@
  * Issue #579 — sellers that scope session state by brand lost cross-step
  * state when a create step sent `brand: acmeoutdoor.example` but a follow-up
  * get/update/delete step either omitted brand or let it default to
- * `test.example`. The runner now overrides brand on every outgoing request
- * after builder / sample_request resolution so a storyboard run lands in one
- * session, regardless of per-tool authorship.
+ * `test.example`. The runner now writes the configured brand into every
+ * outgoing request through the addressing fields that the tool schema allows
+ * after builder / sample_request resolution, so a storyboard run lands in one
+ * session regardless of per-tool authorship.
  */
 
 const { describe, test, it, before } = require('node:test');
@@ -223,13 +224,14 @@ describe('applyBrandInvariant', () => {
  * Reproduces the wire-level signature of issue #579: three steps in a run
  * that each try to set a different brand (via sample_request, via context,
  * and via omission). Before the fix, the outgoing MCP `tools/call` would
- * carry three different brand domains. After the fix, all three must
- * converge on `options.brand`. This catches regressions that move or drop
- * the `applyBrandInvariant` call in `executeStep` even when the helper
- * itself still behaves correctly.
+ * carry three different account brand domains. After the fix, all three must
+ * converge on `options.brand` through `account.brand`; `list_creatives` does
+ * not declare top-level `brand`. This catches regressions that move or drop
+ * the `applyBrandInvariant` call in `executeStep` even when the helper itself
+ * still behaves correctly.
  */
 describe('runStoryboard: brand invariant on the wire', () => {
-  it('sends options.brand on every step regardless of sample_request authorship', async () => {
+  it('sends options.brand through account.brand regardless of sample_request authorship', async () => {
     const seen = [];
     const server = http.createServer(async (req, res) => {
       const chunks = [];
@@ -299,10 +301,12 @@ describe('runStoryboard: brand invariant on the wire', () => {
 
       assert.strictEqual(seen.length, 3, `expected 3 tool calls, got ${seen.length}`);
       for (const call of seen) {
-        assert.deepStrictEqual(call.args.brand, BRAND, `step ${call.name} brand diverged`);
-        if (call.args.account && typeof call.args.account === 'object' && !Array.isArray(call.args.account)) {
-          assert.deepStrictEqual(call.args.account.brand, BRAND, 'account.brand diverged');
-        }
+        assert.strictEqual(call.args.brand, undefined, `step ${call.name} should not carry top-level brand`);
+        assert.ok(
+          call.args.account && typeof call.args.account === 'object' && !Array.isArray(call.args.account),
+          `step ${call.name} should carry an account`
+        );
+        assert.deepStrictEqual(call.args.account.brand, BRAND, 'account.brand diverged');
       }
     } finally {
       server.close();
