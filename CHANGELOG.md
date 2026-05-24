@@ -1,5 +1,21 @@
 # Changelog
 
+## 8.1.0-beta.9
+
+### Patch Changes
+
+- c9a2e63: Expose generated input helpers for brand discovery and verification custom tools, including a full-schema helper for union-shaped `verify_brand_claim` requests.
+- e52f1bf: Preserve ZodObject helpers for safe generated object intersections, including `validate_property_delivery` request schemas used for MCP tool registration.
+- 94ba961: Restore ZodObject helper access on ProductSchema and marker-backed canonical format schemas by collapsing marker-only intersections during schema generation.
+
+  Also preserve exact known-key typing for exported tool request/input schema maps while keeping dynamic string lookups explicitly nullable.
+
+- eb0d260: Restore `ZodObject` ergonomics for generated schemas whose only intersection arms are opaque `Record<string, unknown>` markers.
+
+  `ProductSchema` and related marker-only format schemas now expose object helpers like `.extend()`, `.omit()`, `.pick()`, and `.shape` again without changing runtime validation behavior.
+
+- 314ea71: Type server/platform handler returns as domain payloads rather than requiring protocol task-envelope fields from generated wire response types. The SDK continues to stamp envelope fields such as `status: "completed"` at dispatch time, and exports `ServerPayload<T>` for adopters that want explicit payload return annotations.
+
 ## 8.1.0-beta.8
 
 ### Minor Changes
