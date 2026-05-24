@@ -32,6 +32,18 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 npm install @adcp/sdk
 ```
 
+### Narrow type imports (`@adcp/sdk/types/<tool>`)
+
+Adopters who only need a single AdCP tool's types can import a per-tool slice instead of the full surface. Each slice is a self-contained `.d.ts` covering the tool's `Request` / `Response` / `Success` / `Error` / `Submitted` types and every type they reference:
+
+```ts
+import type { SyncAccountsRequest } from '@adcp/sdk/types/sync-accounts';
+```
+
+Why bother: the full `@adcp/sdk` type surface is ~45,000 lines and crashes `tsc` at Node's default 4 GB heap under `strict + skipLibCheck:false`. A single per-tool slice peaks at ~50 MB. That's the difference between adopters chasing the cryptic `FATAL: mark-compact` Node flag and just having their build pass.
+
+Slices use kebab-case filenames matching the schema cache (`sync_accounts` → `@adcp/sdk/types/sync-accounts`). Requires `moduleResolution: "node16"` / `"nodenext"` / `"bundler"` on the adopter side. A machine-readable index of available slices ships at `@adcp/sdk/types/per-tool-index.json`.
+
 ## Quick Start: Distributed Operations
 
 ```typescript

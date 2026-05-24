@@ -79,6 +79,10 @@ jobs:
       - name: Adopter type-check (catch d.ts leaks)
         run: npm run check:adopter-types
 
+      - name: Adopter type-check — narrow per-tool imports (#1944)
+        run: npm run check:adopter-types-narrow
+        timeout-minutes: 10
+
       - name: Typecheck examples
         run: npm run typecheck:examples
 
