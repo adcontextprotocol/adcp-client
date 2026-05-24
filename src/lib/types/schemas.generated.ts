@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-24T13:38:18.504Z
+// Generated at: 2026-05-24T14:49:43.372Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6070,7 +6070,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const PreviewCreativeRequestSchema: z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
+export const PreviewCreativeRequestSchema: z.ZodObject<{ [K in keyof PreviewCreativeRequest]-?: z.ZodType<PreviewCreativeRequest[K], PreviewCreativeRequest[K]> }, any> & z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     request_type: z.union([z.literal("single"), z.literal("batch"), z.literal("variant")]),
@@ -9000,7 +9000,7 @@ export const CreateMediaBuyResponseSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
 
-export const UpdateMediaBuyRequestSchema: z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
+export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaBuyRequest]-?: z.ZodType<UpdateMediaBuyRequest[K], UpdateMediaBuyRequest[K]> }, any> & z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema,
