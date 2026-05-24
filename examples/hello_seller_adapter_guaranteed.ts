@@ -72,6 +72,9 @@ import {
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
+  type GetProductsPayload,
+  type GetMediaBuyDeliveryPayload,
+  type GetMediaBuysPayload,
   type AccountStore,
   type Account,
   type SyncCreativesRow,
@@ -86,9 +89,7 @@ import type {
   UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
-  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
-  GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
@@ -730,7 +731,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
   // level. See `decisioning.type-checks.ts` for the regression-locked
   // patterns.
   sales: SalesCorePlatform<NetworkMeta> & SalesIngestionPlatform<NetworkMeta> = {
-    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsResponse> => {
+    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
       // Storyboard sends buying_mode: 'brief' with a free-text brief —
@@ -753,7 +754,6 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
       return {
-        status: 'completed',
         products: guaranteed.map(p => projectProduct(p, publisherDomain)),
         cache_scope: 'account',
       };
@@ -1019,7 +1019,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       };
     },
 
-    getMediaBuys: async (req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysResponse> => {
+    getMediaBuys: async (req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const orders = await upstream.listOrders(networkCode);
       const filtered = req.media_buy_ids ? orders.filter(o => req.media_buy_ids!.includes(o.order_id)) : orders;
@@ -1049,7 +1049,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           };
         })
       );
-      return { status: 'completed', media_buys: buys };
+      return { media_buys: buys };
     },
 
     syncCreatives: async (creatives, ctx): Promise<SyncCreativesRow[]> => {
@@ -1090,7 +1090,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       return rows;
     },
 
-    getMediaBuyDelivery: async (req: GetMediaBuyDeliveryRequest, ctx): Promise<GetMediaBuyDeliveryResponse> => {
+    getMediaBuyDelivery: async (req: GetMediaBuyDeliveryRequest, ctx): Promise<GetMediaBuyDeliveryPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const ids = req.media_buy_ids ?? [];
       const deliveries = await Promise.all(ids.map(id => upstream.getDelivery(networkCode, id)));
@@ -1111,7 +1111,6 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const aggregateClicks = present.reduce((s, d) => s + d.totals.clicks, 0);
 
       return {
-        status: 'completed',
         reporting_period: { start: earliest, end: latest },
         currency,
         aggregated_totals: {

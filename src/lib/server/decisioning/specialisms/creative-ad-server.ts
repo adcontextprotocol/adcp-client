@@ -27,6 +27,7 @@
 import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   BuildCreativeRequest,
   CreativeManifest,
@@ -46,6 +47,11 @@ import type { SyncCreativesRow } from './sales';
 
 type Creative = CreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
+export type GetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
 
 export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -80,7 +86,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * does not carry an `account` field; narrow `ctx.account` before reading
    * `ctx_metadata` / `id`. See {@link NoAccountCtx}.
    */
-  previewCreative(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativePayload>;
 
   /**
    * Format catalog. Optional because adopters who delegate format definitions
@@ -92,7 +98,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   listCreativeFormats?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsResponse>;
+  ): Promise<ListCreativeFormatsPayload>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
@@ -114,7 +120,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * graph. When `req.include_pricing`, include vendor pricing options
    * on each creative.
    */
-  listCreatives(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesResponse>;
+  listCreatives(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
 
   /**
    * Per-creative delivery actuals (impressions, spend, pacing). Sync —
@@ -135,5 +141,5 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * through and the platform owns fan-out. Sellers that can't compute
    * cross-cuts omit them; buyers fall back to per-row values.
    */
-  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryResponse>;
+  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryPayload>;
 }

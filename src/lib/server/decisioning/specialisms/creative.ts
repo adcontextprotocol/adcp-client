@@ -18,6 +18,7 @@
 import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   CreativeAsset,
   CreativeManifest,
@@ -64,6 +65,9 @@ export type BuildCreativeReturn =
 
 type Creative = CreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -132,7 +136,7 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * when `accounts.resolve(undefined)` returned null. Narrow before reading
    * `ctx.account.ctx_metadata`. See {@link NoAccountCtx}.
    */
-  previewCreative?(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative?(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativePayload>;
 
   /**
    * Format catalog. Buyers call `list_creative_formats` to discover the
@@ -160,7 +164,7 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
   listCreativeFormats?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsResponse>;
+  ): Promise<ListCreativeFormatsPayload>;
 
   /**
    * Refine a prior generation. `taskId` references a prior submission.

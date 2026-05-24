@@ -29,6 +29,7 @@ import type {
   GetAccountFinancialsRequest,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
+import type { ServerPayload } from '../../types/server-payload';
 import type { NotificationConfig } from '../../types/v3-1-beta';
 import type { CursorPage, CursorRequest } from './pagination';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
@@ -596,7 +597,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * pattern as `accounts.resolve`. Prefer `ctx.agent` for principal-keyed
    * commercial gates; see `upsert?` for the rationale.
    */
-  reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ReportUsageResponse>;
+  reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ServerPayload<ReportUsageResponse>>;
 
   /**
    * get_account_financials API surface. Operator-billed platforms expose

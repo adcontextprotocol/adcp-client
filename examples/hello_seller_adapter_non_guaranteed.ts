@@ -66,6 +66,10 @@ import {
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
+  type GetProductsPayload,
+  type GetMediaBuyDeliveryPayload,
+  type GetMediaBuysPayload,
+  type ListCreativeFormatsPayload,
   type AccountStore,
   type Account,
   type AdcpMediaBuyStatus,
@@ -81,10 +85,7 @@ import type {
   UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
-  GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
-  GetMediaBuyDeliveryResponse,
-  ListCreativeFormatsResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
@@ -580,7 +581,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
   // all-optional and `RequiredPlatformsFor<'sales-non-guaranteed'>` requires
   // the closed shape on the way out.
   sales: SalesCorePlatform<NetworkMeta> & SalesIngestionPlatform<NetworkMeta> = {
-    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsResponse> => {
+    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
       // When the buyer provides structured filters (flight dates, budget),
@@ -594,7 +595,6 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
       return {
-        status: 'completed',
         products: products.map(p => projectProduct(p, publisherDomain)),
         cache_scope: 'account',
       };
@@ -790,7 +790,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       };
     },
 
-    getMediaBuyDelivery: async (req: GetMediaBuyDeliveryRequest, ctx): Promise<GetMediaBuyDeliveryResponse> => {
+    getMediaBuyDelivery: async (req: GetMediaBuyDeliveryRequest, ctx): Promise<GetMediaBuyDeliveryPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const requestedIds = req.media_buy_ids ?? [];
       // Multi-id pass-through per #1342 contract — fan out per id; framework
@@ -828,8 +828,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           `[sales-non-guaranteed] get_media_buy_delivery: ${missing.length} unknown media_buy_id(s) returned no delivery rows: ${missing.join(', ')}`
         );
       }
-      const response: GetMediaBuyDeliveryResponse = {
-        status: 'completed',
+      const response: GetMediaBuyDeliveryPayload = {
         currency: filtered[0]?.currency ?? 'USD',
         reporting_period: {
           start: filtered[0]?.reporting_period.start ?? new Date().toISOString(),
@@ -858,7 +857,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       return response;
     },
 
-    getMediaBuys: async (req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysResponse> => {
+    getMediaBuys: async (req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysPayload> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const requestedIds = req.media_buy_ids ?? [];
       let orders: UpstreamOrder[];
@@ -896,7 +895,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           };
         })
       );
-      const response: GetMediaBuysResponse = { status: 'completed', media_buys };
+      const response: GetMediaBuysPayload = { media_buys };
       return response;
     },
 
@@ -943,7 +942,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       return out;
     },
 
-    listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {
+    listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsPayload> => {
       // Publisher-owned format catalog. The mock doesn't have a discrete
       // formats endpoint (formats live inline on Product); production sellers
       // typically expose `/v1/formats` separately. SWAP: replace with your
@@ -964,7 +963,6 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         FormatAsset.url({ asset_id: 'click_url', required: true }),
       ];
       return {
-        status: 'completed',
         formats: [
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_300x250' },
