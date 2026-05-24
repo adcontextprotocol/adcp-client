@@ -37,6 +37,7 @@
 
 import { AdcpError, isTaskHandoff, type TaskHandoff } from '../async-outcome';
 import type { GetProductsRequest, GetProductsResponse, Product, Proposal } from '../../../types/tools.generated';
+import type { ServerPayload } from '../../../types/server-payload';
 import {
   detectFinalizeAction,
   enforceProposalExpiry,
@@ -94,7 +95,7 @@ export type FinalizeInterceptResult<TRecipe extends Recipe = Recipe> =
   | {
       kind: 'intercepted';
       result: FinalizeProposalSuccess<TRecipe> | TaskHandoff<FinalizeProposalSuccess<TRecipe>>;
-      project: (success: FinalizeProposalSuccess<TRecipe>) => Promise<GetProductsResponse>;
+      project: (success: FinalizeProposalSuccess<TRecipe>) => Promise<ServerPayload<GetProductsResponse>>;
     }
   | { kind: 'pass' };
 
@@ -174,7 +175,7 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
   const path: 'inline' | 'handoff' = isTaskHandoff(result) ? 'handoff' : 'inline';
   const finalizeProposalId = finalizeEntry.proposalId;
 
-  const project = async (success: FinalizeProposalSuccess<TRecipe>): Promise<GetProductsResponse> => {
+  const project = async (success: FinalizeProposalSuccess<TRecipe>): Promise<ServerPayload<GetProductsResponse>> => {
     if (!isFinalizeSuccess<TRecipe>(success)) {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
@@ -213,7 +214,7 @@ function projectFinalizeResponse(args: {
   request: GetProductsRequest;
   committedProposal: Record<string, unknown>;
   finalizeProposalId: string;
-}): GetProductsResponse {
+}): ServerPayload<GetProductsResponse> {
   const refineEntries = (args.request as { refine?: ReadonlyArray<Record<string, unknown>> }).refine;
   const refinementApplied: Array<Record<string, unknown>> = [];
   if (refineEntries) {
@@ -247,12 +248,11 @@ function projectFinalizeResponse(args: {
   // `get_products({ product_ids: [...] })` keyed off
   // `proposals[0].allocations[].product_id`.
   return {
-    status: 'completed',
     cache_scope: 'account',
     products: [],
     proposals: [args.committedProposal as unknown as Proposal],
     refinement_applied: refinementApplied,
-  } as unknown as GetProductsResponse;
+  } as unknown as ServerPayload<GetProductsResponse>;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +270,7 @@ function projectFinalizeResponse(args: {
  * @public
  */
 export async function maybePersistDraftAfterGetProducts<TRecipe extends Recipe>(args: {
-  response: GetProductsResponse;
+  response: ServerPayload<GetProductsResponse>;
   store: ProposalStore<TRecipe> | undefined;
   ctx: { account: { id: string } };
 }): Promise<void> {

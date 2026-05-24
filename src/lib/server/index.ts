@@ -39,6 +39,7 @@ export type { OperationalPlatform, OperationalContext } from './operational-plat
 
 export { pickWireSpecFields, scrubExtensions, WIRE_SPEC_FIELDS } from './wire-safe';
 export type { WireSafe, WireSpecRequestName, ScrubExtensionsOptions } from './wire-safe';
+export type { ServerPayload } from '../types/server-payload';
 
 export { assertNoExampleTlds } from './example-tld-guard';
 export type { AssertNoExampleTldsOptions } from './example-tld-guard';

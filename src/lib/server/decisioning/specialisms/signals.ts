@@ -26,6 +26,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 import type {
   GetSignalsRequest,
   GetSignalsResponse,
@@ -34,6 +35,8 @@ import type {
 } from '../../../types/tools.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
+
+export type GetSignalsPayload = ServerPayload<GetSignalsResponse>;
 
 export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -46,7 +49,7 @@ export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
    * `'POLICY_VIOLATION'` if the buyer doesn't have rights to the data
    * category they're requesting).
    */
-  getSignals(req: GetSignalsRequest, ctx: Ctx<TCtxMeta>): Promise<GetSignalsResponse>;
+  getSignals(req: GetSignalsRequest, ctx: Ctx<TCtxMeta>): Promise<GetSignalsPayload>;
 
   /**
    * Provision a signal onto one or more destination platforms (Snap,

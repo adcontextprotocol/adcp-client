@@ -473,6 +473,25 @@ describe('createAdcpServer', () => {
       assert.strictEqual(caps.status, 'completed');
     });
 
+    it('preserves governance_context on check_governance while stamping envelope status', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        governance: {
+          checkGovernance: async () => ({
+            check_id: 'check_1',
+            verdict: 'approved',
+            plan_id: 'plan_1',
+            explanation: 'Approved',
+            governance_context: 'gc_signed_token_123',
+          }),
+        },
+      });
+      const caps = await callTool(server, 'check_governance', {});
+      assert.strictEqual(caps.status, 'completed');
+      assert.strictEqual(caps.governance_context, 'gc_signed_token_123');
+    });
+
     it('splits MediaBuyStatus on create_media_buy into media_buy_status', async () => {
       // Legacy handlers may still return the media-buy lifecycle in `status`.
       // The server response must expose the AdCP envelope status at `status`
