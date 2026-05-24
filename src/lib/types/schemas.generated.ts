@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-24T13:59:59.954Z
+// Generated at: 2026-05-24T01:31:36.131Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -631,7 +631,7 @@ export const NoneSchema = z.record(z.string(), z.unknown());
 
 export const SizeModeMutexSchema = z.union([FixedSchema, MultiSizeSchema, ResponsiveSchema, NoneSchema]);
 
-export const CanonicalFormatDisplayTagSchema = z.object({
+export const CanonicalFormatDisplayTagSchema = SizeModeMutexSchema.and(z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -660,7 +660,7 @@ export const CanonicalFormatDisplayTagSchema = z.object({
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     om_sdk_required: z.boolean().optional()
-}).passthrough();
+}).passthrough());
 
 export const PriceAdjustmentKindSchema = z.union([z.literal("fee"), z.literal("discount"), z.literal("commission"), z.literal("settlement")]);
 
@@ -698,7 +698,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const DerivativeTypeSchema = z.union([z.literal("clip"), z.literal("highlight"), z.literal("recap"), z.literal("trailer"), z.literal("bonus")]);
 
-export const CanonicalFormatImageSchema = z.object({
+export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -729,9 +729,9 @@ export const CanonicalFormatImageSchema = z.object({
     cta_values: z.array(z.string()).optional(),
     asset_source: z.union([z.literal("buyer_uploaded"), z.literal("publisher_host_recorded"), z.literal("seller_pre_rendered_from_brief"), z.literal("seller_human_designed"), z.literal("agent_synthesized")]).optional(),
     buyer_asset_acceptance: z.union([z.literal("accepted"), z.literal("rejected")]).optional()
-}).passthrough();
+}).passthrough());
 
-export const CanonicalFormatHTML5BannerSchema = z.object({
+export const CanonicalFormatHTML5BannerSchema = SizeModeMutexSchema.and(z.object({
     experimental: z.boolean().optional(),
     deprecated: z.boolean().optional(),
     v1_translatable: z.boolean().optional(),
@@ -765,7 +765,7 @@ export const CanonicalFormatHTML5BannerSchema = z.object({
     backup_image_required: z.boolean().optional(),
     backup_image_max_size_kb: z.number().min(1).optional(),
     ssl_required: z.boolean().optional()
-}).passthrough();
+}).passthrough());
 
 export const DisplayTagFormatDeclarationSchema = z.object({
     format_kind: z.literal("display_tag"),
@@ -2684,7 +2684,7 @@ export const ValidateContentDeliveryResponseSchema = z.object({
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]));
 
-export const TasksGetRequestSchema = AdCPVersionEnvelopeSchema.merge(z.object({
+export const TasksGetRequestSchema = AdCPVersionEnvelopeSchema.and(z.object({
     task_id: z.string(),
     include_history: z.boolean().optional(),
     include_result: z.boolean().optional(),
@@ -2948,7 +2948,7 @@ export const SyncCatalogsInputRequiredSchema = z.object({
 
 export const SortDirectionSchema = z.union([z.literal("asc"), z.literal("desc")]);
 
-export const TasksListResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
+export const TasksListResponseSchema = AdCPVersionEnvelopeSchema.and(ProtocolEnvelopeSchema).and(z.object({
     query_summary: z.object({
         total_matching: z.number().min(0).optional(),
         returned: z.number().min(0).optional(),
@@ -5170,62 +5170,62 @@ export const V1V2CanonicalFormatMappingRegistrySchema = z.object({
     }).passthrough())
 }).passthrough();
 
-export const GroupImageAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupImageAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("image"),
     requirements: ImageAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupVideoAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupVideoAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("video"),
     requirements: VideoAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupAudioAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupAudioAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("audio"),
     requirements: AudioAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupTextAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupTextAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("text"),
     requirements: TextAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupMarkdownAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupMarkdownAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("markdown"),
     requirements: MarkdownAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupHtmlAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupHtmlAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("html"),
     requirements: HTMLAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupCssAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupCssAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("css"),
     requirements: CSSAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupJavaScriptAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupJavaScriptAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("javascript"),
     requirements: JavaScriptAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupVastAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupVastAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("vast"),
     requirements: VASTAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupDaastAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupDaastAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("daast"),
     requirements: DAASTAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupUrlAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupUrlAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("url"),
     requirements: URLAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const GroupWebhookAssetSchema = BaseGroupAssetSchema.merge(z.object({
+export const GroupWebhookAssetSchema = BaseGroupAssetSchema.and(z.object({
     asset_type: z.literal("webhook"),
     requirements: WebhookAssetRequirementsSchema.optional()
 }).passthrough());
@@ -5401,68 +5401,68 @@ export const BaseIndividualAssetSchema = z.object({
     asset_group_id: z.string().optional()
 }).passthrough();
 
-export const IndividualVideoAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualVideoAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("video"),
     requirements: VideoAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualAudioAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualAudioAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("audio"),
     requirements: AudioAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualTextAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualTextAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("text"),
     requirements: TextAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualMarkdownAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualMarkdownAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("markdown"),
     requirements: MarkdownAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualHtmlAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualHtmlAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("html"),
     requirements: HTMLAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualCssAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualCssAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("css"),
     requirements: CSSAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualJavaScriptAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualJavaScriptAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("javascript"),
     requirements: JavaScriptAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualZipAssetSchema = BaseIndividualAssetSchema;
 
-export const IndividualVastAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualVastAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("vast"),
     requirements: VASTAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualDaastAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualDaastAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("daast"),
     requirements: DAASTAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualUrlAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualUrlAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("url"),
     requirements: URLAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualWebhookAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualWebhookAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("webhook"),
     requirements: WebhookAssetRequirementsSchema.optional()
 }).passthrough());
 
-export const IndividualBriefAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualBriefAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("brief")
 }).passthrough());
 
-export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("catalog")
 }).passthrough());
 
@@ -5746,10 +5746,10 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         is_final: z.boolean().optional(),
         finalized_at: z.iso.datetime().optional(),
         pricing_model: PricingModelSchema.optional(),
-        totals: DeliveryMetricsSchema.merge(z.object({
+        totals: DeliveryMetricsSchema.and(z.object({
             effective_rate: z.number().min(0).optional()
         }).passthrough()),
-        by_package: z.array(DeliveryMetricsSchema.merge(z.object({
+        by_package: z.array(DeliveryMetricsSchema.and(z.object({
             package_id: z.string(),
             pacing_index: z.number().min(0).optional(),
             pricing_model: PricingModelSchema.optional(),
@@ -5776,40 +5776,40 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
                     vendor: BrandReferenceSchema,
                     metric_id: VendorMetricIDSchema
                 }).passthrough()])).optional(),
-            by_catalog_item: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_catalog_item: z.array(DeliveryMetricsSchema.and(z.object({
                 content_id: z.string().optional(),
                 content_id_type: ContentIDTypeSchema.optional()
             }).passthrough())).optional(),
-            by_creative: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_creative: z.array(DeliveryMetricsSchema.and(z.object({
                 creative_id: z.string(),
                 weight: z.number().min(0).max(100).optional()
             }).passthrough())).optional(),
-            by_keyword: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_keyword: z.array(DeliveryMetricsSchema.and(z.object({
                 keyword: z.string().optional(),
                 match_type: MatchTypeSchema.optional()
             }).passthrough())).optional(),
-            by_geo: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_geo: z.array(DeliveryMetricsSchema.and(z.object({
                 geo_level: GeographicTargetingLevelSchema.optional(),
                 system: z.string().optional(),
                 geo_code: z.string().optional(),
                 geo_name: z.string().optional()
             }).passthrough())).optional(),
             by_geo_truncated: z.boolean().optional(),
-            by_device_type: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_device_type: z.array(DeliveryMetricsSchema.and(z.object({
                 device_type: DeviceTypeSchema.optional()
             }).passthrough())).optional(),
             by_device_type_truncated: z.boolean().optional(),
-            by_device_platform: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_device_platform: z.array(DeliveryMetricsSchema.and(z.object({
                 device_platform: DevicePlatformSchema.optional()
             }).passthrough())).optional(),
             by_device_platform_truncated: z.boolean().optional(),
-            by_audience: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_audience: z.array(DeliveryMetricsSchema.and(z.object({
                 audience_id: z.string().optional(),
                 audience_source: AudienceSourceSchema.optional(),
                 audience_name: z.string().optional()
             }).passthrough())).optional(),
             by_audience_truncated: z.boolean().optional(),
-            by_placement: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_placement: z.array(DeliveryMetricsSchema.and(z.object({
                 placement_id: z.string().optional(),
                 placement_name: z.string().optional()
             }).passthrough())).optional(),
@@ -5828,7 +5828,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             window_start: z.iso.datetime(),
             window_end: z.iso.datetime(),
             totals: DeliveryMetricsSchema,
-            by_package: z.array(DeliveryMetricsSchema.merge(z.object({
+            by_package: z.array(DeliveryMetricsSchema.and(z.object({
                 package_id: z.string()
             }).passthrough())).optional(),
             is_final: z.boolean().optional(),
@@ -6070,7 +6070,7 @@ export const BuildCreativeMultiSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const PreviewCreativeRequestSchema: z.ZodObject<{ [K in keyof PreviewCreativeRequest]-?: z.ZodType<PreviewCreativeRequest[K], PreviewCreativeRequest[K]> }, any> & z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
+export const PreviewCreativeRequestSchema: z.ZodType<PreviewCreativeRequest & Record<string, unknown>, PreviewCreativeRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     request_type: z.union([z.literal("single"), z.literal("batch"), z.literal("variant")]),
@@ -6125,7 +6125,7 @@ export const PreviewCreativeVariantResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CreativeVariantSchema = DeliveryMetricsSchema.merge(z.object({
+export const CreativeVariantSchema = DeliveryMetricsSchema.and(z.object({
     variant_id: z.string(),
     manifest: CreativeManifestSchema.optional(),
     generation_context: z.object({
@@ -7501,7 +7501,7 @@ export const ListAccountsResponseSchema = z.object({
     payload: z.object({}).passthrough().optional(),
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
-    accounts: z.array(AccountSchema.merge(z.object({
+    accounts: z.array(AccountSchema.and(z.object({
         authorization: AccountAuthorizationSchema.optional()
     }).passthrough())),
     errors: z.array(ErrorSchema).optional(),
@@ -7793,7 +7793,7 @@ export const DigestAttestationSchema = z.object({
     attestation_mode: z.literal("digest")
 }).passthrough();
 
-export const IndividualImageAssetSchema = BaseIndividualAssetSchema.merge(z.object({
+export const IndividualImageAssetSchema = BaseIndividualAssetSchema.and(z.object({
     asset_type: z.literal("image"),
     requirements: ImageAssetRequirementsSchema.optional()
 }).passthrough());
@@ -8234,7 +8234,7 @@ export const V2ManifestCanonicalFormatKind1Schema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const TasksListRequestSchema = AdCPVersionEnvelopeSchema.merge(z.object({
+export const TasksListRequestSchema = AdCPVersionEnvelopeSchema.and(z.object({
     filters: z.object({
         protocol: AdCPProtocolSchema.optional(),
         protocols: z.array(AdCPProtocolSchema).optional(),
@@ -8260,7 +8260,7 @@ export const TasksListRequestSchema = AdCPVersionEnvelopeSchema.merge(z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const ListCreativeFormatsRequestCreativeAgentSchema = AdCPVersionEnvelopeSchema.merge(z.object({
+export const ListCreativeFormatsRequestCreativeAgentSchema = AdCPVersionEnvelopeSchema.and(z.object({
     format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
     type: z.union([z.literal("audio"), z.literal("video"), z.literal("display"), z.literal("dooh")]).optional(),
     asset_types: z.array(z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("html"), z.literal("javascript"), z.literal("url")])).optional(),
@@ -8563,7 +8563,7 @@ export const CreatePropertyListResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ValidatePropertyDeliveryRequestSchema = AdCPVersionEnvelopeSchema.merge(z.object({
+export const ValidatePropertyDeliveryRequestSchema = AdCPVersionEnvelopeSchema.and(z.object({
     list_id: z.string(),
     account: AccountReferenceSchema.optional(),
     records: z.array(DeliveryRecordSchema),
@@ -9000,7 +9000,7 @@ export const CreateMediaBuyResponseSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([CreateMediaBuySuccessSchema, CreateMediaBuyErrorSchema, CreateMediaBuySubmittedSchema]));
 
-export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaBuyRequest]-?: z.ZodType<UpdateMediaBuyRequest[K], UpdateMediaBuyRequest[K]> }, any> & z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
+export const UpdateMediaBuyRequestSchema: z.ZodType<UpdateMediaBuyRequest & Record<string, unknown>, UpdateMediaBuyRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     account: AccountReferenceSchema,
@@ -9217,7 +9217,7 @@ export const GetRightsResponseSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([GetRightsSuccessSchema, GetRightsErrorSchema]));
 
-export const SearchBrandsResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).and(z.union([SearchBrandsSuccessSchema, SearchBrandsErrorSchema]));
+export const SearchBrandsResponseSchema = AdCPVersionEnvelopeSchema.and(ProtocolEnvelopeSchema).and(z.union([SearchBrandsSuccessSchema, SearchBrandsErrorSchema]));
 
 export const VerifyBrandClaimsResponseBulkSchema = z.object({
     context_id: z.string().optional(),
@@ -9235,7 +9235,7 @@ export const VerifyBrandClaimsResponseBulkSchema = z.object({
     adcp_major_version: z.number().optional()
 }).passthrough().and(z.union([VerifyBrandClaimsSuccessSchema, VerifyBrandClaimsErrorSchema]));
 
-export const TasksGetResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
+export const TasksGetResponseSchema = AdCPVersionEnvelopeSchema.and(ProtocolEnvelopeSchema).and(z.object({
     task_id: z.string(),
     task_type: TaskTypeSchema,
     protocol: AdCPProtocolSchema,
@@ -9269,7 +9269,7 @@ export const TasksGetResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEn
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const ValidatePropertyDeliveryResponseSchema = AdCPVersionEnvelopeSchema.merge(ProtocolEnvelopeSchema).merge(z.object({
+export const ValidatePropertyDeliveryResponseSchema = AdCPVersionEnvelopeSchema.and(ProtocolEnvelopeSchema).and(z.object({
     compliant: z.boolean().optional(),
     list_id: z.string(),
     summary: z.object({

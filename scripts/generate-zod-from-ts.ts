@@ -274,7 +274,8 @@ function postProcessUndefinedUnions(content: string): string {
 
 /**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
- * from object schemas that already have .passthrough().
+ * and equivalent record-only union intersections from object schemas that
+ * already have .passthrough().
  *
  * ts-to-zod generates these for TypeScript types with index signatures like
  * `{ field: string } & { [k: string]: unknown }`. Since .passthrough() already
@@ -282,7 +283,9 @@ function postProcessUndefinedUnions(content: string): string {
  * ZodIntersection types that lose .shape access (needed by MCP SDK for tool registration).
  *
  * Also handles z.record(...).and(z.object({...})) patterns (record-first intersections)
- * by extracting just the z.object() portion.
+ * by extracting just the z.object() portion, plus
+ * z.union([RecordUnknownA, RecordUnknownB]).and(z.object({...})) where every
+ * union member is only a Record<string, unknown> container.
  */
 function postProcessRecordIntersections(content: string): string {
   let result = content;
@@ -293,7 +296,10 @@ function postProcessRecordIntersections(content: string): string {
   // Pass 2: Replace `z.record(...).and(CONTENT)` with CONTENT (only for redundant records)
   result = unwrapRecordIntersections(result);
 
-  // Pass 3: Strip `.and(z.union([...]))` where content contains z.never()
+  // Pass 3: Replace `z.union([RecordUnknown...]).and(CONTENT)` with CONTENT.
+  result = unwrapRecordUnionIntersections(result);
+
+  // Pass 4: Strip `.and(z.union([...]))` where content contains z.never()
   result = stripNeverUnionIntersections(result);
 
   return result;
@@ -443,6 +449,161 @@ function unwrapRecordIntersections(content: string): string {
         // z.record(...) not followed by .and( — keep as-is
         result += content.substring(recordStart, i);
       }
+    } else {
+      result += content[i];
+      i++;
+    }
+  }
+
+  return result;
+}
+
+function readBalancedBody(
+  content: string,
+  start: number,
+  openChar: '[' | '(',
+  closeChar: ']' | ')'
+): { body: string; end: number } | undefined {
+  let i = start;
+  let depth = 1;
+  let body = '';
+
+  while (i < content.length && depth > 0) {
+    if (content[i] === '"' || content[i] === "'") {
+      const quote = content[i];
+      body += content[i];
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        if (content[i] === '\\') {
+          body += content[i];
+          i++;
+        }
+        body += content[i];
+        i++;
+      }
+      if (i < content.length) {
+        body += content[i];
+        i++;
+      }
+      continue;
+    }
+
+    if (content[i] === openChar) depth++;
+    else if (content[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        return { body, end: i + 1 };
+      }
+    }
+
+    body += content[i];
+    i++;
+  }
+
+  return undefined;
+}
+
+function splitTopLevelCommaList(content: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+  let i = 0;
+
+  while (i < content.length) {
+    if (content[i] === '"' || content[i] === "'") {
+      const quote = content[i];
+      current += content[i];
+      i++;
+      while (i < content.length && content[i] !== quote) {
+        if (content[i] === '\\') {
+          current += content[i];
+          i++;
+        }
+        current += content[i];
+        i++;
+      }
+      if (i < content.length) {
+        current += content[i];
+        i++;
+      }
+      continue;
+    }
+
+    if (content[i] === '(' || content[i] === '[' || content[i] === '{') depth++;
+    else if (content[i] === ')' || content[i] === ']' || content[i] === '}') depth--;
+    else if (content[i] === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += content[i];
+    i++;
+  }
+
+  const finalPart = current.trim();
+  if (finalPart) parts.push(finalPart);
+  return parts;
+}
+
+function collectRedundantRecordSchemaNames(content: string): Set<string> {
+  const names = new Set<string>();
+  const recordSchemaPattern = /(?:export\s+)?const\s+(\w+)\s*=\s*z\.record\(z\.string\(\), z\.unknown\(\)\);/g;
+  for (const match of content.matchAll(recordSchemaPattern)) {
+    names.add(match[1]!);
+  }
+  return names;
+}
+
+function isRedundantRecordMember(member: string, recordSchemaNames: Set<string>): boolean {
+  const trimmed = member.trim();
+  return trimmed === 'z.record(z.string(), z.unknown())' || recordSchemaNames.has(trimmed);
+}
+
+/**
+ * Replace `z.union([RecordUnknownA, RecordUnknownB]).and(CONTENT)` with CONTENT.
+ *
+ * Some schema variants are intentionally opaque because TypeScript represents
+ * sibling-field constraints as `Record<string, unknown>` marker arms. Intersecting
+ * a union of those arms with the real object shape only removes ZodObject methods;
+ * the later `.passthrough()` object already accepts the same unknown keys.
+ */
+function unwrapRecordUnionIntersections(content: string): string {
+  const MARKER = 'z.union([';
+  const recordSchemaNames = collectRedundantRecordSchemaNames(content);
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (content.startsWith(MARKER, i)) {
+      const unionStart = i;
+      const unionBodyStart = i + MARKER.length;
+      const unionBody = readBalancedBody(content, unionBodyStart, '[', ']');
+
+      if (!unionBody || content[unionBody.end] !== ')') {
+        result += content[i];
+        i++;
+        continue;
+      }
+
+      const unionEnd = unionBody.end + 1;
+      const members = splitTopLevelCommaList(unionBody.body);
+      const isRedundantUnion =
+        members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames));
+
+      if (isRedundantUnion && content.startsWith('.and(', unionEnd)) {
+        const andBodyStart = unionEnd + '.and('.length;
+        const andBody = readBalancedBody(content, andBodyStart, '(', ')');
+        if (andBody && andBody.body.trimStart().startsWith('z.object(')) {
+          result += andBody.body;
+          i = andBody.end;
+          continue;
+        }
+      }
+
+      result += content.substring(unionStart, unionEnd);
+      i = unionEnd;
     } else {
       result += content[i];
       i++;

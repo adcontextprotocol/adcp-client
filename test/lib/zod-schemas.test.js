@@ -1,5 +1,6 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { z } = require('zod');
 
 describe('Zod Schema Validation', () => {
   let schemas;
@@ -21,6 +22,24 @@ describe('Zod Schema Validation', () => {
     assert.equal(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should support omit');
     assert.equal(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should support pick');
     assert.ok(schemas.CanonicalFormatImageSchema.shape.image_formats, 'canonical formats should expose object shape');
+  });
+
+  test('ProductSchema exposes ZodObject composition helpers', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.strictEqual(typeof schemas.ProductSchema.extend, 'function', 'ProductSchema should expose .extend()');
+    assert.strictEqual(typeof schemas.ProductSchema.omit, 'function', 'ProductSchema should expose .omit()');
+    assert.strictEqual(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should expose .pick()');
+
+    const extended = schemas.ProductSchema.extend({ _cached_at: z.string().datetime() });
+    const picked = schemas.ProductSchema.pick({ product_id: true });
+    assert.ok(extended.shape._cached_at, 'extended ProductSchema should include the extension field');
+    assert.ok(
+      picked.safeParse({ product_id: 'prod_123' }).success,
+      'picked ProductSchema should validate picked shape'
+    );
   });
 
   test('MediaBuySchema validates valid media buy', async () => {
