@@ -69,9 +69,14 @@ function shapeOf(s: unknown): InputShape | undefined {
  */
 export const TOOL_INPUT_SHAPES: Readonly<Record<string, Readonly<InputShape>>> = Object.freeze({
   ...Object.fromEntries(
-    Object.entries(TOOL_REQUEST_SCHEMAS).flatMap(([k, s]) => {
+    Object.entries(TOOL_REQUEST_SCHEMAS).map(([k, s]) => {
       const shape = shapeOf(s);
-      return shape ? [[k, shape] as const] : [];
+      if (!shape) {
+        throw new Error(
+          `TOOL_REQUEST_SCHEMAS["${k}"] has no .shape — schema must be a ZodObject (use merge() not and())`
+        );
+      }
+      return [k, shape] as const;
     })
   ),
   creative_approval: schemas.CreativeApprovalRequestSchema.shape,
