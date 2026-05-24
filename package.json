@@ -45,6 +45,9 @@
       "require": "./dist/lib/types/v3-1-beta/index.js",
       "types": "./dist/lib/types/v3-1-beta/index.d.ts"
     },
+    "./types/*": {
+      "types": "./dist/lib/types/*.d.ts"
+    },
     "./wholesale-feed-sync": {
       "import": "./dist/lib/wholesale-feed-sync/index.js",
       "require": "./dist/lib/wholesale-feed-sync/index.js",
@@ -228,6 +231,9 @@
       ],
       "upstream-recorder": [
         "dist/lib/upstream-recorder/index.d.ts"
+      ],
+      "types/*": [
+        "dist/lib/types/*.d.ts"
       ]
     }
   },
@@ -253,7 +259,7 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run schemas:ensure",
     "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js && npm test --workspace=packages/eslint-plugin --if-present",
@@ -294,6 +300,7 @@
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
+    "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "eslint 'src/lib/testing/**/*.ts'",
