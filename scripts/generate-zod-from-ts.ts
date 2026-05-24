@@ -552,7 +552,8 @@ function splitTopLevelCommaList(content: string): string[] {
 
 function collectRedundantRecordSchemaNames(content: string): Set<string> {
   const names = new Set<string>();
-  const recordSchemaPattern = /(?:export\s+)?const\s+(\w+)\s*=\s*z\.record\(z\.string\(\), z\.unknown\(\)\);/g;
+  const recordSchemaPattern =
+    /(?:export\s+)?const\s+(\w+)\s*=\s*z\.record\(\s*z\.string\(\),\s*z\.unknown\(\)\s*\)\s*;?/g;
   for (const match of content.matchAll(recordSchemaPattern)) {
     names.add(match[1]!);
   }

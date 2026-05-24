@@ -36,8 +36,10 @@ describe('Zod Schema Validation', () => {
     assert.strictEqual(typeof schemas.ProductSchema.pick, 'function', 'ProductSchema should expose .pick()');
 
     const extended = schemas.ProductSchema.extend({ _cached_at: z.string().datetime() });
+    const omitted = schemas.ProductSchema.omit({ description: true });
     const picked = schemas.ProductSchema.pick({ product_id: true });
     assert.ok(extended.shape._cached_at, 'extended ProductSchema should include the extension field');
+    assert.ok(!('description' in omitted.shape), 'omitted ProductSchema should remove the omitted field');
     assert.ok(
       picked.safeParse({ product_id: 'prod_123' }).success,
       'picked ProductSchema should validate picked shape'
