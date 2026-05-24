@@ -23,6 +23,7 @@
     "governance-fixtures-verdict-rename",
     "main-ci-3-1-beta-compat",
     "outcome-measurement-rename",
+    "per-tool-types-bundle-split",
     "product-card-self-rendering",
     "promote-query-upstream-traffic",
     "request-signing-conformance-cache",
