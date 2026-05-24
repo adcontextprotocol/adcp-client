@@ -467,7 +467,13 @@ function main(): void {
       // surfacing.
       const existing = allExports.get(name);
       if (existing) {
-        if (existing.body !== info.body) {
+        // Compare stripped bodies so that JSDoc-only divergence (same type emitted
+        // from two JSON Schema sources with different descriptions) does not produce
+        // a false-positive warning. Structural type drift still triggers the warn.
+        // TODO(#1976): root-cause fix — seed generateToolTypes with generatedCoreTypes
+        // so shared schemas (PurchaseType, AudienceConstraints, …) are not re-emitted
+        // in tools.generated.ts in the first place. Tracked in adcp-client#1976.
+        if (stripComments(existing.body) !== stripComments(info.body)) {
           console.warn(
             `[per-tool-types] export-name collision (different bodies): \`${name}\` defined ` +
               `in both ${path.relative(REPO_ROOT, existing.sourceFile)} and ` +
@@ -520,4 +526,8 @@ function main(): void {
   console.log(`[per-tool-types] OUT_DIR now contains ${out.length} per-tool slices`);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+export const __test__ = { stripComments };
