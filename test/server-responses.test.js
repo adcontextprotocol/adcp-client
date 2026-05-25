@@ -189,10 +189,7 @@ describe('mediaBuyResponse', () => {
     });
 
     assert.strictEqual('bank' in result.structuredContent.account.billing_entity, false);
-    assert.strictEqual(
-      'credentials' in result.structuredContent.account.notification_configs[0].authentication,
-      false
-    );
+    assert.strictEqual('credentials' in result.structuredContent.account.notification_configs[0].authentication, false);
     assert.strictEqual('bank' in result.structuredContent.invoice_recipient, false);
   });
 });

@@ -134,10 +134,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * sync regardless of arm — invalid requests reject before allocating
    * any state.
    */
-  acquireRights(
-    req: AcquireRightsRequest,
-    ctx: Ctx<TCtxMeta>
-  ): Promise<AcquireRightsPayload>;
+  acquireRights(req: AcquireRightsRequest, ctx: Ctx<TCtxMeta>): Promise<AcquireRightsPayload>;
 
   /**
    * Modify an existing rights grant — extend dates, adjust impression caps,
@@ -209,8 +206,5 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * Idempotency: required (`x-mutates-state: true`). Resubmission with
    * the same `idempotency_key` returns the original verdict.
    */
-  reviewCreativeApproval(
-    req: CreativeApprovalRequest,
-    ctx: Ctx<TCtxMeta>
-  ): Promise<CreativeApprovalPayload>;
+  reviewCreativeApproval(req: CreativeApprovalRequest, ctx: Ctx<TCtxMeta>): Promise<CreativeApprovalPayload>;
 }

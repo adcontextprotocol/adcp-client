@@ -208,10 +208,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  createMediaBuy?(
-    req: CreateMediaBuyRequest,
-    ctx: Ctx<TCtxMeta>
-  ): Promise<CreateMediaBuyHandlerResult>;
+  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<CreateMediaBuyHandlerResult>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
   // Spec inconsistency — same root cause as get_products above. The
@@ -251,10 +248,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(
-    creatives: Creative[],
-    ctx: Ctx<TCtxMeta>
-  ): Promise<SyncCreativesHandlerResult>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 

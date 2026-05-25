@@ -411,8 +411,7 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
 function _sales_platform_handler_results_accept_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async () => ({ products: [], cache_scope: 'account' }),
-    createMediaBuy: async (_req, ctx) =>
-      ctx.handoffToTask(async () => ({ media_buy_id: 'x', packages: [] })),
+    createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'x', packages: [] })),
     updateMediaBuy: async () => ({ media_buy_id: 'x' }),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -432,7 +431,7 @@ function _sales_platform_handler_results_accept_task_handoff() {
 type _Ok<T> = { ok: true; value: T };
 type _Err<E> = { ok: false; error: E };
 type _Result<T, E> = _Ok<T> | _Err<E>;
-const _ok = <T,>(value: T): _Result<T, Error> => ({ ok: true, value });
+const _ok = <T>(value: T): _Result<T, Error> => ({ ok: true, value });
 
 function _adopter_result_payload_aliases_do_not_require_protocol_status() {
   const creativeManifest = {} as CreativeManifest;

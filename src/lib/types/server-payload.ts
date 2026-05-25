@@ -45,14 +45,14 @@ type StripWriteOnlyResponseFields<T> = T extends JsonPrimitive
   : T extends (infer TItem)[]
     ? StripWriteOnlyResponseFields<TItem>[]
     : T extends readonly (infer TItem)[]
-    ? readonly StripWriteOnlyResponseFields<TItem>[]
-    : T extends object
-      ? StripAuthenticationCredentials<
-          StripBusinessEntityBank<{
-            [K in keyof T]: StripWriteOnlyResponseFields<T[K]>;
-          }>
-        >
-      : T;
+      ? readonly StripWriteOnlyResponseFields<TItem>[]
+      : T extends object
+        ? StripAuthenticationCredentials<
+            StripBusinessEntityBank<{
+              [K in keyof T]: StripWriteOnlyResponseFields<T[K]>;
+            }>
+          >
+        : T;
 
 /**
  * Domain payload shape a server handler returns for a generated wire response.
@@ -66,4 +66,6 @@ type StripWriteOnlyResponseFields<T> = T extends JsonPrimitive
  * strips these; this keeps public server payload annotations aligned with
  * what can safely appear on response wires and in adopter logs.
  */
-export type ServerPayload<T> = T extends unknown ? StripWriteOnlyResponseFields<Omit<T, ProtocolEnvelopeKeys<T>>> : never;
+export type ServerPayload<T> = T extends unknown
+  ? StripWriteOnlyResponseFields<Omit<T, ProtocolEnvelopeKeys<T>>>
+  : never;

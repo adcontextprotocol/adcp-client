@@ -81,10 +81,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * that lands, slow tag-generation pipelines await in-request; status
    * changes flow via `publishStatusChange`.
    */
-  buildCreative(
-    req: BuildCreativeRequest,
-    ctx: Ctx<TCtxMeta>
-  ): Promise<BuildCreativeReturn>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<BuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always sync.
