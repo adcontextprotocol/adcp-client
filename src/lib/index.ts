@@ -273,6 +273,21 @@ export type {
 } from './core/AsyncHandler';
 export { AsyncHandler, createAsyncHandler } from './core/AsyncHandler';
 
+// ====== WHOLESALE FEED WEBHOOKS ======
+export {
+  normalizeWholesaleFeedWebhookNotification,
+  parseWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookNotificationError,
+} from './wholesale-feed-sync/webhook-notification';
+export type {
+  NormalizedWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookAffectedEntityType,
+  WholesaleFeedWebhookCacheScope,
+  WholesaleFeedWebhookNotificationErrorCode,
+  WholesaleFeedWebhookNotificationErrorDetails,
+  WholesaleFeedWebhookNotificationType,
+} from './wholesale-feed-sync/webhook-notification';
+
 // ====== INPUT HANDLERS ======
 export * from './handlers/types';
 
@@ -1158,6 +1173,17 @@ export { activationKey, segmentIdActivationKey, keyValueActivationKey } from './
 // To read fields from a received `SignalID`, use `getSignalId` (segment id)
 // and `getSignalIssuer` (data_provider_domain or agent_url).
 export { signalId, catalogSignalId, agentSignalId, getSignalId, getSignalIssuer } from './utils/signal-id-builders';
+export {
+  buildActivateSignalRequest,
+  getSignalActivationId,
+  getSignalPricingOptionIds,
+  normalizeDiscoveredSignal,
+} from './utils/signal-discovery-helpers';
+export type {
+  BuildActivateSignalRequestOptions,
+  DiscoveredSignal,
+  NormalizedDiscoveredSignal,
+} from './utils/signal-discovery-helpers';
 
 // ====== BUILD CREATIVE RETURN BUILDERS ======
 // Typed factories for the four return shapes accepted by the framework

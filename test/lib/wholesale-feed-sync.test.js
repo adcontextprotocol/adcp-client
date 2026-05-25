@@ -78,10 +78,13 @@ function makeSignal(signal_agent_segment_id, overrides = {}) {
   };
 }
 
-function makeWebhook(event, { version = 'v2', previous = 'v1', cache_scope = 'public' } = {}) {
+function makeWebhook(
+  event,
+  { version = 'v2', previous = 'v1', cache_scope = 'public', notification_id = event.event_id } = {}
+) {
   return {
     idempotency_key: `idem-${event.event_id}`,
-    notification_id: event.event_id,
+    notification_id,
     notification_type: event.event_type,
     fired_at: '2026-05-22T12:00:00Z',
     subscriber_id: 'wholesale-feed-sync',

@@ -9,6 +9,11 @@
 // agents.
 
 export { WholesaleFeedSync } from './sync';
+export {
+  normalizeWholesaleFeedWebhookNotification,
+  parseWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookNotificationError,
+} from './webhook-notification';
 export type {
   WholesaleFeedSyncClient,
   WholesaleFeedSyncConfig,
@@ -19,3 +24,11 @@ export type {
   ResolvedCapabilities,
   SignalFilter,
 } from './types';
+export type {
+  NormalizedWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookAffectedEntityType,
+  WholesaleFeedWebhookCacheScope,
+  WholesaleFeedWebhookNotificationErrorCode,
+  WholesaleFeedWebhookNotificationErrorDetails,
+  WholesaleFeedWebhookNotificationType,
+} from './webhook-notification';

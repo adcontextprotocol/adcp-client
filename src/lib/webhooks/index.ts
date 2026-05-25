@@ -1,5 +1,19 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
+export {
+  normalizeWholesaleFeedWebhookNotification,
+  parseWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookNotificationError,
+} from '../wholesale-feed-sync/webhook-notification';
+export type {
+  NormalizedWholesaleFeedWebhookNotification,
+  WholesaleFeedWebhookAffectedEntityType,
+  WholesaleFeedWebhookCacheScope,
+  WholesaleFeedWebhookNotificationErrorCode,
+  WholesaleFeedWebhookNotificationErrorDetails,
+  WholesaleFeedWebhookNotificationType,
+} from '../wholesale-feed-sync/webhook-notification';
+
 export type WebhookHeaderValue = string | number | readonly string[] | null | undefined;
 export type WebhookHeadersLike = Headers | Record<string, WebhookHeaderValue>;
 
