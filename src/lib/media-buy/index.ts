@@ -8,6 +8,7 @@ export type {
   MediaBuyActionMode,
   MediaBuyAvailableAction,
   MediaBuyValidAction,
+  SLAWindow,
   SlaWindow,
   UpdateMediaBuyRequestLike,
 } from './types';
