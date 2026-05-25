@@ -129,7 +129,8 @@ export class GovernanceMiddleware {
      * Defaults to `undefined`, which `ProtocolClient.callTool` resolves
      * to the SDK constant — same shape as a no-pin call.
      */
-    private adcpVersion?: string
+    private adcpVersion?: string,
+    private versionEnvelope?: import('../protocols').VersionEnvelopeMode
   ) {}
 
   /**
@@ -214,6 +215,7 @@ export class GovernanceMiddleware {
       const response = await ProtocolClient.callTool(config.agent, 'check_governance', request as Record<string, any>, {
         debugLogs,
         adcpVersion: this.adcpVersion,
+        ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
       });
 
       // Unwrap protocol response (MCP text content, structuredContent, A2A artifacts)
@@ -332,7 +334,11 @@ export class GovernanceMiddleware {
         config.agent,
         'report_plan_outcome',
         request as Record<string, any>,
-        { debugLogs, adcpVersion: this.adcpVersion }
+        {
+          debugLogs,
+          adcpVersion: this.adcpVersion,
+          ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
+        }
       );
 
       const responseData = unwrapProtocolResponse(response) as unknown as ReportPlanOutcomeResponse;

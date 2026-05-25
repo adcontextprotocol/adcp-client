@@ -14,7 +14,7 @@
 
 import { ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS, parseAdcpMajorVersion } from '../version';
 import { ConfigurationError } from '../errors';
-import { hasSchemaBundle, resolveBundleKey } from '../validation/schema-loader';
+import { hasSchemaBundle, resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
 
 /**
  * Resolve and validate a configured `adcpVersion`. Returns the value to store
@@ -64,6 +64,45 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   }
 
   return adcpVersion;
+}
+
+export function adcpVersionAliases(version: string, includeFamilyAlias = true): Set<string> {
+  const aliases = new Set<string>([version]);
+  const add = (value: string) => {
+    aliases.add(value);
+    if (includeFamilyAlias) {
+      const family = prereleaseFamilyAlias(value);
+      if (family) aliases.add(family);
+    }
+  };
+
+  try {
+    add(resolveBundleKey(version));
+  } catch {
+    // Keep the raw version only; the caller will report the mismatch.
+  }
+  try {
+    add(toReleasePrecisionWire(version));
+  } catch {
+    // Keep the raw version only; the caller will report the mismatch.
+  }
+  return aliases;
+}
+
+export function isAdcpVersionSupported(version: string, supportedVersions: readonly string[]): boolean {
+  if (supportedVersions.length === 0) return true;
+  const aliases = adcpVersionAliases(version);
+  return supportedVersions.some(v => {
+    for (const supportedAlias of adcpVersionAliases(v, false)) {
+      if (aliases.has(supportedAlias)) return true;
+    }
+    return false;
+  });
+}
+
+function prereleaseFamilyAlias(version: string): string | undefined {
+  const match = /^(\d+\.\d+-[0-9A-Za-z-]+)\.\d+$/.exec(version);
+  return match?.[1];
 }
 
 /**

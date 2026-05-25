@@ -5,6 +5,8 @@
 import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
 import type { WebhookReceiver } from './storyboard/webhook-receiver';
+import type { AdcpVersion } from '../version';
+import type { VersionEnvelopeMode } from '../protocols';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -73,6 +75,18 @@ export type TestScenario =
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
+  /**
+   * AdCP protocol version the test client should speak. Storyboard runners
+   * set this from the compliance cache version instead of relying on the
+   * installed package default.
+   */
+  adcpVersion?: AdcpVersion | (string & {});
+  /**
+   * Version-envelope emission mode. Defaults to `auto`; 3.0 storyboards emit
+   * the legacy major marker only, while 3.1 storyboards also emit the exact
+   * `adcp_version` marker.
+   */
+  versionEnvelope?: VersionEnvelopeMode;
   /** Custom User-Agent string sent with all outbound requests */
   userAgent?: string;
   // Brand reference for product discovery (preferred over brand_manifest)
@@ -278,6 +292,11 @@ export interface AgentProfile {
    * storyboard introduced in a later minor version.
    */
   adcp_major_versions?: number[];
+  /**
+   * Exact/release-precision versions from
+   * `get_adcp_capabilities.adcp.supported_versions`.
+   */
+  adcp_supported_versions?: string[];
   supported_protocols?: string[];
   /** Specialism claims from get_adcp_capabilities.specialisms */
   specialisms?: string[];

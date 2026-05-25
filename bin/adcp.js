@@ -313,6 +313,28 @@ function parseAuthSchemeFlag(args) {
   return value;
 }
 
+function readFlagValue(args, flag) {
+  const idx = args.indexOf(flag);
+  if (idx !== -1 && idx + 1 < args.length && !args[idx + 1].startsWith('--')) {
+    return args[idx + 1];
+  }
+  const eqArg = args.find(a => a.startsWith(`${flag}=`));
+  return eqArg ? eqArg.slice(flag.length + 1) : null;
+}
+
+function parseComplianceSelection(args) {
+  const complianceVersion = readFlagValue(args, '--compliance-version');
+  const complianceDir = readFlagValue(args, '--compliance-dir');
+  return {
+    complianceVersion,
+    complianceDir,
+    resolveOptions: {
+      ...(complianceVersion && { version: complianceVersion }),
+      ...(complianceDir && { complianceDir }),
+    },
+  };
+}
+
 /**
  * Warn when `ADCP_AUTH_SCHEME` was set in the environment but the resolved
  * scheme didn't end up applied (because no token / no credential resolved to
@@ -925,6 +947,8 @@ function parseAgentOptions(args) {
     storyboardsValue = args[storyboardsIndex + 1];
   }
 
+  const { complianceVersion, complianceDir } = parseComplianceSelection(args);
+
   const platformTypeIndex = args.indexOf('--platform-type');
   let platformTypeValue = null;
   if (
@@ -1083,6 +1107,8 @@ function parseAgentOptions(args) {
     requestValue,
     tracksValue,
     storyboardsValue,
+    complianceVersion,
+    complianceDir,
     platformTypeValue,
     timeoutValue,
     multiInstanceStrategyValue,
@@ -1123,6 +1149,8 @@ function parseAgentOptions(args) {
     summaryFile,
     summaryFileExplicit,
     softFail,
+    complianceVersion,
+    complianceDir,
   };
 }
 
@@ -1701,6 +1729,12 @@ SUBCOMMANDS:
 RUN OPTIONS (full assessment):
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
+  --compliance-version VERSION
+                      Select a compliance cache version, e.g. 3.0.12 or
+                      3.1.0-beta.3. The runner uses this cache for
+                      storyboard resolution and wire-version defaults.
+  --compliance-dir PATH
+                      Use a specific compliance cache directory
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
@@ -2047,6 +2081,7 @@ async function handleSpecialismShow(args) {
 async function handleStoryboardList(args) {
   const { listBundles, loadBundleStoryboards } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
+  const { resolveOptions } = parseComplianceSelection(args);
   // --stateful: keep only storyboards that contain at least one step marked
   // `stateful: true`. That's the same predicate the multi-instance runner
   // uses to identify storyboards whose write→read chains surface in-process
@@ -2055,7 +2090,7 @@ async function handleStoryboardList(args) {
 
   let bundles;
   try {
-    bundles = listBundles();
+    bundles = listBundles(resolveOptions);
   } catch (err) {
     console.error(`ERROR: ${err.message}`);
     process.exit(1);
@@ -2129,6 +2164,7 @@ async function handleStoryboardShow(args) {
     PROTOCOL_TO_PATH,
   } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
+  const { complianceVersion, complianceDir, resolveOptions } = parseComplianceSelection(args);
 
   // --specialism <slug>: resolve which storyboards are graded for a given specialism claim.
   const specialismIdx = args.indexOf('--specialism');
@@ -2141,12 +2177,16 @@ async function handleStoryboardShow(args) {
   // Guard: only exclude index specialismIdx+1 when --specialism was actually present (specialismIdx !== -1),
   // otherwise -1+1=0 would silently drop the first positional (the storyboard ID) on plain `show <id>` calls.
   const positionalArgs = args.filter(
-    (a, i) => !a.startsWith('--') && (specialismSlug === null || i !== specialismIdx + 1)
+    (a, i) =>
+      !a.startsWith('--') &&
+      a !== complianceVersion &&
+      a !== complianceDir &&
+      (specialismSlug === null || i !== specialismIdx + 1)
   );
   const storyboardId = positionalArgs[0];
 
   if (specialismSlug) {
-    const index = loadComplianceIndex();
+    const index = loadComplianceIndex(resolveOptions);
     const entry = index.specialisms.find(s => s.id === specialismSlug);
     if (!entry) {
       const known = index.specialisms.map(s => s.id).join(', ');
@@ -2164,10 +2204,13 @@ async function handleStoryboardShow(args) {
     }
     let resolved;
     try {
-      resolved = resolveStoryboardsForCapabilities({
-        specialisms: [specialismSlug],
-        supported_protocols: [snakeCaseProtocol],
-      });
+      resolved = resolveStoryboardsForCapabilities(
+        {
+          specialisms: [specialismSlug],
+          supported_protocols: [snakeCaseProtocol],
+        },
+        resolveOptions
+      );
     } catch (err) {
       console.error(`Failed to resolve specialism "${specialismSlug}": ${err.message}`);
       process.exit(1);
@@ -2216,11 +2259,11 @@ async function handleStoryboardShow(args) {
     process.exit(2);
   }
 
-  const matches = resolveBundleOrStoryboard(storyboardId);
+  const matches = resolveBundleOrStoryboard(storyboardId, resolveOptions);
   if (matches.length === 0) {
     console.error(`Storyboard or bundle not found: ${storyboardId}`);
     console.error(
-      `Available: ${listAllComplianceStoryboards()
+      `Available: ${listAllComplianceStoryboards(resolveOptions)
         .map(s => s.id)
         .join(', ')}`
     );
@@ -2228,7 +2271,7 @@ async function handleStoryboardShow(args) {
   }
 
   const storyboard = matches[0];
-  const bundle = findBundleById(storyboardId);
+  const bundle = findBundleById(storyboardId, resolveOptions);
   if (bundle && matches.length > 1 && !jsonOutput) {
     console.log(
       `\n[${bundle.kind} bundle "${bundle.id}"] contains ${matches.length} storyboards: ${matches
@@ -3332,6 +3375,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
 
   const { runAgainstLocalAgent } = await import('../dist/lib/testing/index.js');
   const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
+  const { resolveOptions } = parseComplianceSelection(args);
   if (!debug && !jsonOutput) {
     setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
   }
@@ -3343,9 +3387,11 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
-      ...(opts.noSandbox || opts.assertsSeededState
+      compliance: resolveOptions,
+      ...(opts.complianceVersion || opts.noSandbox || opts.assertsSeededState
         ? {
             runStoryboardOptions: {
+              ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
             },
@@ -3521,6 +3567,7 @@ function aggregateStrictSummaries(summaries) {
 
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   const { authToken, authScheme, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
+  const { resolveOptions } = parseComplianceSelection(args);
 
   if (urls.length < 2) {
     console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
@@ -3585,16 +3632,16 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
       process.exit(2);
     }
   } else {
-    const bundle = findBundleById(storyboardId);
+    const bundle = findBundleById(storyboardId, resolveOptions);
     if (bundle) {
-      const bundleStoryboards = loadBundleStoryboards(storyboardId);
+      const bundleStoryboards = loadBundleStoryboards(bundle);
       if (!bundleStoryboards || bundleStoryboards.length === 0) {
         console.error(`ERROR: Bundle "${storyboardId}" is empty.`);
         process.exit(2);
       }
       storyboards.push(...bundleStoryboards);
     } else {
-      const sb = getComplianceStoryboardById(storyboardId);
+      const sb = getComplianceStoryboardById(storyboardId, resolveOptions);
       if (!sb) {
         console.error(
           `ERROR: Unknown storyboard or bundle ID: ${storyboardId}\n` + `Run 'adcp storyboard list' to see all options.`
@@ -3733,6 +3780,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
@@ -3841,6 +3889,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
  */
 async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   const { authToken, authScheme, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
+  const { resolveOptions } = parseComplianceSelection(args);
 
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
@@ -3887,16 +3936,16 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
       process.exit(2);
     }
   } else {
-    const bundle = findBundleById(storyboardId);
+    const bundle = findBundleById(storyboardId, resolveOptions);
     if (bundle) {
-      const bundleStoryboards = loadBundleStoryboards(storyboardId);
+      const bundleStoryboards = loadBundleStoryboards(bundle);
       if (!bundleStoryboards || bundleStoryboards.length === 0) {
         console.error(`ERROR: Bundle "${storyboardId}" is empty.`);
         process.exit(2);
       }
       storyboards.push(...bundleStoryboards);
     } else {
-      const sb = getComplianceStoryboardById(storyboardId);
+      const sb = getComplianceStoryboardById(storyboardId, resolveOptions);
       if (!sb) {
         console.error(
           `ERROR: Unknown storyboard or bundle ID: ${storyboardId}\n` + `Run 'adcp storyboard list' to see all options.`
@@ -3992,6 +4041,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     agents: routing.agents,
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
@@ -4137,11 +4187,12 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   if (!storyboards && storyboardsIndex !== -1 && storyboardsIndex + 1 < rawArgs.length) {
     storyboards = rawArgs[storyboardsIndex + 1].split(',');
   }
+  const complianceResolveOptions = parseComplianceSelection(rawArgs).resolveOptions;
   if (storyboards?.length) {
     const { listAllComplianceStoryboards, listBundles } = await import('../dist/lib/testing/storyboard/index.js');
     try {
-      const knownStoryboardIds = new Set(listAllComplianceStoryboards().map(s => s.id));
-      const knownBundleIds = new Set(listBundles().map(b => b.id));
+      const knownStoryboardIds = new Set(listAllComplianceStoryboards(complianceResolveOptions).map(s => s.id));
+      const knownBundleIds = new Set(listBundles(complianceResolveOptions).map(b => b.id));
       const unknown = storyboards.filter(id => !knownStoryboardIds.has(id) && !knownBundleIds.has(id));
       if (unknown.length > 0) {
         console.error(`ERROR: Unknown storyboard or bundle ID(s): ${unknown.join(', ')}`);
@@ -4207,6 +4258,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
     ...(loadedTestKit && { test_kit: loadedTestKit }),
+    ...(opts.complianceVersion && { version: opts.complianceVersion }),
+    ...(opts.complianceDir && { complianceDir: opts.complianceDir }),
   };
 
   if (!opts.jsonOutput) {
@@ -4301,7 +4354,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     // `|| true` shenanigans.
     const summary = buildComplianceSummary(result, {
       sdkVersion: LIBRARY_VERSION,
-      adcpVersion: ADCP_VERSION,
+      adcpVersion: result.adcp_version || ADCP_VERSION,
     });
     emitSummary(summary);
 
@@ -4347,6 +4400,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
   const { authToken, authScheme, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
+  const { resolveOptions } = parseComplianceSelection(args);
 
   enforceStrictFlags(args, warnRemovedFlags(args));
 
@@ -4359,7 +4413,7 @@ async function handleStoryboardStepCmd(args) {
     process.exit(2);
   }
 
-  const storyboard = getComplianceStoryboardById(storyboardId);
+  const storyboard = getComplianceStoryboardById(storyboardId, resolveOptions);
   if (!storyboard) {
     console.error(`Storyboard not found: ${storyboardId}`);
     process.exit(2);

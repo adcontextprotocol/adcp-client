@@ -50,6 +50,8 @@ import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } fro
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
 
+export type VersionEnvelopeMode = 'auto' | 'none';
+
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
  * pin. Returns the SDK default when no pin is provided; throws on a pin
@@ -233,6 +235,13 @@ export interface CallToolOptions {
    */
   adcpVersion?: string;
   /**
+   * Controls whether the SDK injects AdCP version envelope fields into the
+   * outgoing request. Defaults to `auto`. 3.0 pins emit only the legacy
+   * `adcp_major_version`; 3.1+ pins emit both the legacy major and exact
+   * `adcp_version` marker.
+   */
+  versionEnvelope?: VersionEnvelopeMode;
+  /**
    * Transport-level safeguards (size caps, etc.). Per-call override of any
    * matching field on the client constructor's `transport` option.
    */
@@ -265,6 +274,7 @@ export class ProtocolClient {
       serverVersion,
       session,
       adcpVersion,
+      versionEnvelope: versionEnvelopeMode = 'auto',
       transport,
     } = options;
     // Per-instance version envelope. Throws on unparseable pins via
@@ -273,7 +283,7 @@ export class ProtocolClient {
     // `ProtocolClient.callTool` directly (test harnesses, the in-process
     // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
     // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
-    const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
+    const versionEnvelope = versionEnvelopeMode === 'none' ? {} : buildVersionEnvelope(adcpVersion, serverVersion);
     // Enter the response-size-limit ALS slot once for this call. The slot is
     // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
     // cap applies regardless of which path (MCP / A2A / OAuth refresh) the
@@ -336,6 +346,7 @@ export class ProtocolClient {
                 debugLogs,
                 serverVersion,
                 adcpVersion,
+                ...(versionEnvelopeMode !== 'auto' && { versionEnvelope: versionEnvelopeMode }),
               })
             );
           }
@@ -536,12 +547,13 @@ export const createMCPClient = (
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
   adcpVersion?: string,
-  transport?: TransportOptions
+  transport?: TransportOptions,
+  versionEnvelopeMode: VersionEnvelopeMode = 'auto'
 ) => {
   // Validate the pin at factory time so a typo surfaces here rather than at
   // first call. `buildVersionEnvelope` throws via `resolveWireMajor` on bad
   // input — call it once to surface, then close over the envelope.
-  const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
+  const versionEnvelope = versionEnvelopeMode === 'none' ? {} : buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
       withResponseSizeLimit(transport?.maxResponseBytes, () =>
@@ -563,9 +575,10 @@ export const createA2AClient = (
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
   adcpVersion?: string,
-  transport?: TransportOptions
+  transport?: TransportOptions,
+  versionEnvelopeMode: VersionEnvelopeMode = 'auto'
 ) => {
-  const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
+  const versionEnvelope = versionEnvelopeMode === 'none' ? {} : buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
       withResponseSizeLimit(transport?.maxResponseBytes, () =>
