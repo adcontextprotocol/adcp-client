@@ -33,7 +33,7 @@ npm install @adcp/sdk        # 7.x (current latest, AdCP 3.0)
 npm install @adcp/sdk@beta   # 8.x beta (AdCP 3.1.0-beta)
 ```
 
-Upgrading from v7? See **[MIGRATION-v8.md](./MIGRATION-v8.md)** — TL;DR is three changes for most adopters; full guide covers wire shape, type shape, and SDK behavior deltas.
+Upgrading from v7? See **[MIGRATION-v8.md](./MIGRATION-v8.md)** — TL;DR is three changes for most adopters; full guide covers wire shape, type shape, and SDK behavior deltas. Moving from 8.0 beta to 8.1? See [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md), plus the inbound webhook recipe at [`docs/recipes/verifying-inbound-webhooks.md`](./docs/recipes/verifying-inbound-webhooks.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 
