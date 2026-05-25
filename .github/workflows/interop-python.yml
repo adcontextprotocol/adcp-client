@@ -1,4 +1,4 @@
-name: Python Reference Seller Interop
+name: Reference Seller Interop
 
 on:
   pull_request:
@@ -6,33 +6,31 @@ on:
   workflow_dispatch:
     inputs:
       python_ref:
-        description: 'adcp-client-python tag, branch, or commit SHA to test against'
+        description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
-        default: 'v6.1.0-beta.2'
+        default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
   workflow_call:
     inputs:
       python_ref:
-        description: 'adcp-client-python tag, branch, or commit SHA to test against'
+        description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
         type: string
-        default: 'v6.1.0-beta.2'
+        default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
 
 permissions:
   contents: read
 
 jobs:
-  python-reference-seller:
-    name: Python reference seller
+  pack-candidate-sdk:
+    name: Pack candidate SDK
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      ADCP_CLIENT_PYTHON_REF: ${{ inputs.python_ref || 'v6.1.0-beta.2' }}
-      STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result.json
-      SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller.log
+    timeout-minutes: 15
 
     steps:
       - name: Checkout @adcp/sdk
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -47,7 +45,6 @@ jobs:
         run: npm run build:lib
 
       - name: Pack candidate SDK
-        id: pack
         shell: bash
         run: |
           set -euo pipefail
@@ -60,52 +57,194 @@ jobs:
             printf '%s\n' "${tarballs[@]}"
             exit 1
           fi
-          tarball_path="${tarballs[0]}"
-          test -f "$tarball_path"
-          echo "tarball=$tarball_path" >> "$GITHUB_OUTPUT"
-          echo "Packed candidate SDK at $tarball_path"
+          echo "Packed candidate SDK at ${tarballs[0]}"
+
+      - name: Upload candidate SDK tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: adcp-sdk-candidate-tarball
+          if-no-files-found: error
+          path: ${{ runner.temp }}/adcp-sdk-pack/*.tgz
+
+  reference-seller-matrix:
+    name: ${{ matrix.language }} reference seller
+    needs: pack-candidate-sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Add TypeScript/Go rows here only after those repos have shipped a
+          # tagged, known-good reusable harness. The current-checkout TS job
+          # below exercises this repo's harness but is not a release-compat row.
+          - language: python
+            repository: adcontextprotocol/adcp-client-python
+            ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
+            harness: scripts/ci/run_storyboard_reference_seller.sh
+            port: 3001
+    env:
+      STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
+      SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
 
       - name: Setup Python
+        if: matrix.language == 'python'
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Checkout Python reference seller
-        uses: actions/checkout@v5
+      - name: Download candidate SDK tarball
+        uses: actions/download-artifact@v4
         with:
-          repository: adcontextprotocol/adcp-client-python
-          ref: ${{ env.ADCP_CLIENT_PYTHON_REF }}
-          path: reference-python
+          name: adcp-sdk-candidate-tarball
+          path: ${{ runner.temp }}/adcp-sdk-pack
 
-      - name: Verify Python storyboard harness
+      - name: Resolve candidate SDK tarball
+        id: pack
         shell: bash
         run: |
           set -euo pipefail
-          harness="reference-python/scripts/ci/run_storyboard_reference_seller.sh"
+          mapfile -t tarballs < <(find "$RUNNER_TEMP/adcp-sdk-pack" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "::error::Expected one candidate SDK tarball, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+          echo "Using candidate SDK tarball ${tarballs[0]}"
+
+      - name: Checkout ${{ matrix.language }} reference seller
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.ref }}
+          path: reference-${{ matrix.language }}
+          persist-credentials: false
+
+      - name: Verify ${{ matrix.language }} storyboard harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness="reference-${{ matrix.language }}/${{ matrix.harness }}"
           if [[ ! -f "$harness" ]]; then
-            echo "::error::Pinned adcp-client-python ref '$ADCP_CLIENT_PYTHON_REF' does not contain $harness."
-            echo "::error::Pin a tag or commit that includes adcontextprotocol/adcp-client-python#818."
+            echo "::error::Pinned ${{ matrix.repository }} ref '${{ matrix.ref }}' does not contain ${{ matrix.harness }}."
+            echo "::error::Pin a tag or commit that includes a blocking reference-seller storyboard harness."
             exit 1
           fi
           chmod +x "$harness"
 
-      - name: Run Python reference seller storyboard
+      - name: Run ${{ matrix.language }} reference seller storyboard
         shell: bash
         run: |
           set -euo pipefail
-          cd reference-python
+          cd "reference-${{ matrix.language }}"
           ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
-            ADCP_PORT=3001 \
+            ADCP_PORT="${{ matrix.port }}" \
             STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
             SELLER_LOG_PATH="$SELLER_LOG_PATH" \
-            ./scripts/ci/run_storyboard_reference_seller.sh
+            ./${{ matrix.harness }}
+
+      - name: Add interop summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Reference seller interop"
+            echo ""
+            echo "- Implementation: \`${{ matrix.language }}\`"
+            echo "- Repository: \`${{ matrix.repository }}\`"
+            echo "- Ref: \`${{ matrix.ref }}\`"
+            echo "- Harness: \`${{ matrix.harness }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload storyboard artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: python-reference-seller-storyboard
+          name: ${{ matrix.language }}-reference-seller-storyboard
           if-no-files-found: ignore
           path: |
-            storyboard-result.json
-            storyboard-seller.log
+            storyboard-result-${{ matrix.language }}.json
+            storyboard-seller-${{ matrix.language }}.log
+
+  typescript-reference-seller-current:
+    name: TypeScript reference seller (current checkout)
+    needs: pack-candidate-sdk
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-typescript.json
+      SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-typescript.log
+
+    steps:
+      - name: Checkout @adcp/sdk
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Download candidate SDK tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: adcp-sdk-candidate-tarball
+          path: ${{ runner.temp }}/adcp-sdk-pack
+
+      - name: Resolve candidate SDK tarball
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find "$RUNNER_TEMP/adcp-sdk-pack" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "::error::Expected one candidate SDK tarball, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+          echo "Using candidate SDK tarball ${tarballs[0]}"
+
+      - name: Run TypeScript example seller storyboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/run_storyboard_reference_seller.sh
+          ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
+            ADCP_PORT=3002 \
+            STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
+            SELLER_LOG_PATH="$SELLER_LOG_PATH" \
+            ./scripts/ci/run_storyboard_reference_seller.sh
+
+      - name: Add interop summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### TypeScript reference seller harness"
+            echo ""
+            echo "- Repository: \`${{ github.repository }}\`"
+            echo "- Ref: current checkout \`${{ github.sha }}\`"
+            echo "- Seller: \`examples/hello_seller_adapter_guaranteed.ts\`"
+            echo "- Harness: \`scripts/ci/run_storyboard_reference_seller.sh\`"
+            echo "- Note: release compatibility matrix rows must pin a tagged prior TypeScript ref once this harness ships in a release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload storyboard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-reference-seller-storyboard
+          if-no-files-found: ignore
+          path: |
+            storyboard-result-typescript.json
+            storyboard-seller-typescript.log
