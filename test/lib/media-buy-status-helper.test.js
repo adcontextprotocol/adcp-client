@@ -28,6 +28,20 @@ describe('media-buy status helpers', () => {
     );
   });
 
+  test('does not infer overlapping lifecycle statuses from explicit 3.1 envelope-only status', () => {
+    for (const status of ['rejected', 'canceled']) {
+      assert.equal(
+        getAuthoritativeMediaBuyStatus({
+          adcp_version: '3.1',
+          media_buy_id: 'mb_1',
+          status,
+        }),
+        undefined,
+        status
+      );
+    }
+  });
+
   test('allows completed lifecycle status when canonical media_buy_status is present', () => {
     assert.equal(
       getAuthoritativeMediaBuyStatus({
@@ -38,6 +52,20 @@ describe('media-buy status helpers', () => {
       }),
       'completed'
     );
+  });
+
+  test('allows overlapping lifecycle statuses when canonical media_buy_status is present', () => {
+    for (const status of ['rejected', 'canceled']) {
+      assert.equal(
+        getAuthoritativeMediaBuyStatus({
+          adcp_version: '3.1',
+          media_buy_id: 'mb_1',
+          status: 'completed',
+          media_buy_status: status,
+        }),
+        status
+      );
+    }
   });
 
   test('ignores task-only statuses', () => {

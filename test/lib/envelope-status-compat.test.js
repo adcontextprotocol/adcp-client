@@ -139,6 +139,23 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
     assert.strictEqual(result.media_buy_status, undefined);
   });
 
+  test('does not infer media_buy_status from 3.1 overlapping envelope terminal statuses', () => {
+    for (const status of ['rejected', 'canceled']) {
+      const input = {
+        adcp_version: '3.1',
+        media_buy_id: 'mb_1',
+        status,
+        packages: [],
+      };
+
+      const result = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy' });
+
+      assert.strictEqual(result, input);
+      assert.strictEqual(result.status, status);
+      assert.strictEqual(result.media_buy_status, undefined);
+    }
+  });
+
   test('strict response validation accepts legacy create_media_buy lifecycle status after normalization', () => {
     const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
     const result = validateResponse('create_media_buy', {

@@ -140,6 +140,22 @@ describe('context extractors', () => {
       });
     });
 
+    it('prefers nested legacy media_buy fields over outer envelope status', () => {
+      const result = extractContext('create_media_buy', {
+        adcp_version: '3.0.0',
+        status: 'completed',
+        media_buy: {
+          media_buy_id: 'mb_nested',
+          status: 'active',
+        },
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_nested',
+        media_buy_status: 'active',
+      });
+    });
+
     it('prefers media_buy_status on get_media_buys items', () => {
       const result = extractContext('get_media_buys', {
         media_buys: [{ media_buy_id: 'mb_1', status: 'completed', media_buy_status: 'active' }],

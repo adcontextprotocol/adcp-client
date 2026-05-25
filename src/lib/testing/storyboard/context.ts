@@ -21,8 +21,21 @@ import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
 function readMediaBuyStatus(record: Record<string, unknown> | undefined): unknown {
   return getAuthoritativeMediaBuyStatus(record);
+}
+
+function readMediaBuyFields(data: unknown): { mediaBuyId?: unknown; status?: unknown } {
+  const outer = asRecord(data);
+  const nested = asRecord(outer?.media_buy);
+  return {
+    mediaBuyId: nested?.media_buy_id ?? outer?.media_buy_id,
+    status: readMediaBuyStatus(nested) ?? readMediaBuyStatus(outer),
+  };
 }
 
 export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
@@ -66,19 +79,17 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   },
 
   create_media_buy(data) {
-    const d = data as Record<string, unknown> | undefined;
+    const { mediaBuyId, status } = readMediaBuyFields(data);
     const extracted: Record<string, unknown> = {};
-    if (d?.media_buy_id) extracted.media_buy_id = d.media_buy_id;
-    const status = readMediaBuyStatus(d);
+    if (mediaBuyId) extracted.media_buy_id = mediaBuyId;
     if (status) extracted.media_buy_status = status;
     return extracted;
   },
 
   update_media_buy(data) {
-    const d = data as Record<string, unknown> | undefined;
+    const { mediaBuyId, status } = readMediaBuyFields(data);
     const extracted: Record<string, unknown> = {};
-    if (d?.media_buy_id) extracted.media_buy_id = d.media_buy_id;
-    const status = readMediaBuyStatus(d);
+    if (mediaBuyId) extracted.media_buy_id = mediaBuyId;
     if (status) extracted.media_buy_status = status;
     return extracted;
   },
