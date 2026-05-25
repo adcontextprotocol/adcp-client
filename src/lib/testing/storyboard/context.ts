@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import type { StoryboardContext, ContextOutput, ContextInput, ContextProvenanceEntry } from './types';
 import { resolvePath, setPath } from './path';
+import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 
 // ────────────────────────────────────────────────────────────
 // Context extraction: pull known IDs from task responses
@@ -21,7 +22,7 @@ import { resolvePath, setPath } from './path';
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
 function readMediaBuyStatus(record: Record<string, unknown> | undefined): unknown {
-  return record?.media_buy_status ?? record?.status;
+  return getAuthoritativeMediaBuyStatus(record);
 }
 
 export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {

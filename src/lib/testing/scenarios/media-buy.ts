@@ -26,6 +26,7 @@ import {
   validateResponseSchema,
 } from '../client';
 import { testDiscovery } from './discovery';
+import { getAuthoritativeMediaBuyStatus } from '../../utils/media-buy-status';
 
 /**
  * Find a suitable product for testing based on options
@@ -1470,7 +1471,7 @@ export async function testSyncAudiences(
  */
 function extractStatus(data: Record<string, unknown>): string | undefined {
   const nested = data.media_buy as Record<string, unknown> | undefined;
-  return (data.media_buy_status ?? nested?.media_buy_status ?? data.status ?? nested?.status) as string | undefined;
+  return getAuthoritativeMediaBuyStatus(data) ?? getAuthoritativeMediaBuyStatus(nested);
 }
 
 /**

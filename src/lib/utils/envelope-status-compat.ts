@@ -78,9 +78,12 @@ function isLegacy30xPayload(payload: Record<string, unknown>): boolean {
  *
  * Never overwrites an existing task-status. Legacy media-buy lifecycle
  * statuses are moved to `media_buy_status` and replaced with the envelope
- * status `completed`. Pure function; safe to call before validation.
+ * status `completed` when `options.toolName` is `create_media_buy` or
+ * `update_media_buy`. Pure function; safe to call before validation.
  *
  * @param response - The raw wire response object.
+ * @param options - Optional task context. Pass `toolName` when normalizing a
+ *   tool response so task-specific legacy body-status shims can run.
  * @returns A new object with `status` injected when the legacy-leniency
  *   rules apply; the same reference otherwise.
  */
