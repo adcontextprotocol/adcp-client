@@ -1,0 +1,171 @@
+# Migrating from `@adcp/sdk` 8.0 to 8.1
+
+> **Scope.** This guide is for adopters already on the 8.x beta line,
+> moving from the 8.0 beta cut to 8.1. The big theme is AdCP
+> 3.1.0-beta.3 catch-up: response envelopes became stricter, several
+> domain `status` fields were renamed to stop colliding with task status,
+> and webhook verification moved from "example code" to a production recipe.
+
+## TL;DR
+
+- Add envelope `status` everywhere you construct raw wire responses. Server
+  framework users get this stamped for them.
+- Emit release-precision `adcp_version` values such as `3.1-beta.3`, not
+  full semver values such as `3.1.0-beta.3`.
+- Rename domain-level status fields that collided with task status:
+  `MediaBuy.status` -> `media_buy_status`, creative approval `status` ->
+  `approval_status`, rights acquisition `status` -> `rights_status`.
+- Drop `governance_agents[].categories`; 8.1 validates those items as closed.
+- For webhook receivers, move to RFC 9421 verification and a shared replay
+  store before running more than one replica. See
+  [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.md).
+- If your code extends `ProductSchema`, upgrade to 8.1. `ProductSchema` is
+  intentionally a `ZodObject` again, so `.extend()`, `.omit()`, `.pick()`, and
+  `.shape` work.
+
+## Wire Shape Tightening
+
+### Envelope `status` is required
+
+AdCP 3.1.0-beta.2 requires top-level envelope `status` on every response,
+including error responses. The SDK server framework now defaults success
+responses to `status: 'completed'` and error responses to `status: 'failed'`
+unless a tool explicitly returns a richer task state such as `submitted` or
+`working`.
+
+Raw-handler adopters should audit for hand-constructed responses:
+
+```bash
+rg -n "return \\{|status:" src
+```
+
+If the object is a protocol response envelope, it needs a task-status value.
+If it is a domain object nested inside a response, use the renamed domain
+fields below rather than overloading `status`.
+
+### `adcp_version` uses release precision
+
+Wire `adcp_version` values use `MAJOR.MINOR` precision with an optional
+prerelease suffix. Examples:
+
+| Internal bundle/version | Wire value |
+|---|---|
+| `3.1.0-beta.3` | `3.1-beta.3` |
+| `3.1.0` | `3.1` |
+
+The SDK framework normalizes this automatically. Custom emitters should not
+copy package or schema-cache semver strings directly into wire envelopes.
+
+### Domain status fields no longer share the task-status key
+
+Top-level `status` is the task envelope. Domain resources use their own names:
+
+| Old 8.0 beta field | 8.1 field |
+|---|---|
+| `media_buy.status` | `media_buy.media_buy_status` |
+| `creative_approvals[].status` | `creative_approvals[].approval_status` |
+| `acquire_rights.status` | `acquire_rights.rights_status` |
+
+This removes the ambiguity where `status` could mean either the task lifecycle
+(`completed`, `failed`, `submitted`) or a business lifecycle (`active`,
+`approved`, `licensed`).
+
+### `governance_agents[].categories` was removed
+
+The 3.1 schema now treats governance-agent entries as closed objects and
+removes the legacy `categories` field. If you used that field for operator
+metadata, move it to your own registry or extension store; do not emit it in
+`sync_governance`, account responses, or test fixtures.
+
+### Mutating request schemas allow extensions
+
+Mutating request validation now follows the AdCP 3.1 rule that vendor
+extensions can travel on request shapes. Runtime validation accepts unknown
+extension keys on those mutating requests, while SDK-owned fields are still
+validated strictly. If you had tests asserting "unknown key rejected" on
+mutating requests, update them to assert that known fields still validate and
+that extension keys are carried intentionally. Do not use this as a place for
+credentials; `ctx_metadata` and extension objects can still land in logs and
+error envelopes.
+
+## Type-Level Changes
+
+### `ProductSchema` is a `ZodObject` again
+
+8.0's generated `ProductSchema` could appear as a marker-only intersection,
+which made object helpers disappear even though validation behavior was still
+object-shaped. 8.1 collapses those marker-only intersections during codegen.
+
+This is intentional: the schema keeps the same runtime validation semantics,
+but TypeScript users can again write:
+
+```ts
+import { ProductSchema } from '@adcp/sdk';
+import { z } from 'zod';
+
+const ProductWithLocalField = ProductSchema.extend({
+  local_score: z.number(),
+});
+```
+
+Use this for local validation/adaptation. Do not infer that extension fields
+belong on the AdCP wire unless the relevant request schema permits extensions.
+
+### `SyncAccountsRequest.accounts[]` branches are typed
+
+The generated TypeScript now narrows the mutually exclusive
+`SyncAccountsRequest.accounts[]` branches correctly. `ProvisioningMode` and
+`SettingsUpdateMode` expose their real fields instead of a loose passthrough
+shape, including `notification_configs[]` for account-scoped events. Existing
+valid payloads keep working; the adopter-visible change is better
+autocomplete/type-checking and fewer accidental unknown-field escapes.
+
+### `get_products` response shape
+
+`products` can be absent in valid response arms such as unchanged/cache-hit
+responses. Any response that does carry `products` must now also carry
+`cache_scope`. Test fixtures that assumed `products` was always present or
+omitted `cache_scope` on populated product responses need to be updated.
+
+## The Two `TaskStatus` Types
+
+There are two similarly named concepts:
+
+| Import/source | Use it for |
+|---|---|
+| `TaskResult['status']` from the root client API | Handling SDK call results, including client result states like `deferred` and `governance-denied`. |
+| `TaskStatus` from `@adcp/sdk`'s conversation/client types | Legacy client-side status vocabulary used inside the SDK, including compatibility states such as `pending`, `running`, `needs_input`, and `aborted`. |
+| Protocol `TaskStatus` from generated protocol types / server payload helpers | Wire envelope `status` values on AdCP responses and webhook payloads. |
+
+Do not use the root client `TaskStatus` alias as the schema for wire
+responses. It intentionally includes client-side compatibility states. For
+server handler domain payloads, prefer the SDK's server payload aliases so
+envelope fields owned by the framework are stripped from handler return types.
+
+## Webhook Verification
+
+8.1 keeps the legacy HMAC helper for older `push_notification_config` buyers,
+but the spec-current path is RFC 9421 webhook signing with
+`adcp_use: "webhook-signing"` keys. The short version:
+
+- Capture raw request bytes before JSON parsing.
+- Resolve the expected sending agent from your operation state or route, not
+  from attacker-controlled signature headers.
+- Verify with `createWebhookVerifier` / `verifyWebhookSignature`.
+- Use a shared `ReplayStore` for multi-replica receivers.
+- Keep HMAC as an explicit legacy branch only; do not fail open from one scheme
+  to another.
+
+Full recipe: [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.md).
+
+## Checklist
+
+- [ ] Raw response fixtures include envelope `status`.
+- [ ] Raw error fixtures include `status: 'failed'`.
+- [ ] Wire `adcp_version` is release-precision.
+- [ ] Business lifecycle fields use `media_buy_status`, `approval_status`, and
+  `rights_status`.
+- [ ] `governance_agents[]` fixtures no longer emit `categories`.
+- [ ] `get_products` fixtures with products include `cache_scope`.
+- [ ] Webhook receivers capture raw body bytes and verify before processing.
+- [ ] Multi-replica webhook receivers use Redis/Postgres replay storage.
