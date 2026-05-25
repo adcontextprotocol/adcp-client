@@ -167,6 +167,7 @@ export type AdcpTaskName = keyof TaskResponseTypeMap;
 export type InProcessAgentClientConfig = Pick<
   SingleAgentClientConfig,
   | 'adcpVersion'
+  | 'versionEnvelope'
   | 'debug'
   | 'validation'
   | 'governance'

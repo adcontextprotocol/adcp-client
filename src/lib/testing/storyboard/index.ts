@@ -92,6 +92,8 @@ export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 export {
   runStoryboard,
   runStoryboardStep,
+  applyAdcpVersionRunOptions,
+  applyStoryboardVersionOptions,
   getFirstStepPreview,
   summarizeStrictValidation,
   listStrictOnlyFailures,
@@ -114,6 +116,7 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
+  isComplianceVersionSupported,
   loadSpecialismDetail,
   listSpecialisms,
   CapabilityResolutionError,

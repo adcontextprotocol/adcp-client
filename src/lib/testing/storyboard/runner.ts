@@ -6,8 +6,8 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
-import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
-import { closeConnections } from '../../protocols';
+import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
+import { closeConnections, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { executeStoryboardTask } from './task-map';
 import {
@@ -37,7 +37,8 @@ import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSucc
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import { schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import { resolveBundleKey, schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import { parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -139,6 +140,35 @@ const CONTROLLER_SEEDING_FAILED_DETAIL =
 
 const OAUTH_NOT_ADVERTISED_DETAIL =
   'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
+
+export function applyStoryboardVersionOptions(
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): StoryboardRunOptions {
+  return applyAdcpVersionRunOptions(storyboard.adcp_version, options);
+}
+
+export function applyAdcpVersionRunOptions(
+  defaultAdcpVersion: string | undefined,
+  options: StoryboardRunOptions
+): StoryboardRunOptions {
+  const adcpVersion = options.adcpVersion ?? defaultAdcpVersion;
+  if (adcpVersion === undefined) return options;
+
+  const versionEnvelope = options.versionEnvelope ?? storyboardVersionEnvelopeMode(adcpVersion);
+
+  if (options.adcpVersion === adcpVersion && options.versionEnvelope === versionEnvelope) {
+    return options;
+  }
+  return { ...options, adcpVersion, versionEnvelope };
+}
+
+function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
+  const bundleKey = resolveBundleKey(adcpVersion);
+  const major = parseAdcpMajorVersion(bundleKey);
+  if (Number.isFinite(major) && major < 3) return 'none';
+  return 'auto';
+}
 
 /**
  * Suffix appended to the skip detail when the sole-stateful-step exemption
@@ -857,6 +887,7 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
+  options = applyStoryboardVersionOptions(storyboard, options);
   validateTestKit(options.test_kit);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
@@ -1571,6 +1602,7 @@ async function executeStoryboardPass(
   let clients: TestClient[];
   let routingContext: AgentRoutingContext | undefined;
   let profile: AgentProfile | undefined;
+  let callerOwnsClients = false;
 
   if (useRouting) {
     try {
@@ -1586,7 +1618,7 @@ async function executeStoryboardPass(
         duration_ms: 0,
         error: detail,
       };
-      if (!options._client) await closeConnections(options.protocol);
+      await closeConnections(options.protocol);
       return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
     clients = [...routingContext.clients.values()];
@@ -1615,7 +1647,9 @@ async function executeStoryboardPass(
   } else {
     // Build one client per URL. In single-URL mode `_client` (from comply()) is
     // honored so the shared MCP transport is reused across storyboards.
-    clients = agentUrls.map(url => getOrCreateClient(url, options));
+    const clientResolutions = agentUrls.map(url => getOrCreateClientResolution(url, options));
+    clients = clientResolutions.map(r => r.client);
+    callerOwnsClients = clientResolutions.some(r => r.reusedShared);
 
     // Drop any retained A2A session ids before this storyboard's first call.
     // `comply()` shares one client across N storyboards for transport reuse;
@@ -1632,7 +1666,7 @@ async function executeStoryboardPass(
     // expected to run the same code behind a shared state store, so one probe
     // is sufficient. For multi-instance runs, skipping N-1 redundant
     // get_agent_info calls also keeps CI output clean.
-    if (!options._client) {
+    if (!callerOwnsClients) {
       const discovered = await getOrDiscoverProfile(clients[0]!, options);
       // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
       // silent empty `agentTools: []` that lets every step skip with
@@ -1641,7 +1675,7 @@ async function executeStoryboardPass(
       // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
       // See: https://github.com/adcontextprotocol/adcp-client/issues/...
       if (discovered.step.passed === false) {
-        if (!options._client) await closeConnections(options.protocol);
+        await closeConnections(options.protocol);
         return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
       }
       profile = discovered.profile;
@@ -1687,7 +1721,7 @@ async function executeStoryboardPass(
   if (allRequires.length) {
     const unmet = checkRequires(allRequires, options, profile);
     if (unmet) {
-      if (!options._client) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeConnections(options.protocol);
       return {
         ...buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail),
         notices: preflightNotices,
@@ -1706,7 +1740,7 @@ async function executeStoryboardPass(
       const actual = resolveCapabilityPath(rawCaps, cap.path);
       const unmetDetail = evaluateCapabilityPredicate(cap, actual);
       if (unmetDetail !== null) {
-        if (!options._client) await closeConnections(options.protocol);
+        if (!callerOwnsClients) await closeConnections(options.protocol);
         return {
           ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
           notices: preflightNotices,
@@ -1729,7 +1763,7 @@ async function executeStoryboardPass(
   if (storyboard.required_tools?.length && options.agentTools) {
     const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
     if (!hasAnyRequired) {
-      if (!options._client) await closeConnections(options.protocol);
+      if (!callerOwnsClients) await closeConnections(options.protocol);
       return {
         ...buildRequiredToolsMissingResult(
           agentUrls,
@@ -2741,7 +2775,7 @@ async function executeStoryboardPass(
   // Close protocol connections when the runner created its own client. The
   // connection pool is keyed by URL+auth, so a single closeConnections() call
   // evicts every instance's transport regardless of how many URLs we used.
-  if (!options._client) {
+  if (!callerOwnsClients) {
     await closeConnections(options.protocol);
   }
 
@@ -2786,7 +2820,7 @@ async function runMultiPass(
   // only the first pass attaches the synthetic `__controller_seeding__`
   // phase to its `phaseResults`, so the aggregated top-level counts reflect
   // a single seeding pass across the whole run.
-  const preSeedClients = agentUrls.map(url => getOrCreateClient(url, options));
+  const preSeedClients = agentUrls.map(url => getOrCreateClientResolution(url, options).client);
   const preSeedContext: StoryboardContext = { ...options.context };
   const preSeededResult = await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
@@ -2998,8 +3032,10 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  options = applyStoryboardVersionOptions(storyboard, options);
   validateTestKit(options.test_kit);
-  const client = getOrCreateClient(agentUrl, options);
+  const clientResolution = getOrCreateClientResolution(agentUrl, options);
+  const client = clientResolution.client;
 
   // Discover agent profile for standalone step execution. Captured so the
   // executeStep call below can thread `library_version` through to
@@ -3007,7 +3043,7 @@ export async function runStoryboardStep(
   // options so capability-based skip gates in executeStep (e.g. account-mode
   // branching) can read raw_capabilities, mirroring executeStoryboardPass.
   let profile: AgentProfile | undefined;
-  if (!options._client) {
+  if (!clientResolution.reusedShared) {
     const discovered = await getOrDiscoverProfile(client, options);
     profile = discovered.profile;
     if (profile && !options._profile) {
@@ -3073,7 +3109,7 @@ export async function runStoryboardStep(
     agentLibraryVersion: profile?.library_version,
   });
 
-  if (!options._client) {
+  if (!clientResolution.reusedShared) {
     await closeConnections(options.protocol);
   }
 

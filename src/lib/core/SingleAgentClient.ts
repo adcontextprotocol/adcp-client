@@ -5,8 +5,7 @@ import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
-import { resolveAdcpVersion } from '../utils/adcp-version-config';
-import { resolveBundleKey } from '../validation/schema-loader';
+import { isAdcpVersionSupported, resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -198,6 +197,12 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * accepting forward-compatible strings.
    */
   adcpVersion?: AdcpVersion | (string & {});
+  /**
+   * Controls emission of AdCP version envelope fields. Defaults to `auto`.
+   * `none` is primarily for conformance harnesses that need to send a
+   * request exactly as authored, without SDK-managed version fields.
+   */
+  versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** Enable debug logging */
   debug?: boolean;
   /** Custom User-Agent header sent with all outbound protocol requests.
@@ -453,6 +458,7 @@ export class SingleAgentClient {
       onActivity: config.onActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
+      ...(config.versionEnvelope !== undefined && { versionEnvelope: config.versionEnvelope }),
       transport: config.transport,
     });
 
@@ -3277,8 +3283,7 @@ export class SingleAgentClient {
     // matches only against another `'3.1.0-beta.1'`, not `'3.1'`.
     const supportedVersions = capabilities.supportedVersions;
     if (supportedVersions !== undefined && supportedVersions.length > 0) {
-      const expectedKey = resolveBundleKey(this.resolvedAdcpVersion);
-      if (!supportedVersions.includes(expectedKey)) {
+      if (!isAdcpVersionSupported(this.resolvedAdcpVersion, supportedVersions)) {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     } else {
