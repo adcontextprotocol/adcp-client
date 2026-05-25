@@ -526,12 +526,12 @@ function _server_payload_strips_write_only_notification_credentials(): void {
   const auth = listAccounts.accounts[0]?.notification_configs?.[0]?.authentication;
   if (auth) {
     // @ts-expect-error — response payload aliases must not expose write-only webhook credentials.
-    auth.credentials;
+    const _credentials = auth.credentials;
   }
   const billingEntity = listAccounts.accounts[0]?.billing_entity;
   if (billingEntity) {
     // @ts-expect-error — response payload aliases must not expose write-only bank coordinates.
-    billingEntity.bank;
+    const _bank = billingEntity.bank;
   }
 
   const createBuy: CreateMediaBuyPayload = {
@@ -555,12 +555,12 @@ function _server_payload_strips_write_only_notification_credentials(): void {
   const embeddedAuth = createBuy.account?.notification_configs?.[0]?.authentication;
   if (embeddedAuth) {
     // @ts-expect-error — embedded account payloads get the same response-safe projection.
-    embeddedAuth.credentials;
+    const _embeddedCredentials = embeddedAuth.credentials;
   }
   const invoiceRecipient = createBuy.invoice_recipient;
   if (invoiceRecipient) {
     // @ts-expect-error — direct BusinessEntity payloads get the same response-safe projection.
-    invoiceRecipient.bank;
+    const _invoiceRecipientBank = invoiceRecipient.bank;
   }
 }
 
