@@ -18,6 +18,7 @@
     "cut-8-0-beta",
     "enter-pre-mode-beta",
     "field-value-or-absent-media-buy-status",
+    "fix-server-handler-payload-aliases",
     "fix-unwrapper-injected-status-leak",
     "fix-zod-schemas-test-envelope-status",
     "governance-agents-categories-removed",
@@ -38,6 +39,7 @@
     "server-handler-payload-types",
     "source-fixes-1950-union-products-governance",
     "storyboard-brand-invariant-fix",
+    "storyboard-version-negotiation",
     "terminal-account-pagination",
     "test-agents-envelope-status",
     "triage-agent-routing-briefs"

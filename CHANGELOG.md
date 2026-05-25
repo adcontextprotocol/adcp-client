@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.1.0-beta.10
+
+### Patch Changes
+
+- 6738e2a: Export named server `*Payload` and `*HandlerResult` aliases for decisioning handlers, and keep those payload types aligned with runtime response projection by stripping write-only webhook credentials and billing bank fields.
+
+  Adopters that annotated server helper layers with generated wire `*Response` / `*Success` types should switch those annotations to the exported aliases from `@adcp/sdk/server`, or use `ServerPayload<T>` directly for less common generated response shapes.
+
+- 21240cf: fix: make storyboard runner version negotiation explicit
+
+  Storyboards now inherit the AdCP version from the selected compliance cache, suppress the exact `adcp_version` marker for 3.0 cache runs, and opt into explicit 3.1 markers only when running 3.1 storyboards. The compliance runner and CLI also expose cache selection so the runner does not infer the spec line solely from the installed package version.
+
 ## 8.1.0-beta.9
 
 ### Patch Changes
