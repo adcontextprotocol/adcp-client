@@ -16,6 +16,8 @@ compliance/cache/
 
 # Test harness scratch dirs (test/jsdoc-constraints-codegen.test.js)
 .tmp-jsdoc-constraints-*/
+# Test harness scratch dirs (test/generate-per-tool-collision.test.js)
+.per-tool-collision-*/
 
 # Environment variables
 .env
