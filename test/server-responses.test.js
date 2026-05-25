@@ -160,6 +160,38 @@ describe('mediaBuyResponse', () => {
     });
     assert.strictEqual(result.structuredContent.account.setup.url, 'https://example.com/sign');
   });
+
+  it('strips write-only fields from nested account and invoice recipient', () => {
+    const result = mediaBuyResponse({
+      media_buy_id: 'mb_1',
+      packages: [],
+      account: {
+        account_id: 'acct_1',
+        name: 'Acme',
+        status: 'active',
+        billing_entity: {
+          legal_name: 'Acme Corp.',
+          bank: { account_holder: 'Acme', iban: 'DE89370400440532013000' },
+        },
+        notification_configs: [
+          {
+            subscriber_id: 'ops',
+            url: 'https://buyer.example/webhook',
+            event_types: ['product.updated'],
+            authentication: { schemes: ['Bearer'], credentials: 'secret-token' },
+          },
+        ],
+      },
+      invoice_recipient: {
+        legal_name: 'Acme Media',
+        bank: { account_holder: 'Acme Media', iban: 'DE89370400440532013000' },
+      },
+    });
+
+    assert.strictEqual('bank' in result.structuredContent.account.billing_entity, false);
+    assert.strictEqual('credentials' in result.structuredContent.account.notification_configs[0].authentication, false);
+    assert.strictEqual('bank' in result.structuredContent.invoice_recipient, false);
+  });
 });
 
 describe('deliveryResponse', () => {
@@ -237,6 +269,18 @@ describe('updateMediaBuyResponse', () => {
       /`setup` is not a field on the media buy.*belongs inside `account\.setup`/
     );
   });
+
+  it('strips write-only bank fields from invoice recipient', () => {
+    const result = updateMediaBuyResponse({
+      media_buy_id: 'mb_1',
+      invoice_recipient: {
+        legal_name: 'Acme Media',
+        bank: { account_holder: 'Acme Media', iban: 'DE89370400440532013000' },
+      },
+    });
+
+    assert.strictEqual('bank' in result.structuredContent.invoice_recipient, false);
+  });
 });
 
 describe('getMediaBuysResponse', () => {
@@ -260,6 +304,43 @@ describe('getMediaBuysResponse', () => {
         }),
       /getMediaBuysResponse.*`setup` is not a field on the media buy/
     );
+  });
+
+  it('strips write-only fields from nested accounts and invoice recipients', () => {
+    const result = getMediaBuysResponse({
+      media_buys: [
+        {
+          media_buy_id: 'mb_1',
+          status: 'active',
+          account: {
+            account_id: 'acct_1',
+            name: 'Acme',
+            status: 'active',
+            billing_entity: {
+              legal_name: 'Acme Corp.',
+              bank: { account_holder: 'Acme', iban: 'DE89370400440532013000' },
+            },
+            notification_configs: [
+              {
+                subscriber_id: 'ops',
+                url: 'https://buyer.example/webhook',
+                event_types: ['signal.updated'],
+                authentication: { schemes: ['HMAC-SHA256'], credentials: 'shared-secret' },
+              },
+            ],
+          },
+          invoice_recipient: {
+            legal_name: 'Acme Media',
+            bank: { account_holder: 'Acme Media', iban: 'DE89370400440532013000' },
+          },
+        },
+      ],
+    });
+
+    const buy = result.structuredContent.media_buys[0];
+    assert.strictEqual('bank' in buy.account.billing_entity, false);
+    assert.strictEqual('credentials' in buy.account.notification_configs[0].authentication, false);
+    assert.strictEqual('bank' in buy.invoice_recipient, false);
   });
 });
 

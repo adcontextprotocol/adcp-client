@@ -157,12 +157,50 @@ function stripNotificationConfigSecrets<T extends object>(row: T): T {
   };
 }
 
-function stripAccountNotificationConfigSecrets<T extends { accounts?: unknown }>(data: T): T {
+function stripBusinessEntityBank<T extends object>(row: T, key: 'billing_entity' | 'invoice_recipient'): T {
+  const entity = (row as Record<string, unknown>)[key];
+  if (entity == null || typeof entity !== 'object') return row;
+  if (!('bank' in entity)) return row;
+  const { bank: _bank, ...entityWithoutBank } = entity as Record<string, unknown>;
+  const stripped = { ...row } as Record<string, unknown>;
+  if (Object.keys(entityWithoutBank).length > 0) {
+    stripped[key] = entityWithoutBank;
+  } else {
+    delete stripped[key];
+  }
+  return stripped as T;
+}
+
+function stripAccountWriteOnlyFields<T extends object>(account: T): T {
+  return stripBusinessEntityBank(stripNotificationConfigSecrets(account), 'billing_entity');
+}
+
+function stripAccountsWriteOnlyFields<T extends { accounts?: unknown }>(data: T): T {
   if (!Array.isArray(data.accounts)) return data;
   return {
     ...data,
     accounts: data.accounts.map(account =>
-      account != null && typeof account === 'object' ? stripNotificationConfigSecrets(account) : account
+      account != null && typeof account === 'object' ? stripAccountWriteOnlyFields(account) : account
+    ),
+  };
+}
+
+function stripMediaBuyWriteOnlyFields<T extends object>(buy: T): T {
+  let stripped = stripBusinessEntityBank(buy, 'invoice_recipient');
+  const account = (stripped as { account?: unknown }).account;
+  if (account == null || typeof account !== 'object') return stripped;
+  return {
+    ...stripped,
+    account: stripAccountWriteOnlyFields(account),
+  };
+}
+
+function stripMediaBuysWriteOnlyFields<T extends { media_buys?: unknown }>(data: T): T {
+  if (!Array.isArray(data.media_buys)) return data;
+  return {
+    ...data,
+    media_buys: data.media_buys.map(buy =>
+      buy != null && typeof buy === 'object' ? stripMediaBuyWriteOnlyFields(buy) : buy
     ),
   };
 }
@@ -231,7 +269,7 @@ export function productsResponse(data: ServerPayload<GetProductsResponse>, summa
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function mediaBuyResponse(data: ServerPayload<CreateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'mediaBuyResponse');
-  const withDefaults = { ...data };
+  const withDefaults = { ...stripMediaBuyWriteOnlyFields(data) };
   if (withDefaults.revision === undefined) {
     withDefaults.revision = 1;
   }
@@ -270,7 +308,7 @@ export function deliveryResponse(data: ServerPayload<GetMediaBuyDeliveryResponse
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listAccountsResponse(data: ServerPayload<ListAccountsResponse>, summary?: string): McpToolResponse {
-  const stripped = stripAccountNotificationConfigSecrets(data);
+  const stripped = stripAccountsWriteOnlyFields(data);
   return {
     content: [{ type: 'text', text: summary ?? `Found ${stripped.accounts.length} accounts` }],
     structuredContent: completedStructuredContent(stripped),
@@ -300,7 +338,7 @@ export function listCreativeFormatsResponse(
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function updateMediaBuyResponse(data: ServerPayload<UpdateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'updateMediaBuyResponse');
-  const withDefaults = { ...data };
+  const withDefaults = { ...stripBusinessEntityBank(data, 'invoice_recipient') };
   if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
     withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
   }
@@ -320,14 +358,15 @@ export function getMediaBuysResponse(data: ServerPayload<GetMediaBuysResponse>, 
       assertNoTopLevelSetup(buy, 'getMediaBuysResponse');
     }
   }
+  const stripped = stripMediaBuysWriteOnlyFields(data);
   return {
     content: [
       {
         type: 'text',
-        text: summary ?? `Found ${data.media_buys.length} media buy${data.media_buys.length === 1 ? '' : 's'}`,
+        text: summary ?? `Found ${stripped.media_buys.length} media buy${stripped.media_buys.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: completedStructuredContent(data),
+    structuredContent: completedStructuredContent(stripped),
   };
 }
 
@@ -780,7 +819,7 @@ export function creativeApprovalError(data: CreativeApprovalError): CreativeAppr
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncAccountsResponse(data: ServerPayload<SyncAccountsResponse>, summary?: string): McpToolResponse {
-  const stripped = 'accounts' in data ? stripAccountNotificationConfigSecrets(data) : data;
+  const stripped = 'accounts' in data ? stripAccountsWriteOnlyFields(data) : data;
   const defaultSummary =
     'errors' in stripped
       ? 'Account sync error'

@@ -21,12 +21,16 @@ import type {
   BusinessEntity,
   ExtensionObject,
   PaymentTerms,
+  ListAccountsResponse,
   ReportUsageRequest,
   ReportUsageResponse,
+  SyncAccountsResponse,
   SyncAccountsSuccess,
   SyncGovernanceRequest,
+  SyncGovernanceResponse,
   SyncGovernanceSuccess,
   GetAccountFinancialsRequest,
+  GetAccountFinancialsResponse,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
@@ -37,6 +41,22 @@ import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 type WireNotificationConfig = Omit<NotificationConfig, 'authentication'> & {
   authentication?: Omit<NonNullable<NotificationConfig['authentication']>, 'credentials'>;
 };
+
+export type ListAccountsPayload = ServerPayload<ListAccountsResponse>;
+export type SyncAccountsPayload = ServerPayload<SyncAccountsResponse>;
+export type SyncAccountsSuccessPayload = ServerPayload<SyncAccountsSuccess>;
+export type SyncAccountsRow = SyncAccountsSuccess['accounts'][number];
+export type SyncGovernancePayload = ServerPayload<SyncGovernanceResponse>;
+export type SyncGovernanceSuccessPayload = ServerPayload<SyncGovernanceSuccess>;
+export type SyncGovernanceRow = SyncGovernanceSuccess['accounts'][number];
+export type ReportUsagePayload = ServerPayload<ReportUsageResponse>;
+export type GetAccountFinancialsPayload = ServerPayload<GetAccountFinancialsResponse>;
+export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinancialsSuccess>;
+export type ListAccountsHandlerResult<TCtxMeta = Record<string, unknown>> = CursorPage<Account<TCtxMeta>>;
+export type SyncAccountsHandlerResult = SyncAccountsResultRow[];
+export type SyncGovernanceHandlerResult = SyncGovernanceRow[];
+export type ReportUsageHandlerResult = ReportUsagePayload;
+export type GetAccountFinancialsHandlerResult = GetAccountFinancialsSuccessPayload;
 
 /**
  * Account — framework's rich representation. A strict superset of the wire
@@ -524,7 +544,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * verified `agent_url` from `credential.kind === 'http_sig'` when
    * `agentRegistry` is not configured).
    */
-  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
+  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsHandlerResult>;
 
   /**
    * sync_governance API surface. Buyers register governance agent endpoints
@@ -566,7 +586,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   syncGovernance?(
     entries: SyncGovernanceRequest['accounts'],
     ctx?: ResolveContext
-  ): Promise<SyncGovernanceSuccess['accounts']>;
+  ): Promise<SyncGovernanceHandlerResult>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.
@@ -577,7 +597,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * scope the listing per-principal (e.g., return only accounts visible to
    * the calling buyer agent) without re-deriving identity from the request.
    */
-  list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<CursorPage<Account<TCtxMeta>>>;
+  list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<ListAccountsHandlerResult<TCtxMeta>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
@@ -597,7 +617,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * pattern as `accounts.resolve`. Prefer `ctx.agent` for principal-keyed
    * commercial gates; see `upsert?` for the rationale.
    */
-  reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ServerPayload<ReportUsageResponse>>;
+  reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ReportUsageHandlerResult>;
 
   /**
    * get_account_financials API surface. Operator-billed platforms expose
@@ -624,7 +644,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   getAccountFinancials?(
     req: GetAccountFinancialsRequest,
     ctx: AccountToolContext<TCtxMeta>
-  ): Promise<GetAccountFinancialsSuccess>;
+  ): Promise<GetAccountFinancialsHandlerResult>;
 
   /**
    * Mid-request token refresh hook. Optional. Called by the framework when

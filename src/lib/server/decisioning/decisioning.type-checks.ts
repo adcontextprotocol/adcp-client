@@ -23,6 +23,31 @@ import type {
   SalesPlatform,
   SalesCorePlatform,
   SalesIngestionPlatform,
+  ActivateSignalPayload,
+  BuildCreativePayload,
+  BuildCreativeMultiPayload,
+  CreativeApprovedPayload,
+  GetProductsPayload,
+  CreateMediaBuyHandlerResult,
+  CreateMediaBuyPayload,
+  UpdateMediaBuyPayload,
+  GetMediaBuyDeliveryPayload,
+  GetMediaBuysPayload,
+  GetAccountFinancialsHandlerResult,
+  GetBrandIdentityPayload,
+  GetRightsPayload,
+  ListAccountsHandlerResult,
+  ListCreativeFormatsPayload,
+  ReportUsageHandlerResult,
+  SyncAudiencesPayload,
+  SyncAccountsHandlerResult,
+  SyncCreativesPayload,
+  SyncCreativesHandlerResult,
+  SyncEventSourcesPayload,
+  SyncGovernanceHandlerResult,
+  ListAccountsPayload,
+  RightsTerms,
+  UpdateRightsPayload,
   SponsoredIntelligencePlatform,
   AudiencePlatform,
   CreateAdcpServerFromPlatformOptions,
@@ -383,6 +408,92 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
   return sales;
 }
 
+function _sales_platform_handler_results_accept_task_handoff() {
+  const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
+    getProducts: async () => ({ products: [], cache_scope: 'account' }),
+    createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'x', packages: [] })),
+    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    syncCreatives: async (_creatives, ctx) => ctx.handoffToTask(async () => []),
+  };
+
+  const createResult: CreateMediaBuyHandlerResult = { media_buy_id: 'x', packages: [] };
+  const syncResult: SyncCreativesHandlerResult = [];
+  void createResult;
+  void syncResult;
+  return sales;
+}
+
+type _Ok<T> = { ok: true; value: T };
+type _Err<E> = { ok: false; error: E };
+type _Result<T, E> = _Ok<T> | _Err<E>;
+const _ok = <T>(value: T): _Result<T, Error> => ({ ok: true, value });
+
+function _adopter_result_payload_aliases_do_not_require_protocol_status() {
+  const creativeManifest = {} as CreativeManifest;
+  const rightsTerms = {} as RightsTerms;
+  const payloads: [
+    _Result<GetProductsPayload, Error>,
+    _Result<ListCreativeFormatsPayload, Error>,
+    _Result<CreateMediaBuyPayload, Error>,
+    _Result<UpdateMediaBuyPayload, Error>,
+    _Result<SyncCreativesPayload, Error>,
+    _Result<SyncEventSourcesPayload, Error>,
+    _Result<ListAccountsPayload, Error>,
+    _Result<GetMediaBuysPayload, Error>,
+    _Result<GetMediaBuyDeliveryPayload, Error>,
+    _Result<BuildCreativePayload, Error>,
+    _Result<BuildCreativeMultiPayload, Error>,
+    _Result<SyncAudiencesPayload, Error>,
+    _Result<ActivateSignalPayload, Error>,
+    _Result<GetBrandIdentityPayload, Error>,
+    _Result<GetRightsPayload, Error>,
+    _Result<UpdateRightsPayload, Error>,
+    _Result<CreativeApprovedPayload, Error>,
+    _Result<CreateMediaBuyHandlerResult, Error>,
+    _Result<SyncCreativesHandlerResult, Error>,
+  ] = [
+    _ok({ products: [], cache_scope: 'account' }),
+    _ok({ formats: [] }),
+    _ok({ media_buy_id: 'x', packages: [] }),
+    _ok({ media_buy_id: 'x' }),
+    _ok({ creatives: [] }),
+    _ok({ event_sources: [] }),
+    _ok({ accounts: [] }),
+    _ok({ media_buys: [] }),
+    _ok({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    _ok({ creative_manifest: creativeManifest }),
+    _ok({ creative_manifests: [] }),
+    _ok({ audiences: [] }),
+    _ok({ deployments: [] }),
+    _ok({ brand_id: 'brand_1', house: { domain: 'acme.com', name: 'Acme' }, names: [{ en: 'Acme' }] }),
+    _ok({ rights: [] }),
+    _ok({ rights_id: 'rights_1', terms: rightsTerms }),
+    _ok({ approval_status: 'approved', rights_id: 'rights_1' }),
+    _ok({ media_buy_id: 'x', packages: [] }),
+    _ok([]),
+  ];
+  return payloads;
+}
+
+function _account_handler_result_aliases_are_exported() {
+  const results: [
+    ListAccountsHandlerResult,
+    SyncAccountsHandlerResult,
+    SyncGovernanceHandlerResult,
+    _Result<ReportUsageHandlerResult, Error>,
+    _Result<GetAccountFinancialsHandlerResult, Error>,
+  ] = [{ items: [] }, [], [], _ok({ accepted: 0 }), _ok({} as GetAccountFinancialsHandlerResult)];
+  return results;
+}
+
 function _server_payload_preserves_domain_status_fields(): void {
   type CreateMediaBuySuccess = import('../../types/tools.generated').CreateMediaBuySuccess;
   const payload: ServerPayload<CreateMediaBuySuccess> = {
@@ -391,6 +502,66 @@ function _server_payload_preserves_domain_status_fields(): void {
     status: 'active',
   };
   void payload;
+}
+
+function _server_payload_strips_write_only_notification_credentials(): void {
+  const listAccounts: ListAccountsPayload = {
+    accounts: [
+      {
+        account_id: 'acct_1',
+        name: 'Acme',
+        status: 'active',
+        billing_entity: { legal_name: 'Acme Inc.' },
+        notification_configs: [
+          {
+            subscriber_id: 'buyer-primary',
+            url: 'https://hooks.test/notify',
+            event_types: [],
+            authentication: { schemes: ['Bearer'] },
+          },
+        ],
+      },
+    ],
+  };
+  const auth = listAccounts.accounts[0]?.notification_configs?.[0]?.authentication;
+  if (auth) {
+    // @ts-expect-error — response payload aliases must not expose write-only webhook credentials.
+    const _credentials = auth.credentials;
+  }
+  const billingEntity = listAccounts.accounts[0]?.billing_entity;
+  if (billingEntity) {
+    // @ts-expect-error — response payload aliases must not expose write-only bank coordinates.
+    const _bank = billingEntity.bank;
+  }
+
+  const createBuy: CreateMediaBuyPayload = {
+    media_buy_id: 'mb_1',
+    packages: [],
+    invoice_recipient: { legal_name: 'Acme Inc.' },
+    account: {
+      account_id: 'acct_1',
+      name: 'Acme',
+      status: 'active',
+      notification_configs: [
+        {
+          subscriber_id: 'buyer-primary',
+          url: 'https://hooks.test/notify',
+          event_types: [],
+          authentication: { schemes: ['HMAC-SHA256'] },
+        },
+      ],
+    },
+  };
+  const embeddedAuth = createBuy.account?.notification_configs?.[0]?.authentication;
+  if (embeddedAuth) {
+    // @ts-expect-error — embedded account payloads get the same response-safe projection.
+    const _embeddedCredentials = embeddedAuth.credentials;
+  }
+  const invoiceRecipient = createBuy.invoice_recipient;
+  if (invoiceRecipient) {
+    // @ts-expect-error — direct BusinessEntity payloads get the same response-safe projection.
+    const _invoiceRecipientBank = invoiceRecipient.bank;
+  }
 }
 
 function _server_payload_keeps_required_domain_fields(): void {
@@ -751,7 +922,11 @@ export const _references = [
   _sales_guaranteed_field_annotation_pattern,
   _sales_guaranteed_spread_helpers_pattern,
   _sales_platform_payload_returns_do_not_require_protocol_status,
+  _sales_platform_handler_results_accept_task_handoff,
+  _adopter_result_payload_aliases_do_not_require_protocol_status,
+  _account_handler_result_aliases_are_exported,
   _server_payload_preserves_domain_status_fields,
+  _server_payload_strips_write_only_notification_credentials,
   _server_payload_keeps_required_domain_fields,
   _server_payload_preserves_governance_context,
   _non_sales_platform_payload_returns_do_not_require_protocol_status,

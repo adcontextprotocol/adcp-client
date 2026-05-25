@@ -86,7 +86,22 @@ export type {
   AuthPrincipal,
   AccountStore,
   AccountFilter,
+  ListAccountsPayload,
+  SyncAccountsPayload,
+  SyncAccountsSuccessPayload,
+  SyncAccountsRow,
   SyncAccountsResultRow,
+  SyncGovernancePayload,
+  SyncGovernanceSuccessPayload,
+  SyncGovernanceRow,
+  ReportUsagePayload,
+  GetAccountFinancialsPayload,
+  GetAccountFinancialsSuccessPayload,
+  ListAccountsHandlerResult,
+  SyncAccountsHandlerResult,
+  SyncGovernanceHandlerResult,
+  ReportUsageHandlerResult,
+  GetAccountFinancialsHandlerResult,
   AdcpAccountStatus,
   ResolveContext,
   AccountToolContext,
@@ -156,6 +171,8 @@ export type { ResolveAccountHooks, ResolveGuardOptions } from './resolve-presets
 export type {
   CreativeBuilderPlatform,
   BuildCreativeReturn,
+  BuildCreativePayload,
+  BuildCreativeMultiPayload,
   PreviewCreativePayload as CreativePreviewCreativePayload,
   ListCreativeFormatsPayload as CreativeListCreativeFormatsPayload,
   // Deprecated aliases — kept for one-release source compat. Both
@@ -168,6 +185,9 @@ export type {
 
 export type {
   CreativeAdServerPlatform,
+  BuildCreativeReturn as CreativeAdServerBuildCreativeReturn,
+  BuildCreativePayload as CreativeAdServerBuildCreativePayload,
+  BuildCreativeMultiPayload as CreativeAdServerBuildCreativeMultiPayload,
   PreviewCreativePayload as CreativeAdServerPreviewCreativePayload,
   ListCreativeFormatsPayload as CreativeAdServerListCreativeFormatsPayload,
   ListCreativesPayload as CreativeAdServerListCreativesPayload,
@@ -214,15 +234,31 @@ export type {
   SalesCorePlatform,
   SalesIngestionPlatform,
   GetProductsPayload,
+  CreateMediaBuyPayload,
+  CreateMediaBuyHandlerResult,
+  UpdateMediaBuyPayload,
   GetMediaBuyDeliveryPayload,
   GetMediaBuysPayload,
+  ProvidePerformanceFeedbackPayload,
   ListCreativeFormatsPayload,
   ListCreativesPayload,
+  SyncCreativesPayload,
+  SyncCreativesHandlerResult,
+  SyncCatalogsPayload,
+  LogEventPayload,
+  SyncEventSourcesPayload,
 } from './specialisms/sales';
 
-export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
+export type {
+  AudiencePlatform,
+  Audience,
+  SyncAudiencesPayload,
+  SyncAudiencesRow,
+  SyncAudiencesHandlerResult,
+  AudienceStatus,
+} from './specialisms/audiences';
 
-export type { SignalsPlatform, GetSignalsPayload } from './specialisms/signals';
+export type { SignalsPlatform, GetSignalsPayload, ActivateSignalPayload } from './specialisms/signals';
 
 export type {
   SponsoredIntelligencePlatform,
@@ -232,7 +268,20 @@ export type {
   SITerminateSessionPayload,
 } from './specialisms/sponsored-intelligence';
 
-export type { BrandRightsPlatform } from './specialisms/brand-rights';
+export type {
+  BrandRightsPlatform,
+  GetBrandIdentityPayload,
+  GetRightsPayload,
+  AcquireRightsAcquiredPayload,
+  AcquireRightsPendingApprovalPayload,
+  AcquireRightsRejectedPayload,
+  AcquireRightsPayload,
+  UpdateRightsPayload,
+  CreativeApprovedPayload,
+  CreativeRejectedPayload,
+  CreativePendingReviewPayload,
+  CreativeApprovalPayload,
+} from './specialisms/brand-rights';
 
 // Brand-rights wire types — re-exported from `@adcp/sdk/server/decisioning`
 // because brand-rights is the only specialism whose wire types live in

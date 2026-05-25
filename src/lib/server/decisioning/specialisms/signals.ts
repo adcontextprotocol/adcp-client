@@ -37,6 +37,7 @@ import type {
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type GetSignalsPayload = ServerPayload<GetSignalsResponse>;
+export type ActivateSignalPayload = ServerPayload<ActivateSignalSuccess>;
 
 export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -70,5 +71,5 @@ export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
    *   - `'POLICY_VIOLATION'` — buyer lacks rights to activate this data
    *   - `'INVALID_REQUEST'` — missing or unrecognized destination
    */
-  activateSignal(req: ActivateSignalRequest, ctx: Ctx<TCtxMeta>): Promise<ActivateSignalSuccess>;
+  activateSignal(req: ActivateSignalRequest, ctx: Ctx<TCtxMeta>): Promise<ActivateSignalPayload>;
 }

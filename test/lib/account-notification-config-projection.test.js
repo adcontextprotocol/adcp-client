@@ -70,13 +70,17 @@ describe('account notification_configs projection', () => {
     ]);
   });
 
-  test('raw list_accounts response builder strips only notification credentials', () => {
+  test('raw list_accounts response builder strips notification credentials and bank details', () => {
     const response = listAccountsResponse({
       accounts: [
         {
           account_id: 'acc_acme',
           name: 'Acme',
           status: 'active',
+          billing_entity: {
+            legal_name: 'Acme Corp.',
+            bank: { account_holder: 'Acme Corp.', iban: 'DE89370400440532013000' },
+          },
           notification_configs: [
             {
               subscriber_id: 'wholesale-feed-sync',
@@ -95,9 +99,10 @@ describe('account notification_configs projection', () => {
     assert.deepStrictEqual(response.structuredContent.accounts[0].notification_configs[0].authentication, {
       schemes: ['Bearer'],
     });
+    assert.equal('bank' in response.structuredContent.accounts[0].billing_entity, false);
   });
 
-  test('raw sync_accounts response builder strips notification credentials before idempotent replay caching', () => {
+  test('raw sync_accounts response builder strips notification credentials and bank details before replay caching', () => {
     const response = syncAccountsResponse({
       accounts: [
         {
@@ -105,6 +110,10 @@ describe('account notification_configs projection', () => {
           operator: 'acme.example',
           action: 'updated',
           status: 'active',
+          billing_entity: {
+            legal_name: 'Acme Corp.',
+            bank: { account_holder: 'Acme Corp.', iban: 'DE89370400440532013000' },
+          },
           notification_configs: [
             {
               subscriber_id: 'wholesale-feed-sync',
@@ -123,5 +132,6 @@ describe('account notification_configs projection', () => {
     assert.deepStrictEqual(response.structuredContent.accounts[0].notification_configs[0].authentication, {
       schemes: ['HMAC-SHA256'],
     });
+    assert.equal('bank' in response.structuredContent.accounts[0].billing_entity, false);
   });
 });

@@ -95,10 +95,17 @@ type Creative = CreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type GetProductsPayload = ServerPayload<GetProductsResponse>;
+export type CreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
+export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
+export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
 export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
+export type SyncCreativesPayload = ServerPayload<SyncCreativesSuccess>;
+export type SyncCatalogsPayload = ServerPayload<SyncCatalogsSuccess>;
+export type LogEventPayload = ServerPayload<LogEventSuccess>;
+export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
 
 /**
  * Wire success-row shape for `sync_creatives`. Returning the array of these
@@ -106,6 +113,8 @@ export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
  * with `{ creatives: [...] }` to form `SyncCreativesSuccess`.
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
+export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuyPayload>;
+export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;
 
 export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // **Method shape — all optional, enforced per-specialism.** Every method on
@@ -199,10 +208,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  createMediaBuy?(
-    req: CreateMediaBuyRequest,
-    ctx: Ctx<TCtxMeta>
-  ): Promise<CreateMediaBuySuccess | TaskHandoff<CreateMediaBuySuccess>>;
+  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<CreateMediaBuyHandlerResult>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
   // Spec inconsistency — same root cause as get_products above. The
@@ -214,7 +220,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // `publishStatusChange` on `resource_type: 'media_buy'` rather than
   // HITL on this tool.
   /** Sync update. Returns the patched buy. */
-  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuySuccess>;
+  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuyPayload>;
 
   // ── sync_creatives: unified hybrid shape ────────────────────────────
 
@@ -242,10 +248,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(
-    creatives: Creative[],
-    ctx: Ctx<TCtxMeta>
-  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesHandlerResult>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
@@ -356,7 +359,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   providePerformanceFeedback?(
     req: ProvidePerformanceFeedbackRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ProvidePerformanceFeedbackSuccess>;
+  ): Promise<ProvidePerformanceFeedbackPayload>;
 
   // ── list_creative_formats: sync only ────────────────────────────────
   // Discovery tool — buyers query what creative formats this seller
@@ -385,20 +388,20 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // store-ids) for `sales-catalog-driven` agents (Amazon, Criteo, Citrusad,
   // Walmart Connect, Shopify ad surfaces). Optional — non-retail sales
   // adopters omit. Idempotent on the buyer's `idempotency_key`.
-  syncCatalogs?(req: SyncCatalogsRequest, ctx: Ctx<TCtxMeta>): Promise<SyncCatalogsSuccess>;
+  syncCatalogs?(req: SyncCatalogsRequest, ctx: Ctx<TCtxMeta>): Promise<SyncCatalogsPayload>;
 
   // ── log_event: sync only ────────────────────────────────────────────
   // Conversion / engagement event logging. Buyers post events tied to
   // a `media_buy_id` for performance attribution. Used by retail-media
   // (post-purchase events) and conversion-tracked sales (Snap pixel,
   // Meta CAPI, LinkedIn conversions API). Optional.
-  logEvent?(req: LogEventRequest, ctx: Ctx<TCtxMeta>): Promise<LogEventSuccess>;
+  logEvent?(req: LogEventRequest, ctx: Ctx<TCtxMeta>): Promise<LogEventPayload>;
 
   // ── sync_event_sources: sync only ──────────────────────────────────
   // Register conversion event sources (websites, apps, offline pixel
   // IDs) so subsequent `log_event` calls can be attributed correctly.
   // Optional — adopters who don't expose conversion tracking omit.
-  syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TCtxMeta>): Promise<SyncEventSourcesSuccess>;
+  syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TCtxMeta>): Promise<SyncEventSourcesPayload>;
 }
 
 /**
