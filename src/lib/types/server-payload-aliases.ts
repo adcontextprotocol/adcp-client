@@ -156,7 +156,4 @@ export type UpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
 export type CreativeApprovedPayload = ServerPayload<CreativeApproved>;
 export type CreativeRejectedPayload = ServerPayload<CreativeRejected>;
 export type CreativePendingReviewPayload = ServerPayload<CreativePendingReview>;
-export type CreativeApprovalPayload =
-  | CreativeApprovedPayload
-  | CreativeRejectedPayload
-  | CreativePendingReviewPayload;
+export type CreativeApprovalPayload = CreativeApprovedPayload | CreativeRejectedPayload | CreativePendingReviewPayload;
