@@ -480,7 +480,7 @@ function validateResponseSchema(
   // `utils/envelope-status-compat.ts`.
   const dataForValidation = Array.isArray(dataWithoutMessage)
     ? dataWithoutMessage
-    : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>);
+    : injectLegacyEnvelopeStatus(dataWithoutMessage as Record<string, unknown>, { toolName: taskName });
   const parseResult = schema.safeParse(dataForValidation);
 
   // Strict (AJV) verdict runs alongside the lenient Zod check so the run

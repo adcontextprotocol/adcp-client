@@ -694,7 +694,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   // schema. See `utils/envelope-status-compat.ts`.
   const compatPayload =
     payload && typeof payload === 'object' && !Array.isArray(payload)
-      ? injectLegacyEnvelopeStatus(payload as Record<string, unknown>)
+      ? injectLegacyEnvelopeStatus(payload as Record<string, unknown>, { toolName })
       : payload;
   const variant = selectResponseVariant(compatPayload);
   const validator = getValidator(toolName, variant, version);

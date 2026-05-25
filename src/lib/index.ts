@@ -1002,7 +1002,14 @@ export const wireVersion = {
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
-export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
+export {
+  getStandardFormats,
+  unwrapProtocolResponse,
+  isAdcpError,
+  isAdcpSuccess,
+  getAuthoritativeMediaBuyStatus,
+  isMediaBuyStatus,
+} from './utils';
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';

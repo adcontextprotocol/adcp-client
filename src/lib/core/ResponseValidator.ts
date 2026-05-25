@@ -328,7 +328,7 @@ export class ResponseValidator {
     // declares itself as 3.0.x. See `utils/envelope-status-compat.ts`.
     const validatePayload =
       data && typeof data === 'object' && !Array.isArray(data)
-        ? injectLegacyEnvelopeStatus(data as Record<string, unknown>)
+        ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName })
         : data;
 
     // Validate

@@ -4,9 +4,9 @@
 // 3.0.x (or carry no version field at all) so an 8.0-beta SDK validating
 // against the 3.1 envelope schema can still parse 3.0 wire responses.
 //
-// 3.1+ payloads must be returned UNCHANGED so the strict validator still
-// rejects a 3.1 peer that omits `status` — the leniency is back-compat,
-// not a permanent loosening.
+// 3.1+ payloads must not receive synthetic status fields, so the strict
+// validator still rejects a 3.1 peer that omits `status` — the leniency is
+// back-compat, not a permanent loosening.
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
@@ -26,6 +26,7 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
     for (const version of ['3.0.0', '3.0.5', '3.0.12']) {
       const result = injectLegacyEnvelopeStatus({ adcp_version: version, products: [] });
       assert.strictEqual(result.status, 'completed', `version ${version}`);
+      assert.strictEqual(result.adcp_version, version, `version ${version} preserved exactly`);
     }
   });
 
@@ -81,6 +82,123 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
     };
     const result = injectLegacyEnvelopeStatus(input);
     assert.strictEqual(result.status, 'failed');
+  });
+
+  test('3.0 create_media_buy success with legacy MediaBuyStatus → media_buy_status plus completed envelope', () => {
+    const input = {
+      adcp_major_version: 3,
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      packages: [],
+      context: { correlation_id: 'corr_1' },
+    };
+    const result = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy' });
+    assert.notStrictEqual(result, input);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.media_buy_status, 'pending_creatives');
+    assert.deepStrictEqual(result.packages, []);
+  });
+
+  test('3.0 update_media_buy with divergent status fields is returned unchanged', () => {
+    const input = {
+      media_buy_id: 'mb_1',
+      status: 'pending_start',
+      media_buy_status: 'active',
+      packages: [],
+    };
+    const result = injectLegacyEnvelopeStatus(input, { toolName: 'update_media_buy' });
+    assert.strictEqual(result, input);
+    assert.strictEqual(result.status, 'pending_start');
+    assert.strictEqual(result.media_buy_status, 'active');
+  });
+
+  test('3.1 create_media_buy deprecated lifecycle status → media_buy_status plus completed envelope for validation', () => {
+    const input = {
+      adcp_version: '3.1',
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      packages: [],
+    };
+    const result = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy' });
+    assert.notStrictEqual(result, input);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.media_buy_status, 'pending_creatives');
+  });
+
+  test('does not infer media_buy_status from 3.1 envelope status completed', () => {
+    const input = {
+      adcp_version: '3.1',
+      media_buy_id: 'mb_1',
+      status: 'completed',
+      packages: [],
+    };
+
+    const result = injectLegacyEnvelopeStatus(input, { toolName: 'create_media_buy' });
+
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.media_buy_status, undefined);
+  });
+
+  test('strict response validation accepts legacy create_media_buy lifecycle status after normalization', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('create_media_buy', {
+      adcp_major_version: 3,
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      packages: [],
+      context: { correlation_id: 'corr_1' },
+    });
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.variant, 'sync');
+  });
+
+  test('strict response validation accepts legacy update_media_buy lifecycle status after normalization', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('update_media_buy', {
+      adcp_major_version: 3,
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      affected_packages: [],
+    });
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.variant, 'sync');
+  });
+
+  test('strict response validation accepts 3.1 deprecated create_media_buy lifecycle status', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('create_media_buy', {
+      adcp_version: '3.1',
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      packages: [],
+      context: { correlation_id: 'corr_1' },
+    });
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.variant, 'sync');
+  });
+
+  test('strict response validation rejects divergent media-buy lifecycle statuses', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('update_media_buy', {
+      adcp_version: '3.1',
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      media_buy_status: 'active',
+      affected_packages: [],
+    });
+    assert.strictEqual(result.valid, false);
+  });
+
+  test('strict response validation rejects full-semver response adcp_version', () => {
+    const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+    const result = validateResponse('create_media_buy', {
+      adcp_version: '3.1.0-beta.3',
+      status: 'completed',
+      media_buy_id: 'mb_1',
+      media_buy_status: 'pending_creatives',
+      packages: [],
+    });
+    assert.strictEqual(result.valid, false);
   });
 
   test('no version fields at all → treated as legacy, status injected', () => {

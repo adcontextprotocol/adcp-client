@@ -270,7 +270,7 @@ export async function testCreateMediaBuy(
     const mediaBuy = createResult.data as unknown as Record<string, unknown>;
     const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
     mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
-    const status = (mediaBuy.status || nested?.status) as string | undefined;
+    const status = extractStatus(mediaBuy);
     const packages = (mediaBuy.packages || nested?.packages) as unknown[] | undefined;
     createStep.details = `Created media buy: ${mediaBuyId}, status: ${status}`;
     createStep.created_id = mediaBuyId;
@@ -341,7 +341,7 @@ export async function testFullSalesFlow(
     if (updateResult?.success && updateResult?.data) {
       const data = updateResult.data as unknown as Record<string, unknown>;
       const nested = data.media_buy as Record<string, unknown> | undefined;
-      const status = (data.status || nested?.status) as string | undefined;
+      const status = extractStatus(data);
       updateStep.details = `Updated media buy, status: ${status}`;
       updateStep.response_preview = JSON.stringify(
         {
@@ -404,10 +404,11 @@ export async function testFullSalesFlow(
         );
         // Provide observation data so collectObservations can check valid_actions/sandbox
         // even when media_buy_lifecycle doesn't run (e.g., agent lacks update_media_buy).
+        const status = extractStatus(mediaBuy);
         snapshotStep.observation_data = {
           valid_actions: mediaBuy.valid_actions,
           sandbox: mediaBuy.sandbox,
-          status: mediaBuy.status,
+          status,
           has_creative_deadline: packages.some((p: any) => p.creative_deadline) || !!mediaBuy.creative_deadline,
         };
       }
@@ -988,7 +989,7 @@ export async function testCreativeInline(
     const mediaBuy = createResult.data as unknown as Record<string, unknown>;
     const nested = mediaBuy.media_buy as Record<string, unknown> | undefined;
     const mediaBuyId = (mediaBuy.media_buy_id || nested?.media_buy_id) as string | undefined;
-    const status = (mediaBuy.status || nested?.status) as string | undefined;
+    const status = extractStatus(mediaBuy);
     const packages = (mediaBuy.packages || nested?.packages) as Record<string, unknown>[] | undefined;
     const hasCreatives = packages?.some(p => {
       const creatives = p.creatives as unknown[] | undefined;
@@ -1469,7 +1470,7 @@ export async function testSyncAudiences(
  */
 function extractStatus(data: Record<string, unknown>): string | undefined {
   const nested = data.media_buy as Record<string, unknown> | undefined;
-  return (data.status ?? nested?.status) as string | undefined;
+  return (data.media_buy_status ?? nested?.media_buy_status ?? data.status ?? nested?.status) as string | undefined;
 }
 
 /**
@@ -1638,6 +1639,7 @@ export async function testMediaBuyLifecycle(
         const history = mediaBuy.history as Array<Record<string, unknown>> | undefined;
         const packages = (mediaBuy.packages || []) as Array<Record<string, unknown>>;
         const hasCreativeDeadline = packages.some(p => p.creative_deadline) || !!mediaBuy.creative_deadline;
+        const status = extractStatus(mediaBuy);
 
         // Validate history entry shape if present
         let historyValid = true;
@@ -1647,11 +1649,11 @@ export async function testMediaBuyLifecycle(
           if (missingTimestamp || missingAction) historyValid = false;
         }
 
-        statusStep.details = `Status: ${mediaBuy.status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}, revision: ${mbRevision ?? 'not provided'}`;
+        statusStep.details = `Status: ${status}, valid_actions: ${validActions ? validActions.join(', ') : 'not provided'}, revision: ${mbRevision ?? 'not provided'}`;
         statusStep.response_preview = JSON.stringify(
           {
             media_buy_id: mediaBuy.media_buy_id,
-            status: mediaBuy.status,
+            status,
             confirmed_at: mbConfirmedAt,
             revision: mbRevision,
             valid_actions: validActions,
@@ -1666,7 +1668,7 @@ export async function testMediaBuyLifecycle(
         statusStep.observation_data = {
           valid_actions: validActions,
           sandbox: mediaBuy.sandbox,
-          status: mediaBuy.status,
+          status,
           has_creative_deadline: hasCreativeDeadline,
           history_entries: history?.length ?? 0,
           history_valid: historyValid,
@@ -2125,7 +2127,7 @@ export async function testPackageLifecycle(
       const mediaBuys = (verifyResult.data.media_buys || []) as Array<Record<string, unknown>>;
       const mediaBuy =
         mediaBuys.find((item: Record<string, unknown>) => item.media_buy_id === mediaBuyId) || mediaBuys[0];
-      const status = mediaBuy?.status as string | undefined;
+      const status = mediaBuy ? extractStatus(mediaBuy) : undefined;
 
       if (status === 'active' || status === 'pending_start') {
         verifyStep.details = `Media buy still ${status} after package-level operations`;

@@ -20,6 +20,10 @@ import { resolvePath, setPath } from './path';
 
 type ContextExtractor = (data: unknown) => Record<string, unknown>;
 
+function readMediaBuyStatus(record: Record<string, unknown> | undefined): unknown {
+  return record?.media_buy_status ?? record?.status;
+}
+
 export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
   sync_accounts(data) {
     const d = data as Record<string, unknown> | undefined;
@@ -64,7 +68,8 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const d = data as Record<string, unknown> | undefined;
     const extracted: Record<string, unknown> = {};
     if (d?.media_buy_id) extracted.media_buy_id = d.media_buy_id;
-    if (d?.status) extracted.media_buy_status = d.status;
+    const status = readMediaBuyStatus(d);
+    if (status) extracted.media_buy_status = status;
     return extracted;
   },
 
@@ -72,7 +77,8 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const d = data as Record<string, unknown> | undefined;
     const extracted: Record<string, unknown> = {};
     if (d?.media_buy_id) extracted.media_buy_id = d.media_buy_id;
-    if (d?.status) extracted.media_buy_status = d.status;
+    const status = readMediaBuyStatus(d);
+    if (status) extracted.media_buy_status = status;
     return extracted;
   },
 
@@ -90,7 +96,7 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     if (pagination?.has_more === true) return {};
     return {
       media_buy_id: buys[0].media_buy_id,
-      media_buy_status: buys[0].status,
+      media_buy_status: readMediaBuyStatus(buys[0]),
     };
   },
 

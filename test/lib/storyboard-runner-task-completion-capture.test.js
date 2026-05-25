@@ -161,6 +161,89 @@ describe('runStoryboardStep — task_completion. context_outputs', () => {
     assert.equal(captureFailures.length, 0, 'no capture failures synthesized when polled artifact has the field');
   });
 
+  test('normalizes legacy media-buy status on polled completion artifacts before capture', async () => {
+    const statusStoryboard = {
+      ...baseStoryboard,
+      phases: [
+        {
+          ...baseStoryboard.phases[0],
+          steps: [
+            {
+              ...baseStoryboard.phases[0].steps[0],
+              context_outputs: [{ key: 'media_buy_status', path: 'task_completion.media_buy_status' }],
+            },
+          ],
+        },
+      ],
+    };
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_async_legacy_status' },
+      pollResult: {
+        success: true,
+        data: {
+          adcp_major_version: 3,
+          media_buy_id: 'mb_legacy_status',
+          status: 'pending_creatives',
+          packages: [],
+        },
+      },
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', statusStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+    });
+
+    assert.equal(result.context.media_buy_status, 'pending_creatives');
+    assert.equal(
+      result.validations.filter(v => v.check === 'capture_path_not_resolvable').length,
+      0,
+      'media_buy_status capture resolved from normalized polled artifact'
+    );
+  });
+
+  test('does not expose synthetic status on polled completion artifacts', async () => {
+    const statusStoryboard = {
+      ...baseStoryboard,
+      phases: [
+        {
+          ...baseStoryboard.phases[0],
+          steps: [
+            {
+              ...baseStoryboard.phases[0].steps[0],
+              context_outputs: [{ key: 'synthetic_status', path: 'task_completion.status' }],
+            },
+          ],
+        },
+      ],
+    };
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_async_media_buy_status_only' },
+      pollResult: {
+        success: true,
+        data: {
+          media_buy_id: 'mb_media_buy_status_only',
+          media_buy_status: 'pending_creatives',
+          packages: [],
+        },
+      },
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', statusStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+    });
+
+    assert.equal(result.context.synthetic_status, undefined);
+    assert.equal(
+      result.validations.filter(v => v.check === 'capture_path_not_resolvable').length,
+      1,
+      'task_completion.status stays absent when only a synthetic envelope status was needed for validation'
+    );
+  });
+
   test('emits capture_poll_timeout (not capture_path_not_resolvable) when polling exceeds the timeout', async () => {
     process.env.STORYBOARD_TASK_POLL_TIMEOUT_MS = '50';
     try {
@@ -304,6 +387,53 @@ describe('runStoryboardStep — task_completion. context_outputs', () => {
       'wait filter targeted task_id'
     );
     void calls;
+  });
+
+  test('normalizes legacy media-buy status on webhook completion artifacts before capture', async () => {
+    const statusStoryboard = {
+      ...baseStoryboard,
+      phases: [
+        {
+          ...baseStoryboard.phases[0],
+          steps: [
+            {
+              ...baseStoryboard.phases[0].steps[0],
+              context_outputs: [{ key: 'media_buy_status', path: 'task_completion.media_buy_status' }],
+            },
+          ],
+        },
+      ],
+    };
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_webhook_legacy_status' },
+      pollResult: { success: true, data: { media_buy_id: 'mb_from_poll' } },
+      pollDelay: 500,
+    });
+    const webhookReceiver = buildWebhookReceiver({
+      payload: {
+        task_id: 'task_webhook_legacy_status',
+        result: {
+          media_buy_id: 'mb_webhook_legacy_status',
+          status: 'pending_creatives',
+          packages: [],
+        },
+      },
+      deliverAfterMs: 5,
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', statusStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _webhookReceiver: webhookReceiver,
+    });
+
+    assert.equal(result.context.media_buy_status, 'pending_creatives');
+    assert.equal(
+      result.validations.filter(v => v.check === 'capture_path_not_resolvable').length,
+      0,
+      'media_buy_status capture resolved from normalized webhook artifact'
+    );
   });
 
   test('webhook fallback works when executor.pollTaskCompletion is unavailable', async () => {
