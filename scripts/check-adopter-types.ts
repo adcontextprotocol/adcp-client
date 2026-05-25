@@ -87,8 +87,20 @@ import type {
 import { createAdcpServerFromPlatform, defineOperationalPlatform } from '@adcp/sdk/server';
 import { createAdcpServer as createLegacyAdcpServer } from '@adcp/sdk/server/legacy/v5';
 import { createSingleAgentClient, extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from '@adcp/sdk';
-import type { CreateMediaBuySuccess, CreativeManifest, ServerPayload as ServerPayloadFromTypes } from '@adcp/sdk/types';
-import type { AccountReference } from '@adcp/sdk';
+import type {
+  CreateMediaBuyPayload as TypesCreateMediaBuyPayload,
+  CreateMediaBuySuccess,
+  CreativeManifest,
+  GetProductsPayload as TypesGetProductsPayload,
+  ServerPayload as ServerPayloadFromTypes,
+  UpdateMediaBuyPayload as TypesUpdateMediaBuyPayload,
+} from '@adcp/sdk/types';
+import type {
+  AccountReference,
+  CreateMediaBuyPayload as RootCreateMediaBuyPayload,
+  GetProductsPayload as RootGetProductsPayload,
+  UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
+} from '@adcp/sdk';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 
 declare const _server: AdcpServer;
@@ -275,6 +287,17 @@ const _serverPayload: ServerPayload<CreateMediaBuySuccess> = {
 };
 const _typesPayload: ServerPayloadFromTypes<CreateMediaBuySuccess> = _serverPayload;
 void _typesPayload;
+const _rootPayloadAlias: RootCreateMediaBuyPayload = _serverPayload;
+const _typesPayloadAlias: TypesCreateMediaBuyPayload = _rootPayloadAlias;
+const _rootGetProductsPayload: RootGetProductsPayload = { products: [], cache_scope: 'account' };
+const _typesGetProductsPayload: TypesGetProductsPayload = _rootGetProductsPayload;
+const _rootUpdatePayload: RootUpdateMediaBuyPayload = { media_buy_id: 'mb_1' };
+const _typesUpdatePayload: TypesUpdateMediaBuyPayload = _rootUpdatePayload;
+void _typesPayloadAlias;
+void _typesGetProductsPayload;
+void _typesUpdatePayload;
+// @ts-expect-error named payload aliases must not expose SDK-owned protocol envelope fields
+void _rootPayloadAlias.task_id;
 
 // @ts-expect-error ServerPayload must preserve required domain fields.
 const _missingRequiredDomainField: ServerPayload<CreateMediaBuySuccess> = { packages: [] };
