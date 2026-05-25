@@ -218,6 +218,24 @@ export {
   REGULATED_HUMAN_REVIEW_CATEGORIES,
   ANNEX_III_POLICY_IDS,
 } from './governance';
+
+// ====== NETWORKING / SSRF GUARDS ======
+// Public so adopters can converge on the SDK's DNS-pinning and address
+// classification behavior instead of copying partial guards. Use
+// `ssrfSafeFetch` as the security boundary; address classifiers are advisory
+// helpers and do not protect raw fetches from DNS rebinding.
+export {
+  ssrfSafeFetch,
+  decodeBodyAsJsonOrText,
+  SSRF_TRANSIENT_CODES,
+  SsrfRefusedError,
+  isPrivateIp,
+  isAlwaysBlocked,
+  isLikelyPrivateUrl,
+  type SsrfRefusedCode,
+  type SsrfFetchOptions,
+  type SsrfFetchResult,
+} from './net';
 export type {
   BuildHumanReviewPlanInput,
   BuildHumanOverrideInput,
@@ -1002,7 +1020,14 @@ export const wireVersion = {
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
-export { getStandardFormats, unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './utils';
+export {
+  getStandardFormats,
+  unwrapProtocolResponse,
+  isAdcpError,
+  isAdcpSuccess,
+  getAuthoritativeMediaBuyStatus,
+  isMediaBuyStatus,
+} from './utils';
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';

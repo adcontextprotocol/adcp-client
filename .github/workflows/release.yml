@@ -8,14 +8,23 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+  contents: read
 
 jobs:
+  reference-seller-interop:
+    name: Reference seller interop
+    permissions:
+      contents: read
+    uses: ./.github/workflows/interop-python.yml
+
   release:
     name: Release
+    needs: reference-seller-interop
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v5

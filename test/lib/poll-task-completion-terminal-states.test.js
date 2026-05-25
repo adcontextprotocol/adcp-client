@@ -78,6 +78,55 @@ describe('pollTaskCompletion terminal state handling', () => {
     assert.ok(result.error.includes('Budget cap exceeded'), `Expected error from message field, got: ${result.error}`);
   });
 
+  test('preserves legacy media-buy lifecycle status in completed task result', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      task: {
+        taskId: 'task-legacy-result',
+        status: 'completed',
+        taskType: 'create_media_buy',
+        result: {
+          media_buy_id: 'mb-legacy-result',
+          status: 'pending_creatives',
+          packages: [],
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-legacy-result', 10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.data.status, 'pending_creatives');
+    assert.strictEqual(result.data.media_buy_status, 'pending_creatives');
+  });
+
+  test('does not add synthetic status to completed task result with media_buy_status only', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      task: {
+        taskId: 'task-media-buy-status-only',
+        status: 'completed',
+        taskType: 'create_media_buy',
+        result: {
+          media_buy_id: 'mb-media-buy-status-only',
+          media_buy_status: 'pending_creatives',
+          packages: [],
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-media-buy-status-only', 10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.data.status, undefined);
+    assert.strictEqual(result.data.media_buy_status, 'pending_creatives');
+  });
+
   test('exits on first poll without retries when tasks/get returns rejected', async () => {
     let pollCount = 0;
 

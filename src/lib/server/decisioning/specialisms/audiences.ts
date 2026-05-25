@@ -13,6 +13,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { ServerPayload } from '../../../types/server-payload';
 import type { SyncAudiencesRequest, SyncAudiencesSuccess } from '../../../types/tools.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
@@ -34,6 +35,8 @@ export type Audience = NonNullable<SyncAudiencesRequest['audiences']>[number];
  * value — use `'failed'` for buyer-rejected audiences.
  */
 export type SyncAudiencesRow = SyncAudiencesSuccess['audiences'][number];
+export type SyncAudiencesPayload = ServerPayload<SyncAudiencesSuccess>;
+export type SyncAudiencesHandlerResult = SyncAudiencesRow[];
 
 export type AudienceStatus = NonNullable<SyncAudiencesRow['status']>;
 
@@ -54,7 +57,7 @@ export interface AudiencePlatform<TCtxMeta = Record<string, unknown>> {
    * Throw `new AdcpError(...)` for buyer-fixable rejection
    * (`AUDIENCE_TOO_SMALL`, etc.).
    */
-  syncAudiences(audiences: Audience[], ctx: Ctx<TCtxMeta>): Promise<SyncAudiencesRow[]>;
+  syncAudiences(audiences: Audience[], ctx: Ctx<TCtxMeta>): Promise<SyncAudiencesHandlerResult>;
 
   /**
    * Batch-poll current status for one or more audiences. Sync — this is a

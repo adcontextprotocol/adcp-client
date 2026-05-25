@@ -90,6 +90,84 @@ describe('context extractors', () => {
     });
   });
 
+  describe('media-buy status extraction', () => {
+    it('prefers media_buy_status over envelope status on create_media_buy', () => {
+      const result = extractContext('create_media_buy', {
+        media_buy_id: 'mb_1',
+        status: 'completed',
+        media_buy_status: 'pending_creatives',
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+        media_buy_status: 'pending_creatives',
+      });
+    });
+
+    it('falls back to legacy status on update_media_buy', () => {
+      const result = extractContext('update_media_buy', {
+        media_buy_id: 'mb_1',
+        status: 'paused',
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+        media_buy_status: 'paused',
+      });
+    });
+
+    it('does not infer lifecycle status from 3.1 envelope completed status', () => {
+      const result = extractContext('create_media_buy', {
+        adcp_version: '3.1',
+        media_buy_id: 'mb_1',
+        status: 'completed',
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+      });
+    });
+
+    it('does not infer update lifecycle status from 3.1 envelope completed status', () => {
+      const result = extractContext('update_media_buy', {
+        adcp_version: '3.1',
+        media_buy_id: 'mb_1',
+        status: 'completed',
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+      });
+    });
+
+    it('prefers nested legacy media_buy fields over outer envelope status', () => {
+      const result = extractContext('create_media_buy', {
+        adcp_version: '3.0.0',
+        status: 'completed',
+        media_buy: {
+          media_buy_id: 'mb_nested',
+          status: 'active',
+        },
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_nested',
+        media_buy_status: 'active',
+      });
+    });
+
+    it('prefers media_buy_status on get_media_buys items', () => {
+      const result = extractContext('get_media_buys', {
+        media_buys: [{ media_buy_id: 'mb_1', status: 'completed', media_buy_status: 'active' }],
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+        media_buy_status: 'active',
+      });
+    });
+  });
+
   describe('check_governance', () => {
     it('extracts governance_context, check_id, plan_id, and verdict', () => {
       const data = {

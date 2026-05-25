@@ -310,6 +310,7 @@ import type {
 
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
 import type { MediaChannel } from '../types/tools.generated';
+import type { ServerPayload } from '../types/server-payload';
 import {
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -505,268 +506,271 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
 export interface AdcpToolMap {
   get_products: {
     params: z.input<typeof GetProductsRequestSchema>;
-    result: GetProductsResponse;
+    result: ServerPayload<GetProductsResponse>;
     response: GetProductsResponse;
   };
   create_media_buy: {
     params: z.input<typeof CreateMediaBuyRequestSchema>;
-    result: CreateMediaBuySuccess;
+    result: ServerPayload<CreateMediaBuySuccess>;
     response: CreateMediaBuyResponse;
   };
   update_media_buy: {
     params: z.input<typeof UpdateMediaBuyRequestSchema>;
-    result: UpdateMediaBuySuccess;
+    result: ServerPayload<UpdateMediaBuySuccess>;
     response: UpdateMediaBuyResponse;
   };
   get_media_buys: {
     params: z.input<typeof GetMediaBuysRequestSchema>;
-    result: GetMediaBuysResponse;
+    result: ServerPayload<GetMediaBuysResponse>;
     response: GetMediaBuysResponse;
   };
   get_media_buy_delivery: {
     params: z.input<typeof GetMediaBuyDeliveryRequestSchema>;
-    result: GetMediaBuyDeliveryResponse;
+    result: ServerPayload<GetMediaBuyDeliveryResponse>;
     response: GetMediaBuyDeliveryResponse;
   };
   provide_performance_feedback: {
     params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
-    result: ProvidePerformanceFeedbackSuccess;
+    result: ServerPayload<ProvidePerformanceFeedbackSuccess>;
     response: ProvidePerformanceFeedbackResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
-    result: ListCreativeFormatsResponse;
+    result: ServerPayload<ListCreativeFormatsResponse>;
     response: ListCreativeFormatsResponse;
   };
   build_creative: {
     params: z.input<typeof BuildCreativeRequestSchema>;
-    result: BuildCreativeSuccess | BuildCreativeMultiSuccess;
+    result: ServerPayload<BuildCreativeSuccess> | ServerPayload<BuildCreativeMultiSuccess>;
     response: BuildCreativeResponse;
   };
   preview_creative: {
     params: z.input<typeof PreviewCreativeRequestSchema>;
-    result: PreviewCreativeResponse;
+    result: ServerPayload<PreviewCreativeResponse>;
     response: PreviewCreativeResponse;
   };
   get_creative_delivery: {
     params: z.input<typeof GetCreativeDeliveryRequestSchema>;
-    result: GetCreativeDeliveryResponse;
+    result: ServerPayload<GetCreativeDeliveryResponse>;
     response: GetCreativeDeliveryResponse;
   };
   list_creatives: {
     params: z.input<typeof ListCreativesRequestSchema>;
-    result: ListCreativesResponse;
+    result: ServerPayload<ListCreativesResponse>;
     response: ListCreativesResponse;
   };
   sync_creatives: {
     params: z.input<typeof SyncCreativesRequestSchema>;
-    result: SyncCreativesSuccess;
+    result: ServerPayload<SyncCreativesSuccess>;
     response: SyncCreativesResponse;
   };
   get_signals: {
     params: z.input<typeof GetSignalsRequestSchema>;
-    result: GetSignalsResponse;
+    result: ServerPayload<GetSignalsResponse>;
     response: GetSignalsResponse;
   };
   activate_signal: {
     params: z.input<typeof ActivateSignalRequestSchema>;
-    result: ActivateSignalSuccess;
+    result: ServerPayload<ActivateSignalSuccess>;
     response: ActivateSignalResponse;
   };
   list_accounts: {
     params: z.input<typeof ListAccountsRequestSchema>;
-    result: ListAccountsResponse;
+    result: ServerPayload<ListAccountsResponse>;
     response: ListAccountsResponse;
   };
   sync_accounts: {
     params: z.input<typeof SyncAccountsRequestSchema>;
-    result: SyncAccountsSuccess;
+    result: ServerPayload<SyncAccountsSuccess>;
     response: SyncAccountsResponse;
   };
   sync_governance: {
     params: z.input<typeof SyncGovernanceRequestSchema>;
-    result: SyncGovernanceSuccess;
+    result: ServerPayload<SyncGovernanceSuccess>;
     response: SyncGovernanceResponse;
   };
   get_account_financials: {
     params: z.input<typeof GetAccountFinancialsRequestSchema>;
-    result: GetAccountFinancialsSuccess;
+    result: ServerPayload<GetAccountFinancialsSuccess>;
     response: GetAccountFinancialsResponse;
   };
   report_usage: {
     params: z.input<typeof ReportUsageRequestSchema>;
-    result: ReportUsageResponse;
+    result: ServerPayload<ReportUsageResponse>;
     response: ReportUsageResponse;
   };
   sync_event_sources: {
     params: z.input<typeof SyncEventSourcesRequestSchema>;
-    result: SyncEventSourcesSuccess;
+    result: ServerPayload<SyncEventSourcesSuccess>;
     response: SyncEventSourcesResponse;
   };
   log_event: {
     params: z.input<typeof LogEventRequestSchema>;
-    result: LogEventSuccess;
+    result: ServerPayload<LogEventSuccess>;
     response: LogEventResponse;
   };
   sync_audiences: {
     params: z.input<typeof SyncAudiencesRequestSchema>;
-    result: SyncAudiencesSuccess;
+    result: ServerPayload<SyncAudiencesSuccess>;
     response: SyncAudiencesResponse;
   };
   sync_catalogs: {
     params: z.input<typeof SyncCatalogsRequestSchema>;
-    result: SyncCatalogsSuccess;
+    result: ServerPayload<SyncCatalogsSuccess>;
     response: SyncCatalogsResponse;
   };
   create_property_list: {
     params: z.input<typeof CreatePropertyListRequestSchema>;
-    result: CreatePropertyListResponse;
+    result: ServerPayload<CreatePropertyListResponse>;
     response: CreatePropertyListResponse;
   };
   update_property_list: {
     params: z.input<typeof UpdatePropertyListRequestSchema>;
-    result: UpdatePropertyListResponse;
+    result: ServerPayload<UpdatePropertyListResponse>;
     response: UpdatePropertyListResponse;
   };
   get_property_list: {
     params: z.input<typeof GetPropertyListRequestSchema>;
-    result: GetPropertyListResponse;
+    result: ServerPayload<GetPropertyListResponse>;
     response: GetPropertyListResponse;
   };
   list_property_lists: {
     params: z.input<typeof ListPropertyListsRequestSchema>;
-    result: ListPropertyListsResponse;
+    result: ServerPayload<ListPropertyListsResponse>;
     response: ListPropertyListsResponse;
   };
   delete_property_list: {
     params: z.input<typeof DeletePropertyListRequestSchema>;
-    result: DeletePropertyListResponse;
+    result: ServerPayload<DeletePropertyListResponse>;
     response: DeletePropertyListResponse;
   };
   create_collection_list: {
     params: z.input<typeof CreateCollectionListRequestSchema>;
-    result: CreateCollectionListResponse;
+    result: ServerPayload<CreateCollectionListResponse>;
     response: CreateCollectionListResponse;
   };
   update_collection_list: {
     params: z.input<typeof UpdateCollectionListRequestSchema>;
-    result: UpdateCollectionListResponse;
+    result: ServerPayload<UpdateCollectionListResponse>;
     response: UpdateCollectionListResponse;
   };
   get_collection_list: {
     params: z.input<typeof GetCollectionListRequestSchema>;
-    result: GetCollectionListResponse;
+    result: ServerPayload<GetCollectionListResponse>;
     response: GetCollectionListResponse;
   };
   list_collection_lists: {
     params: z.input<typeof ListCollectionListsRequestSchema>;
-    result: ListCollectionListsResponse;
+    result: ServerPayload<ListCollectionListsResponse>;
     response: ListCollectionListsResponse;
   };
   delete_collection_list: {
     params: z.input<typeof DeleteCollectionListRequestSchema>;
-    result: DeleteCollectionListResponse;
+    result: ServerPayload<DeleteCollectionListResponse>;
     response: DeleteCollectionListResponse;
   };
   list_content_standards: {
     params: z.input<typeof ListContentStandardsRequestSchema>;
-    result: ListContentStandardsResponse;
+    result: ServerPayload<ListContentStandardsResponse>;
     response: ListContentStandardsResponse;
   };
   get_content_standards: {
     params: z.input<typeof GetContentStandardsRequestSchema>;
-    result: GetContentStandardsResponse;
+    result: ServerPayload<GetContentStandardsResponse>;
     response: GetContentStandardsResponse;
   };
   create_content_standards: {
     params: z.input<typeof CreateContentStandardsRequestSchema>;
-    result: CreateContentStandardsResponse;
+    result: ServerPayload<CreateContentStandardsResponse>;
     response: CreateContentStandardsResponse;
   };
   update_content_standards: {
     params: z.input<typeof UpdateContentStandardsRequestSchema>;
-    result: UpdateContentStandardsResponse;
+    result: ServerPayload<UpdateContentStandardsResponse>;
     response: UpdateContentStandardsResponse;
   };
   calibrate_content: {
     params: z.input<typeof CalibrateContentRequestSchema>;
-    result: CalibrateContentResponse;
+    result: ServerPayload<CalibrateContentResponse>;
     response: CalibrateContentResponse;
   };
   validate_content_delivery: {
     params: z.input<typeof ValidateContentDeliveryRequestSchema>;
-    result: ValidateContentDeliveryResponse;
+    result: ServerPayload<ValidateContentDeliveryResponse>;
     response: ValidateContentDeliveryResponse;
   };
   get_media_buy_artifacts: {
     params: z.input<typeof GetMediaBuyArtifactsRequestSchema>;
-    result: GetMediaBuyArtifactsResponse;
+    result: ServerPayload<GetMediaBuyArtifactsResponse>;
     response: GetMediaBuyArtifactsResponse;
   };
   get_creative_features: {
     params: z.input<typeof GetCreativeFeaturesRequestSchema>;
-    result: GetCreativeFeaturesResponse;
+    result: ServerPayload<GetCreativeFeaturesResponse>;
     response: GetCreativeFeaturesResponse;
   };
   sync_plans: {
     params: z.input<typeof SyncPlansRequestSchema>;
-    result: SyncPlansResponse;
+    result: ServerPayload<SyncPlansResponse>;
     response: SyncPlansResponse;
   };
   check_governance: {
     params: z.input<typeof CheckGovernanceRequestSchema>;
-    result: CheckGovernanceResponse;
+    result: ServerPayload<CheckGovernanceResponse>;
     response: CheckGovernanceResponse;
   };
   report_plan_outcome: {
     params: z.input<typeof ReportPlanOutcomeRequestSchema>;
-    result: ReportPlanOutcomeResponse;
+    result: ServerPayload<ReportPlanOutcomeResponse>;
     response: ReportPlanOutcomeResponse;
   };
   get_plan_audit_logs: {
     params: z.input<typeof GetPlanAuditLogsRequestSchema>;
-    result: GetPlanAuditLogsResponse;
+    result: ServerPayload<GetPlanAuditLogsResponse>;
     response: GetPlanAuditLogsResponse;
   };
   si_get_offering: {
     params: z.input<typeof SIGetOfferingRequestSchema>;
-    result: SIGetOfferingResponse;
+    result: ServerPayload<SIGetOfferingResponse>;
     response: SIGetOfferingResponse;
   };
   si_initiate_session: {
     params: z.input<typeof SIInitiateSessionRequestSchema>;
-    result: SIInitiateSessionResponse;
+    result: ServerPayload<SIInitiateSessionResponse>;
     response: SIInitiateSessionResponse;
   };
   si_send_message: {
     params: z.input<typeof SISendMessageRequestSchema>;
-    result: SISendMessageResponse;
+    result: ServerPayload<SISendMessageResponse>;
     response: SISendMessageResponse;
   };
   si_terminate_session: {
     params: z.input<typeof SITerminateSessionRequestSchema>;
-    result: SITerminateSessionResponse;
+    result: ServerPayload<SITerminateSessionResponse>;
     response: SITerminateSessionResponse;
   };
 
   get_brand_identity: {
     params: z.input<typeof GetBrandIdentityRequestSchema>;
-    result: GetBrandIdentitySuccess;
+    result: ServerPayload<GetBrandIdentitySuccess>;
     response: GetBrandIdentitySuccess;
   };
   get_rights: {
     params: z.input<typeof GetRightsRequestSchema>;
-    result: GetRightsSuccess;
+    result: ServerPayload<GetRightsSuccess>;
     response: GetRightsSuccess;
   };
   acquire_rights: {
     params: z.input<typeof AcquireRightsRequestSchema>;
-    result: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
+    result:
+      | ServerPayload<AcquireRightsAcquired>
+      | ServerPayload<AcquireRightsPendingApproval>
+      | ServerPayload<AcquireRightsRejected>;
     response: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
   };
   update_rights: {
     params: z.input<typeof UpdateRightsRequestSchema>;
-    result: UpdateRightsSuccess;
+    result: ServerPayload<UpdateRightsSuccess>;
     response: UpdateRightsResponse;
   };
 }
@@ -2059,9 +2063,11 @@ function resolveExtraScope(toolName: string, params: Record<string, unknown>): s
 }
 
 function genericResponse(toolName: string, data: object, summary?: string): McpToolResponse {
+  const structuredContent = { ...toStructuredContent(data) };
+  if (structuredContent.status === undefined) structuredContent.status = 'completed';
   return {
     content: [{ type: 'text', text: summary ?? `${toolName} completed` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent,
   };
 }
 
@@ -3452,7 +3458,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
 
       const meta = TOOL_META[toolName];
-      const schema = TOOL_REQUEST_SCHEMAS[toolName] as { shape: Record<string, unknown> } | undefined;
+      const schema = (TOOL_REQUEST_SCHEMAS as Readonly<Record<string, { shape: Record<string, unknown> }>>)[toolName];
       if (!schema?.shape) {
         logger.warn(`No schema found for tool "${toolName}" in TOOL_REQUEST_SCHEMAS, skipping`);
         continue;

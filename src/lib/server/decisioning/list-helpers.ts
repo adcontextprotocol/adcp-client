@@ -18,12 +18,13 @@
  */
 
 import type { ListCreativesRequest, ListCreativesResponse, PaginationResponse } from '../../types/tools.generated';
+import type { ServerPayload } from '../../types/server-payload';
 
 export interface BuildListCreativesResponseOpts {
   /** Original request — used to surface `filters_applied` + `sort_applied` summaries. */
   request: ListCreativesRequest;
   /** The page of creative rows. Length determines `query_summary.returned`. */
-  creatives: ListCreativesResponse['creatives'];
+  creatives: ServerPayload<ListCreativesResponse>['creatives'];
   /** Pagination cursor for the next page. Required — pass `{ has_more: false }` when this is the last page. */
   pagination: PaginationResponse;
   /**
@@ -52,7 +53,7 @@ export interface BuildListCreativesResponseOpts {
  * }
  * ```
  */
-export function buildListCreativesResponse(opts: BuildListCreativesResponseOpts): ListCreativesResponse {
+export function buildListCreativesResponse(opts: BuildListCreativesResponseOpts): ServerPayload<ListCreativesResponse> {
   const { request, creatives, pagination, totalMatching } = opts;
 
   const filters = request.filters;
@@ -77,7 +78,7 @@ export function buildListCreativesResponse(opts: BuildListCreativesResponseOpts)
     if (filters.has_variables !== undefined) filtersApplied.push('has_variables');
   }
 
-  const summary: ListCreativesResponse['query_summary'] = {
+  const summary: ServerPayload<ListCreativesResponse>['query_summary'] = {
     total_matching: totalMatching ?? pagination.total_count ?? creatives.length,
     returned: creatives.length,
     ...(filtersApplied.length > 0 && { filters_applied: filtersApplied }),
@@ -90,7 +91,6 @@ export function buildListCreativesResponse(opts: BuildListCreativesResponseOpts)
   };
 
   return {
-    status: 'completed',
     query_summary: summary,
     pagination,
     creatives,

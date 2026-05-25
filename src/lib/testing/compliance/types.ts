@@ -127,6 +127,8 @@ export interface ComplianceFailure {
 
 export interface ComplianceResult {
   agent_url: string;
+  /** AdCP compliance cache version used for this assessment. */
+  adcp_version?: string;
   agent_profile: AgentProfile;
   /** Machine-readable overall status */
   overall_status: OverallStatus;

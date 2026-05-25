@@ -21,6 +21,7 @@ import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { cancelA2ATask } from '../protocols/a2a';
 import type {
   Message,
@@ -140,7 +141,14 @@ function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
   // the canonical typed field; pre-3.1.0 sellers using
   // `additionalProperties: true` shared the same field name, so the
   // mapping is unchanged across versions.
-  if (flat.result !== undefined) taskInfo.result = flat.result;
+  if (flat.result !== undefined) {
+    taskInfo.result =
+      flat.result != null && typeof flat.result === 'object' && !Array.isArray(flat.result)
+        ? normalizeLegacyMediaBuyStatusForReturn(flat.result as Record<string, unknown>, {
+            toolName: taskInfo.taskType,
+          })
+        : flat.result;
+  }
   return taskInfo;
 }
 
@@ -319,6 +327,7 @@ export class TaskExecutor {
        * truth for both validation and wire-level major.
        */
       adcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
       /**
        * Transport-level safeguards applied to every call this executor
        * dispatches. Per-call options can override individual fields.
@@ -331,7 +340,12 @@ export class TaskExecutor {
       this.conversationStorage = new Map();
     }
     if (config.governance) {
-      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity, config.adcpVersion);
+      this.governanceMiddleware = new GovernanceMiddleware(
+        config.governance,
+        config.onActivity,
+        config.adcpVersion,
+        config.versionEnvelope
+      );
     }
     const modes = resolveValidationModes(config.validation);
     this.requestValidationMode = modes.requests;
@@ -585,6 +599,7 @@ export class TaskExecutor {
         serverVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
       });
 
@@ -1333,6 +1348,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
@@ -1394,6 +1410,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
@@ -1683,6 +1700,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
       }
     );

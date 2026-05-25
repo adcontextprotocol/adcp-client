@@ -33,6 +33,7 @@ import type { MaybePromise } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
 import type { GetProductsRequest, GetProductsResponse } from '../../../types/tools.generated';
+import type { ServerPayload } from '../../../types/server-payload';
 import type { TaskHandoff } from '../async-outcome';
 
 // ---------------------------------------------------------------------------
@@ -408,7 +409,7 @@ export interface ProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
    * buyer drives the finalize transition via subsequent refine calls
    * with `action: 'finalize'`.
    */
-  getProducts(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<GetProductsResponse>;
+  getProducts(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ServerPayload<GetProductsResponse>>;
 
   /**
    * Refine-mode iteration on a previous `getProducts` response.
@@ -429,7 +430,7 @@ export interface ProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
    * see those entries intercepted by the framework before this method
    * is called.
    */
-  refineProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<GetProductsResponse>;
+  refineProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ServerPayload<GetProductsResponse>>;
 
   /**
    * Commit a draft proposal to firm pricing + inventory hold.

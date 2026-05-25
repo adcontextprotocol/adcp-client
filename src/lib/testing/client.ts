@@ -21,6 +21,15 @@ import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
+import { ADCP_VERSION } from '../version';
+import type { VersionEnvelopeMode } from '../protocols';
+
+const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
+
+interface TestClientVersionOptions {
+  adcpVersion: string;
+  versionEnvelope: VersionEnvelopeMode;
+}
 
 /**
  * Extract a principal identifier from TestOptions auth.
@@ -177,13 +186,27 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
     validation: { logSchemaViolations: false },
+    ...(options.adcpVersion !== undefined && { adcpVersion: options.adcpVersion }),
+    ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
   });
 
-  return multiClient.agent('test');
+  const client = multiClient.agent('test');
+  Object.defineProperty(client, TEST_CLIENT_VERSION_OPTIONS, {
+    value: {
+      adcpVersion: multiClient.getAdcpVersion(),
+      versionEnvelope: options.versionEnvelope ?? 'auto',
+    } satisfies TestClientVersionOptions,
+    enumerable: false,
+  });
+  return client;
 }
 
 export type TestClient = ReturnType<typeof createTestClient>;
+export interface TestClientResolution {
+  client: TestClient;
+  reusedShared: boolean;
+}
 
 /**
  * Return a shared client from options (set by comply()) or create a fresh one.
@@ -191,7 +214,25 @@ export type TestClient = ReturnType<typeof createTestClient>;
  * so scenarios reuse the same MCP connection instead of opening 36+ connections.
  */
 export function getOrCreateClient(agentUrl: string, options: TestOptions): TestClient {
-  return (options._client as TestClient) ?? createTestClient(agentUrl, options.protocol || 'mcp', options);
+  return getOrCreateClientResolution(agentUrl, options).client;
+}
+
+export function getOrCreateClientResolution(agentUrl: string, options: TestOptions): TestClientResolution {
+  const shared = options._client as TestClient | undefined;
+  if (shared && testClientMatchesVersionOptions(shared, options)) {
+    return { client: shared, reusedShared: true };
+  }
+  return { client: createTestClient(agentUrl, options.protocol || 'mcp', options), reusedShared: false };
+}
+
+function testClientMatchesVersionOptions(client: TestClient, options: TestOptions): boolean {
+  const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
+    TEST_CLIENT_VERSION_OPTIONS
+  ];
+  if (!meta) return options.adcpVersion === undefined && options.versionEnvelope === undefined;
+  const expectedAdcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const expectedVersionEnvelope = options.versionEnvelope ?? 'auto';
+  return meta.adcpVersion === expectedAdcpVersion && meta.versionEnvelope === expectedVersionEnvelope;
 }
 
 /**
@@ -358,6 +399,8 @@ export async function discoverAgentProfile(
         profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);
         profile.adcp_version = parsed.version;
+        profile.adcp_major_versions = parsed.majorVersions;
+        if (parsed.supportedVersions !== undefined) profile.adcp_supported_versions = parsed.supportedVersions;
         profile.supported_protocols = parsed.protocols;
         profile.supports_governance = parsed.protocols.includes('governance');
         profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
@@ -675,7 +718,7 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
   // responses. See `utils/envelope-status-compat.ts`.
   const compatData =
     data && typeof data === 'object' && !Array.isArray(data)
-      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>)
+      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName })
       : data;
   const result = schema.safeParse(compatData);
   if (result.success) {

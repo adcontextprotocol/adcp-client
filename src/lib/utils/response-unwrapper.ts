@@ -33,7 +33,7 @@ import type {
   ActivateSignalResponse,
 } from '../types/tools.generated';
 import { TOOL_RESPONSE_SCHEMAS } from './response-schemas';
-import { injectLegacyEnvelopeStatus } from './envelope-status-compat';
+import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from './envelope-status-compat';
 
 /**
  * Typed error thrown when the response unwrapper's Zod schema rejects an
@@ -163,7 +163,7 @@ export function unwrapProtocolResponse(
       // Back-compat: 3.0.x sellers may omit envelope `status` (made REQUIRED
       // in 3.1.0-beta.2). Inject a synthetic status only when the response
       // declares itself as 3.0.x (or carries no version field at all).
-      const dataToValidate = injectLegacyEnvelopeStatus(stripped);
+      const dataToValidate = injectLegacyEnvelopeStatus(stripped, { toolName });
       const result = schema.safeParse(dataToValidate);
       if (!result.success) {
         // When filterInvalidArrayItems is enabled and this is a get_products response,
@@ -177,6 +177,8 @@ export function unwrapProtocolResponse(
             if (!('status' in stripped)) {
               const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
               validated = rest as unknown as typeof validated;
+            } else {
+              validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
             }
             if (_msg) validated._message = _msg as string;
             return retag(validated);
@@ -209,6 +211,8 @@ export function unwrapProtocolResponse(
       if (!('status' in stripped)) {
         const { status: _s, ...rest } = validated as unknown as Record<string, unknown>;
         validated = rest as unknown as typeof validated;
+      } else {
+        validated = restoreLegacyMediaBuyStatusForReturn(validated, stripped, dataToValidate, toolName);
       }
       if (_msg) validated._message = _msg as string;
       return retag(validated);
@@ -217,6 +221,29 @@ export function unwrapProtocolResponse(
 
   // Return unwrapped response (no validation) — already tagged above.
   return unwrapped as AdCPResponse;
+}
+
+function restoreLegacyMediaBuyStatusForReturn<T extends AdCPResponse & { _message?: string }>(
+  validated: T,
+  original: Record<string, unknown>,
+  compat: Record<string, unknown>,
+  toolName: string
+): T {
+  if (
+    (toolName === 'create_media_buy' || toolName === 'update_media_buy') &&
+    typeof original.media_buy_id === 'string' &&
+    typeof original.status === 'string' &&
+    compat.status === 'completed' &&
+    typeof compat.media_buy_status === 'string'
+  ) {
+    return normalizeLegacyMediaBuyStatusForReturn(
+      { ...validated, status: original.status } as unknown as Record<string, unknown>,
+      { toolName }
+    ) as unknown as T;
+  }
+  return normalizeLegacyMediaBuyStatusForReturn(validated as unknown as Record<string, unknown>, {
+    toolName,
+  }) as unknown as T;
 }
 
 /**
@@ -594,7 +621,7 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
     const { _message: _, ...stripped } = (response ?? {}) as Record<string, unknown>;
     // Apply the same 3.0.x envelope-status leniency as unwrapProtocolResponse
     // so success detection stays consistent across the two entry points.
-    const dataToValidate = injectLegacyEnvelopeStatus(stripped);
+    const dataToValidate = injectLegacyEnvelopeStatus(stripped, { toolName: taskName });
     const result = schema.safeParse(dataToValidate);
     return result.success;
   }

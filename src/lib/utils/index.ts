@@ -137,6 +137,7 @@ export function getStandardFormats(): CreativeFormat[] {
 // Re-export response unwrapping utilities
 export { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './response-unwrapper';
 export type { AdCPResponse } from './response-unwrapper';
+export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from './media-buy-status';
 
 // Lightweight MCP CallToolResult extractor (prefers structuredContent, falls back to JSON text).
 export { extractResult, type ToolCallResultLike } from './extract-result';

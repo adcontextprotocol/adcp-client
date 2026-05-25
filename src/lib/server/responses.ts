@@ -43,6 +43,7 @@ import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type { GetProductsResponse } from '../types/core.generated';
 import type { CreateMediaBuySuccess } from '../types/core.generated';
 import type { GetMediaBuyDeliveryResponse } from '../types/tools.generated';
+import type { ServerPayload } from '../types/server-payload';
 import { validActionsForStatus } from './media-buy-helpers';
 import type { CancelMediaBuyInput } from './media-buy-helpers';
 import type {
@@ -108,6 +109,30 @@ export function toStructuredContent(data: object): Record<string, unknown> {
   return data as unknown as Record<string, unknown>;
 }
 
+const MEDIA_BUY_STATUS_VALUES = new Set([
+  'pending_creatives',
+  'pending_start',
+  'active',
+  'paused',
+  'completed',
+  'rejected',
+  'canceled',
+]);
+
+function completedStructuredContent(data: object, opts?: { splitMediaBuyStatus?: boolean }): Record<string, unknown> {
+  const structured = { ...toStructuredContent(data) };
+  if (
+    opts?.splitMediaBuyStatus === true &&
+    typeof structured.status === 'string' &&
+    MEDIA_BUY_STATUS_VALUES.has(structured.status)
+  ) {
+    if (structured.media_buy_status === undefined) structured.media_buy_status = structured.status;
+    delete structured.status;
+  }
+  if (structured.status === undefined) structured.status = 'completed';
+  return structured;
+}
+
 function stripNotificationConfigSecrets<T extends object>(row: T): T {
   const notificationConfigs = (row as { notification_configs?: unknown }).notification_configs;
   if (!Array.isArray(notificationConfigs)) return row;
@@ -132,12 +157,50 @@ function stripNotificationConfigSecrets<T extends object>(row: T): T {
   };
 }
 
-function stripAccountNotificationConfigSecrets<T extends { accounts?: unknown }>(data: T): T {
+function stripBusinessEntityBank<T extends object>(row: T, key: 'billing_entity' | 'invoice_recipient'): T {
+  const entity = (row as Record<string, unknown>)[key];
+  if (entity == null || typeof entity !== 'object') return row;
+  if (!('bank' in entity)) return row;
+  const { bank: _bank, ...entityWithoutBank } = entity as Record<string, unknown>;
+  const stripped = { ...row } as Record<string, unknown>;
+  if (Object.keys(entityWithoutBank).length > 0) {
+    stripped[key] = entityWithoutBank;
+  } else {
+    delete stripped[key];
+  }
+  return stripped as T;
+}
+
+function stripAccountWriteOnlyFields<T extends object>(account: T): T {
+  return stripBusinessEntityBank(stripNotificationConfigSecrets(account), 'billing_entity');
+}
+
+function stripAccountsWriteOnlyFields<T extends { accounts?: unknown }>(data: T): T {
   if (!Array.isArray(data.accounts)) return data;
   return {
     ...data,
     accounts: data.accounts.map(account =>
-      account != null && typeof account === 'object' ? stripNotificationConfigSecrets(account) : account
+      account != null && typeof account === 'object' ? stripAccountWriteOnlyFields(account) : account
+    ),
+  };
+}
+
+function stripMediaBuyWriteOnlyFields<T extends object>(buy: T): T {
+  let stripped = stripBusinessEntityBank(buy, 'invoice_recipient');
+  const account = (stripped as { account?: unknown }).account;
+  if (account == null || typeof account !== 'object') return stripped;
+  return {
+    ...stripped,
+    account: stripAccountWriteOnlyFields(account),
+  };
+}
+
+function stripMediaBuysWriteOnlyFields<T extends { media_buys?: unknown }>(data: T): T {
+  if (!Array.isArray(data.media_buys)) return data;
+  return {
+    ...data,
+    media_buys: data.media_buys.map(buy =>
+      buy != null && typeof buy === 'object' ? stripMediaBuyWriteOnlyFields(buy) : buy
     ),
   };
 }
@@ -172,10 +235,13 @@ function assertNoTopLevelSetup(data: unknown, builder: string): void {
  * the typed payload model live at different layers.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?: string): McpToolResponse {
+export function capabilitiesResponse(
+  data: ServerPayload<GetAdCPCapabilitiesResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Agent capabilities retrieved' }],
-    structuredContent: { ...toStructuredContent(data), status: 'completed' },
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -183,9 +249,8 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
  * Build a get_products response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
-  const structured = toStructuredContent(data) as Record<string, unknown>;
-  if (structured.status === undefined) structured.status = 'completed';
+export function productsResponse(data: ServerPayload<GetProductsResponse>, summary?: string): McpToolResponse {
+  const structured = completedStructuredContent(data);
   return {
     content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
     structuredContent: structured,
@@ -202,9 +267,9 @@ export function productsResponse(data: GetProductsResponse, summary?: string): M
  *   `status` is provided but `valid_actions` is not
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string): McpToolResponse {
+export function mediaBuyResponse(data: ServerPayload<CreateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'mediaBuyResponse');
-  const withDefaults = { ...data };
+  const withDefaults = { ...stripMediaBuyWriteOnlyFields(data) };
   if (withDefaults.revision === undefined) {
     withDefaults.revision = 1;
   }
@@ -216,7 +281,7 @@ export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string):
   }
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} created` }],
-    structuredContent: toStructuredContent(withDefaults),
+    structuredContent: completedStructuredContent(withDefaults, { splitMediaBuyStatus: true }),
   };
 }
 
@@ -224,7 +289,7 @@ export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string):
  * Build a get_media_buy_delivery response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: string): McpToolResponse {
+export function deliveryResponse(data: ServerPayload<GetMediaBuyDeliveryResponse>, summary?: string): McpToolResponse {
   return {
     content: [
       {
@@ -234,7 +299,7 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
           `Delivery data for ${data.media_buy_deliveries.length} media buy${data.media_buy_deliveries.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -242,11 +307,11 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
  * Build a list_accounts response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listAccountsResponse(data: ListAccountsResponse, summary?: string): McpToolResponse {
-  const stripped = stripAccountNotificationConfigSecrets(data);
+export function listAccountsResponse(data: ServerPayload<ListAccountsResponse>, summary?: string): McpToolResponse {
+  const stripped = stripAccountsWriteOnlyFields(data);
   return {
     content: [{ type: 'text', text: summary ?? `Found ${stripped.accounts.length} accounts` }],
-    structuredContent: toStructuredContent(stripped),
+    structuredContent: completedStructuredContent(stripped),
   };
 }
 
@@ -254,10 +319,13 @@ export function listAccountsResponse(data: ListAccountsResponse, summary?: strin
  * Build a list_creative_formats response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, summary?: string): McpToolResponse {
+export function listCreativeFormatsResponse(
+  data: ServerPayload<ListCreativeFormatsResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.formats.length} creative formats` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -268,15 +336,15 @@ export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, s
  * `valid_actions` from `validActionsForStatus()`.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: string): McpToolResponse {
+export function updateMediaBuyResponse(data: ServerPayload<UpdateMediaBuySuccess>, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'updateMediaBuyResponse');
-  const withDefaults = { ...data };
+  const withDefaults = { ...stripBusinessEntityBank(data, 'invoice_recipient') };
   if (withDefaults.valid_actions === undefined && withDefaults.status != null) {
     withDefaults.valid_actions = validActionsForStatus(withDefaults.status);
   }
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${withDefaults.media_buy_id} updated` }],
-    structuredContent: toStructuredContent(withDefaults),
+    structuredContent: completedStructuredContent(withDefaults, { splitMediaBuyStatus: true }),
   };
 }
 
@@ -284,20 +352,21 @@ export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: st
  * Build a get_media_buys response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: string): McpToolResponse {
+export function getMediaBuysResponse(data: ServerPayload<GetMediaBuysResponse>, summary?: string): McpToolResponse {
   if (Array.isArray(data.media_buys)) {
     for (const buy of data.media_buys) {
       assertNoTopLevelSetup(buy, 'getMediaBuysResponse');
     }
   }
+  const stripped = stripMediaBuysWriteOnlyFields(data);
   return {
     content: [
       {
         type: 'text',
-        text: summary ?? `Found ${data.media_buys.length} media buy${data.media_buys.length === 1 ? '' : 's'}`,
+        text: summary ?? `Found ${stripped.media_buys.length} media buy${stripped.media_buys.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(stripped),
   };
 }
 
@@ -306,12 +375,12 @@ export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: strin
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function performanceFeedbackResponse(
-  data: ProvidePerformanceFeedbackSuccess,
+  data: ServerPayload<ProvidePerformanceFeedbackSuccess>,
   summary?: string
 ): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Performance feedback accepted' }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -319,7 +388,7 @@ export function performanceFeedbackResponse(
  * Build a successful build_creative response (single format).
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: string): McpToolResponse {
+export function buildCreativeResponse(data: ServerPayload<BuildCreativeSuccess>, summary?: string): McpToolResponse {
   // Optional-chain the default summary — handler responses that drop
   // `format_id` still reach the wire-level schema validator (which names
   // the missing field), instead of crashing the dispatcher here with an
@@ -327,7 +396,7 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
   const formatId = data.creative_manifest?.format_id?.id;
   return {
     content: [{ type: 'text', text: summary ?? (formatId ? `Creative built: ${formatId}` : 'Creative built') }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -335,11 +404,14 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
  * Build a successful build_creative response (multi-format).
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summary?: string): McpToolResponse {
+export function buildCreativeMultiResponse(
+  data: ServerPayload<BuildCreativeMultiSuccess>,
+  summary?: string
+): McpToolResponse {
   const count = data.creative_manifests?.length ?? 0;
   return {
     content: [{ type: 'text', text: summary ?? `Built ${count} creative formats` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -365,7 +437,7 @@ export function previewCreativeResponse(
         : `Variant preview generated`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -373,10 +445,13 @@ export function previewCreativeResponse(
  * Build a get_creative_delivery response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function creativeDeliveryResponse(data: GetCreativeDeliveryResponse, summary?: string): McpToolResponse {
+export function creativeDeliveryResponse(
+  data: ServerPayload<GetCreativeDeliveryResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Creative delivery data for ${data.currency} report` }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -384,7 +459,7 @@ export function creativeDeliveryResponse(data: GetCreativeDeliveryResponse, summ
  * Build a list_creatives response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listCreativesResponse(data: ListCreativesResponse, summary?: string): McpToolResponse {
+export function listCreativesResponse(data: ServerPayload<ListCreativesResponse>, summary?: string): McpToolResponse {
   return {
     content: [
       {
@@ -393,7 +468,7 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
           summary ?? `Found ${data.query_summary.total_matching} creatives (${data.query_summary.returned} returned)`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -404,7 +479,10 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
  * storyboard runner flags as shape drift).
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listPropertyListsResponse(data: ListPropertyListsResponse, summary?: string): McpToolResponse {
+export function listPropertyListsResponse(
+  data: ServerPayload<ListPropertyListsResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [
       {
@@ -412,7 +490,7 @@ export function listPropertyListsResponse(data: ListPropertyListsResponse, summa
         text: summary ?? `Found ${data.lists.length} property list${data.lists.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -422,7 +500,10 @@ export function listPropertyListsResponse(data: ListPropertyListsResponse, summa
  * governance surface for program-level collections.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listCollectionListsResponse(data: ListCollectionListsResponse, summary?: string): McpToolResponse {
+export function listCollectionListsResponse(
+  data: ServerPayload<ListCollectionListsResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [
       {
@@ -430,7 +511,7 @@ export function listCollectionListsResponse(data: ListCollectionListsResponse, s
         text: summary ?? `Found ${data.lists.length} collection list${data.lists.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -447,14 +528,17 @@ export function listCollectionListsResponse(data: ListCollectionListsResponse, s
  * discrimination pattern a few screens down.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function listContentStandardsResponse(data: ListContentStandardsResponse, summary?: string): McpToolResponse {
+export function listContentStandardsResponse(
+  data: ServerPayload<ListContentStandardsResponse>,
+  summary?: string
+): McpToolResponse {
   const defaultSummary =
     'standards' in data
       ? `Found ${data.standards.length} content standard${data.standards.length === 1 ? '' : 's'}`
       : 'Content standards lookup error';
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -464,7 +548,10 @@ export function listContentStandardsResponse(data: ListContentStandardsResponse,
  * storyboard runner's shape-drift hint.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary?: string): McpToolResponse {
+export function getPlanAuditLogsResponse(
+  data: ServerPayload<GetPlanAuditLogsResponse>,
+  summary?: string
+): McpToolResponse {
   return {
     content: [
       {
@@ -472,7 +559,7 @@ export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary
         text: summary ?? `Audit data for ${data.plans.length} plan${data.plans.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -480,7 +567,7 @@ export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary
  * Build a successful sync_creatives response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: string): McpToolResponse {
+export function syncCreativesResponse(data: ServerPayload<SyncCreativesSuccess>, summary?: string): McpToolResponse {
   return {
     content: [
       {
@@ -488,7 +575,7 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
         text: summary ?? `Synced ${data.creatives.length} creative${data.creatives.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -496,7 +583,7 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
  * Build a get_signals response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function getSignalsResponse(data: GetSignalsResponse, summary?: string): McpToolResponse {
+export function getSignalsResponse(data: ServerPayload<GetSignalsResponse>, summary?: string): McpToolResponse {
   return {
     content: [
       {
@@ -504,7 +591,7 @@ export function getSignalsResponse(data: GetSignalsResponse, summary?: string): 
         text: summary ?? `Found ${(data.signals ?? []).length} signal${(data.signals ?? []).length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -512,7 +599,7 @@ export function getSignalsResponse(data: GetSignalsResponse, summary?: string): 
  * Build a successful activate_signal response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function activateSignalResponse(data: ActivateSignalSuccess, summary?: string): McpToolResponse {
+export function activateSignalResponse(data: ServerPayload<ActivateSignalSuccess>, summary?: string): McpToolResponse {
   return {
     content: [
       {
@@ -522,7 +609,7 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
           `Signal activated across ${data.deployments.length} deployment${data.deployments.length === 1 ? '' : 's'}`,
       },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -581,7 +668,7 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
 
   return {
     content: [{ type: 'text', text: summary ?? `Media buy ${input.media_buy_id} canceled` }],
-    structuredContent: data,
+    structuredContent: completedStructuredContent(data, { splitMediaBuyStatus: true }),
   };
 }
 
@@ -597,7 +684,7 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
  * becomes the default.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
+export function acquireRightsResponse(data: ServerPayload<AcquireRightsResponse>, summary?: string): McpToolResponse {
   const dataAsAny = data as AcquireRightsResponse & { rights_status?: string; rights_id?: string };
   const defaultSummary =
     'errors' in data
@@ -609,7 +696,7 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
           : `Rights ${dataAsAny.rights_id} pending approval`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -659,7 +746,7 @@ export function acquireRightsRejected(
  * default summary, error pass-through).
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function updateRightsResponse(data: UpdateRightsResponse, summary?: string): McpToolResponse {
+export function updateRightsResponse(data: ServerPayload<UpdateRightsResponse>, summary?: string): McpToolResponse {
   const defaultSummary =
     'errors' in data
       ? 'Rights update error'
@@ -668,7 +755,7 @@ export function updateRightsResponse(data: UpdateRightsResponse, summary?: strin
         : `Rights ${data.rights_id} updated`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 
@@ -681,7 +768,7 @@ export function updateRightsResponse(data: UpdateRightsResponse, summary?: strin
  * `rights_constraint`) without crossing the union.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function updateRightsSuccess(data: UpdateRightsSuccess, summary?: string): McpToolResponse {
+export function updateRightsSuccess(data: ServerPayload<UpdateRightsSuccess>, summary?: string): McpToolResponse {
   return updateRightsResponse(data as unknown as UpdateRightsResponse, summary);
 }
 
@@ -731,15 +818,15 @@ export function creativeApprovalError(data: CreativeApprovalError): CreativeAppr
  * `SyncAccountsResponse` union; error payloads pass through.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
-  const stripped = 'accounts' in data ? stripAccountNotificationConfigSecrets(data) : data;
+export function syncAccountsResponse(data: ServerPayload<SyncAccountsResponse>, summary?: string): McpToolResponse {
+  const stripped = 'accounts' in data ? stripAccountsWriteOnlyFields(data) : data;
   const defaultSummary =
     'errors' in stripped
       ? 'Account sync error'
       : `Synced ${stripped.accounts?.length ?? 0} account${stripped.accounts?.length === 1 ? '' : 's'}`;
   return {
     content: [{ type: 'text', text: summary ?? defaultSummary }],
-    structuredContent: toStructuredContent(stripped),
+    structuredContent: completedStructuredContent(stripped),
   };
 }
 
@@ -759,15 +846,17 @@ export function syncAccountsResponse(data: SyncAccountsResponse, summary?: strin
  * (`AccountStore.syncGovernance`) paths are protected.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: string): McpToolResponse {
+export function syncGovernanceResponse(data: ServerPayload<SyncGovernanceResponse>, summary?: string): McpToolResponse {
   const stripped = stripGovernanceAgentSecrets(data);
   return {
     content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
-    structuredContent: toStructuredContent(stripped),
+    structuredContent: completedStructuredContent(stripped),
   };
 }
 
-function stripGovernanceAgentSecrets(data: SyncGovernanceResponse): SyncGovernanceResponse {
+function stripGovernanceAgentSecrets(
+  data: ServerPayload<SyncGovernanceResponse>
+): ServerPayload<SyncGovernanceResponse> {
   if (!('accounts' in data) || !Array.isArray(data.accounts)) return data;
   return {
     ...data,
@@ -802,12 +891,12 @@ function stripGovernanceAgentSecrets(data: SyncGovernanceResponse): SyncGovernan
  * ```
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
+export function reportUsageResponse(data: ServerPayload<ReportUsageResponse>, summary?: string): McpToolResponse {
   return {
     content: [
       { type: 'text', text: summary ?? `Accepted ${data.accepted} usage record${data.accepted === 1 ? '' : 's'}` },
     ],
-    structuredContent: toStructuredContent(data),
+    structuredContent: completedStructuredContent(data),
   };
 }
 

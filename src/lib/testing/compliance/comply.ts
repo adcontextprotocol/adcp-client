@@ -11,7 +11,7 @@
 import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
-import { runStoryboard } from '../storyboard/runner';
+import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate } from './spec-conformance';
 
@@ -25,8 +25,9 @@ import {
   resolveStoryboardsForCapabilities,
   resolveBundleOrStoryboard,
   listAllComplianceStoryboards,
+  loadComplianceIndex,
 } from '../storyboard/compliance';
-import type { NotApplicableStoryboard } from '../storyboard/compliance';
+import type { NotApplicableStoryboard, ResolveOptions } from '../storyboard/compliance';
 import type { RunnerNotice, Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
 import type {
   ComplianceTrack,
@@ -494,6 +495,10 @@ export interface ComplyOptions extends TestOptions {
    * `runStoryboard`. See `StoryboardRunOptions.contracts`.
    */
   contracts?: StoryboardRunOptions['contracts'];
+  /** Explicit compliance cache version override. */
+  version?: string;
+  /** Explicit compliance cache directory override. */
+  complianceDir?: string;
 }
 
 /**
@@ -578,13 +583,13 @@ function fenceAgentText(text: string, max = 500): string {
 // Storyboard resolution
 // ────────────────────────────────────────────────────────────────────────────
 
-function resolveExplicitStoryboards(ids: string[]): Storyboard[] {
+function resolveExplicitStoryboards(ids: string[], resolveOptions: ResolveOptions = {}): Storyboard[] {
   const resolved: Storyboard[] = [];
   const seen = new Set<string>();
   for (const id of ids) {
-    const matched = resolveBundleOrStoryboard(id);
+    const matched = resolveBundleOrStoryboard(id, resolveOptions);
     if (matched.length === 0) {
-      const available = listAllComplianceStoryboards();
+      const available = listAllComplianceStoryboards(resolveOptions);
       throw new Error(
         `Unknown storyboard or bundle ID: "${id}". ` +
           `Available IDs include: ${available
@@ -602,15 +607,22 @@ function resolveExplicitStoryboards(ids: string[]): Storyboard[] {
   return resolved;
 }
 
-function resolveFromCapabilities(profile: AgentProfile): {
+function resolveFromCapabilities(
+  profile: AgentProfile,
+  resolveOptions: ResolveOptions = {}
+): {
   storyboards: Storyboard[];
   not_applicable: NotApplicableStoryboard[];
 } {
-  const { storyboards, not_applicable } = resolveStoryboardsForCapabilities({
-    supported_protocols: profile.supported_protocols,
-    specialisms: profile.specialisms,
-    major_versions: profile.adcp_major_versions,
-  });
+  const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+    {
+      supported_protocols: profile.supported_protocols,
+      specialisms: profile.specialisms,
+      major_versions: profile.adcp_major_versions,
+      supported_versions: profile.adcp_supported_versions,
+    },
+    resolveOptions
+  );
   return { storyboards, not_applicable };
 }
 
@@ -620,12 +632,12 @@ function resolveFromCapabilities(profile: AgentProfile): {
  * bundle (e.g., `sales-guaranteed` → `media_buy_seller/governance_approved`),
  * so the lookup spans every cached storyboard — not just the declared set.
  */
-function expandScenarios(storyboards: Storyboard[]): Storyboard[] {
+function expandScenarios(storyboards: Storyboard[], resolveOptions: ResolveOptions = {}): Storyboard[] {
   const seen = new Set(storyboards.map(s => s.id));
   const expanded: Storyboard[] = [];
   let allStoryboardsCache: Storyboard[] | null = null;
   const lookupById = (id: string): Storyboard | undefined => {
-    if (!allStoryboardsCache) allStoryboardsCache = listAllComplianceStoryboards();
+    if (!allStoryboardsCache) allStoryboardsCache = listAllComplianceStoryboards(resolveOptions);
     return allStoryboardsCache.find(s => s.id === id);
   };
 
@@ -778,7 +790,8 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
 export function extractFailures(
   results: StoryboardResult[],
   storyboards: Storyboard[],
-  agentRef: string
+  agentRef: string,
+  fixOptions: { complianceVersion?: string; complianceDir?: string } = {}
 ): ComplianceFailure[] {
   const failures: ComplianceFailure[] = [];
 
@@ -831,7 +844,7 @@ export function extractFailures(
           error: step.error,
           ...(step.adcp_error && { adcp_error: step.adcp_error }),
           expected,
-          fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
+          fix_command: buildFixCommand(agentRef, result.storyboard_id, step.step_id, fixOptions),
           ...(validationSummary && { validation: validationSummary }),
         });
       }
@@ -839,6 +852,22 @@ export function extractFailures(
   }
 
   return failures;
+}
+
+function buildFixCommand(
+  agentRef: string,
+  storyboardId: string,
+  stepId: string,
+  options: { complianceVersion?: string; complianceDir?: string }
+): string {
+  const parts = ['adcp', 'storyboard', 'step', agentRef, storyboardId, stepId, '--json'];
+  if (options.complianceVersion) parts.push('--compliance-version', options.complianceVersion);
+  if (options.complianceDir) parts.push('--compliance-dir', options.complianceDir);
+  return parts.map(shellArg).join(' ');
+}
+
+function shellArg(value: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -854,8 +883,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     signal: externalSignal,
     webhook_receiver,
     contracts,
+    version,
+    complianceDir,
     ...testOptions
   } = options;
+  const resolveOptions: ResolveOptions = {
+    ...(version !== undefined && { version }),
+    ...(complianceDir !== undefined && { complianceDir }),
+  };
+  const complianceIndex = loadComplianceIndex(resolveOptions);
 
   // Validate timeout_ms
   if (timeout_ms !== undefined) {
@@ -891,11 +927,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   const signal = abortController?.signal;
 
   try {
-    const effectiveOptions: TestOptions = {
+    const effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
       ...testOptions,
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
-    };
+    });
 
     // Check for abort before starting
     signal?.throwIfAborted();
@@ -906,8 +942,16 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Discover agent capabilities once and share across all storyboards.
     // Pass the combined signal so a slow/unresponsive agent can't hold the
     // comply pipeline past its own timeout (adcp-client#1612).
-    const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(client, signal);
+    const discoveryOptions =
+      testOptions.versionEnvelope === undefined
+        ? { ...effectiveOptions, versionEnvelope: 'none' as const }
+        : effectiveOptions;
+    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
+    const { profile, step: profileStep } = await discoverAgentProfile(discoveryClient, signal);
+    const client =
+      discoveryOptions === effectiveOptions
+        ? discoveryClient
+        : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 
@@ -983,8 +1027,8 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       if (authCheck.isAuth) {
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
         const candidate = explicitStoryboards?.length
-          ? resolveExplicitStoryboards(explicitStoryboards)
-          : resolveFromCapabilities(degraded).storyboards;
+          ? resolveExplicitStoryboards(explicitStoryboards, resolveOptions)
+          : resolveFromCapabilities(degraded, resolveOptions).storyboards;
         const runnable = candidate.filter(sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security');
         if (runnable.length > 0) {
           allObservations.push(...authCheck.observations);
@@ -1000,11 +1044,20 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
             effectiveOptions,
             allObservations,
             start,
+            complianceIndex.adcp_version,
             signal
           );
         }
       }
-      return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
+      return buildUnreachableResult(
+        agentUrl,
+        profile,
+        profileStep.error,
+        start,
+        effectiveOptions,
+        complianceIndex.adcp_version,
+        signal
+      );
     }
 
     // Resolve storyboards: explicit IDs override capability-driven selection.
@@ -1012,13 +1065,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     let notApplicable: NotApplicableStoryboard[] = [];
     let missingToolStoryboards: NotApplicableStoryboard[] = [];
     if (explicitStoryboards?.length) {
-      initialStoryboards = resolveExplicitStoryboards(explicitStoryboards);
+      initialStoryboards = resolveExplicitStoryboards(explicitStoryboards, resolveOptions);
     } else {
-      const resolved = resolveFromCapabilities(profile);
+      const resolved = resolveFromCapabilities(profile, resolveOptions);
       initialStoryboards = resolved.storyboards;
       notApplicable = resolved.not_applicable;
     }
-    const applicableStoryboards = expandScenarios(initialStoryboards);
+    const applicableStoryboards = expandScenarios(initialStoryboards, resolveOptions);
 
     // For capability-resolved runs, exclude storyboards and injected scenarios whose
     // required_tools are absent from the agent's discovered toolset. These are
@@ -1151,7 +1204,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const overallStatus = computeOverallStatus(summary);
 
     const agentRef = options.agent_alias || agentUrl;
-    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
+    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef, {
+      complianceVersion: complianceIndex.adcp_version,
+      ...(complianceDir !== undefined && { complianceDir }),
+    });
 
     // Aggregate notices from all storyboard runs. Dedup is by `code` (each
     // notice type appears once in the rollup), but the per-occurrence
@@ -1178,6 +1234,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     return {
       agent_url: agentUrl,
+      adcp_version: complianceIndex.adcp_version,
       agent_profile: profile,
       overall_status: overallStatus,
       tracks: trackResults,
@@ -1322,6 +1379,7 @@ async function runWithDegradedProfile(
   effectiveOptions: TestOptions,
   seededObservations: AdvisoryObservation[],
   start: number,
+  adcpVersion: string,
   signal?: AbortSignal
 ): Promise<ComplianceResult> {
   const allObservations: AdvisoryObservation[] = [...seededObservations];
@@ -1362,7 +1420,10 @@ async function runWithDegradedProfile(
   const summary = buildSummary(trackResults, storyboardResults);
   const overallStatus = computeOverallStatus(summary);
   const agentRef = options.agent_alias || agentUrl;
-  const failures = extractFailures(storyboardResults, storyboards, agentRef);
+  const failures = extractFailures(storyboardResults, storyboards, agentRef, {
+    complianceVersion: adcpVersion,
+    ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
+  });
 
   // Tag canonical vs reference views to disambiguate the same
   // TrackResult appearing in both `tracks` and `tested_tracks`
@@ -1370,6 +1431,7 @@ async function runWithDegradedProfile(
   for (const t of trackResults) t._view = 'canonical';
   return {
     agent_url: agentUrl,
+    adcp_version: adcpVersion,
     agent_profile: profile,
     overall_status: overallStatus,
     tracks: trackResults,
@@ -1401,6 +1463,7 @@ async function buildUnreachableResult(
   errorMsg: string | undefined,
   start: number,
   _effectiveOptions: TestOptions,
+  adcpVersion: string,
   signal?: AbortSignal
 ): Promise<ComplianceResult> {
   const { isAuth, observations } = await detectAuthRejection(agentUrl, errorMsg, signal);
@@ -1408,6 +1471,7 @@ async function buildUnreachableResult(
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
   return {
     agent_url: agentUrl,
+    adcp_version: adcpVersion,
     agent_profile: profile,
     overall_status: (isAuth ? 'auth_required' : 'unreachable') as OverallStatus,
     tracks: [],
