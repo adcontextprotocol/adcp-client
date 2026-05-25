@@ -14,6 +14,7 @@ import type {
   PreviewCreativePayload as TypesPreviewCreativePayload,
 } from '../lib/types';
 import type { CreateMediaBuySuccess } from '../lib/types';
+import type { GetProductsPayload as DecisioningGetProductsPayload } from '../lib/server/decisioning/specialisms/sales';
 
 const rootCreateMediaBuyPayload: RootCreateMediaBuyPayload = {
   media_buy_id: 'mb_1',
@@ -32,6 +33,12 @@ const rootGetProductsPayload: RootGetProductsPayload = {
 const serverGetProductsPayload: ServerGetProductsPayload = rootGetProductsPayload;
 const typesGetProductsPayload: TypesGetProductsPayload = serverGetProductsPayload;
 void typesGetProductsPayload;
+declare const publicTypesGetProductsPayload: TypesGetProductsPayload;
+declare const decisioningGetProductsPayload: DecisioningGetProductsPayload;
+const decisioningPayloadFromPublicAlias: DecisioningGetProductsPayload = publicTypesGetProductsPayload;
+const publicAliasFromDecisioningPayload: TypesGetProductsPayload = decisioningGetProductsPayload;
+void decisioningPayloadFromPublicAlias;
+void publicAliasFromDecisioningPayload;
 
 declare const serverPreviewCreativePayload: ServerPreviewCreativePayload;
 const typesPreviewCreativePayload: TypesPreviewCreativePayload = serverPreviewCreativePayload;
