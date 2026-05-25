@@ -24,7 +24,8 @@ const {
   GovernanceDeniedError,
   PolicyViolationError,
 } = require('../dist/lib/server');
-const { getErrorRecovery } = require('../dist/lib/types/error-codes');
+const { KNOWN_ERROR_CODES } = require('../dist/lib/server/decisioning/async-outcome');
+const { getErrorRecovery, STANDARD_ERROR_CODES } = require('../dist/lib/types/error-codes');
 
 // Recovery is no longer hardcoded in typed-error classes — it's inherited
 // from STANDARD_ERROR_CODES via getErrorRecovery(code). These assertions
@@ -259,9 +260,27 @@ describe('Typed AdcpError subclasses — code + spec-correct recovery shape', ()
 });
 
 describe('AdcpError — recovery defaults from spec when omitted', () => {
+  it('uses the standard error-code runtime table for known-code warnings', () => {
+    assert.deepEqual(new Set(KNOWN_ERROR_CODES), new Set(Object.keys(STANDARD_ERROR_CODES)));
+  });
+
   it('omitting recovery falls back to getErrorRecovery(code) for standard codes', () => {
     const e = new AdcpError('TERMS_REJECTED', { message: 'omitted recovery' });
     assert.equal(e.recovery, 'correctable');
+  });
+
+  it('recognizes ACTION_NOT_ALLOWED without warning as a standard code', () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      const e = new AdcpError('ACTION_NOT_ALLOWED', { message: 'not available for this buy' });
+      assert.equal(e.recovery, 'correctable');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.deepEqual(warnings, []);
   });
 
   it('omitting recovery for a non-standard code falls back to terminal', () => {

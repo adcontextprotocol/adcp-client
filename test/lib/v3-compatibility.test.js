@@ -2097,6 +2097,12 @@ describe('Standard Error Codes', () => {
     assert.ok(STANDARD_ERROR_CODES.IDEMPOTENCY_EXPIRED);
   });
 
+  test('includes ACTION_NOT_ALLOWED as a standard AdCP 3.1 code', () => {
+    assert.ok(STANDARD_ERROR_CODES.ACTION_NOT_ALLOWED);
+    assert.strictEqual(STANDARD_ERROR_CODES.ACTION_NOT_ALLOWED.recovery, 'correctable');
+    assert.strictEqual(isStandardErrorCode('ACTION_NOT_ALLOWED'), true);
+  });
+
   test('every code has description and recovery', () => {
     for (const [code, info] of Object.entries(STANDARD_ERROR_CODES)) {
       assert.ok(info.description, `${code} missing description`);
@@ -2134,6 +2140,7 @@ describe('Standard Error Codes', () => {
     assert.strictEqual(isStandardErrorCode('RATE_LIMITED'), true);
     assert.strictEqual(isStandardErrorCode('BUDGET_EXHAUSTED'), true);
     assert.strictEqual(isStandardErrorCode('CONFLICT'), true);
+    assert.strictEqual(isStandardErrorCode('ACTION_NOT_ALLOWED'), true);
   });
 
   test('isStandardErrorCode returns false for custom codes', () => {
@@ -2144,6 +2151,7 @@ describe('Standard Error Codes', () => {
   test('getErrorRecovery returns correct recovery for known codes', () => {
     assert.strictEqual(getErrorRecovery('RATE_LIMITED'), 'transient');
     assert.strictEqual(getErrorRecovery('INVALID_REQUEST'), 'correctable');
+    assert.strictEqual(getErrorRecovery('ACTION_NOT_ALLOWED'), 'correctable');
     assert.strictEqual(getErrorRecovery('ACCOUNT_SUSPENDED'), 'terminal');
   });
 
