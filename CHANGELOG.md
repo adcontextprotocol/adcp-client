@@ -1,5 +1,36 @@
 # Changelog
 
+## 8.1.0-beta.11
+
+### Minor Changes
+
+- 8d32fe6: fix(media-buy): use generated 3.1 types for `available_actions[]` surface
+
+  The hand-written wire-shape types in `src/lib/media-buy/types.ts` (`MediaBuyValidAction`, `MediaBuyActionMode`, `MediaBuyAvailableAction`, `ActionNotAllowedReason`, `ActionNotAllowedDetails`, and the SLA window) are deleted and replaced with re-exports from `src/lib/types/core.generated.ts` now that the AdCP 3.1.0-beta.3 schema cache produces them.
+
+  **Breaking type shape fix.** The previously-shipped `SlaWindow` was `{ unit, value, response_max? }`. The spec evolved to `SLAWindow` (caps, ISO acronym convention) with shape `{ response_max?, completion_max? }` where both are ISO 8601 duration strings. Adopters reading `available_actions[0].sla.response_max` against the prior type would have hit a runtime shape mismatch when sellers actually populated `sla`. `SLAWindow` is the canonical export; `SlaWindow` remains as a deprecated import-compatibility alias to the corrected generated shape.
+
+  Helper-local types stay: `LEGACY_COARSE_ACTIONS`, `LegacyCoarseAction`, `MediaBuyActionContext`, `UpdateMediaBuyRequestLike`. These are convenience subsets the preflight resolver reads against and aren't part of the wire schema.
+
+  `scripts/generate-media-buy-update-fields.ts` re-ran against the real 3.1.0-beta.3 cache. The generated `enumMetadata.update_fields` table is unchanged from the snapshot taken against the merged-but-pre-release upstream copy.
+
+  Preflight logic, boolean gates, `ActionNotAllowedError`, and the compat shim for `valid_actions[]` are unchanged.
+
+- a809021: Re-export SSRF-safe networking helpers from the package root and the new
+  `@adcp/sdk/net` public subpath. This includes `ssrfSafeFetch`,
+  `SsrfRefusedError`, `SSRF_TRANSIENT_CODES`, `decodeBodyAsJsonOrText`,
+  `isPrivateIp`, `isAlwaysBlocked`, and `isLikelyPrivateUrl`.
+
+  Docs add the 8.0 -> 8.1 migration guide and a recipe for verifying inbound
+  webhooks with RFC 9421, per-agent isolation, multi-replica replay storage, and
+  legacy HMAC handling.
+
+### Patch Changes
+
+- dcefd85: Expose named server `*Payload` aliases from the root, types, and server barrels so adopters can annotate server-side adapter returns without importing wire `*Response` types.
+- 90d9edb: Normalize legacy media-buy lifecycle status responses during validation and storyboard capture, and export `getAuthoritativeMediaBuyStatus` / `isMediaBuyStatus` helpers for reading authoritative media-buy status from mixed-version payloads. The normalized return shape preserves seller-provided legacy `status` values while adding canonical `media_buy_status` where the lifecycle status is unambiguous.
+- 77252a9: Fix false-positive collision warnings in per-tool type extractor when the same type is emitted by both tools.generated and core.generated with different JSDoc but identical structure.
+
 ## 8.1.0-beta.10
 
 ### Patch Changes
