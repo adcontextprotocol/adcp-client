@@ -128,6 +128,18 @@ describe('context extractors', () => {
       });
     });
 
+    it('does not infer update lifecycle status from 3.1 envelope completed status', () => {
+      const result = extractContext('update_media_buy', {
+        adcp_version: '3.1',
+        media_buy_id: 'mb_1',
+        status: 'completed',
+      });
+
+      assert.deepStrictEqual(result, {
+        media_buy_id: 'mb_1',
+      });
+    });
+
     it('prefers media_buy_status on get_media_buys items', () => {
       const result = extractContext('get_media_buys', {
         media_buys: [{ media_buy_id: 'mb_1', status: 'completed', media_buy_status: 'active' }],
