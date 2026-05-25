@@ -27,6 +27,7 @@ export type {
 export type { FormatReferenceStructuredObject } from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
 export type { ServerPayload } from './server-payload';
+export * from './server-payload-aliases';
 /**
  * @deprecated AdCP 3.0.1 renamed this type to `FormatReferenceStructuredObject`
  * (the wire shape is identical — pure documentation rename per the spec). This

@@ -88,6 +88,11 @@
       "require": "./dist/lib/webhooks/index.js",
       "types": "./dist/lib/webhooks/index.d.ts"
     },
+    "./net": {
+      "import": "./dist/lib/net/index.js",
+      "require": "./dist/lib/net/index.js",
+      "types": "./dist/lib/net/index.d.ts"
+    },
     "./server": {
       "import": "./dist/lib/server/index.js",
       "require": "./dist/lib/server/index.js",
@@ -195,6 +200,9 @@
       ],
       "webhooks": [
         "dist/lib/webhooks/index.d.ts"
+      ],
+      "net": [
+        "dist/lib/net/index.d.ts"
       ],
       "server": [
         "dist/lib/server/index.d.ts"
