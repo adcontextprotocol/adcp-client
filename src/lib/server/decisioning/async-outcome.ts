@@ -15,24 +15,15 @@
  * @public
  */
 
-import { ErrorCodeValues } from '../../types/enums.generated';
-import { FORWARD_COMPAT_ERROR_CODES } from '../../types/forward-compat-error-codes';
-import { getErrorRecovery, type StandardErrorCode } from '../../types/error-codes';
+import { getErrorRecovery, STANDARD_ERROR_CODES, type StandardErrorCode } from '../../types/error-codes';
 
 /**
- * Error code vocabulary the SDK recognizes. Composes the manifest-derived
- * `ErrorCodeValues` (codes in the SDK's primary `ADCP_VERSION` pin) with
- * the forward-compat overlay (codes from newer AdCP releases the SDK
- * pre-emptively knows about). Adding a code to the spec lights up
- * everywhere downstream (typo warn, `ErrorCode` union, autocomplete)
- * without a hand-edit. Adopters can return platform-specific codes too —
- * agents fall back to the `recovery` classification on unknowns via the
- * `(string & {})` escape hatch on `AdcpStructuredError.code`.
+ * Error code vocabulary the SDK recognizes. Uses the same runtime table as
+ * `isStandardErrorCode` / `getErrorRecovery` so decisioning warnings cannot
+ * drift from the SDK's standard-code lookup when manifest-derived codes or
+ * forward-compat overlay entries are refreshed independently.
  */
-export const KNOWN_ERROR_CODES = [
-  ...ErrorCodeValues,
-  ...(Object.keys(FORWARD_COMPAT_ERROR_CODES) as readonly string[]),
-] as readonly string[];
+export const KNOWN_ERROR_CODES = Object.keys(STANDARD_ERROR_CODES) as readonly string[];
 
 export type ErrorCode = StandardErrorCode;
 
@@ -59,7 +50,7 @@ function maybeWarnUnknownErrorCode(code: string): void {
   // eslint-disable-next-line no-console
   console.warn(
     `[adcp/decisioning] AdcpError code "${code}" is not in the known ErrorCode set ` +
-      `(${KNOWN_ERROR_CODES.length} standard codes per schemas/cache/<version>/enums/error-code.json). ` +
+      `(${KNOWN_ERROR_CODES.length} standard codes in the SDK runtime table). ` +
       `If this is intentional (vendor-specific code), set ADCP_DECISIONING_ALLOW_CUSTOM_CODES=1. ` +
       `Otherwise check spelling against the ErrorCode union.`
   );
