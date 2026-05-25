@@ -311,10 +311,10 @@ describe('extractContext – get_media_buys pagination guard', () => {
   });
 
   it('extracts media_buy_id when no pagination block present (single-resource response)', () => {
-    const data = { media_buys: [{ media_buy_id: 'buy-2', status: 'pending' }] };
+    const data = { media_buys: [{ media_buy_id: 'buy-2', status: 'pending_start' }] };
     const result = extractContext('get_media_buys', data);
     assert.strictEqual(result.media_buy_id, 'buy-2');
-    assert.strictEqual(result.media_buy_status, 'pending');
+    assert.strictEqual(result.media_buy_status, 'pending_start');
   });
 
   it('returns {} when media_buys array is empty', () => {
