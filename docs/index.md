@@ -23,6 +23,8 @@ Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript
 
 ### 📈 Migration Guides
 
+- [8.0 → 8.1](./migration-8.0-to-8.1.md) — AdCP 3.1.0-beta.3 tightening, webhook verification, `TaskStatus` ambiguity
+- [7.11 → 8.0](./migration-7.11-to-8.0.md) — 8.x beta migration notes
 - [6.6 → 6.7](./migration-6.6-to-6.7.md) — fifteen adopter recipes; two breaking (`'implicit'` refusal, `SalesPlatform` split)
 - [5.x → 6.x](./migration-5.x-to-6.x.md) — `createAdcpServerFromPlatform` framework shape
 - [4.x → 5.x](./migration-4.x-to-5.x.md) — `TaskResult` discriminated union + `createAdcpServer`
@@ -52,7 +54,7 @@ Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript
 - [Real-World Examples](./guides/REAL-WORLD-EXAMPLES.md)
 - [Async Patterns](./guides/ASYNC-DEVELOPER-GUIDE.md) / [Migration](./guides/ASYNC-MIGRATION-GUIDE.md) / [Troubleshooting](./guides/ASYNC-TROUBLESHOOTING-GUIDE.md)
 - [Testing Strategy](./guides/TESTING-STRATEGY.md) / [Multi-Instance Testing](./guides/MULTI-INSTANCE-TESTING.md)
-- [Recipes](./recipes/) — `composeMethod` testing patterns, etc.
+- [Recipes](./recipes/) — inbound webhook verification, `composeMethod` testing patterns, etc.
 
 ### 📦 Resources
 
