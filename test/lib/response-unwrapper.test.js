@@ -1212,7 +1212,7 @@ describe('Response Unwrapper', () => {
           packages: [createTestPackage({ package_id: 'pkg-2' })],
           status: 'completed',
           media_buy_status: 'completed',
-          adcp_version: '3.1.0-beta.3',
+          adcp_version: '3.1-beta.3',
         },
         content: [],
       };
@@ -1222,6 +1222,41 @@ describe('Response Unwrapper', () => {
       // Seller-emitted status must be preserved
       assert.strictEqual(result.status, 'completed');
       assert.strictEqual(result.media_buy_status, 'completed');
+    });
+
+    test('unwrapProtocolResponse preserves legacy media-buy lifecycle status after compat validation', () => {
+      const mcpResponse = {
+        structuredContent: {
+          media_buy_id: 'mb-legacy-status',
+          buyer_ref: 'buyer-ref-3',
+          packages: [createTestPackage({ package_id: 'pkg-3' })],
+          status: 'pending_creatives',
+        },
+        content: [],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
+
+      assert.strictEqual(result.status, 'pending_creatives');
+      assert.strictEqual(result.media_buy_status, 'pending_creatives');
+    });
+
+    test('unwrapProtocolResponse accepts 3.1 deprecated media-buy lifecycle status', () => {
+      const mcpResponse = {
+        structuredContent: {
+          adcp_version: '3.1',
+          media_buy_id: 'mb-31-deprecated-status',
+          buyer_ref: 'buyer-ref-4',
+          packages: [createTestPackage({ package_id: 'pkg-4' })],
+          status: 'pending_creatives',
+        },
+        content: [],
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'create_media_buy', 'mcp');
+
+      assert.strictEqual(result.status, 'pending_creatives');
+      assert.strictEqual(result.media_buy_status, 'pending_creatives');
     });
   });
 });

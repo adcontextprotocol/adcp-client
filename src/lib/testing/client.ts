@@ -718,7 +718,7 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
   // responses. See `utils/envelope-status-compat.ts`.
   const compatData =
     data && typeof data === 'object' && !Array.isArray(data)
-      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>)
+      ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName })
       : data;
   const result = schema.safeParse(compatData);
   if (result.success) {

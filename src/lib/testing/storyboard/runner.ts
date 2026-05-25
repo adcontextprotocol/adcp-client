@@ -33,6 +33,7 @@ import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDisp
 import { resolvePath, toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
+import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -687,7 +688,8 @@ async function resolveTaskCompletionOutputs(
   taskResult: TaskResult | undefined,
   outputs: readonly { path?: string | undefined }[],
   client: TestClient,
-  webhookReceiver: WebhookReceiver | undefined
+  webhookReceiver: WebhookReceiver | undefined,
+  originatingTaskName: string
 ): Promise<TaskCompletionResolution> {
   const hasTaskCompletionPath = outputs.some(
     o => typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
@@ -782,7 +784,7 @@ async function resolveTaskCompletionOutputs(
     if (winner.kind === 'poll') {
       const polled = winner.result;
       if (polled.success === false) return { attempted: true, taskFailed: true };
-      return { attempted: true, data: polled.data };
+      return { attempted: true, data: normalizeTaskCompletionData(polled.data, originatingTaskName) };
     }
     // Webhook win.
     const waitResult = winner.result;
@@ -797,7 +799,7 @@ async function resolveTaskCompletionOutputs(
     // attribute to `capture_task_failed`, not silently fall through to a
     // capture against an undefined `result`.
     if (webhookBody?.status === 'completed') {
-      return { attempted: true, data: webhookBody.result };
+      return { attempted: true, data: normalizeTaskCompletionData(webhookBody.result, originatingTaskName) };
     }
     return { attempted: true, taskFailed: true };
   } catch {
@@ -805,6 +807,25 @@ async function resolveTaskCompletionOutputs(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function normalizeTaskCompletionData(data: unknown, taskName: string): unknown {
+  if (data == null || typeof data !== 'object' || Array.isArray(data)) return data;
+  const original = data as Record<string, unknown>;
+  const compat = injectLegacyEnvelopeStatus(original, { toolName: taskName });
+  if (!('status' in original) && 'status' in compat) {
+    const { status: _status, ...rest } = compat;
+    return normalizeLegacyMediaBuyStatusForReturn(rest, { toolName: taskName });
+  }
+  if (
+    (taskName === 'create_media_buy' || taskName === 'update_media_buy') &&
+    typeof original.status === 'string' &&
+    compat.status === 'completed' &&
+    typeof compat.media_buy_status === 'string'
+  ) {
+    return normalizeLegacyMediaBuyStatusForReturn({ ...compat, status: original.status }, { toolName: taskName });
+  }
+  return normalizeLegacyMediaBuyStatusForReturn(compat, { toolName: taskName });
 }
 
 function readEnvIntOrDefault(value: string | undefined, fallback: number): number {
@@ -4038,7 +4059,8 @@ async function executeStep(
       taskResult,
       step.context_outputs,
       client,
-      runState.webhookReceiver
+      runState.webhookReceiver,
+      effectiveStep.task
     );
     // `'data' in resolution` distinguishes "polled, artifact had no data"
     // (use undefined → outputs fail with capture_path_not_resolvable) from
