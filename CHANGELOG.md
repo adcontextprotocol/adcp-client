@@ -1,5 +1,53 @@
 # Changelog
 
+## 8.1.0-beta.13
+
+### Minor Changes
+
+- 156059c: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-beta.5.
+
+  The 3.1 beta write-side media-buy helpers now emit `format_option_refs` /
+  `format_option_id` instead of the removed `capability_ids` path, while keeping
+  the old capability-named helper exports as beta.3 compatibility aliases.
+  `packageRefsForCapabilities()` is now documented as beta.3-only and emits a
+  one-time warning because beta.5 sellers reject `capability_ids` on
+  `PackageRequest`.
+
+  `PROPOSAL_NOT_FOUND` recovery is aligned to beta5 as `correctable`, and the
+  projection diagnostic detail name follows the beta5 `format_option_id` field
+  instead of the beta.3 `capability_id` name. Regenerated types, Zod schemas,
+  docs, schema caches, conformance arbitraries, retry policy, and compliance
+  controller support are aligned with the beta5 protocol bundle.
+
+- 8c0a7f0: Expose canonical creative format migration helpers and get_products cache-scope helpers.
+
+  Adds the `CanonicalFormat` namespace plus projection subpath builder helpers for authoring `format_options[]` and v1 fallback refs, exports the existing projection/write-side helpers from the package root, and adds `ensureGetProductsCacheScope()` / `validateGetProductsCacheScope()` for storefronts composing legacy upstream product feeds.
+
+  Also widens `SyncCreativesPayload` to include operation-level `SyncCreativesError` payloads and adds explicit `list_creative_formats` server payload aliases.
+
+- 05bc22b: Add first-class helpers for decomposing and enforcing `update_media_buy` action requests. `decomposeUpdateMediaBuy()` exposes concrete requested mutations with action, path, scope, package IDs, and best-effort before/after values, while `assertUpdateMediaBuyAllowed()` lets server adopters throw canonical `ACTION_NOT_ALLOWED` errors from per-buy `available_actions[]`.
+
+### Patch Changes
+
+- f05ca49: Disambiguate A2A artifact `status` fields so domain payloads like `update_media_buy` returning `status: "canceled"` are treated as completed tool responses, not task lifecycle cancellations. Parser, validator, task polling, and signing discovery logic now consistently read the latest structured DataPart.
+- a312e00: Publish releases under AdCP minor-line npm dist-tags.
+
+  The release wrapper derives `adcp-<major.minor>` from `package.json#adcp_version`
+  and uses that as the publish-time npm tag, so OIDC trusted publishing can update
+  the compatibility channel without a post-publish dist-tag mutation.
+
+- b8a08bb: Accept AdCP 3.1 `vendor_metric` optimization goals in `create_media_buy` validation and treat top-level `errors[]` as advisory when a task-aware success or submitted payload is present.
+- 3600320: fix: let external compliance dirs provide their matching schema bundle
+
+  When `--compliance-dir` points at another SDK package or checkout, the storyboard runner now registers the sibling schema bundle before constructing the test client. This allows a beta runner that ships only the 3.1 cache to execute a supplied 3.0 compliance bundle without failing the `adcpVersion` schema-bundle preflight.
+
+- 9beb418: Fix idempotency storyboard grading for MCP sellers by keeping missing-field vectors on the initialized SDK transport, and allow standard `recovery` metadata on `IDEMPOTENCY_CONFLICT` error envelopes.
+- ca64f88: Split storyboard runner exclusions from selected-but-skipped steps in compliance summaries.
+
+  Runs now report caller-excluded work, such as version gates, explicit request-signing vector filters, live-side-effect opt-outs, and profile exclusions, under `steps_not_selected` / `not_selected_by_reason` instead of inflating `steps_skipped`. Selected steps that could not execute, such as missing tools or missing `comply_test_controller`, remain skipped.
+
+  The narrow compliance summary artifact is bumped to schema version 2 and now exposes `not_selected_count`, optional `not_selected` records, `not_selected_by_reason`, and `skipped_by_reason`.
+
 ## 8.1.0-beta.12
 
 ### Minor Changes
