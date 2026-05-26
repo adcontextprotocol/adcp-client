@@ -1,7 +1,7 @@
 // Tests for buyer-side preflight helpers landed for AdCP 3.1 / RFC #4480.
 // Covers:
 //   - boolean gates (canPause, canExtendFlight, ...)
-//   - getActionForMutation resolver across direction cases
+//   - decomposeUpdateMediaBuy / getActionForMutation across direction cases
 //   - preflightUpdateMediaBuy ok / not-ok paths and compat shim
 
 const { test, describe, beforeEach } = require('node:test');
@@ -18,6 +18,7 @@ const {
   canReallocateBudget,
   canRemoveCreative,
   canAddPackages,
+  decomposeUpdateMediaBuy,
   findAvailableAction,
   getActionForMutation,
   getAvailableActions,
@@ -123,6 +124,77 @@ describe('getAvailableActions compat shim', () => {
     assert.strictEqual(getRollupParent('increase_budget'), 'update_budget');
     assert.strictEqual(getRollupParent('extend_flight'), 'update_dates');
     assert.strictEqual(getRollupParent('pause'), undefined);
+  });
+});
+
+describe('decomposeUpdateMediaBuy', () => {
+  const buy = buyWith([
+    { action: 'extend_flight', mode: 'self_serve' },
+    { action: 'increase_budget', mode: 'self_serve' },
+    { action: 'update_frequency_caps', mode: 'self_serve' },
+  ]);
+
+  test('returns concrete package mutations with action, path, and before/after values', () => {
+    const plan = decomposeUpdateMediaBuy(buy, {
+      end_time: '2026-07-01T00:00:00Z',
+      packages: [
+        {
+          package_id: 'pkg_1',
+          budget: 1500,
+          targeting_overlay: { frequency_cap: { count: 3, interval: 'day' } },
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      plan.actions.map(a => a.action).sort(),
+      ['extend_flight', 'increase_budget', 'update_frequency_caps']
+    );
+    assert.deepStrictEqual(plan.touched_fields, [
+      'end_time',
+      'packages[].budget',
+      'packages[].targeting_overlay.frequency_cap',
+    ]);
+
+    const budget = plan.mutations.find(m => m.path === 'packages[0].budget');
+    assert.ok(budget);
+    assert.strictEqual(budget.action, 'increase_budget');
+    assert.strictEqual(budget.direction, 'increase');
+    assert.strictEqual(budget.scope, 'package');
+    assert.strictEqual(budget.package_id, 'pkg_1');
+    assert.strictEqual(budget.from, 1000);
+    assert.strictEqual(budget.to, 1500);
+  });
+
+  test('preserves separate package mutations while aggregating shared actions', () => {
+    const plan = decomposeUpdateMediaBuy(buy, {
+      packages: [
+        { package_id: 'pkg_1', budget: 1200 },
+        { package_id: 'pkg_2', budget: 300 },
+      ],
+    });
+
+    assert.strictEqual(plan.actions.length, 1);
+    assert.strictEqual(plan.actions[0].action, 'reallocate_budget');
+    assert.strictEqual(plan.actions[0].direction, 'reallocate');
+    assert.deepStrictEqual(
+      plan.mutations.map(m => [m.path, m.from, m.to]),
+      [
+        ['packages[0].budget', 1000, 1200],
+        ['packages[1].budget', 500, 300],
+      ]
+    );
+  });
+
+  test('returns empty plan for unknown/no-op patches', () => {
+    const plan = decomposeUpdateMediaBuy(buy, {
+      packages: [{ package_id: 'pkg_1', paused: false }],
+    });
+    assert.deepStrictEqual(plan, {
+      mutations: [],
+      actions: [],
+      touched_fields: [],
+    });
   });
 });
 
@@ -276,6 +348,11 @@ describe('preflightUpdateMediaBuy', () => {
     });
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.actions.length, 2);
+    assert.strictEqual(result.mutations.length, 2);
+    assert.deepStrictEqual(
+      result.mutations.map(m => m.path).sort(),
+      ['end_time', 'packages[0].budget']
+    );
     assert.deepStrictEqual(result.modes.sort(), ['requires_approval', 'self_serve']);
     assert.strictEqual(result.requiresAsyncFlow, true);
     assert.strictEqual(result.compat, undefined);
@@ -288,6 +365,7 @@ describe('preflightUpdateMediaBuy', () => {
     assert.strictEqual(result.denials.length, 1);
     assert.strictEqual(result.denials[0].action, 'extend_flight');
     assert.strictEqual(result.denials[0].reason, 'not_supported_on_buy');
+    assert.strictEqual(result.mutations[0].path, 'end_time');
     assert.ok(Array.isArray(result.currently_available_actions));
   });
 
