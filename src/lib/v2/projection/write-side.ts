@@ -9,6 +9,7 @@
  */
 
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
+import { warnOnce } from '../../utils/deprecation';
 
 export type FormatOptionRef =
   | { scope: 'publisher'; publisher_domain: string; format_option_id: string }
@@ -40,7 +41,8 @@ export interface PackageFormatRefs {
 /**
  * Beta.3 compatibility shape emitted by {@link packageRefsForCapabilities}.
  * New beta.5 code should use {@link packageRefsForFormatOptions}; this keeps
- * callers pinned to the capability_id/capability_ids protocol surface working.
+ * callers pinned to the beta.3 capability_id/capability_ids protocol surface
+ * working. Beta.5+ sellers reject `capability_ids` on PackageRequest.
  */
 export interface PackageCapabilityRefs {
   capability_ids: string[];
@@ -252,10 +254,22 @@ export function packageRefsForFormatOptions(
   return format_ids.length > 0 ? { format_option_refs, format_ids } : { format_option_refs };
 }
 
+/**
+ * Resolve beta.3 `capability_id` selectors and emit beta.3
+ * `{ capability_ids, format_ids? }` PackageRequest fields.
+ *
+ * @deprecated Beta.5+ sellers reject `capability_ids` on PackageRequest. Use
+ * {@link packageRefsForFormatOptions} for beta.5+ sellers.
+ */
 export function packageRefsForCapabilities(
   product: { format_options?: V2ProductFormatDeclaration[] },
   capabilityIds: string[]
 ): PackageCapabilityRefs {
+  warnOnce(
+    'packageRefsForCapabilities.beta3-only',
+    'packageRefsForCapabilities() emits beta.3-only capability_ids. Beta.5+ sellers reject capability_ids; use packageRefsForFormatOptions() for beta.5+ package requests.'
+  );
+
   if (product === null || typeof product !== 'object' || Array.isArray(product)) {
     throw new CapabilityIdsLookupError(
       'invalid_product',
@@ -389,7 +403,10 @@ export function legacyFormatIdsForFormatOption(
 }
 
 /**
- * Compatibility alias for callers using the pre-GA helper name.
+ * Compatibility alias for callers using the beta.3 helper name.
+ *
+ * @deprecated Emits beta.3-only `capability_ids`. Beta.5+ sellers reject that
+ * field. Use {@link packageRefsForFormatOptions} for beta.5+ package requests.
  */
 export function legacyFormatIdsForCapability(
   product: { format_options?: V2ProductFormatDeclaration[] },
@@ -408,5 +425,8 @@ export function legacyFormatIdsForCapability(
 }
 
 function capabilityIdForLookup(decl: V2ProductFormatDeclaration): string | undefined {
+  // Migration alias: beta.3 catalogs used capability_id, beta.5 catalogs use
+  // format_option_id. This beta.3 read path accepts either field so pinned
+  // callers can bridge mixed catalog fixtures while they migrate.
   return decl.capability_id ?? decl.format_option_id;
 }

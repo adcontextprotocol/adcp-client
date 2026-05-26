@@ -7,6 +7,7 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
 
 const {
   packageRefsForFormatOptions,
@@ -486,12 +487,24 @@ describe('packageRefsForCapabilities (3.1.0-beta.3 compatibility)', () => {
     ],
   };
 
-  test('emits beta.3 capability_ids rather than beta.5 format_option_refs', () => {
-    const refs = packageRefsForCapabilities(beta3Product, ['nytimes_mrec', 'nytimes_video_30s', 'nytimes_mrec']);
+  test('emits beta.3 capability_ids rather than beta.5 format_option_refs and warns once', () => {
+    resetWarnings();
+    const originalWarn = console.warn;
+    const warnings = [];
+    console.warn = message => warnings.push(String(message));
+    try {
+      const refs = packageRefsForCapabilities(beta3Product, ['nytimes_mrec', 'nytimes_video_30s', 'nytimes_mrec']);
 
-    assert.deepStrictEqual(refs.capability_ids, ['nytimes_mrec', 'nytimes_video_30s']);
-    assert.strictEqual('format_option_refs' in refs, false);
-    assert.deepStrictEqual(refs.format_ids.map(f => f.id).sort(), ['display_300x250_image', 'video_standard_30s']);
+      assert.deepStrictEqual(refs.capability_ids, ['nytimes_mrec', 'nytimes_video_30s']);
+      assert.strictEqual('format_option_refs' in refs, false);
+      assert.deepStrictEqual(refs.format_ids.map(f => f.id).sort(), ['display_300x250_image', 'video_standard_30s']);
+
+      packageRefsForCapabilities(beta3Product, ['nytimes_mrec']);
+    } finally {
+      console.warn = originalWarn;
+    }
+    assert.strictEqual(warnings.length, 1);
+    assert.match(warnings[0], /Beta\.5\+ sellers reject capability_ids/);
   });
 
   test('preserves beta.3 error class and code names', () => {

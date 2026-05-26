@@ -115,6 +115,11 @@ export function resolveFormatOptionId(
 
 /**
  * Compatibility alias for the pre-GA helper name.
+ *
+ * Accepts either beta.3 `capability_id` or beta.5 `format_option_id` during
+ * the catalog transition. If a publisher reuses the same string in both
+ * fields for different declarations, the first declaration in `formats[]`
+ * wins, matching {@link resolveFormatOptionId}'s publisher-order semantics.
  */
 export function resolveCapabilityId(
   formats: AdAgentsPublisherFormat[],

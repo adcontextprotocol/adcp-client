@@ -16,6 +16,11 @@
   `MediaBuy.status` -> `media_buy_status`, creative approval `status` ->
   `approval_status`, rights acquisition `status` -> `rights_status`.
 - Drop `governance_agents[].categories`; 8.1 validates those items as closed.
+- Use `packageRefsForFormatOptions()` for beta.5 media-buy package requests.
+  `packageRefsForCapabilities()` is beta.3-only and now emits a one-time
+  warning because beta.5 sellers reject `capability_ids`.
+- Treat `PROPOSAL_NOT_FOUND` as correctable. Projection diagnostics now report
+  `format_option_id` rather than the beta.3 `capability_id` name.
 - For webhook receivers, move to RFC 9421 verification and a shared replay
   store before running more than one replica. See
   [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.md).
@@ -89,6 +94,33 @@ credentials; `ctx_metadata` and extension objects can still land in logs and
 error envelopes.
 
 ## Type-Level Changes
+
+### Format-option package helpers
+
+AdCP 3.1.0-beta.5 removed the beta.3 `capability_ids` request path from
+`PackageRequest`; beta.5 sellers reject that field rather than treating it as
+an extension. New buyer code should compose packages with:
+
+```ts
+import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
+```
+
+`packageRefsForCapabilities()` remains exported for callers pinned to beta.3
+fixtures or sellers, but it is marked deprecated and emits a one-time warning
+on 8.1 because its return value is intentionally beta.3-only.
+
+Projection diagnostics also use the beta.5 field name:
+`diagnostic.error.details.format_option_id`. If you log or branch on the old
+beta.3 diagnostic detail `capability_id`, update that reader while keeping any
+stored historical logs as-is.
+
+### Proposal-not-found recovery
+
+`PROPOSAL_NOT_FOUND` now reports `recovery: 'correctable'` in proposal refine /
+finalize paths. This matches beta.5 storyboards: buyers can correct the
+`proposal_id` and retry rather than treating the failure as terminal. The SDK's
+retry policy already routes this code through its per-code policy, so callers
+using `decideRetry()` do not need a custom override.
 
 ### `ProductSchema` is a `ZodObject` again
 

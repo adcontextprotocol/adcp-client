@@ -662,14 +662,16 @@ export async function discoverSignals(
         signal_type?: unknown;
         type?: unknown;
       };
-      const signalId =
-        typeof signalData.signal_agent_segment_id === 'string'
-          ? signalData.signal_agent_segment_id
-          : typeof signalData.signal_ref === 'string'
-            ? signalData.signal_ref
-            : signalData.signal_ref != null
-              ? JSON.stringify(signalData.signal_ref)
-              : undefined;
+      let signalId: string | undefined;
+      if (typeof signalData.signal_agent_segment_id === 'string') {
+        signalId = signalData.signal_agent_segment_id;
+      } else if (typeof signalData.signal_ref === 'string') {
+        signalId = signalData.signal_ref;
+      } else if (signalData.signal_ref != null) {
+        // Summary-only convenience for the test report; rawSignals above
+        // preserves the seller's canonical signal_ref object.
+        signalId = JSON.stringify(signalData.signal_ref);
+      }
       if (!signalId) continue;
       signals.push({
         signal_id: signalId,
