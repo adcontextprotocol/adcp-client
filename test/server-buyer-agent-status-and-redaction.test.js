@@ -41,7 +41,7 @@ function buildPlatform(overrides = {}) {
     },
     statusMappers: {},
     sales: {
-      getProducts: async (_req, ctx) => ({ products: [], _ctxAgent: ctx?.agent }),
+      getProducts: async (_req, ctx) => ({ cache_scope: 'account', products: [], _ctxAgent: ctx?.agent }),
       createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
       updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
       syncCreatives: async () => [],
@@ -104,7 +104,7 @@ describe('Stage 4 — status enforcement', () => {
       sales: {
         getProducts: async () => {
           handlerInvoked = true;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -228,7 +228,7 @@ describe('Stage 4 — status enforcement', () => {
           // request mutating the agent record in the seller's DB.
           registryStatus = 'suspended';
           handlerCompleted = true;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),

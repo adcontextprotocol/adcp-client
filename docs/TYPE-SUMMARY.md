@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-05-22
-> @adcp/sdk v8.1.0-beta.0
+> Generated at: 2026-05-26
+> @adcp/sdk v8.1.0-beta.11
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -265,6 +265,10 @@ _Response (success branch):_
 }
 ```
 
+_Watch out:_
+- `cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.
+- SDK server handlers may omit `cache_scope` only for no-account product feeds; the framework can safely infer `public` only when there is no inline account and no auth-derived/resolved account.
+
 **`list_creative_formats`** — Request parameters for discovering format IDs and creative agents supported by this sales agent.
 
 _Request:_
@@ -302,6 +306,11 @@ _Response (success branch):_
   context: Context
 }
 ```
+
+_Watch out:_
+- Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 **`create_media_buy`** — Request parameters for creating a media buy.
 
@@ -351,6 +360,9 @@ _Response (success branch):_
 }
 ```
 
+_Watch out:_
+- Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
+
 **`update_media_buy`** — Request parameters for updating campaign and package settings.
 
 _Request:_
@@ -392,6 +404,9 @@ _Response (success branch):_
   context: Context
 }
 ```
+
+_Watch out:_
+- Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
 
 **`get_media_buys`** — Request parameters for retrieving media buy status, creative approvals, and delivery snapshots.
 
@@ -627,6 +642,11 @@ _Response (success branch):_
 }
 ```
 
+_Watch out:_
+- Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.
+- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.
+- Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).
+
 **`preview_creative`** — Request parameters for generating creative previews.
 
 _Request:_
@@ -657,6 +677,9 @@ _Response (success branch):_
   context: Context
 }
 ```
+
+_Watch out:_
+- Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.
 
 **`list_creative_formats`** — Request parameters for discovering creative formats from this creative agent.
 
@@ -694,6 +717,11 @@ _Response (success branch):_
   context: Context
 }
 ```
+
+_Watch out:_
+- Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 **`get_creative_delivery`** — Request parameters for retrieving creative delivery data with variant-level breakdowns.
 

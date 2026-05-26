@@ -48,6 +48,16 @@ const SKIP_TOOLS = new Set(['comply-test-controller']);
 // still carries the operational lessons that bit real integrators.
 // Keep each entry under ~5 lines — llms.txt is a scan surface, not a tutorial.
 const TOOL_GOTCHAS: Record<string, string[]> = {
+  get_products: [
+    '`cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.',
+    'SDK server handlers may omit `cache_scope` only for no-account product feeds; the framework can safely infer `public` only when there is no inline account and no auth-derived/resolved account.',
+  ],
+  create_media_buy: [
+    'Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.',
+  ],
+  update_media_buy: [
+    'Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.',
+  ],
   build_creative: [
     'Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.',
     'Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.',
@@ -1099,7 +1109,7 @@ function generateLlmsTxt(
   ln(`- Documentation: ${DOCS_BASE_URL}/`);
   ln(`- npm: https://www.npmjs.com/package/@adcp/sdk`);
   ln(`- Spec: https://adcontextprotocol.org`);
-  ln(`- CLI: \`npx @adcp/sdk@latest\``);
+  ln(`- CLI: \`npx @adcp/sdk@beta\` for the 8.1 / AdCP 3.1 beta line`);
   ln();
 
   return lines.join('\n');
@@ -1235,6 +1245,15 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
         ln('```');
       }
       ln();
+
+      const gotchas = TOOL_GOTCHAS[tool.name];
+      if (gotchas?.length) {
+        ln(`_Watch out:_`);
+        for (const note of gotchas) {
+          ln(`- ${note}`);
+        }
+        ln();
+      }
     }
   }
 

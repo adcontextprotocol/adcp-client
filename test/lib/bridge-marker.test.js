@@ -78,7 +78,9 @@ describe('_bridge marker — append-merge tools', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
-      mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'h-1', name: 'Handler' }] }) },
+      mediaBuy: {
+        getProducts: async () => ({ cache_scope: 'account', products: [{ product_id: 'h-1', name: 'Handler' }] }),
+      },
       testController: {
         getSeededProducts: () => [
           { product_id: 's-1', name: 'S1' },
@@ -422,7 +424,7 @@ describe('_bridge marker — absent when no merge ran', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
-      mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'h-1', name: 'H' }] }) },
+      mediaBuy: { getProducts: async () => ({ cache_scope: 'account', products: [{ product_id: 'h-1', name: 'H' }] }) },
       testController: {},
     });
     const res = await dispatch(server, 'get_products', {
@@ -437,7 +439,7 @@ describe('_bridge marker — absent when no merge ran', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
-      mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'h-1', name: 'H' }] }) },
+      mediaBuy: { getProducts: async () => ({ cache_scope: 'account', products: [{ product_id: 'h-1', name: 'H' }] }) },
       testController: { getSeededProducts: () => [{ product_id: 's-1', name: 'S' }] },
     });
     const res = await dispatch(server, 'get_products', {
@@ -481,7 +483,7 @@ describe('_bridge marker — absent when no merge ran', () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
-      mediaBuy: { getProducts: async () => ({ products: [{ product_id: 'h-1', name: 'H' }] }) },
+      mediaBuy: { getProducts: async () => ({ cache_scope: 'account', products: [{ product_id: 'h-1', name: 'H' }] }) },
       testController: { getSeededProducts: () => [] },
     });
     const res = await dispatch(server, 'get_products', {

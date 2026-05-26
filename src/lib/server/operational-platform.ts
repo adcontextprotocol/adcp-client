@@ -53,7 +53,7 @@ import type {
   UpdateMediaBuyRequest,
   UpdateMediaBuyResponse,
 } from '../types/tools.generated';
-import type { ServerPayload } from '../types/server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
 import type { AudienceStatus } from './decisioning/specialisms/audiences';
 
 /**
@@ -223,7 +223,7 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
     contextId?: string,
     brand?: Record<string, unknown>,
     sourceChain?: readonly string[]
-  ): Promise<ServerPayload<GetProductsResponse>>;
+  ): Promise<RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>>;
 }
 
 /**

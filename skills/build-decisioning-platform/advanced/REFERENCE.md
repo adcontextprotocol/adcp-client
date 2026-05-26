@@ -57,6 +57,7 @@ const platform = {
   sales: {
     getProducts: async (req, ctx) => ({
       status: 'completed',
+      cache_scope: 'account',
       products: [
         {
           product_id: 'p_homepage',
@@ -139,7 +140,7 @@ getProducts: async (req, ctx) => {
   for (const p of products) {
     await ctx.ctxMetadata?.set('product', p.id, { gam: { ad_unit_ids: p.adUnitIds } });
   }
-  return { products: products.map(toAdcpProduct) };
+  return { products: products.map(toAdcpProduct), cache_scope: 'account' };
 },
 
 // Read on the way in (subsequent call referencing the same ID):

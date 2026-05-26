@@ -46,6 +46,7 @@ function buildPlatform(overrides = {}) {
     statusMappers: {},
     sales: {
       getProducts: async (_req, ctx) => ({
+        cache_scope: 'account',
         products: [],
         _ctxAgent: ctx?.agent,
       }),
@@ -478,7 +479,7 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
         list: async () => ({ items: [], nextCursor: null }),
       },
       sales: {
-        getProducts: async (_req, ctx) => ({ products: [], _ctxAgent: ctx?.agent }),
+        getProducts: async (_req, ctx) => ({ cache_scope: 'account', products: [], _ctxAgent: ctx?.agent }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],

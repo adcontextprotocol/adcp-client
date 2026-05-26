@@ -28,11 +28,11 @@ import {
   type SalesCorePlatform,
   type SalesIngestionPlatform,
   type AccountStore,
+  type GetProductsPayload,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
-  GetProductsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -97,8 +97,8 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
 
   sales: SalesCorePlatform<ProgrammaticMeta> & SalesIngestionPlatform<ProgrammaticMeta> = {
     /** Sync discovery: catalog read; no async ceremony. */
-    getProducts: async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
-      status: 'completed' as const,
+    getProducts: async (_req: GetProductsRequest): Promise<GetProductsPayload> => ({
+      cache_scope: 'account' as const,
       products: [
         {
           product_id: 'prod_run_of_network_display',

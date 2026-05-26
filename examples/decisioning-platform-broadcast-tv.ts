@@ -34,11 +34,11 @@ import {
   type SalesCorePlatform,
   type SalesIngestionPlatform,
   type AccountStore,
+  type GetProductsPayload,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
-  GetProductsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -117,7 +117,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
      * the eventual products via `publishStatusChange` on
      * `resource_type: 'proposal'`.
      */
-    getProducts: async (req: GetProductsRequest): Promise<GetProductsResponse> => {
+    getProducts: async (req: GetProductsRequest): Promise<GetProductsPayload> => {
       const promotedOffering = (req as { promoted_offering?: string }).promoted_offering ?? '';
       if (/political|cannabis|gambling/i.test(promotedOffering)) {
         throw new AdcpError('POLICY_VIOLATION', {
@@ -129,7 +129,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
       }
 
       return {
-        status: 'completed' as const,
+        cache_scope: 'account' as const,
         products: [
           {
             product_id: 'prod_primetime_30s',

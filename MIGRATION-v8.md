@@ -138,13 +138,15 @@ product_card: {
 
 ### `get_products.products` is now optional
 
-3.1.0-beta.3's `unchanged: true` wholesale-feed branch legitimately omits `products`. The Zod schema is `ZodOptional<ZodArray<...>>`. If you had code asserting `products.length`, narrow first.
+3.1.0-beta.3's `unchanged: true` wholesale-feed branch legitimately omits `products`, but it must still echo `cache_scope`. The Zod schema is `ZodOptional<ZodArray<...>>`. If you had code asserting `products.length`, narrow first.
 
 The SDK's `filterInvalidProducts: true` unwrapper option now correctly handles the optional shape (silent dead-feature regression fixed in 8.1.0-beta.3).
 
-### `cache_scope` is required on populated `get_products` responses
+### `cache_scope` is required on product and unchanged `get_products` responses
 
-The populated-products branch of `get_products` now requires `cache_scope: 'public' | 'account'`. Server handlers must set it.
+The populated-products branch and the `unchanged: true` wholesale-feed branch of `get_products` now require `cache_scope: 'public' | 'account'`. Server handlers must set it.
+
+Use `public` for responses with no inline account and no auth-derived/resolved account context, or for account requests that still use the universal rate card. Use `account` when account-specific rate cards or pricing overlays are present. The SDK may infer `public` only when no account context exists; account-scoped product responses must be explicit.
 
 ### Union responses are now intersection-wrapped
 
@@ -220,7 +222,7 @@ Quick scan for the adopter who knows which tools their code touches:
 If you want belt-and-braces against accidentally consuming a beta on `latest`, pin exactly:
 
 ```bash
-npm install @adcp/sdk@8.1.0-beta.8
+npm install @adcp/sdk@8.1.0-beta.11
 ```
 
 The beta line is API-stable across patch bumps within a single beta (same npm dist-tag); the field renames and reshapes above all landed by 8.1.0-beta.3.

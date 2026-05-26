@@ -122,7 +122,7 @@ describe('Personas — end-to-end against a DecisioningPlatform', () => {
           observed.brief = req.brief;
           observed.brand_domain = req.brand?.domain;
           observed.account_id = ctx.account?.id;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({
           media_buy_id: 'mb_1',

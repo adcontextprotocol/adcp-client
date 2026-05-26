@@ -63,7 +63,7 @@
 import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
-import type { ServerPayload } from '../../../types/server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -94,7 +94,7 @@ import type {
 type Creative = CreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export type GetProductsPayload = ServerPayload<GetProductsResponse>;
+export type GetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 export type CreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
 export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;

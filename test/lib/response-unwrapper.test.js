@@ -36,6 +36,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
                   },
                 },
@@ -64,6 +65,7 @@ describe('Response Unwrapper', () => {
                   kind: 'data',
                   data: {
                     response: {
+                      cache_scope: 'public',
                       products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
                     },
                   },
@@ -194,6 +196,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'p1' }), createTestProduct({ product_id: 'p2' })],
                   },
                 },
@@ -218,6 +221,7 @@ describe('Response Unwrapper', () => {
           },
         ],
         structuredContent: {
+          cache_scope: 'public',
           products: [createTestProduct({ product_id: 'p1' })],
         },
       };
@@ -238,6 +242,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'old', name: 'Old Product' })],
                   },
                 },
@@ -249,6 +254,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'new', name: 'New Product' })],
                   },
                 },
@@ -313,6 +319,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'p1' })],
                   },
                 },
@@ -345,6 +352,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
                   },
                 },
@@ -389,6 +397,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'prod1', name: 'Test Product' })],
                   },
                 },
@@ -418,6 +427,7 @@ describe('Response Unwrapper', () => {
             {
               kind: 'data',
               data: {
+                cache_scope: 'public',
                 products: [createTestProduct({ product_id: `prod${i}`, name: `Product ${i}` })],
               },
             },
@@ -707,6 +717,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [createTestProduct({ product_id: 'prod-1' })],
                   },
                 },
@@ -723,9 +734,51 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].product_id, 'prod-1');
     });
 
+    test('should accept legacy 3.0 MCP get_products without cache_scope', () => {
+      const mcpResponse = {
+        structuredContent: {
+          adcp_version: '3.0.12',
+          products: [createTestProduct({ product_id: 'prod-1' })],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp');
+      assert.ok(result.products, 'Should return validated products');
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.cache_scope, undefined);
+      assert.strictEqual(result.status, undefined);
+    });
+
+    test('should accept legacy 3.0 A2A get_products without cache_scope', () => {
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    adcp_version: '3.0.12',
+                    products: [createTestProduct({ product_id: 'prod-1' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a');
+      assert.ok(result.products, 'Should return validated products');
+      assert.strictEqual(result.products.length, 1);
+      assert.strictEqual(result.cache_scope, undefined);
+      assert.strictEqual(result.status, undefined);
+    });
+
     test('should reject get_products response with non-array products', () => {
       const mcpResponse = {
         structuredContent: {
+          cache_scope: 'public',
           products: 'not an array',
         },
       };
@@ -817,6 +870,7 @@ describe('Response Unwrapper', () => {
 
       const mcpResponse = {
         structuredContent: {
+          cache_scope: 'public',
           products: [validProduct, invalidProduct],
         },
       };
@@ -839,6 +893,7 @@ describe('Response Unwrapper', () => {
 
       const mcpResponse = {
         structuredContent: {
+          cache_scope: 'public',
           products: [invalidProduct1, invalidProduct2],
         },
       };
@@ -855,6 +910,7 @@ describe('Response Unwrapper', () => {
 
       const mcpResponse = {
         structuredContent: {
+          cache_scope: 'public',
           products: [product1, product2],
         },
       };
@@ -898,6 +954,7 @@ describe('Response Unwrapper', () => {
                 {
                   kind: 'data',
                   data: {
+                    cache_scope: 'public',
                     products: [validProduct, invalidProduct],
                   },
                 },
@@ -917,6 +974,7 @@ describe('Response Unwrapper', () => {
     test('should return null from filtering when products field is not an array', () => {
       const mcpResponse = {
         structuredContent: {
+          cache_scope: 'public',
           products: 'not-an-array',
         },
       };
@@ -1104,6 +1162,7 @@ describe('Response Unwrapper', () => {
 
     test('should validate get_products success response', () => {
       const successResponse = {
+        cache_scope: 'public',
         products: [createTestProduct({ product_id: 'prod1' })],
       };
 
@@ -1134,6 +1193,7 @@ describe('Response Unwrapper', () => {
           {
             type: 'text',
             text: JSON.stringify({
+              cache_scope: 'public',
               products: [createTestProduct({ product_id: 'p1' })],
               extra_field: 'unexpected',
             }),

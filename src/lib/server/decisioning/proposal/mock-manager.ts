@@ -29,9 +29,14 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
-import type { GetProductsRequest, GetProductsResponse } from '../../../types/tools.generated';
-import type { ServerPayload } from '../../../types/server-payload';
-import type { ProposalCapabilities, ProposalManager, ProposalSalesSpecialism, Recipe } from './types';
+import type { GetProductsRequest } from '../../../types/tools.generated';
+import type {
+  ProposalCapabilities,
+  ProposalGetProductsPayload,
+  ProposalManager,
+  ProposalSalesSpecialism,
+  Recipe,
+} from './types';
 
 /**
  * Construction options for {@link MockProposalManager}.
@@ -126,14 +131,14 @@ export class MockProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
   async getProducts(
     req: GetProductsRequest,
     _ctx: RequestContext<Account<TCtxMeta>>
-  ): Promise<ServerPayload<GetProductsResponse>> {
+  ): Promise<ProposalGetProductsPayload> {
     return this.forward('/get_products', req);
   }
 
   async refineProducts(
     req: GetProductsRequest,
     _ctx: RequestContext<Account<TCtxMeta>>
-  ): Promise<ServerPayload<GetProductsResponse>> {
+  ): Promise<ProposalGetProductsPayload> {
     if (!this.capabilities.refine) {
       // Adopter wired the manager without refine but the framework
       // dispatched here anyway — surface the inconsistency rather than
@@ -146,7 +151,7 @@ export class MockProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
     return this.forward('/refine_products', req);
   }
 
-  private async forward(path: string, body: unknown): Promise<ServerPayload<GetProductsResponse>> {
+  private async forward(path: string, body: unknown): Promise<ProposalGetProductsPayload> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -167,7 +172,7 @@ export class MockProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
             (text ? `: ${text.slice(0, 500)}` : '')
         );
       }
-      const json = (await response.json()) as ServerPayload<GetProductsResponse>;
+      const json = (await response.json()) as ProposalGetProductsPayload;
       return json;
     } finally {
       clearTimeout(timer);

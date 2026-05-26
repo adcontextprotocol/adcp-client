@@ -44,7 +44,7 @@ const MEDIA_BUY_STATUS_RESPONSE_TOOLS = new Set(['create_media_buy', 'update_med
  *  - No version fields at all → treated as legacy (3.0.x leniency applies)
  *  - `adcp_version` declares a major other than 3 → NOT 3.0.x (no leniency)
  */
-function isLegacy30xPayload(payload: Record<string, unknown>): boolean {
+export function isLegacy30xPayload(payload: Record<string, unknown>): boolean {
   const adcpVersion = payload.adcp_version;
   if (typeof adcpVersion === 'string') {
     if (

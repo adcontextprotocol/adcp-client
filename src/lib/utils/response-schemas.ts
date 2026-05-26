@@ -9,9 +9,32 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
 
+function declaresLegacy30xPayload(response: Record<string, unknown>): boolean {
+  const adcpVersion = response.adcp_version;
+  if (typeof adcpVersion === 'string') {
+    return (
+      adcpVersion === '3' || adcpVersion === '3.0' || adcpVersion.startsWith('3.0.') || adcpVersion.startsWith('3.0-')
+    );
+  }
+  return response.adcp_major_version === 3;
+}
+
+const GetProductsResponseStrictSchema = schemas.GetProductsResponseSchema.superRefine((value, ctx) => {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return;
+  const response = value as { products?: unknown; cache_scope?: unknown; unchanged?: unknown };
+  if (declaresLegacy30xPayload(response)) return;
+  if ((Array.isArray(response.products) || response.unchanged === true) && response.cache_scope === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['cache_scope'],
+      message: '`cache_scope` is required when `products` is present or `unchanged` is true',
+    });
+  }
+});
+
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
-  get_products: schemas.GetProductsResponseSchema,
+  get_products: GetProductsResponseStrictSchema,
   create_media_buy: schemas.CreateMediaBuyResponseSchema,
   update_media_buy: schemas.UpdateMediaBuyResponseSchema,
   get_media_buys: schemas.GetMediaBuysResponseSchema,

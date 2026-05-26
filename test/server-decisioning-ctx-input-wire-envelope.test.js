@@ -33,7 +33,7 @@ function basePlatform(overrides = {}) {
       list: async () => ({ items: [], nextCursor: null }),
     },
     sales: {
-      getProducts: async () => ({ products: [] }),
+      getProducts: async () => ({ cache_scope: 'account', products: [] }),
       createMediaBuy: async () => ({
         media_buy_id: 'mb_1',
         status: 'pending_creatives',
@@ -65,7 +65,7 @@ describe('ctx.input — un-destructured wire envelope on every v6 dispatch', () 
     let observedCtx;
     const platform = basePlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ cache_scope: 'account', products: [] }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async (creatives, ctx) => {
@@ -155,7 +155,7 @@ describe('ctx.input — un-destructured wire envelope on every v6 dispatch', () 
     let observedCtx;
     const platform = basePlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ cache_scope: 'account', products: [] }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async (buyId, patch, ctx) => {
           observedBuyId = buyId;
@@ -242,7 +242,7 @@ describe('ctx.input — un-destructured wire envelope on every v6 dispatch', () 
       sales: {
         getProducts: async (req, ctx) => {
           observedCtx = ctx;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),

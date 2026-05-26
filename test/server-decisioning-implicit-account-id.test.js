@@ -33,6 +33,7 @@ function buildImplicitPlatform(overrides = {}) {
     statusMappers: {},
     sales: {
       getProducts: async () => ({
+        cache_scope: 'account',
         products: [
           {
             product_id: 'p1',

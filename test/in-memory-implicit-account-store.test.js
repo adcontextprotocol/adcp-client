@@ -195,6 +195,7 @@ describe('InMemoryImplicitAccountStore — wired into a server', () => {
         statusMappers: {},
         sales: {
           getProducts: async (_req, ctx) => ({
+            cache_scope: ctx?.account?.id ? 'account' : 'public',
             products: [{ product_id: `p:${ctx?.account?.id ?? 'none'}`, name: 'p', formats: [] }],
           }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),

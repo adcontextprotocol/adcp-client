@@ -71,6 +71,7 @@ describe('ResponseValidator Tests', () => {
     it('should validate valid MCP response with structuredContent', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [createValidProduct()],
         },
       };
@@ -127,7 +128,10 @@ describe('ResponseValidator Tests', () => {
               parts: [
                 {
                   kind: 'data',
-                  data: { products: [createValidProduct()] },
+                  data: {
+                    cache_scope: 'public',
+                    products: [createValidProduct()],
+                  },
                 },
               ],
             },
@@ -212,6 +216,7 @@ describe('ResponseValidator Tests', () => {
     it('should validate expected fields in MCP response', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [createValidProduct()],
         },
       };
@@ -242,6 +247,7 @@ describe('ResponseValidator Tests', () => {
     it('should warn on empty arrays for expected fields', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [],
         },
       };
@@ -282,6 +288,20 @@ describe('ResponseValidator Tests', () => {
     it('should validate get_products response', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
+          products: [createValidProduct()],
+        },
+      };
+
+      const result = validator.validate(response, 'get_products');
+
+      assert.strictEqual(result.valid, true);
+    });
+
+    it('should validate legacy 3.0 get_products responses without cache_scope', () => {
+      const response = {
+        structuredContent: {
+          adcp_version: '3.0.12',
           products: [createValidProduct()],
         },
       };
@@ -375,6 +395,7 @@ describe('ResponseValidator Tests', () => {
     it('should fail in strict mode with warnings', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [], // Empty array triggers warning
         },
       };
@@ -391,6 +412,7 @@ describe('ResponseValidator Tests', () => {
     it('should pass in non-strict mode with warnings', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [],
         },
       };
@@ -419,6 +441,7 @@ describe('ResponseValidator Tests', () => {
     it('validateOrThrow should not throw on valid response', () => {
       const response = {
         structuredContent: {
+          cache_scope: 'public',
           products: [createValidProduct()],
         },
       };

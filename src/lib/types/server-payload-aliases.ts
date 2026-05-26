@@ -75,7 +75,7 @@ import type {
   GetRightsSuccess,
   UpdateRightsSuccess,
 } from './core.generated';
-import type { ServerPayload } from './server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 
 export type GetAdCPCapabilitiesPayload = ServerPayload<GetAdCPCapabilitiesResponse>;
 
@@ -88,7 +88,7 @@ export type ReportUsagePayload = ServerPayload<ReportUsageResponse>;
 export type GetAccountFinancialsPayload = ServerPayload<GetAccountFinancialsResponse>;
 export type GetAccountFinancialsSuccessPayload = ServerPayload<GetAccountFinancialsSuccess>;
 
-export type GetProductsPayload = ServerPayload<GetProductsResponse>;
+export type GetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 export type CreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
 export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;

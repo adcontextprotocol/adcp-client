@@ -144,6 +144,17 @@ describe('curated validation hints (issue #1309)', () => {
     assert.match(issue.hint ?? '', /Bare ID strings are rejected/);
   });
 
+  test('get_products with products missing cache_scope fires the cache-scope hint', () => {
+    const outcome = validateResponse('get_products', {
+      status: 'completed',
+      products: [],
+    });
+    const issue = outcome.issues.find(i => i.pointer === '/cache_scope' && i.keyword === 'required');
+    assert.ok(issue, `expected /cache_scope required issue, got: ${JSON.stringify(outcome.issues)}`);
+    assert.match(issue.hint ?? '', /responses with `products` or `unchanged: true` must include `cache_scope`/);
+    assert.match(issue.hint ?? '', /universal rate card/);
+  });
+
   test('VAST asset missing delivery_type fires the inline-vs-redirect hint', () => {
     // Synthetic — the issue path the rule matches happens deep inside
     // sync_creatives' nested asset oneOf cascade. Direct findHint()

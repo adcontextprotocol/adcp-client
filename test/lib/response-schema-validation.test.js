@@ -80,32 +80,56 @@ describe('validateResponseSchema', () => {
   // ---- get_products (#371) ----
   describe('get_products — required fields (#371)', () => {
     it('passes for valid response', () => {
-      const result = validateResponseSchema('get_products', { products: [validProduct] });
+      const result = validateResponseSchema('get_products', { products: [validProduct], cache_scope: 'public' });
       assert.strictEqual(result.passed, true);
     });
 
     it('passes for empty products array', () => {
-      const result = validateResponseSchema('get_products', { products: [] });
+      const result = validateResponseSchema('get_products', { products: [], cache_scope: 'public' });
       assert.strictEqual(result.passed, true);
+    });
+
+    it('fails when cache_scope is missing on a products response', () => {
+      const result = validateResponseSchema('get_products', { products: [] });
+      assert.strictEqual(result.passed, false);
+      assert.ok(result.error.includes('cache_scope'), `Expected cache_scope error, got: ${result.error}`);
+    });
+
+    it('passes for unchanged wholesale-feed responses without products', () => {
+      const result = validateResponseSchema('get_products', {
+        unchanged: true,
+        wholesale_feed_version: 'wf_v1',
+        cache_scope: 'public',
+      });
+      assert.strictEqual(result.passed, true);
+    });
+
+    it('fails when cache_scope is missing on an unchanged wholesale-feed response', () => {
+      const result = validateResponseSchema('get_products', {
+        unchanged: true,
+        wholesale_feed_version: 'wf_v1',
+      });
+      assert.strictEqual(result.passed, false);
+      assert.ok(result.error.includes('cache_scope'), `Expected cache_scope error, got: ${result.error}`);
     });
 
     it('fails when product_id is missing', () => {
       const { product_id, ...without } = validProduct;
-      const result = validateResponseSchema('get_products', { products: [without] });
+      const result = validateResponseSchema('get_products', { products: [without], cache_scope: 'public' });
       assert.strictEqual(result.passed, false);
       assert.ok(result.error.includes('product_id'), `Expected product_id error, got: ${result.error}`);
     });
 
     it('fails when name is missing', () => {
       const { name, ...without } = validProduct;
-      const result = validateResponseSchema('get_products', { products: [without] });
+      const result = validateResponseSchema('get_products', { products: [without], cache_scope: 'public' });
       assert.strictEqual(result.passed, false);
       assert.ok(result.error.includes('name'), `Expected name error, got: ${result.error}`);
     });
 
     // 3.1.0-beta.3 made `products` OPTIONAL on the get_products response
-    // envelope: a wholesale-feed unchanged response legitimately omits it
-    // (see the top-level if/then on `unchanged: true`), and an error
+    // envelope: a wholesale-feed unchanged response legitimately omits
+    // products (while still requiring cache_scope), and an error
     // response carries `errors[]` instead of `products[]`. The "absent
     // products is a failure" assertion no longer matches the spec.
     // Constraint coverage when products IS provided remains in the
@@ -573,7 +597,7 @@ describe('validateResponseSchema', () => {
   //     missing-field message these tests assert on.
   //   - The "non-union schemas" guard (`get_products` with `{ not_products: true }`)
   //     also flips: 3.1.0-beta.3 made `products` OPTIONAL on the get_products
-  //     response (the `unchanged: true` shape legitimately omits it), so the
+  //     response (the `unchanged: true` shape legitimately omits products), so the
   //     payload now validates and no missing-field message is produced.
   //   - The Zod-internals canary fails for the same reason — the schema is no
   //     longer a `ZodUnion`, so `_def.options` is intentionally absent.

@@ -43,7 +43,7 @@ function basePlatform({ getProducts } = {}) {
       }),
     },
     sales: {
-      getProducts: getProducts ?? (async () => ({ products: [] })),
+      getProducts: getProducts ?? (async () => ({ cache_scope: 'account', products: [] })),
       createMediaBuy: async () => ({
         media_buy_id: 'mb_1',
         status: 'pending_creatives',
