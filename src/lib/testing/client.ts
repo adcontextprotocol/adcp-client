@@ -655,10 +655,31 @@ export async function discoverSignals(
     rawSignals = responseData.signals ?? [];
 
     for (const signal of rawSignals) {
+      const signalData = signal as {
+        signal_agent_segment_id?: unknown;
+        signal_ref?: unknown;
+        name?: unknown;
+        signal_type?: unknown;
+        type?: unknown;
+      };
+      const signalId =
+        typeof signalData.signal_agent_segment_id === 'string'
+          ? signalData.signal_agent_segment_id
+          : typeof signalData.signal_ref === 'string'
+            ? signalData.signal_ref
+            : signalData.signal_ref != null
+              ? JSON.stringify(signalData.signal_ref)
+              : undefined;
+      if (!signalId) continue;
       signals.push({
-        signal_id: signal.signal_agent_segment_id,
-        name: signal.name,
-        type: signal.signal_type,
+        signal_id: signalId,
+        name: typeof signalData.name === 'string' ? signalData.name : undefined,
+        type:
+          typeof signalData.signal_type === 'string'
+            ? signalData.signal_type
+            : typeof signalData.type === 'string'
+              ? signalData.type
+              : undefined,
       });
     }
 

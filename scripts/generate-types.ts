@@ -275,6 +275,29 @@ function resolveAllOfRefForMerge(ref: string): any | null {
   return enforceStrictSchema(preprocessed);
 }
 
+function inlineAllOfObjectMemberForMerge(member: any): any | null {
+  if (!member || typeof member !== 'object' || Array.isArray(member)) return null;
+  if (member.type !== 'object') return null;
+  if (!member.properties || typeof member.properties !== 'object') return null;
+
+  const unsupported = ['allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'];
+  if (unsupported.some(key => member[key] !== undefined)) return null;
+
+  return enforceStrictSchema(member);
+}
+
+function isRequiredOnlyAnyOf(anyOf: unknown): boolean {
+  return (
+    Array.isArray(anyOf) &&
+    anyOf.length > 0 &&
+    anyOf.every(branch => {
+      if (!branch || typeof branch !== 'object' || Array.isArray(branch)) return false;
+      const keys = Object.keys(branch);
+      return keys.length === 1 && keys[0] === 'required' && Array.isArray((branch as any).required);
+    })
+  );
+}
+
 /**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
@@ -414,24 +437,27 @@ export function enforceStrictSchema(schema: any): any {
   ) {
     const remaining: any[] = [];
     for (const member of strictSchema.allOf) {
+      let resolved: any | null = null;
       if (member && typeof member === 'object' && typeof member.$ref === 'string' && Object.keys(member).length === 1) {
-        const resolved = resolveAllOfRefForMerge(member.$ref);
-        if (resolved) {
-          // Variant-level fields win on collision — `properties`, `required`,
-          // and `additionalProperties` are merged with variant precedence.
-          strictSchema.properties = {
-            ...(resolved.properties ?? {}),
-            ...(strictSchema.properties ?? {}),
-          };
-          const mergedRequired = [...(resolved.required ?? []), ...(strictSchema.required ?? [])];
-          if (mergedRequired.length > 0) {
-            strictSchema.required = [...new Set(mergedRequired)];
-          }
-          if (strictSchema.additionalProperties === undefined && resolved.additionalProperties !== undefined) {
-            strictSchema.additionalProperties = resolved.additionalProperties;
-          }
-          continue;
+        resolved = resolveAllOfRefForMerge(member.$ref);
+      } else {
+        resolved = inlineAllOfObjectMemberForMerge(member);
+      }
+      if (resolved) {
+        // Variant-level fields win on collision — `properties`, `required`,
+        // and `additionalProperties` are merged with variant precedence.
+        strictSchema.properties = {
+          ...(resolved.properties ?? {}),
+          ...(strictSchema.properties ?? {}),
+        };
+        const mergedRequired = [...(resolved.required ?? []), ...(strictSchema.required ?? [])];
+        if (mergedRequired.length > 0) {
+          strictSchema.required = [...new Set(mergedRequired)];
         }
+        if (strictSchema.additionalProperties === undefined && resolved.additionalProperties !== undefined) {
+          strictSchema.additionalProperties = resolved.additionalProperties;
+        }
+        continue;
       }
       remaining.push(member);
     }
@@ -506,6 +532,15 @@ export function enforceStrictSchema(schema: any): any {
   if (strictSchema.if) delete strictSchema.if;
   if (strictSchema.then) delete strictSchema.then;
   if (strictSchema.else) delete strictSchema.else;
+
+  // Required-only anyOf is the JSON Schema idiom for "at least one of these
+  // fields must be present" (for example signal_ref OR deprecated signal_id).
+  // TypeScript cannot represent that cleanly; keeping it often makes jsts
+  // emit a loose `{ [k: string]: unknown }` union arm. Ajv still enforces the
+  // original schema at runtime, so the TS emit path strips the guard.
+  if (isRequiredOnlyAnyOf(strictSchema.anyOf)) {
+    delete strictSchema.anyOf;
+  }
 
   if (strictSchema.anyOf) {
     strictSchema.anyOf = strictSchema.anyOf.map(enforceStrictSchema);
@@ -1558,6 +1593,12 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'CatalogAsset1', base: 'CatalogAsset' },
   { numbered: 'AssetVariant1', base: 'AssetVariant' },
   { numbered: 'CreativeAsset1', base: 'CreativeAsset' },
+  { numbered: 'PackageSignalTargetingGroups1', base: 'PackageSignalTargetingGroups' },
+  { numbered: 'PackageSignalTargetingGroup1', base: 'PackageSignalTargetingGroup' },
+  { numbered: 'LegacyManifestNamedFormatReference1', base: 'LegacyManifestNamedFormatReference' },
+  { numbered: 'ManifestCanonicalFormatKind1', base: 'ManifestCanonicalFormatKind' },
+  { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
+  { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
   ...Array.from({ length: 6 }, (_, index) => index + 2).flatMap(suffix => [
     { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
     { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },

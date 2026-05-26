@@ -134,7 +134,7 @@ export function pickWireSpecFields<K extends WireSpecRequestName>(
     // Return an empty WireSafe — the upstream call will reject on
     // missing required fields (e.g. `idempotency_key`), which is the
     // right error class to surface (it's adopter-side, not buyer-side).
-    return out as WireSafe<WireSpecRequestShape<K>>;
+    return out as unknown as WireSafe<WireSpecRequestShape<K>>;
   }
   const source = request as Record<string, unknown>;
   // Indexed loop instead of for-of: avoids Array.prototype[Symbol.iterator]
@@ -148,7 +148,7 @@ export function pickWireSpecFields<K extends WireSpecRequestName>(
       out[field] = source[field];
     }
   }
-  return out as WireSafe<WireSpecRequestShape<K>>;
+  return out as unknown as WireSafe<WireSpecRequestShape<K>>;
 }
 
 /**

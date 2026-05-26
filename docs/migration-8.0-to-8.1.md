@@ -2,7 +2,7 @@
 
 > **Scope.** This guide is for adopters already on the 8.x beta line,
 > moving from the 8.0 beta cut to 8.1. The big theme is AdCP
-> 3.1.0-beta.3 catch-up: response envelopes became stricter, several
+> 3.1.0-beta.5 catch-up: response envelopes became stricter, several
 > domain `status` fields were renamed to stop colliding with task status,
 > and webhook verification moved from "example code" to a production recipe.
 
@@ -10,8 +10,8 @@
 
 - Add envelope `status` everywhere you construct raw wire responses. Server
   framework users get this stamped for them.
-- Emit release-precision `adcp_version` values such as `3.1-beta.3`, not
-  full semver values such as `3.1.0-beta.3`.
+- Emit release-precision `adcp_version` values such as `3.1-beta.5`, not
+  full semver values such as `3.1.0-beta.5`.
 - Rename domain-level status fields that collided with task status:
   `MediaBuy.status` -> `media_buy_status`, creative approval `status` ->
   `approval_status`, rights acquisition `status` -> `rights_status`.
@@ -50,7 +50,7 @@ prerelease suffix. Examples:
 
 | Internal bundle/version | Wire value |
 |---|---|
-| `3.1.0-beta.3` | `3.1-beta.3` |
+| `3.1.0-beta.5` | `3.1-beta.5` |
 | `3.1.0` | `3.1` |
 
 The SDK framework normalizes this automatically. Custom emitters should not

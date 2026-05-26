@@ -5,7 +5,7 @@
  * publishers' `formats[]` arrives via the same `.well-known/adagents.json`
  * fetch chain (with ads.txt `MANAGERDOMAIN` fallback, SSRF guards,
  * cycle detection). This module adds the 3.1-specific extraction +
- * scoping + capability_id resolution on top.
+ * scoping + format_option_id resolution on top.
  *
  * Three helpers:
  *
@@ -15,8 +15,8 @@
  *     and/or `propertyTags`. Formats with no `applies_to_*` apply to
  *     all properties at the publisher. Formats with both `propertyIds`
  *     and `propertyTags` set match either.
- *   - `resolveCapabilityId(formats, capabilityId)` — looks up a single
- *     publisher format by `capability_id`. Used when a placement's
+ *   - `resolveFormatOptionId(formats, formatOptionId)` — looks up a single
+ *     publisher format by `format_option_id`. Used when a placement's
  *     `format_options[i]` references a publisher format by id rather
  *     than declaring inline.
  *
@@ -93,22 +93,32 @@ export function scopePublisherFormats(
 }
 
 /**
- * Resolve a `capability_id` reference against a publisher's catalog.
+ * Resolve a `format_option_id` reference against a publisher's catalog.
  * Used when a placement's `format_options[i]` declares
- * `{ capability_id: 'meta_reels' }` rather than an inline declaration
+ * `{ format_option_id: 'meta_reels' }` rather than an inline declaration
  * — the SDK looks up the full format declaration on the publisher's
  * adagents.json by id.
  *
  * Returns undefined when no format matches (caller surfaces a
  * diagnostic; placement is unresolved).
  *
- * Note: capability_id uniqueness is the publisher's responsibility.
+ * Note: format_option_id uniqueness is the publisher's responsibility.
  * If two formats share the same id, this returns the first match
  * (formats array order is preserved from the publisher's adagents.json).
+ */
+export function resolveFormatOptionId(
+  formats: AdAgentsPublisherFormat[],
+  formatOptionId: string
+): AdAgentsPublisherFormat | undefined {
+  return formats.find(f => f.format_option_id === formatOptionId);
+}
+
+/**
+ * Compatibility alias for the pre-GA helper name.
  */
 export function resolveCapabilityId(
   formats: AdAgentsPublisherFormat[],
   capabilityId: string
 ): AdAgentsPublisherFormat | undefined {
-  return formats.find(f => f.capability_id === capabilityId);
+  return formats.find(f => f.capability_id === capabilityId || f.format_option_id === capabilityId);
 }

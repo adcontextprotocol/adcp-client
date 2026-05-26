@@ -14,9 +14,9 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('derives explicit opt-in envelope for 3.1 storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 
-    const options = applyStoryboardVersionOptions({ adcp_version: '3.1.0-beta.3' }, {});
+    const options = applyStoryboardVersionOptions({ adcp_version: '3.1.0-beta.5' }, {});
 
-    assert.strictEqual(options.adcpVersion, '3.1.0-beta.3');
+    assert.strictEqual(options.adcpVersion, '3.1.0-beta.5');
     assert.strictEqual(options.versionEnvelope, 'auto');
   });
 
@@ -45,14 +45,14 @@ describe('storyboard runner AdCP version negotiation', () => {
     const { createTestClient, getOrCreateClient } = require('../../dist/lib/testing/client.js');
 
     const shared = createTestClient('https://example.com/mcp', 'mcp', {
-      adcpVersion: '3.1.0-beta.3',
+      adcpVersion: '3.1.0-beta.5',
       versionEnvelope: 'auto',
     });
 
     assert.strictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: '3.1.0-beta.3',
+        adcpVersion: '3.1.0-beta.5',
         versionEnvelope: 'auto',
       }),
       shared
@@ -60,7 +60,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.notStrictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: '3.1.0-beta.3',
+        adcpVersion: '3.1.0-beta.5',
         versionEnvelope: 'none',
       }),
       shared
@@ -120,14 +120,14 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('exact seller supported_versions are matched against cache version aliases', () => {
     const { isComplianceVersionSupported } = require('../../dist/lib/testing/storyboard/index.js');
 
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.1.0-beta.3']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.1-beta.3']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.1-beta']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.1-beta.2']), false);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.1.0-beta.2']), false);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1.0-beta.5']), true);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta.5']), true);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta']), true);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta.2']), false);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1.0-beta.2']), false);
     assert.strictEqual(isComplianceVersionSupported('3.0.12', ['3.0.0']), true);
     assert.strictEqual(isComplianceVersionSupported('3.1.1', ['3.1.0']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.3', ['3.0']), false);
+    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.0']), false);
   });
 
   test('capability resolution fails loudly on exact version mismatch', () => {

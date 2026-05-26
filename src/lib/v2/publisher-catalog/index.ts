@@ -3,7 +3,7 @@
  *
  * Used after `validateAdAgents()` (from `src/lib/discovery/`) returns a
  * parsed `AdAgentsJson` — these helpers extract + scope + resolve
- * `capability_id` references against the publisher's format catalog.
+ * `format_option_id` references against the publisher's format catalog.
  *
  * Typical flow:
  *
@@ -12,13 +12,13 @@
  * import {
  *   extractPublisherFormats,
  *   scopePublisherFormats,
- *   resolveCapabilityId,
+ *   resolveFormatOptionId,
  * } from '@adcp/sdk/v2/publisher-catalog';
  *
  * const { adagents } = await validateAdAgents('https://nytimes.com');
  * const all = extractPublisherFormats(adagents);
  * const homepageFormats = scopePublisherFormats(all, { propertyId: 'homepage' });
- * const placementFormat = resolveCapabilityId(homepageFormats, 'nytimes_homepage_takeover_premium');
+ * const placementFormat = resolveFormatOptionId(homepageFormats, 'nytimes_homepage_takeover_premium');
  * ```
  *
  * No new fetcher — uses the existing discovery layer's HTTPS-only fetch
@@ -29,6 +29,7 @@
 export {
   extractPublisherFormats,
   scopePublisherFormats,
+  resolveFormatOptionId,
   resolveCapabilityId,
   type PublisherFormatScope,
 } from './formats';

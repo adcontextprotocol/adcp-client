@@ -33,12 +33,19 @@ export type { V2ToV1Result } from './v2-to-v1';
 export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedProduct } from './augment-response';
 
 export {
+  packageRefsForFormatOptions,
   packageRefsForCapabilities,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
+  legacyFormatIdsForFormatOption,
   legacyFormatIdsForCapability,
+  FormatOptionRefsLookupError,
   CapabilityIdsLookupError,
   type PackageFormatRefs,
+  type PackageCapabilityRefs,
+  type FormatOptionRef,
+  type FormatOptionSelector,
+  type FormatOptionRefsLookupErrorCode,
   type CapabilityIdsLookupErrorCode,
 } from './write-side';
 

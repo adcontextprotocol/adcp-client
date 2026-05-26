@@ -12,7 +12,7 @@ test('exported SDK library version matches package.json', () => {
 });
 
 test('AdCP semver pins normalize to release-precision wire values', () => {
-  assert.equal(toReleasePrecisionVersion('3.1.0-beta.3'), '3.1-beta.3');
+  assert.equal(toReleasePrecisionVersion('3.1.0-beta.5'), '3.1-beta.5');
   assert.equal(toReleasePrecisionVersion('3.1.0'), '3.1');
-  assert.equal(toReleasePrecisionVersion('3.1-beta.3'), '3.1-beta.3');
+  assert.equal(toReleasePrecisionVersion('3.1-beta.5'), '3.1-beta.5');
 });

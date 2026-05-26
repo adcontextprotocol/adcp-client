@@ -52,6 +52,8 @@ export interface V2ProductFormatDeclaration {
   format_kind: CanonicalFormatKind;
   params: Record<string, unknown>;
   capability_id?: string;
+  format_option_id?: string;
+  publisher_domain?: string;
   display_name?: string;
   applies_to_channels?: string[];
   canonical_formats_only?: boolean;
@@ -141,7 +143,7 @@ export type ProjectionDiagnostic =
         details: {
           format_kind: CanonicalFormatKind;
           product_id: string;
-          capability_id?: string;
+          format_option_id?: string;
           resolution_failure: 'no_registry_match' | 'catalog_lacks_canonical_annotation' | 'no_match';
         };
       };
@@ -160,7 +162,7 @@ export type ProjectionDiagnostic =
         details: {
           format_kind: CanonicalFormatKind;
           product_id: string;
-          capability_id?: string;
+          format_option_id?: string;
           registry_matches: number;
         };
       };
@@ -177,7 +179,7 @@ export type ProjectionDiagnostic =
         details: {
           format_kind: CanonicalFormatKind;
           product_id: string;
-          capability_id?: string;
+          format_option_id?: string;
           reason: 'canonical_formats_only';
         };
       };
@@ -197,7 +199,7 @@ export type ProjectionDiagnostic =
         details: {
           format_kind: CanonicalFormatKind;
           product_id: string;
-          capability_id?: string;
+          format_option_id?: string;
         };
       };
     })
@@ -226,7 +228,7 @@ export type ProjectionDiagnostic =
         details: {
           format_kind: CanonicalFormatKind;
           product_id: string;
-          capability_id?: string;
+          format_option_id?: string;
           size_mode: 'sizes' | 'responsive_range';
           declared_sizes_count?: number;
           /**
