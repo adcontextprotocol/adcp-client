@@ -1109,7 +1109,7 @@ function generateLlmsTxt(
   ln(`- Documentation: ${DOCS_BASE_URL}/`);
   ln(`- npm: https://www.npmjs.com/package/@adcp/sdk`);
   ln(`- Spec: https://adcontextprotocol.org`);
-  ln(`- CLI: \`npx @adcp/sdk@beta\` for the 8.1 / AdCP 3.1 beta line`);
+  ln(`- CLI: \`npx @adcp/sdk@adcp-3.1\` for the 8.1 / AdCP 3.1 beta line`);
   ln();
 
   return lines.join('\n');
