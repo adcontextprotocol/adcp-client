@@ -105,11 +105,13 @@ jobs:
             ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
+            advisory: true
           - language: typescript
             repository: adcontextprotocol/adcp-client
             ref: 97aef9f9561983b21605e77c3377bbdc0641b61c # @adcp/sdk@8.1.0-beta.12
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3002
+            advisory: true
     env:
       STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
@@ -198,6 +200,7 @@ jobs:
             echo "- Repository: \`${{ matrix.repository }}\`"
             echo "- Ref: \`${{ matrix.ref }}\`"
             echo "- Harness: \`${{ matrix.harness }}\`"
+            echo "- Advisory: \`${{ matrix.advisory }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload storyboard artifacts
