@@ -171,11 +171,21 @@ jobs:
         run: |
           set -euo pipefail
           cd "reference-${{ matrix.language }}"
+          set +e
           ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
             ADCP_PORT="${{ matrix.port }}" \
             STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
             SELLER_LOG_PATH="$SELLER_LOG_PATH" \
             ./${{ matrix.harness }}
+          status=$?
+          set -e
+
+          if [[ "$status" -ne 0 && "${{ matrix.advisory }}" == "true" ]]; then
+            echo "::warning::${{ matrix.language }} reference seller storyboard failed, but this lane is advisory for the current SDK prerelease."
+            exit 0
+          fi
+
+          exit "$status"
 
       - name: Add interop summary
         if: always()

@@ -89,6 +89,7 @@ import type {
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
   GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
@@ -245,13 +246,9 @@ interface UpstreamDelivery {
   line_item_breakdown?: Array<{ line_item_id: string; impressions: number; spend: number }>;
 }
 
-interface ViewabilityMetrics {
-  measurable_impressions: number;
-  viewable_impressions: number;
-  viewable_rate: number;
-  viewed_seconds: number;
-  standard: string;
-}
+type ViewabilityMetrics = NonNullable<
+  GetMediaBuyDeliveryResponse['media_buy_deliveries'][number]['totals']['viewability']
+>;
 
 interface SimulatedDelivery {
   impressions: number;
@@ -1273,6 +1270,7 @@ serve(
         },
         simulate: {
           delivery: ({ media_buy_id, impressions, clicks, reported_spend, viewability }) => {
+            const viewabilityMetrics = viewability as ViewabilityMetrics | undefined;
             const prev = simulatedDelivery.get(media_buy_id) ?? {
               impressions: 0,
               clicks: 0,
@@ -1282,9 +1280,12 @@ serve(
               impressions: prev.impressions + (impressions ?? 0),
               clicks: prev.clicks + (clicks ?? 0),
               reported_spend: reported_spend ?? prev.reported_spend,
-              viewability: viewability ?? prev.viewability,
+              viewability: viewabilityMetrics ?? prev.viewability,
             });
-            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend, viewability } };
+            return {
+              success: true,
+              simulated: { media_buy_id, impressions, clicks, reported_spend, viewability: viewabilityMetrics },
+            };
           },
         },
       },
