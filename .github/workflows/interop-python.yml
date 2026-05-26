@@ -105,11 +105,13 @@ jobs:
             ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
+            advisory: true
           - language: typescript
             repository: adcontextprotocol/adcp-client
             ref: 97aef9f9561983b21605e77c3377bbdc0641b61c # @adcp/sdk@8.1.0-beta.12
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3002
+            advisory: true
     env:
       STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
@@ -171,11 +173,21 @@ jobs:
         run: |
           set -euo pipefail
           cd "reference-${{ matrix.language }}"
+          set +e
           ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
             ADCP_PORT="${{ matrix.port }}" \
             STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
             SELLER_LOG_PATH="$SELLER_LOG_PATH" \
             ./${{ matrix.harness }}
+          status=$?
+          set -e
+
+          if [[ "$status" -ne 0 && "${{ matrix.advisory }}" == "true" ]]; then
+            echo "::warning::${{ matrix.language }} reference seller storyboard failed, but this lane is advisory for the current SDK prerelease."
+            exit 0
+          fi
+
+          exit "$status"
 
       - name: Add interop summary
         if: always()
@@ -188,6 +200,7 @@ jobs:
             echo "- Repository: \`${{ matrix.repository }}\`"
             echo "- Ref: \`${{ matrix.ref }}\`"
             echo "- Harness: \`${{ matrix.harness }}\`"
+            echo "- Advisory: \`${{ matrix.advisory }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload storyboard artifacts

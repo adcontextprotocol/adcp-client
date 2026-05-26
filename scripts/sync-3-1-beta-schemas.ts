@@ -1,11 +1,9 @@
 #!/usr/bin/env tsx
 /**
- * Opt-in sync of the AdCP 3.1.0-beta.3 schema bundle into
- * `schemas/cache/3.1.0-beta.3/`. The SDK's primary pin stays at the
- * `ADCP_VERSION` file value (3.0.x GA); clients pinning `adcpVersion:
- * "3.1.0-beta.3"` or `"3.1-beta"` get strict validation against the beta
- * schemas (conditional wholesale-feed fetch, wholesale signals, wholesale
- * feed webhook registration).
+ * Sync the AdCP 3.1.0-beta.5 schema bundle into
+ * `schemas/cache/3.1.0-beta.5/`. Clients pinning `adcpVersion:
+ * "3.1.0-beta.5"` or `"3.1-beta"` get strict validation against these
+ * schemas.
  *
  * Wraps `syncSchemas()` so we inherit cosign verification, sha256 check,
  * and tarball extraction. The wrapper restores the `latest` symlink to
@@ -22,7 +20,7 @@ import { syncSchemas } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
-const BETA_VERSION = '3.1.0-beta.3';
+const BETA_VERSION = '3.1.0-beta.5';
 const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
 
 /**

@@ -834,6 +834,47 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.success, true);
       assert.deepStrictEqual(result.scenarios, ['force_account_status']);
     });
+
+    it('dispatches force_upstream_unavailable with tool and upstream_name', async () => {
+      let captured;
+      const store = {
+        async forceUpstreamUnavailable(params) {
+          captured = params;
+          return { success: true, previous_state: 'available', current_state: 'unavailable' };
+        },
+      };
+
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_upstream_unavailable',
+        params: { tool: 'get_products', upstream_name: 'inventory' },
+      });
+
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(captured, { tool: 'get_products', upstream_name: 'inventory' });
+    });
+
+    it('returns INVALID_PARAMS for force_upstream_unavailable without params.tool', async () => {
+      const store = { async forceUpstreamUnavailable() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_upstream_unavailable',
+        params: {},
+      });
+
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /params\.tool/);
+    });
+
+    it('returns UNKNOWN_SCENARIO when force_upstream_unavailable is not implemented', async () => {
+      const result = await handleTestControllerRequest(
+        {},
+        {
+          scenario: 'force_upstream_unavailable',
+          params: { tool: 'get_products' },
+        }
+      );
+
+      assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+    });
   });
 
   // ── factory overload ────────────────────────────────────
@@ -1347,6 +1388,7 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
       async forceSessionStatus() {},
       async forceCreateMediaBuyArm() {},
       async forceTaskCompletion() {},
+      async forceUpstreamUnavailable() {},
       async simulateDelivery() {},
       async simulateBudgetSpend() {},
       async queryUpstreamTraffic() {

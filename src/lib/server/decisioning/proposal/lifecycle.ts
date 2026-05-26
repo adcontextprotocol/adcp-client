@@ -41,7 +41,7 @@ import type { Recipe } from './types';
  *
  * Three failure modes mapped to spec error codes:
  *
- *   - Record not found OR cross-tenant → `PROPOSAL_NOT_FOUND` (terminal).
+ *   - Record not found OR cross-tenant → `PROPOSAL_NOT_FOUND` (correctable).
  *     Cross-tenant probes return the same error as missing IDs (no
  *     principal-enumeration via id probing).
  *   - State !== `'committed'` → `PROPOSAL_NOT_COMMITTED` (correctable).
@@ -66,7 +66,7 @@ export async function enforceProposalExpiry<TRecipe extends Recipe>(
   const record = await proposalStore.get(proposalId, { expectedAccountId });
   if (!record) {
     throw new AdcpError('PROPOSAL_NOT_FOUND', {
-      recovery: 'terminal',
+      recovery: 'correctable',
       message:
         `Proposal ${JSON.stringify(proposalId)} not found. The buyer must call get_products ` +
         `with buying_mode='refine' and refine=[{action:'finalize',...}] to obtain a ` +

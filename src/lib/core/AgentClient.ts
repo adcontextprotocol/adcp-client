@@ -562,16 +562,16 @@ export class AgentClient {
   /**
    * Create a new media buy.
    *
-   * **V2-mental-model write flow (preferred at 3.1.0-beta.2+).** After
+   * **3.1+ format-option write flow (preferred at 3.1.0-beta.5+).** After
    * `getProducts()` returns the V2-augmented response (`format_options[]`
-   * auto-populated), pick declarations by `capability_id` and use
-   * `packageRefsForCapabilities` to author the package. The helper emits
-   * BOTH `capability_ids[]` (the V2-native path; adcontextprotocol/adcp
-   * #4844 in 3.1.0-beta.2) AND `format_ids[]` (v1-compat dual emission)
-   * so a single request works against both V2-capable and v1-only sellers.
+   * auto-populated), pick declarations by `format_option_id` and use
+   * `packageRefsForFormatOptions` to author the package. The helper emits
+   * BOTH `format_option_refs[]` (the 3.1+ path) AND `format_ids[]`
+   * (legacy named-format dual emission) so a single request works against
+   * both format-option-aware and legacy sellers.
    *
    * ```ts
-   * import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+   * import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
    *
    * const { data: { products } } = await agent.getProducts({ brief: '...' });
    * const product = products[0];
@@ -581,8 +581,8 @@ export class AgentClient {
    *     package_id: 'pkg-1',
    *     product_id: product.product_id,
    *     pricing_option_id: product.pricing_options[0].pricing_option_id,
-   *     ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-   *     // ↑ spreads `{ capability_ids, format_ids? }`
+   *     ...packageRefsForFormatOptions(product, ['nytimes_mrec', 'nytimes_video_30s']),
+   *     // ↑ spreads `{ format_option_refs, format_ids? }`
    *     budget: { currency: 'USD', total: 5000 },
    *   }],
    *   // ...
@@ -596,7 +596,10 @@ export class AgentClient {
    *   "package_id": "pkg-1",
    *   "product_id": "...",
    *   "pricing_option_id": "...",
-   *   "capability_ids": ["nytimes_mrec", "nytimes_video_30s"],
+   *   "format_option_refs": [
+   *     {"scope": "product", "format_option_id": "nytimes_mrec"},
+   *     {"scope": "product", "format_option_id": "nytimes_video_30s"}
+   *   ],
    *   "format_ids": [
    *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "display_300x250_image"},
    *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "video_standard_30s"}
@@ -605,17 +608,17 @@ export class AgentClient {
    * }
    * ```
    *
-   * `format_ids` is omitted entirely when every chosen capability is V2-only
+   * `format_ids` is omitted entirely when every chosen format option is V2-only
    * (the spec's "neither present" fallback fires for v1 sellers in that case).
    *
    * For adopters writing strictly to v1 sellers — or for products whose
-   * `format_options[]` entries don't publish `capability_id` — see the
+   * `format_options[]` entries don't publish `format_option_id` — see the
    * `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
-   * `legacyFormatIdsForCapability` helpers in `@adcp/sdk/v2/projection`.
+   * `legacyFormatIdsForFormatOption` helpers in `@adcp/sdk/v2/projection`.
    *
-   * `packageRefsForCapabilities` throws `CapabilityIdsLookupError` with
-   * a normalized `.code` in `{ 'unknown_capability_id' |
-   * 'capability_ids_not_published' | 'empty_input' | 'invalid_product' }`
+   * `packageRefsForFormatOptions` throws `FormatOptionRefsLookupError`
+   * with a normalized `.code` in `{ 'unknown_format_option_id' |
+   * 'format_option_refs_not_published' | 'empty_input' | 'invalid_product' }`
    * — branch on `.code` to fall back to the `legacy*` helpers when the
    * product is V1-shape only. See the helper JSDoc for the full
    * recovery example.

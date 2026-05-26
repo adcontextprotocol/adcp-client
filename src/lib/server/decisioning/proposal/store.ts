@@ -383,7 +383,7 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     // principal-enumeration defense as `get`.
     if (!record || record.accountId !== args.expectedAccountId) {
       throw new AdcpError('PROPOSAL_NOT_FOUND', {
-        recovery: 'terminal',
+        recovery: 'correctable',
         message: `Proposal ${JSON.stringify(proposalId)} not found.`,
         field: 'proposal_id',
       });

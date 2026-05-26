@@ -154,7 +154,13 @@ const upstream = {
       body,
       headers(networkCode)
     );
-    if (!r.body) throw new AdcpError('SERVICE_UNAVAILABLE', { message: 'upstream refine failed' });
+    if (!r.body) {
+      throw new AdcpError('PROPOSAL_NOT_FOUND', {
+        message: `Proposal ${JSON.stringify(proposalId)} not found.`,
+        field: 'refine[0].proposal_id',
+        recovery: 'correctable',
+      });
+    }
     return r.body;
   },
   async finalizeProposal(networkCode: string, proposalId: string): Promise<UpstreamProposal> {

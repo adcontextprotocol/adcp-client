@@ -142,7 +142,7 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
   const record = await store.get(finalizeEntry.proposalId, { expectedAccountId: accountId });
   if (!record) {
     throw new AdcpError('PROPOSAL_NOT_FOUND', {
-      recovery: 'terminal',
+      recovery: 'correctable',
       message:
         `Proposal ${JSON.stringify(finalizeEntry.proposalId)} not found. The buyer must call ` +
         `get_products with buying_mode='brief' or 'refine' to obtain a draft proposal_id ` +

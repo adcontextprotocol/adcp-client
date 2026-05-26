@@ -9,7 +9,7 @@ export const LIBRARY_VERSION = '8.1.0-beta.12';
 /**
  * AdCP specification version this library is built for
  */
-export const ADCP_VERSION = '3.1.0-beta.3';
+export const ADCP_VERSION = '3.1.0-beta.5';
 
 /**
  * AdCP major version sent with every request (adcp_major_version field).
@@ -34,6 +34,7 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.1.0-beta.1',
   '3.1.0-beta.2',
   '3.1.0-beta.3',
+  '3.1.0-beta.5',
   '3.0.0',
   '3.0.1',
   '3.0.2',
@@ -64,9 +65,9 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  */
 export const VERSION_INFO = {
   library: '8.1.0-beta.12',
-  adcp: '3.1.0-beta.3',
+  adcp: '3.1.0-beta.5',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-05-26T04:21:14.416Z',
+  generatedAt: '2026-05-26T08:43:30.534Z',
 } as const;
 
 /**
@@ -126,10 +127,10 @@ export function parseAdcpMajorVersion(version: string): number {
  * with a patch digit.
  *
  * Behavior:
- *   - `"3.1.0-beta.3"` → `"3.1-beta.3"`
+ *   - `"3.1.0-beta.5"` → `"3.1-beta.5"`
  *   - `"3.1.0"`        → `"3.1"`
  *   - `"3.0.12"`       → `"3.0"`
- *   - Already-release-precision input (`"3.1"`, `"3.1-beta.3"`) passes through
+ *   - Already-release-precision input (`"3.1"`, `"3.1-beta.5"`) passes through
  *   - Legacy aliases (`"v2.5"`, `"v3"`) pass through unchanged — the wire
  *     regex doesn't accept them anyway; the v2.5 path uses
  *     `adcp_major_version` instead of `adcp_version` for transport.
@@ -144,7 +145,7 @@ export function toReleasePrecisionVersion(version: string): string {
     const [, major, minor, pre = ''] = semverMatch;
     return `${major}.${minor}${pre}`;
   }
-  // Already release-precision (no patch digit). Includes `3.1`, `3.1-beta.3`.
+  // Already release-precision (no patch digit). Includes `3.1`, `3.1-beta.5`.
   if (/^\d+\.\d+(-[A-Za-z0-9.-]+)?$/.test(trimmed)) return trimmed;
   // Legacy aliases (`v3`, `v2.5`, `v2.6`) and anything we don't recognize —
   // pass through so the wire validator can flag genuine drift.

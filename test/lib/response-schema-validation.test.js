@@ -335,10 +335,10 @@ describe('validateResponseSchema', () => {
       }
     });
 
-    it('fails when data_provider is missing', () => {
+    it('passes when data_provider is missing (optional display field)', () => {
       const { data_provider, ...without } = validSignal;
       const result = validateResponseSchema('get_signals', { signals: [without] });
-      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.passed, true, `Expected pass, got: ${result.error || ''}`);
     });
 
     it('fails when deployments is missing', () => {

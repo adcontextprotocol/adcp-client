@@ -166,7 +166,7 @@ function projectDeclaration(
           details: {
             format_kind: decl.format_kind,
             product_id: productId,
-            capability_id: decl.capability_id,
+            format_option_id: decl.format_option_id,
             reason: 'canonical_formats_only',
           },
         },
@@ -186,7 +186,7 @@ function projectDeclaration(
           details: {
             format_kind: decl.format_kind,
             product_id: productId,
-            capability_id: decl.capability_id,
+            format_option_id: decl.format_option_id,
           },
         },
       },
@@ -232,7 +232,7 @@ function projectDeclaration(
             details: {
               format_kind: decl.format_kind,
               product_id: productId,
-              capability_id: decl.capability_id,
+              format_option_id: decl.format_option_id,
               size_mode: lossy.mode,
               declared_sizes_count: lossy.count,
               emitted_sizes_count: emit.length,
@@ -265,7 +265,7 @@ function projectDeclaration(
           details: {
             format_kind: decl.format_kind,
             product_id: productId,
-            capability_id: decl.capability_id,
+            format_option_id: decl.format_option_id,
             registry_matches: result.matchedEntries,
           },
         },
@@ -283,7 +283,7 @@ function projectDeclaration(
         details: {
           format_kind: decl.format_kind,
           product_id: productId,
-          capability_id: decl.capability_id,
+          format_option_id: decl.format_option_id,
           resolution_failure: 'no_registry_match',
         },
       },

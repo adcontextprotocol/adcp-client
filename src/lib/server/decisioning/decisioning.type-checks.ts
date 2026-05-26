@@ -433,30 +433,32 @@ type _Err<E> = { ok: false; error: E };
 type _Result<T, E> = _Ok<T> | _Err<E>;
 const _ok = <T>(value: T): _Result<T, Error> => ({ ok: true, value });
 
-function _adopter_result_payload_aliases_do_not_require_protocol_status() {
+type _AdopterResultPayloadAliases = [
+  _Result<GetProductsPayload, Error>,
+  _Result<ListCreativeFormatsPayload, Error>,
+  _Result<CreateMediaBuyPayload, Error>,
+  _Result<UpdateMediaBuyPayload, Error>,
+  _Result<SyncCreativesPayload, Error>,
+  _Result<SyncEventSourcesPayload, Error>,
+  _Result<ListAccountsPayload, Error>,
+  _Result<GetMediaBuysPayload, Error>,
+  _Result<GetMediaBuyDeliveryPayload, Error>,
+  _Result<BuildCreativePayload, Error>,
+  _Result<BuildCreativeMultiPayload, Error>,
+  _Result<SyncAudiencesPayload, Error>,
+  _Result<ActivateSignalPayload, Error>,
+  _Result<GetBrandIdentityPayload, Error>,
+  _Result<GetRightsPayload, Error>,
+  _Result<UpdateRightsPayload, Error>,
+  _Result<CreativeApprovedPayload, Error>,
+  _Result<CreateMediaBuyHandlerResult, Error>,
+  _Result<SyncCreativesHandlerResult, Error>,
+];
+
+function _adopter_result_payload_aliases_do_not_require_protocol_status(): _AdopterResultPayloadAliases {
   const creativeManifest = {} as CreativeManifest;
   const rightsTerms = {} as RightsTerms;
-  const payloads: [
-    _Result<GetProductsPayload, Error>,
-    _Result<ListCreativeFormatsPayload, Error>,
-    _Result<CreateMediaBuyPayload, Error>,
-    _Result<UpdateMediaBuyPayload, Error>,
-    _Result<SyncCreativesPayload, Error>,
-    _Result<SyncEventSourcesPayload, Error>,
-    _Result<ListAccountsPayload, Error>,
-    _Result<GetMediaBuysPayload, Error>,
-    _Result<GetMediaBuyDeliveryPayload, Error>,
-    _Result<BuildCreativePayload, Error>,
-    _Result<BuildCreativeMultiPayload, Error>,
-    _Result<SyncAudiencesPayload, Error>,
-    _Result<ActivateSignalPayload, Error>,
-    _Result<GetBrandIdentityPayload, Error>,
-    _Result<GetRightsPayload, Error>,
-    _Result<UpdateRightsPayload, Error>,
-    _Result<CreativeApprovedPayload, Error>,
-    _Result<CreateMediaBuyHandlerResult, Error>,
-    _Result<SyncCreativesHandlerResult, Error>,
-  ] = [
+  const payloads: _AdopterResultPayloadAliases = [
     _ok({ products: [], cache_scope: 'account' }),
     _ok({ formats: [] }),
     _ok({ media_buy_id: 'x', packages: [] }),
