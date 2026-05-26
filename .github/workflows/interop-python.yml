@@ -9,6 +9,10 @@ on:
         description: 'adcp-client-python commit SHA, tag, or branch to test against'
         required: false
         default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
+      runner_package_ref:
+        description: 'Optional @adcp/sdk npm package ref for manual runner probes, e.g. adcp-3.0 or @adcp/sdk@adcp-3.1. Empty packs this checkout.'
+        required: false
+        default: ''
   workflow_call:
     inputs:
       python_ref:
@@ -16,15 +20,22 @@ on:
         required: false
         type: string
         default: '92b1618c3bebfef481f3deef423cbe29d8820de3'
+      runner_package_ref:
+        description: 'Optional @adcp/sdk npm package ref for manual runner probes. Empty packs this checkout.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
-  pack-candidate-sdk:
-    name: Pack candidate SDK
+  pack-sdk-runner:
+    name: Pack SDK runner
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      RUNNER_PACKAGE_REF: ${{ inputs.runner_package_ref || '' }}
 
     steps:
       - name: Checkout @adcp/sdk
@@ -39,50 +50,66 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        if: env.RUNNER_PACKAGE_REF == ''
         run: npm ci
 
-      - name: Build candidate SDK
+      - name: Build SDK runner
+        if: env.RUNNER_PACKAGE_REF == ''
         run: npm run build:lib
 
-      - name: Pack candidate SDK
+      - name: Pack SDK runner
         shell: bash
         run: |
           set -euo pipefail
           pack_dir="$RUNNER_TEMP/adcp-sdk-pack"
           mkdir -p "$pack_dir"
-          npm pack --pack-destination "$pack_dir" --silent
+          if [[ -n "${RUNNER_PACKAGE_REF:-}" ]]; then
+            package_ref="$RUNNER_PACKAGE_REF"
+            if [[ "$package_ref" != @adcp/sdk@* ]]; then
+              package_ref="@adcp/sdk@$package_ref"
+            fi
+            echo "Packing SDK runner from npm package ref $package_ref"
+            npm pack "$package_ref" --pack-destination "$pack_dir" --silent
+          else
+            echo "Packing SDK runner from this checkout"
+            npm pack --pack-destination "$pack_dir" --silent
+          fi
           mapfile -t tarballs < <(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print)
           if [[ "${#tarballs[@]}" -ne 1 ]]; then
             echo "::error::Expected one packed SDK tarball in $pack_dir, found ${#tarballs[@]}."
             printf '%s\n' "${tarballs[@]}"
             exit 1
           fi
-          echo "Packed candidate SDK at ${tarballs[0]}"
+          echo "Packed SDK runner at ${tarballs[0]}"
 
-      - name: Upload candidate SDK tarball
+      - name: Upload SDK runner tarball
         uses: actions/upload-artifact@v4
         with:
-          name: adcp-sdk-candidate-tarball
+          name: adcp-sdk-runner-tarball
           if-no-files-found: error
           path: ${{ runner.temp }}/adcp-sdk-pack/*.tgz
 
   reference-seller-matrix:
     name: ${{ matrix.language }} reference seller
-    needs: pack-candidate-sdk
+    needs: pack-sdk-runner
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Add TypeScript/Go rows here only after those repos have shipped a
-          # tagged, known-good reusable harness. The current-checkout TS job
-          # below exercises this repo's harness but is not a release-compat row.
+          # Add Go here only after adcp-go has shipped a tagged, known-good
+          # reusable harness.
           - language: python
             repository: adcontextprotocol/adcp-client-python
             ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3001
+          - language: typescript
+            repository: adcontextprotocol/adcp-client
+            ref: 97aef9f9561983b21605e77c3377bbdc0641b61c # @adcp/sdk@8.1.0-beta.12
+            harness: scripts/ci/run_storyboard_reference_seller.sh
+            port: 3002
     env:
       STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
@@ -99,25 +126,25 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Download candidate SDK tarball
+      - name: Download SDK runner tarball
         uses: actions/download-artifact@v4
         with:
-          name: adcp-sdk-candidate-tarball
+          name: adcp-sdk-runner-tarball
           path: ${{ runner.temp }}/adcp-sdk-pack
 
-      - name: Resolve candidate SDK tarball
+      - name: Resolve SDK runner tarball
         id: pack
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t tarballs < <(find "$RUNNER_TEMP/adcp-sdk-pack" -maxdepth 1 -type f -name '*.tgz' -print)
           if [[ "${#tarballs[@]}" -ne 1 ]]; then
-            echo "::error::Expected one candidate SDK tarball, found ${#tarballs[@]}."
+            echo "::error::Expected one SDK runner tarball, found ${#tarballs[@]}."
             printf '%s\n' "${tarballs[@]}"
             exit 1
           fi
           echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
-          echo "Using candidate SDK tarball ${tarballs[0]}"
+          echo "Using SDK runner tarball ${tarballs[0]}"
 
       - name: Checkout ${{ matrix.language }} reference seller
         uses: actions/checkout@v5
@@ -175,7 +202,8 @@ jobs:
 
   typescript-reference-seller-current:
     name: TypeScript reference seller (current checkout)
-    needs: pack-candidate-sdk
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    needs: pack-sdk-runner
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -194,25 +222,25 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Download candidate SDK tarball
+      - name: Download SDK runner tarball
         uses: actions/download-artifact@v4
         with:
-          name: adcp-sdk-candidate-tarball
+          name: adcp-sdk-runner-tarball
           path: ${{ runner.temp }}/adcp-sdk-pack
 
-      - name: Resolve candidate SDK tarball
+      - name: Resolve SDK runner tarball
         id: pack
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t tarballs < <(find "$RUNNER_TEMP/adcp-sdk-pack" -maxdepth 1 -type f -name '*.tgz' -print)
           if [[ "${#tarballs[@]}" -ne 1 ]]; then
-            echo "::error::Expected one candidate SDK tarball, found ${#tarballs[@]}."
+            echo "::error::Expected one SDK runner tarball, found ${#tarballs[@]}."
             printf '%s\n' "${tarballs[@]}"
             exit 1
           fi
           echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
-          echo "Using candidate SDK tarball ${tarballs[0]}"
+          echo "Using SDK runner tarball ${tarballs[0]}"
 
       - name: Run TypeScript example seller storyboard
         shell: bash
@@ -236,7 +264,7 @@ jobs:
             echo "- Ref: current checkout \`${{ github.sha }}\`"
             echo "- Seller: \`examples/hello_seller_adapter_guaranteed.ts\`"
             echo "- Harness: \`scripts/ci/run_storyboard_reference_seller.sh\`"
-            echo "- Note: release compatibility matrix rows must pin a tagged prior TypeScript ref once this harness ships in a release."
+            echo "- Note: tagged TypeScript release compatibility is covered by the matrix row pinned to @adcp/sdk@8.1.0-beta.12."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload storyboard artifacts
