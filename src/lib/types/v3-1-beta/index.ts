@@ -1,4 +1,4 @@
-// AdCP 3.1.0-beta.1 type surface — re-export the generated request/response
+// AdCP 3.1.0-beta.5 type surface — re-export the generated request/response
 // interfaces so consumers can import them as a namespace:
 //
 //   import * as V31Beta from '@adcp/sdk/types/v3-1-beta';
@@ -9,7 +9,7 @@
 //   import type { GetProductsResponse, WholesaleFeedEvent } from '@adcp/sdk/types/v3-1-beta';
 //
 // The SDK's primary type surface (`@adcp/sdk/types`) stays pinned to the
-// GA `ADCP_VERSION`; this opt-in parallel tree exposes the wholesale feed
+// primary `ADCP_VERSION`; this parallel tree exposes the 3.1 beta
 // additions (`if_wholesale_feed_version`, `cache_scope`,
 // `unchanged`, `WholesaleFeedEvent`, `WholesaleFeedWebhook`) so consumers can build against
 // beta sellers with full type coverage.

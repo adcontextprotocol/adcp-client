@@ -7,8 +7,9 @@ import { createAdcpServer, serve, adcpError } from '@adcp/sdk/server/legacy/v5';
 import type { GetSignalsResponse } from '@adcp/sdk';
 
 type Signal = NonNullable<GetSignalsResponse['signals']>[number];
+type CatalogSignal = Signal & { pricing_options: NonNullable<Signal['pricing_options']> };
 
-const SIGNALS: Signal[] = [
+const SIGNALS: CatalogSignal[] = [
   {
     signal_agent_segment_id: 'seg_auto_intenders',
     name: 'Auto Intenders',

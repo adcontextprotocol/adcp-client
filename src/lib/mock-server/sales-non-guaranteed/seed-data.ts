@@ -141,6 +141,15 @@ export const AD_UNITS: MockAdUnit[] = [
     targetable: true,
   },
   {
+    ad_unit_id: 'au_acmeoutdoor_display',
+    name: 'Acme Outdoor — Display Programmatic',
+    path: '/acme/outdoor/display',
+    network_code: 'net_acmeoutdoor',
+    sizes: [{ width: 300, height: 250 }],
+    environment: 'web',
+    targetable: true,
+  },
+  {
     ad_unit_id: 'au_pinnacle_remnant',
     name: 'Pinnacle Display Remnant',
     path: '/pinnacle/display/remnant',
@@ -212,6 +221,16 @@ export const PRODUCTS: MockProduct[] = [
     format_ids: ['video_15s'],
     ad_unit_ids: ['au_acmeoutdoor_dooh'],
     pricing: { min_cpm: 6.0, target_cpm: 9.0, currency: 'USD', min_spend: 500 },
+  },
+  {
+    product_id: 'acme_display_remnant_q2',
+    name: 'Acme Outdoor — Display Programmatic Q2',
+    network_code: 'net_acmeoutdoor',
+    delivery_type: 'non_guaranteed',
+    channel: 'display',
+    format_ids: ['display_300x250'],
+    ad_unit_ids: ['au_acmeoutdoor_display'],
+    pricing: { min_cpm: 1.25, target_cpm: 1.9, currency: 'USD', min_spend: 500 },
   },
   {
     product_id: 'pinnacle_display_remnant_q2',

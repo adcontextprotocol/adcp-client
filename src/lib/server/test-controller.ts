@@ -163,6 +163,7 @@ export const CONTROLLER_SCENARIOS = {
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
   QUERY_UPSTREAM_TRAFFIC: 'query_upstream_traffic',
+  FORCE_UPSTREAM_UNAVAILABLE: 'force_upstream_unavailable',
 } as const satisfies Record<string, ControllerScenario>;
 
 /**
@@ -379,6 +380,12 @@ export interface TestControllerStore {
     endpoint_pattern?: string;
     limit?: number;
   }): Promise<UpstreamTrafficSuccessResponse>;
+
+  /**
+   * Mark an upstream dependency as unreachable for subsequent calls within
+   * the compliance session. Backs the stale-response advisory storyboard.
+   */
+  forceUpstreamUnavailable?(params: { tool: string; upstream_name?: string }): Promise<StateTransitionSuccess>;
 }
 
 /**
@@ -558,6 +565,7 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
   ['queryUpstreamTraffic', CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC],
+  ['forceUpstreamUnavailable', CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE],
 ];
 
 /**
@@ -1155,6 +1163,22 @@ async function handleTestControllerRequestImpl(
           limit?: number;
         };
         return wrapStoreSuccess(await store.queryUpstreamTraffic(queryParams));
+      }
+
+      case CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE: {
+        if (!store.forceUpstreamUnavailable) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const forceParams = (params ?? {}) as { tool?: unknown; upstream_name?: unknown };
+        if (typeof forceParams.tool !== 'string' || forceParams.tool.length === 0) {
+          return controllerError('INVALID_PARAMS', 'force_upstream_unavailable requires params.tool');
+        }
+        return wrapStoreSuccess(
+          await store.forceUpstreamUnavailable({
+            tool: forceParams.tool,
+            upstream_name: typeof forceParams.upstream_name === 'string' ? forceParams.upstream_name : undefined,
+          })
+        );
       }
 
       default:

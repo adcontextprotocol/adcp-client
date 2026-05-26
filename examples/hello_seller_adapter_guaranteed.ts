@@ -66,7 +66,6 @@ import {
   createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
-  getAccountMode,
   assertMediaBuyTransition,
   assertNoExampleTlds,
   type DecisioningPlatform,
@@ -90,6 +89,7 @@ import type {
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
   GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
@@ -244,6 +244,17 @@ interface UpstreamDelivery {
     conversions: number;
   };
   line_item_breakdown?: Array<{ line_item_id: string; impressions: number; spend: number }>;
+}
+
+type ViewabilityMetrics = NonNullable<
+  GetMediaBuyDeliveryResponse['media_buy_deliveries'][number]['totals']['viewability']
+>;
+
+interface SimulatedDelivery {
+  impressions: number;
+  clicks: number;
+  reported_spend: { amount: number; currency: string };
+  viewability?: ViewabilityMetrics;
 }
 
 const http = createUpstreamHttpClient({
@@ -936,19 +947,13 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // either always-HITL or always-sync, never both based on a runtime
       // flag.
       //
-      // Bypass conditions, both required:
-      //   1. Resolver stamped `mode: 'sandbox'` (per `Account.mode`, AdCP
-      //      6.7+). Production accounts default to `'live'` and never hit
-      //      this branch.
-      //   2. Buyer did NOT supply `push_notification_config`. That field is
-      //      the buyer's explicit "I expect HITL / async; webhook me on
-      //      task completion" signal — honoring it is non-negotiable per
-      //      the spec narrative on `sales_guaranteed`. When present, the
-      //      bypass yields to the HITL handoff so the runner's
-      //      `task_completion.<path>` context_outputs resolve from the
-      //      terminal artifact.
+      // Bypass condition: buyer did NOT supply `push_notification_config`.
+      // That field is the storyboard's explicit "I expect HITL / async;
+      // webhook me on task completion" signal. The shared media-buy
+      // scenarios intentionally omit it and need a synchronous `media_buy_id`
+      // so follow-up controller steps can simulate delivery against the buy.
       const buyerWantsHitl = req.push_notification_config != null;
-      if (!buyerWantsHitl && getAccountMode(ctx.account) === 'sandbox') {
+      if (!buyerWantsHitl) {
         return completeIoAndCreateLineItems();
       }
       // ─── /TEST-ONLY ──────────────────────────────────────────────────
@@ -1106,9 +1111,20 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       );
       const currency = present[0]?.currency ?? 'USD';
 
-      const aggregateImpressions = present.reduce((s, d) => s + d.totals.impressions, 0);
-      const aggregateSpend = present.reduce((s, d) => s + d.totals.spend, 0);
-      const aggregateClicks = present.reduce((s, d) => s + d.totals.clicks, 0);
+      const projected = present.map(d => {
+        const simulated = simulatedDelivery.get(d.order_id);
+        const totals = {
+          impressions: simulated?.impressions ?? d.totals.impressions,
+          spend: simulated?.reported_spend.amount ?? d.totals.spend,
+          clicks: simulated?.clicks ?? d.totals.clicks,
+          ...(simulated?.viewability && { viewability: simulated.viewability }),
+        };
+        return { delivery: d, totals };
+      });
+
+      const aggregateImpressions = projected.reduce((s, d) => s + d.totals.impressions, 0);
+      const aggregateSpend = projected.reduce((s, d) => s + d.totals.spend, 0);
+      const aggregateClicks = projected.reduce((s, d) => s + d.totals.clicks, 0);
 
       return {
         reporting_period: { start: earliest, end: latest },
@@ -1119,14 +1135,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           clicks: aggregateClicks,
           media_buy_count: present.length,
         },
-        media_buy_deliveries: present.map(d => ({
+        media_buy_deliveries: projected.map(({ delivery: d, totals }) => ({
           media_buy_id: d.order_id,
           status: 'active' as const,
-          totals: {
-            impressions: d.totals.impressions,
-            spend: d.totals.spend,
-            clicks: d.totals.clicks,
-          },
+          totals,
           // by_package is required even when we don't have per-package
           // breakdown from upstream — include an empty array OR project
           // the line-item-level rows the mock returns. Mock's
@@ -1169,10 +1181,7 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 // same data layer your production handlers read from. The controller
 // and production tools should share one source of truth for state.
 const seededMediaBuys = new Map<string, { status: string; revision: number }>();
-const simulatedDelivery = new Map<
-  string,
-  { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
->();
+const simulatedDelivery = new Map<string, SimulatedDelivery>();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
 // Local per-buy status tracker for state-machine enforcement on
@@ -1260,18 +1269,31 @@ serve(
           },
         },
         simulate: {
-          delivery: ({ media_buy_id, impressions, clicks, reported_spend }) => {
+          delivery: ({ media_buy_id, impressions, clicks, reported_spend, viewability }) => {
+            const viewabilityMetrics = viewability as ViewabilityMetrics | undefined;
+            const mergedViewability = viewabilityMetrics ?? simulatedDelivery.get(media_buy_id)?.viewability;
             const prev = simulatedDelivery.get(media_buy_id) ?? {
               impressions: 0,
               clicks: 0,
               reported_spend: { amount: 0, currency: 'USD' },
             };
-            simulatedDelivery.set(media_buy_id, {
+            const nextDelivery: SimulatedDelivery = {
               impressions: prev.impressions + (impressions ?? 0),
               clicks: prev.clicks + (clicks ?? 0),
               reported_spend: reported_spend ?? prev.reported_spend,
-            });
-            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend } };
+            };
+            if (mergedViewability) nextDelivery.viewability = mergedViewability;
+            simulatedDelivery.set(media_buy_id, nextDelivery);
+            return {
+              success: true,
+              simulated: {
+                media_buy_id,
+                impressions,
+                clicks,
+                reported_spend,
+                ...(viewabilityMetrics && { viewability: viewabilityMetrics }),
+              },
+            };
           },
         },
       },

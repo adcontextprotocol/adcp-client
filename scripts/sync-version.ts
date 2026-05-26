@@ -80,10 +80,8 @@ function assertSafeVersion(value: string, source: string): void {
 // is intentional, so a spec move forces a human to think about which
 // historical versions stay in the compat surface.
 //
-// `3.1.0-beta.*` is opt-in: the SDK's primary pin stays at the current
-// 3.0.x GA, but consumers can pin `adcpVersion: '3.1.0-beta.3'` (or
-// '3.1-beta') to exercise the V2 mental model + wholesale-feed sync cluster
-// against beta sellers. Side-bundle synced via `npm run sync-schemas:3.1-beta`.
+// Keep historical versions in the compat surface. Consumers can also pin
+// `adcpVersion: '3.1-beta'` to follow the newest bundled 3.1 prerelease.
 const COMPATIBLE_PREFIX = [
   'v2.5',
   'v2.6',
@@ -93,6 +91,7 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-beta.1',
   '3.1.0-beta.2',
   '3.1.0-beta.3',
+  '3.1.0-beta.5',
 ] as const;
 
 /**
@@ -300,10 +299,10 @@ export function parseAdcpMajorVersion(version: string): number {
  * with a patch digit.
  *
  * Behavior:
- *   - \`"3.1.0-beta.3"\` → \`"3.1-beta.3"\`
+ *   - \`"3.1.0-beta.5"\` → \`"3.1-beta.5"\`
  *   - \`"3.1.0"\`        → \`"3.1"\`
  *   - \`"3.0.12"\`       → \`"3.0"\`
- *   - Already-release-precision input (\`"3.1"\`, \`"3.1-beta.3"\`) passes through
+ *   - Already-release-precision input (\`"3.1"\`, \`"3.1-beta.5"\`) passes through
  *   - Legacy aliases (\`"v2.5"\`, \`"v3"\`) pass through unchanged — the wire
  *     regex doesn't accept them anyway; the v2.5 path uses
  *     \`adcp_major_version\` instead of \`adcp_version\` for transport.
@@ -318,7 +317,7 @@ export function toReleasePrecisionVersion(version: string): string {
     const [, major, minor, pre = ''] = semverMatch;
     return \`\${major}.\${minor}\${pre}\`;
   }
-  // Already release-precision (no patch digit). Includes \`3.1\`, \`3.1-beta.3\`.
+  // Already release-precision (no patch digit). Includes \`3.1\`, \`3.1-beta.5\`.
   if (/^\\d+\\.\\d+(-[A-Za-z0-9.-]+)?$/.test(trimmed)) return trimmed;
   // Legacy aliases (\`v3\`, \`v2.5\`, \`v2.6\`) and anything we don't recognize —
   // pass through so the wire validator can flag genuine drift.
@@ -357,7 +356,7 @@ function updatePackageJsonVersion(adcpVersion: string, autoUpdate: boolean = fal
     const [major, minor, patch] = currentLibraryVersion.split('.').map(Number);
 
     // Determine version bump strategy based on AdCP version change.
-    // Note: `'3.1.0-beta.3'.split('.').map(Number)` produces
+    // Note: `'3.1.0-beta.5'.split('.').map(Number)` produces
     // `[3, 1, NaN, NaN, 3]` for prerelease versions because `'0-beta'`
     // and `'beta'` aren't numeric. We only destructure `[major, minor]`,
     // so the NaN at index 2 is intentionally discarded. If a future

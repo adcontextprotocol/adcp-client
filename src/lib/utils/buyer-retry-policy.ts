@@ -73,7 +73,7 @@ export type RetryDecision =
         | 'auth' // AUTH_REQUIRED / PERMISSION_DENIED / SCOPE_INSUFFICIENT / READ_ONLY_SCOPE / FIELD_NOT_PERMITTED / ACTION_NOT_ALLOWED — operator must rotate creds / grant access
         | 'governance_unreachable' // GOVERNANCE_UNAVAILABLE / CAMPAIGN_SUSPENDED — out-of-band
         | 'idempotency_check_required' // IDEMPOTENCY_EXPIRED / CONFIGURATION_ERROR — buyer MUST do a natural-key check before minting a new key (spec safety constraint to prevent double-creation)
-        | 'capability' // FORMAT_PROJECTION_FAILED / FORMAT_DECLARATION_DIVERGENT / FORMAT_DECLARATION_V1_AMBIGUOUS / FORMAT_CAPABILITY_UNRESOLVED / FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE / PIXEL_TRACKER_LOSSY_DOWNGRADE / PIXEL_TRACKER_UPGRADE_INFERRED — implementation choice problem (operator needs to pick a different adapter or surface the advisory to the buyer); distinct from 'commercial' so dashboards can filter
+        | 'capability' // FORMAT_PROJECTION_FAILED / FORMAT_DECLARATION_DIVERGENT / FORMAT_DECLARATION_V1_AMBIGUOUS / FORMAT_OPTION_UNRESOLVED / PRIVATE_FIELD_IN_PUBLIC_PLACEMENT / FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE / PIXEL_TRACKER_LOSSY_DOWNGRADE / PIXEL_TRACKER_UPGRADE_INFERRED — implementation choice problem (operator needs to pick a different adapter or surface the advisory to the buyer); distinct from 'commercial' so dashboards can filter
         | 'terminal' // spec recovery 'terminal' (account suspended, budget exhausted, CREDENTIAL_IN_ARGS, RETENTION_EXPIRED, STALE_RESPONSE — advisory paired with a populated success payload; consume the payload, surface the advisory, do not retry …)
         | 'attempts_exhausted' // hit attemptCap — caller already retried as many times as the policy allows
         | 'unknown'; // non-standard code, no policy override — buyer surfaces to user
@@ -309,7 +309,8 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   FORMAT_PROJECTION_FAILED: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_DIVERGENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'capability' },
-  FORMAT_CAPABILITY_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_OPTION_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
+  PRIVATE_FIELD_IN_PUBLIC_PLACEMENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'capability' },
 
   // Pixel-tracker — buyer's tracker shape doesn't fit the seller's surface.

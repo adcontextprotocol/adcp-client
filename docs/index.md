@@ -23,7 +23,7 @@ Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript
 
 ### 📈 Migration Guides
 
-- [8.0 → 8.1](./migration-8.0-to-8.1.md) — AdCP 3.1.0-beta.3 tightening, webhook verification, `TaskStatus` ambiguity
+- [8.0 → 8.1](./migration-8.0-to-8.1.md) — AdCP 3.1.0-beta.5 tightening, webhook verification, `TaskStatus` ambiguity
 - [7.11 → 8.0](./migration-7.11-to-8.0.md) — 8.x beta migration notes
 - [6.6 → 6.7](./migration-6.6-to-6.7.md) — fifteen adopter recipes; two breaking (`'implicit'` refusal, `SalesPlatform` split)
 - [5.x → 6.x](./migration-5.x-to-6.x.md) — `createAdcpServerFromPlatform` framework shape

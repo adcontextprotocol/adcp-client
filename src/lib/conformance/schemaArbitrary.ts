@@ -245,6 +245,10 @@ function enforceKnownConditionals(value: Record<string, unknown>, shape: ObjectS
     current = enforceCreativeManifestFormatSelector(current);
   }
 
+  if (declares(shape, 'scope') && declares(shape, 'format_option_id') && declares(shape, 'publisher_domain')) {
+    current = enforceFormatOptionRef(current);
+  }
+
   return current;
 }
 
@@ -284,6 +288,25 @@ function enforceCreativeManifestFormatSelector(value: Record<string, unknown>): 
 
   return current;
 }
+
+function enforceFormatOptionRef(value: Record<string, unknown>): Record<string, unknown> {
+  const current = { ...value };
+
+  if (current.scope === 'product') {
+    delete current.publisher_domain;
+    return current;
+  }
+
+  if (current.scope === 'publisher') {
+    if (typeof current.publisher_domain !== 'string' || !DOMAIN_RE.test(current.publisher_domain)) {
+      current.publisher_domain = 'example.com';
+    }
+  }
+
+  return current;
+}
+
+const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 /**
  * Probabilistically adds a single unknown key to `value`. The key name

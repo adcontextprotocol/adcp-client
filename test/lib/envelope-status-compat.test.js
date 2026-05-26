@@ -54,7 +54,7 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
   });
 
   test('3.1-beta envelope without status → returned UNCHANGED', () => {
-    for (const version of ['3.1-beta', '3.1-beta.3', '3.1.0-beta.2']) {
+    for (const version of ['3.1-beta', '3.1-beta.5', '3.1.0-beta.2']) {
       const result = injectLegacyEnvelopeStatus({ adcp_version: version });
       assert.strictEqual(result.status, undefined, `version ${version}`);
     }
@@ -209,7 +209,7 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
   test('strict response validation rejects full-semver response adcp_version', () => {
     const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
     const result = validateResponse('create_media_buy', {
-      adcp_version: '3.1.0-beta.3',
+      adcp_version: '3.1.0-beta.5',
       status: 'completed',
       media_buy_id: 'mb_1',
       media_buy_status: 'pending_creatives',

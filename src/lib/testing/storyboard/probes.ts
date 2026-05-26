@@ -289,6 +289,21 @@ export async function rawMcpProbe(options: {
       }
     } catch {
       httpResult.body = text;
+      // HTTP 400 with a plain-text body that signals a missing MCP session — e.g.
+      // "Bad Request: Missing session ID" from strict Python-based servers.  Detect
+      // before falling back to the generic non-JSON message so compliance reports
+      // show the session-init diagnostic rather than a bare HTTP 400.
+      if (httpResult.status >= 400 && /missing session/i.test(text)) {
+        return {
+          httpResult,
+          taskResult: {
+            success: false,
+            data: undefined,
+            error: `MCP session not initialized (HTTP ${httpResult.status}: ${text.trim()}). rawMcpProbe skips the initialize handshake; strict servers will reject here before auth is evaluated.`,
+            _extraction_path: 'error',
+          },
+        };
+      }
       return {
         httpResult,
         taskResult: {

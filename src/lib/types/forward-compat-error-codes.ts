@@ -47,7 +47,7 @@ export interface ForwardCompatErrorCodeInfo extends StandardErrorCodeInfo {
  * consumer site so the rest of the SDK treats them as first-class.
  *
  * **Currently empty.** The 8.0-beta cut advanced the primary `ADCP_VERSION`
- * pin to `3.1.0-beta.2`, which folded the prior overlay entries
+ * pin to `3.1.0-beta.5`, which folded the prior overlay entries
  * (`AUTH_MISSING`, `AUTH_INVALID`, `AGENT_SUSPENDED`, `AGENT_BLOCKED`) into
  * the manifest-driven surface. The compile-time disjointness check in
  * `error-codes.ts` fails closed if a code returns to this map after the

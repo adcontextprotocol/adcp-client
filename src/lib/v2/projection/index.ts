@@ -61,12 +61,19 @@ export {
 } from './builders';
 
 export {
+  packageRefsForFormatOptions,
   packageRefsForCapabilities,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
+  legacyFormatIdsForFormatOption,
   legacyFormatIdsForCapability,
+  FormatOptionRefsLookupError,
   CapabilityIdsLookupError,
   type PackageFormatRefs,
+  type PackageCapabilityRefs,
+  type FormatOptionRef,
+  type FormatOptionSelector,
+  type FormatOptionRefsLookupErrorCode,
   type CapabilityIdsLookupErrorCode,
 } from './write-side';
 

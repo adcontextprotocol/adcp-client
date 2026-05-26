@@ -844,6 +844,7 @@ _Request:_
   discovery_mode: 'brief' | 'wholesale'
   account: Account Ref
   signal_spec: string
+  signal_refs: object[]
   signal_ids: object[]
   destinations: object[]
   countries: string[]

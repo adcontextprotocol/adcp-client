@@ -1131,7 +1131,18 @@ export interface ProductFilters {
    * Budget range to filter appropriate products
    */
   budget_range?: {
-    [k: string]: unknown | undefined;
+    /**
+     * Minimum budget amount
+     */
+    min?: number;
+    /**
+     * Maximum budget amount
+     */
+    max?: number;
+    /**
+     * ISO 4217 currency code (e.g., 'USD', 'EUR', 'GBP')
+     */
+    currency: string;
   };
   /**
    * Filter by target countries using ISO 3166-1 alpha-2 country codes (e.g., ['US', 'CA', 'GB'])

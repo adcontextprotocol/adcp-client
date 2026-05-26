@@ -131,7 +131,7 @@ export interface AuthorizedAgent {
  * `applies_to_property_ids` / `applies_to_property_tags`.
  *
  * Shape mirrors the v2 `ProductFormatDeclaration` (canonical
- * `format_kind` + `params` + optional `capability_id` for inline
+ * `format_kind` + `params` + optional `format_option_id` for inline
  * placement references) — kept loose at this layer because the
  * discovery types don't depend on the v2/canonical-formats stack.
  * `src/lib/v2/publisher-catalog/` consumes this with stronger
@@ -146,8 +146,12 @@ export interface AdAgentsPublisherFormat {
   format_kind: string;
   /** Canonical-specific parameter block (slots, dimensions, codecs, etc.). */
   params?: Record<string, unknown>;
-  /** Stable identifier for this declaration; placements reference via `capability_id`. */
+  /** Legacy beta.3 stable identifier for this declaration. */
   capability_id?: string;
+  /** Stable identifier for this declaration; placements reference via `format_option_id`. */
+  format_option_id?: string;
+  /** Namespace when this declaration comes from a publisher-hosted catalog. */
+  publisher_domain?: string;
   /** Seller-controlled human-readable label. */
   display_name?: string;
   /** Subset of the publisher's property_ids this format applies to. Omit = applies to all. */
@@ -187,7 +191,7 @@ export interface AdAgentsJson {
    * properties via `applies_to_property_ids` /
    * `applies_to_property_tags`. Consumed by
    * `src/lib/v2/publisher-catalog/` for property-scoped lookup +
-   * `capability_id` resolution from `placement.format_options[]`.
+   * `format_option_id` resolution from `placement.format_options[]`.
    * Optional; absent on 3.0.x adagents.json files.
    */
   formats?: AdAgentsPublisherFormat[];

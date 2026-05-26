@@ -15,6 +15,7 @@ const path = require('node:path');
 const {
   extractPublisherFormats,
   scopePublisherFormats,
+  resolveFormatOptionId,
   resolveCapabilityId,
 } = require('../../dist/lib/v2/publisher-catalog/index.js');
 
@@ -25,8 +26,13 @@ describe('extractPublisherFormats', () => {
   test('returns all formats from a 3.1 adagents.json', () => {
     const formats = extractPublisherFormats(META);
     assert.strictEqual(formats.length, 4, 'meta fixture has 4 formats');
-    const capIds = formats.map(f => f.capability_id).sort();
-    assert.deepStrictEqual(capIds, ['meta_feed_carousel', 'meta_feed_image', 'meta_reels', 'meta_stories_video']);
+    const formatOptionIds = formats.map(f => f.format_option_id).sort();
+    assert.deepStrictEqual(formatOptionIds, [
+      'meta_feed_carousel',
+      'meta_feed_image',
+      'meta_reels',
+      'meta_stories_video',
+    ]);
   });
 
   test('returns [] for a 3.0.x adagents.json without `formats[]`', () => {
@@ -62,30 +68,30 @@ describe('scopePublisherFormats — by propertyId', () => {
   test('includes formats with no `applies_to_*` regardless of propertyId', () => {
     // Synthesize a fixture with one unscoped + one scoped format.
     const mixed = [
-      { capability_id: 'unscoped', format_kind: 'image' }, // no applies_to_*
-      { capability_id: 'scoped', format_kind: 'image', applies_to_property_ids: ['x'] },
+      { format_option_id: 'unscoped', format_kind: 'image' }, // no applies_to_*
+      { format_option_id: 'scoped', format_kind: 'image', applies_to_property_ids: ['x'] },
     ];
     const scoped = scopePublisherFormats(mixed, { propertyId: 'y' });
     // Unscoped matches (universal); scoped doesn't match 'y'.
     assert.strictEqual(scoped.length, 1);
-    assert.strictEqual(scoped[0].capability_id, 'unscoped');
+    assert.strictEqual(scoped[0].format_option_id, 'unscoped');
   });
 });
 
 describe('scopePublisherFormats — by propertyTags', () => {
   test('matches formats whose applies_to_property_tags overlaps the request', () => {
     const fixture = [
-      { capability_id: 'feed', format_kind: 'image', applies_to_property_tags: ['feed'] },
-      { capability_id: 'story', format_kind: 'image', applies_to_property_tags: ['story', 'short_form'] },
-      { capability_id: 'feed_and_story', format_kind: 'image', applies_to_property_tags: ['feed', 'story'] },
+      { format_option_id: 'feed', format_kind: 'image', applies_to_property_tags: ['feed'] },
+      { format_option_id: 'story', format_kind: 'image', applies_to_property_tags: ['story', 'short_form'] },
+      { format_option_id: 'feed_and_story', format_kind: 'image', applies_to_property_tags: ['feed', 'story'] },
     ];
     const scoped = scopePublisherFormats(fixture, { propertyTags: ['feed'] });
-    const capIds = scoped.map(f => f.capability_id).sort();
-    assert.deepStrictEqual(capIds, ['feed', 'feed_and_story']);
+    const formatOptionIds = scoped.map(f => f.format_option_id).sort();
+    assert.deepStrictEqual(formatOptionIds, ['feed', 'feed_and_story']);
   });
 
   test('returns [] when no scoped format matches the requested tag', () => {
-    const fixture = [{ capability_id: 'a', format_kind: 'image', applies_to_property_tags: ['x'] }];
+    const fixture = [{ format_option_id: 'a', format_kind: 'image', applies_to_property_tags: ['x'] }];
     const scoped = scopePublisherFormats(fixture, { propertyTags: ['y'] });
     assert.strictEqual(scoped.length, 0);
   });
@@ -101,30 +107,47 @@ describe('scopePublisherFormats — empty scope', () => {
   });
 });
 
-describe('resolveCapabilityId', () => {
+describe('resolveFormatOptionId', () => {
   const formats = extractPublisherFormats(META);
 
-  test('finds a format by capability_id', () => {
-    const found = resolveCapabilityId(formats, 'meta_reels');
+  test('finds a format by format_option_id', () => {
+    const found = resolveFormatOptionId(formats, 'meta_reels');
     assert.ok(found, 'meta_reels should resolve');
     assert.strictEqual(found.format_kind, 'video_hosted');
     assert.deepStrictEqual(found.applies_to_property_ids, ['instagram', 'facebook']);
   });
 
-  test('returns undefined when capability_id has no match', () => {
-    const found = resolveCapabilityId(formats, 'meta_nonexistent');
+  test('returns undefined when format_option_id has no match', () => {
+    const found = resolveFormatOptionId(formats, 'meta_nonexistent');
     assert.strictEqual(found, undefined);
   });
 
-  test('returns first match when capability_ids collide (publisher bug)', () => {
+  test('returns first match when format_option_ids collide (publisher bug)', () => {
     // Spec leaves uniqueness to the publisher; helpers stay deterministic
     // by returning the first match in document order. Surfacing the
     // collision is the publisher's responsibility.
     const dupes = [
-      { capability_id: 'x', format_kind: 'image', display_name: 'first' },
-      { capability_id: 'x', format_kind: 'video_hosted', display_name: 'second' },
+      { format_option_id: 'x', format_kind: 'image', display_name: 'first' },
+      { format_option_id: 'x', format_kind: 'video_hosted', display_name: 'second' },
     ];
-    const found = resolveCapabilityId(dupes, 'x');
+    const found = resolveFormatOptionId(dupes, 'x');
     assert.strictEqual(found?.display_name, 'first');
+  });
+});
+
+describe('resolveCapabilityId (3.1.0-beta.3 compatibility)', () => {
+  test('resolves beta.3 capability_id catalogs', () => {
+    const formats = [
+      { capability_id: 'meta_reels', format_kind: 'video_hosted', display_name: 'Reels' },
+      { capability_id: 'meta_feed', format_kind: 'image', display_name: 'Feed' },
+    ];
+
+    const found = resolveCapabilityId(formats, 'meta_reels');
+    assert.strictEqual(found?.display_name, 'Reels');
+  });
+
+  test('also accepts beta.5 format_option_id catalogs for migration callers', () => {
+    const found = resolveCapabilityId([{ format_option_id: 'meta_reels', format_kind: 'video_hosted' }], 'meta_reels');
+    assert.strictEqual(found?.format_kind, 'video_hosted');
   });
 });
