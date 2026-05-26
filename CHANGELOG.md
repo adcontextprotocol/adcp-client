@@ -1,5 +1,37 @@
 # Changelog
 
+## 8.1.0-beta.12
+
+### Minor Changes
+
+- bbf735c: Export `parseWholesaleFeedWebhookNotification` /
+  `normalizeWholesaleFeedWebhookNotification` helpers for canonical wholesale-feed
+  webhook receivers and align `WholesaleFeedSync` dedupe semantics with delivery
+  `idempotency_key` plus canonical logical event identity
+  `notification_id === event.event_id`.
+
+  Add buyer-side signal discovery helpers that normalize `get_signals` rows,
+  expose the canonical `activate_signal.signal_agent_segment_id` handle, and
+  build activation requests without confusing `signal_id` provenance for the
+  activation key.
+
+### Patch Changes
+
+- 70cdb20: Recognize `ACTION_NOT_ALLOWED` through the shared standard error-code runtime table so decisioning `AdcpError` construction does not warn for the AdCP 3.1 code.
+- d6528d7: Tighten beta.11 server payload migration around `get_products.cache_scope`.
+
+  Server-facing `get_products` payload aliases and `productsResponse()` now require
+  `cache_scope` whenever `products` are returned or a wholesale-feed response is
+  `unchanged`. Unchanged responses still omit `products`, but must echo
+  `cache_scope`. Strict response validation catches plain JavaScript adopters that
+  bypass TypeScript.
+
+  Framework response defaulting now infers `cache_scope: 'public'` only when there
+  is no inline account and no auth-derived/resolved account. Account-scoped
+  requests fail closed unless the adapter explicitly chooses `public` or
+  `account`, and sandbox/test-controller seeded merges no longer hide missing
+  account-scoped scope.
+
 ## 8.1.0-beta.11
 
 ### Minor Changes
