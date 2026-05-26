@@ -142,6 +142,92 @@ for account-scoped requests because agents may omit overlay capability
 declarations for confidentiality; account-scoped product responses should set
 `cache_scope` explicitly.
 
+Client/storefront composition code that consumes upstream inventory sources can
+normalize older upstream responses before caching:
+
+```ts
+import { ensureGetProductsCacheScope } from '@adcp/sdk';
+
+const upstream = await seller.getProducts(req);
+const response = ensureGetProductsCacheScope(upstream, {
+  defaultCacheScope: 'account', // fail-closed for composed storefronts
+  onInject: event => logger.warn('Injected get_products cache_scope', event),
+});
+```
+
+`validateGetProductsCacheScope(response)` is the non-mutating check. It returns
+`{ ok: false, reason: 'missing_cache_scope' | 'invalid_cache_scope' }` when a
+populated or unchanged response is not cache-safe.
+
+## Canonical Creative Format Migration
+
+8.1 makes the canonical-format migration path easier to find from the package
+root and from `@adcp/sdk/v2/projection`.
+
+Use `format_options[]` as the canonical product surface. Keep `format_ids[]`
+only as the v1 fallback during the migration window, using the v2 declaration's
+`v1_format_ref[]` as the authoritative pairing:
+
+```ts
+import {
+  CanonicalFormat,
+  packageRefsForCapabilities,
+  withFormatOptions,
+} from '@adcp/sdk';
+
+const homepageMrec = CanonicalFormat.image(
+  { width: 300, height: 250 },
+  {
+    capability_id: 'homepage_mrec',
+    display_name: 'Homepage MREC',
+    v1_format_ref: [
+      CanonicalFormat.ref('https://creative.adcontextprotocol.org', 'display_300x250_image'),
+    ],
+  }
+);
+
+const product = {
+  product_id: 'homepage_takeover',
+  name: 'Homepage Takeover',
+  format_options: [homepageMrec],
+  format_ids: homepageMrec.v1_format_ref,
+  product_card: CanonicalFormat.productCard({
+    title: 'Homepage Takeover',
+    price_label: 'From $12 CPM',
+  }),
+};
+```
+
+Do not put `format_id` on `product_card`. Product cards describe the product UI;
+creative acceptance lives in `format_options[]` and the v1 fallback
+`format_ids[]`.
+
+Buyer/write-side migration:
+
+```ts
+const { response, diagnostics } = withFormatOptions(getProductsResponse);
+if (diagnostics.length > 0) logger.warn('Format projection diagnostics', diagnostics);
+
+const product = response.products[0];
+const refs = packageRefsForCapabilities(product, ['homepage_mrec']);
+
+await agent.createMediaBuy({
+  packages: [{
+    product_id: product.product_id,
+    pricing_option_id: product.pricing_options[0].pricing_option_id,
+    ...refs, // capability_ids + format_ids when a v1 fallback exists
+    budget: 5000,
+  }],
+});
+```
+
+`ListCreativeFormatsPayload` is the canonical alias for the server handler
+payload shape of `list_creative_formats`. `ListCreativeFormatsResponsePayload`
+and `ListCreativeFormatsServerPayload` remain equivalent aliases for search
+and older local naming conventions. Prefer the canonical alias in new
+platform/server code instead of annotating handlers with the generated wire
+response type.
+
 ## Handler Payloads vs Wire Envelopes
 
 Framework server adopters should return SDK server payload aliases from
@@ -156,6 +242,19 @@ schema-valid payloads into the builder. For example:
 productsResponse({ products, cache_scope: 'public' });
 mediaBuyResponse({ media_buy_id, media_buy_status: 'pending_creatives', packages: [] });
 ```
+
+`SyncCreativesPayload` now covers both sync success rows and operation-level
+failure payloads:
+
+```ts
+const failed: SyncCreativesPayload = {
+  errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
+};
+```
+
+Raw/manual server adopters can pass either arm to `syncCreativesResponse()`;
+operation-level errors produce an MCP error response with envelope
+`status: 'failed'`.
 
 Buyer, CLI, and testing users should use `@adcp/sdk@beta` or an exact
 `8.1.0-beta.N` pin while validating AdCP 3.1 behavior. `@latest` remains on
@@ -201,5 +300,9 @@ Full recipe: [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.m
   `rights_status`.
 - [ ] `governance_agents[]` fixtures no longer emit `categories`.
 - [ ] `get_products` fixtures with products include `cache_scope`.
+- [ ] Storefront/upstream adapters normalize legacy get_products responses with
+  `ensureGetProductsCacheScope()` before caching.
+- [ ] Products that support canonical creative formats publish `format_options[]`
+  and keep `format_ids[]` only as the v1 fallback.
 - [ ] Webhook receivers capture raw body bytes and verify before processing.
 - [ ] Multi-replica webhook receivers use Redis/Postgres replay storage.

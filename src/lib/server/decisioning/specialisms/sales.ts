@@ -87,6 +87,7 @@ import type {
   LogEventSuccess,
   SyncEventSourcesRequest,
   SyncEventSourcesSuccess,
+  SyncCreativesError,
   SyncCreativesSuccess,
   CreativeAsset,
 } from '../../../types/tools.generated';
@@ -102,7 +103,9 @@ export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
 export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
-export type SyncCreativesPayload = ServerPayload<SyncCreativesSuccess>;
+export type SyncCreativesSuccessPayload = ServerPayload<SyncCreativesSuccess>;
+export type SyncCreativesErrorPayload = ServerPayload<SyncCreativesError>;
+export type SyncCreativesPayload = SyncCreativesSuccessPayload | SyncCreativesErrorPayload;
 export type SyncCatalogsPayload = ServerPayload<SyncCatalogsSuccess>;
 export type LogEventPayload = ServerPayload<LogEventSuccess>;
 export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;

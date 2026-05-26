@@ -256,6 +256,7 @@ import type {
   BuildCreativeResponse,
   GetCreativeDeliveryResponse,
   ListCreativesResponse,
+  SyncCreativesError,
   SyncCreativesSuccess,
   SyncCreativesResponse,
   GetSignalsResponse,
@@ -561,7 +562,7 @@ export interface AdcpToolMap {
   };
   sync_creatives: {
     params: z.input<typeof SyncCreativesRequestSchema>;
-    result: ServerPayload<SyncCreativesSuccess>;
+    result: ServerPayload<SyncCreativesSuccess> | ServerPayload<SyncCreativesError>;
     response: SyncCreativesResponse;
   };
   get_signals: {

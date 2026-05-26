@@ -872,6 +872,14 @@ export type {
   A2AMountOptions,
   ExpressAppLike,
   AccountMode,
+  RequireCacheScopeWhenProducts,
+  ServerPayload,
+  ListCreativeFormatsPayload,
+  ListCreativeFormatsResponsePayload,
+  ListCreativeFormatsServerPayload,
+  SyncCreativesPayload,
+  SyncCreativesSuccessPayload,
+  SyncCreativesErrorPayload,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======
@@ -907,6 +915,16 @@ export { brandManifestToBrandReference, promotedProductsToCatalog, promotedOffer
 
 // Request parameter normalization (deprecated field auto-conversion)
 export { normalizeRequestParams, normalizePackageParams } from './utils/request-normalizer';
+
+// get_products response cache-scope helpers
+export {
+  ensureGetProductsCacheScope,
+  validateGetProductsCacheScope,
+  type EnsureGetProductsCacheScopeOptions,
+  type GetProductsCacheScope,
+  type GetProductsResponseWithCacheScope,
+  type GetProductsCacheScopeValidation,
+} from './utils/get-products-cache-scope';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
 // Re-export all Zod schemas for user validation needs
@@ -1167,6 +1185,55 @@ export {
   type ParameterizedRender,
   type RenderItem,
 } from './utils/format-render-builders';
+
+// ====== CANONICAL CREATIVE FORMAT MIGRATION HELPERS ======
+// Author `Product.format_options[]`, v1 `format_id` references, and product
+// cards from one obvious namespace while migrating away from local Format.type
+// and product_card.format_id conventions.
+export {
+  CanonicalFormat,
+  audioDaastFormatDeclaration,
+  audioHostedFormatDeclaration,
+  agentPlacementFormatDeclaration,
+  canonicalFormatDeclaration,
+  customFormatDeclaration,
+  displayTagFormatDeclaration,
+  formatRef,
+  formatRefs,
+  html5FormatDeclaration,
+  imageCarouselFormatDeclaration,
+  imageFormatDeclaration,
+  nativeInFeedFormatDeclaration,
+  productCard,
+  productCardDetailed,
+  responsiveCreativeFormatDeclaration,
+  sponsoredPlacementFormatDeclaration,
+  videoHostedFormatDeclaration,
+  videoVastFormatDeclaration,
+  type CanonicalFormatDeclaration,
+  type CanonicalFormatDeclarationFields,
+  type CanonicalFormatParams,
+  type FormatReferenceInput,
+  type ProductCardDetailedFields,
+  type ProductCardFields,
+} from './v2/projection';
+
+export {
+  augmentProductWithFormatOptions,
+  withFormatOptions,
+  packageRefsForCapabilities,
+  legacyFormatIdsFromOptions,
+  tryLegacyFormatIdsFromOptions,
+  legacyFormatIdsForCapability,
+  CapabilityIdsLookupError,
+  type CapabilityIdsLookupErrorCode,
+  type CanonicalFormatKind,
+  type PackageFormatRefs,
+  type ProjectionDiagnostic,
+  type V1FormatId,
+  type V1Product,
+  type V2Product,
+} from './v2/projection';
 
 // ====== ACTIVATION KEY BUILDERS ======
 // Typed factories that inject the `type` discriminator on `ActivationKey`.

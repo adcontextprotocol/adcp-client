@@ -10,18 +10,17 @@
  *
  *   - `withFormatOptions` / `augmentProductWithFormatOptions` —
  *     buyer-side response augmentation. Adds `format_options[]` to a
- *     v1-shaped get_products response so V2-aware buyers read the V2
- *     mental model regardless of the seller's wire version. Additive —
- *     `format_ids[]` is preserved.
+ *     v1-shaped get_products response so canonical-format-aware buyers
+ *     can read the canonical model regardless of the seller's wire
+ *     version. Additive — `format_ids[]` is preserved.
  *
  *   - Catalog + registry primitives (`lookupV1Format`,
  *     `findCatalogEntryByCanonicalAndSize`, registry exports) for
  *     callers wiring projection into their own code paths.
  *
- * Designed to be called by adopters who want to opt into the V2 mental
- * model at 7.10 without taking the 8.0 narrowing. 8.0 will move
- * `withFormatOptions` onto the default response path; until then,
- * adopters call it explicitly.
+ * Exposed from both `@adcp/sdk/v2/projection` and the package root for
+ * adopters migrating from local format metadata and `product_card.format_id`
+ * conventions to canonical creative formats.
  */
 
 export { projectV1ProductToV2 } from './v1-to-v2';
@@ -33,6 +32,35 @@ export type { V2ToV1Result } from './v2-to-v1';
 export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedProduct } from './augment-response';
 
 export {
+  CanonicalFormat,
+  audioDaastFormatDeclaration,
+  audioHostedFormatDeclaration,
+  agentPlacementFormatDeclaration,
+  canonicalFormatDeclaration,
+  customFormatDeclaration,
+  displayTagFormatDeclaration,
+  formatRef,
+  formatRefs,
+  html5FormatDeclaration,
+  imageCarouselFormatDeclaration,
+  imageFormatDeclaration,
+  nativeInFeedFormatDeclaration,
+  productCard,
+  productCardDetailed,
+  responsiveCreativeFormatDeclaration,
+  sponsoredPlacementFormatDeclaration,
+  videoHostedFormatDeclaration,
+  videoVastFormatDeclaration,
+  type CanonicalFormatDeclaration,
+  type CanonicalFormatDeclarationFields,
+  type CanonicalFormatKind,
+  type CanonicalFormatParams,
+  type FormatReferenceInput,
+  type ProductCardDetailedFields,
+  type ProductCardFields,
+} from './builders';
+
+export {
   packageRefsForCapabilities,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
@@ -42,14 +70,7 @@ export {
   type CapabilityIdsLookupErrorCode,
 } from './write-side';
 
-export type {
-  V1FormatId,
-  V2ProductFormatDeclaration,
-  V2Product,
-  V1Product,
-  CanonicalFormatKind,
-  ProjectionDiagnostic,
-} from './types';
+export type { V1FormatId, V2ProductFormatDeclaration, V2Product, V1Product, ProjectionDiagnostic } from './types';
 
 export {
   loadCatalog,

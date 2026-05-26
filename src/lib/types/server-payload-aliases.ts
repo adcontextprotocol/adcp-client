@@ -52,6 +52,7 @@ import type {
   SyncAccountsSuccess,
   SyncAudiencesSuccess,
   SyncCatalogsSuccess,
+  SyncCreativesError,
   SyncCreativesSuccess,
   SyncEventSourcesSuccess,
   SyncGovernanceResponse,
@@ -94,9 +95,16 @@ export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
 export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
 export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
+/** Canonical server handler payload alias for `list_creative_formats`. */
 export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+/** Equivalent alias retained for response-centric naming/search. Prefer `ListCreativeFormatsPayload` in new code. */
+export type ListCreativeFormatsResponsePayload = ListCreativeFormatsPayload;
+/** Equivalent alias retained for server-centric naming/search. Prefer `ListCreativeFormatsPayload` in new code. */
+export type ListCreativeFormatsServerPayload = ListCreativeFormatsPayload;
 export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
-export type SyncCreativesPayload = ServerPayload<SyncCreativesSuccess>;
+export type SyncCreativesSuccessPayload = ServerPayload<SyncCreativesSuccess>;
+export type SyncCreativesErrorPayload = ServerPayload<SyncCreativesError>;
+export type SyncCreativesPayload = SyncCreativesSuccessPayload | SyncCreativesErrorPayload;
 export type SyncCatalogsPayload = ServerPayload<SyncCatalogsSuccess>;
 export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
 export type LogEventPayload = ServerPayload<LogEventSuccess>;

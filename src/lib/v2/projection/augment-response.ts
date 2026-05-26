@@ -3,21 +3,13 @@
  * `format_options[]` derived from the existing `format_ids[]` on each
  * Product.
  *
- * 7.10 ships these as opt-in surface — buyers who want the V2 mental
- * model call `withFormatOptions(response)` and read `format_options`
- * instead of `format_ids`. The 8.0 release will move this onto the
- * default response path so adopters never need to call it explicitly.
+ * Buyers who want the canonical creative-format model call
+ * `withFormatOptions(response)` and read `format_options` instead of
+ * relying only on legacy `format_ids`.
  *
- * Why not auto-project inside `AgentClient.getProducts()` at 7.10:
- *
- *   - Existing 7.x code reads `format_ids[]` and we don't want a silent
- *     payload mutation in a minor release.
- *   - Generated `GetProductsResponse` type at 7.x is the 3.0.x shape;
- *     adding `format_options` invisibly would skew TypeScript inference
- *     for callers who haven't moved.
- *   - Version-envelope detection (cache per agent_url, read
- *     `adcp_major_version` off response) is a separate piece of
- *     scaffolding that's better introduced at the 8.0 boundary.
+ * The SDK also auto-projects compatible `AgentClient.getProducts()`
+ * responses; this helper remains useful for cached responses, fixtures,
+ * upstream seller/storefront composition, and explicit migration code.
  *
  * Pure functions — no IO, no caching. Each Product is projected
  * independently; diagnostics aggregate so a multi-product response
