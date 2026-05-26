@@ -135,7 +135,13 @@ export function getStandardFormats(): CreativeFormat[] {
 }
 
 // Re-export response unwrapping utilities
-export { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } from './response-unwrapper';
+export {
+  unwrapProtocolResponse,
+  isAdcpError,
+  isAdcpSuccess,
+  isTerminalAdcpError,
+  hasAdvisorySuccessPayload,
+} from './response-unwrapper';
 export type { AdCPResponse } from './response-unwrapper';
 export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from './media-buy-status';
 

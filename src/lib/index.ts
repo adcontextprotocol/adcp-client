@@ -1044,6 +1044,8 @@ export {
   unwrapProtocolResponse,
   isAdcpError,
   isAdcpSuccess,
+  isTerminalAdcpError,
+  hasAdvisorySuccessPayload,
   getAuthoritativeMediaBuyStatus,
   isMediaBuyStatus,
 } from './utils';

@@ -6,6 +6,7 @@
 
 const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
+const { createTestProduct } = require('./test-fixtures');
 
 describe('pollTaskCompletion terminal state handling', () => {
   let TaskExecutor;
@@ -181,6 +182,82 @@ describe('pollTaskCompletion terminal state handling', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.data.status, undefined);
     assert.strictEqual(result.data.media_buy_status, 'pending_creatives');
+  });
+
+  test('returns success when completed task result has advisory errors[]', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      task: {
+        taskId: 'task-advisory-success',
+        status: 'completed',
+        taskType: 'get_products',
+        result: {
+          status: 'completed',
+          cache_scope: 'public',
+          products: [createTestProduct({ product_id: 'prod-advisory-polled' })],
+          errors: [{ code: 'FORMAT_DECLARATION_DIVERGENT', message: 'advisory only' }],
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-advisory-success', 10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.data.products[0].product_id, 'prod-advisory-polled');
+    assert.strictEqual(result.data.errors[0].code, 'FORMAT_DECLARATION_DIVERGENT');
+    assert.strictEqual(result.adcpError, undefined);
+  });
+
+  test('returns failure when completed task result has explicit failed status', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      task: {
+        taskId: 'task-terminal-payload',
+        status: 'completed',
+        taskType: 'report_usage',
+        result: {
+          status: 'failed',
+          accepted: 0,
+          errors: [{ code: 'INVALID_USAGE_ROW', message: 'all rows rejected' }],
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-terminal-payload', 10);
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.status, 'failed');
+    assert.match(result.error, /all rows rejected/);
+    assert.strictEqual(result.adcpError.code, 'INVALID_USAGE_ROW');
+  });
+
+  test('returns failure when completed create_media_buy result lacks media_buy_id', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      task: {
+        taskId: 'task-invalid-media-buy',
+        status: 'completed',
+        taskType: 'create_media_buy',
+        result: {
+          status: 'completed',
+          packages: [],
+          errors: [{ code: 'INVALID_RESPONSE', message: 'missing media_buy_id' }],
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-invalid-media-buy', 10);
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.status, 'failed');
+    assert.match(result.error, /missing media_buy_id/);
   });
 
   test('exits on first poll without retries when tasks/get returns rejected', async () => {

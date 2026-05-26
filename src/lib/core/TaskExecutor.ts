@@ -17,7 +17,7 @@ import {
   type ValidationMode,
 } from '../validation/client-hooks';
 import { formatIssues } from '../validation/schema-validator';
-import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper';
+import { unwrapProtocolResponse, isAdcpError, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
@@ -732,7 +732,7 @@ export class TaskExecutor {
         const completedData = this.extractResponseData(response, debugLogs, taskName);
         this.updateTaskStatus(taskId, 'completed', completedData);
 
-        const operationSuccess = this.isOperationSuccess(completedData);
+        const operationSuccess = this.isOperationSuccess(completedData, taskName);
 
         // Validate response against AdCP schema - validate extracted data, not protocol wrapper
         const validationResult = this.validateResponseSchema(completedData, taskName, debugLogs);
@@ -866,7 +866,7 @@ export class TaskExecutor {
           defaultData &&
           (defaultData !== response || response.structuredContent || response.result || response.data)
         ) {
-          const defaultSuccess = this.isOperationSuccess(defaultData);
+          const defaultSuccess = this.isOperationSuccess(defaultData, taskName);
 
           // Validate response against AdCP schema - validate extracted data, not protocol wrapper
           const defaultValidation = this.validateResponseSchema(defaultData, taskName, debugLogs);
@@ -1010,8 +1010,8 @@ export class TaskExecutor {
    * Check if extracted response data represents a successful operation.
    * Handles singular `error`, plural `errors` (AdCP schema), and `success: false`.
    */
-  private isOperationSuccess(data: any): boolean {
-    return data?.success !== false && !data?.error && !data?.adcp_error && !isAdcpError(data);
+  private isOperationSuccess(data: any, taskName?: string): boolean {
+    return data?.success !== false && !data?.error && !data?.adcp_error && !isTerminalAdcpError(data, taskName);
   }
 
   /**
@@ -1506,7 +1506,7 @@ export class TaskExecutor {
       }
 
       if (status.status === ADCP_STATUS.COMPLETED) {
-        const pollSuccess = this.isOperationSuccess(status.result);
+        const pollSuccess = this.isOperationSuccess(status.result, status.taskType);
 
         if (pollSuccess) {
           return attachMatch({
