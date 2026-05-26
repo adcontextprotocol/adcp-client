@@ -270,6 +270,38 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].name, 'New Product');
     });
 
+    test('should ignore trailing text-only artifact when extracting A2A data', () => {
+      const a2aResponse = {
+        result: {
+          kind: 'task',
+          status: { state: 'completed' },
+          artifacts: [
+            {
+              artifactId: 'result',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    cache_scope: 'public',
+                    products: [createTestProduct({ product_id: 'final', name: 'Final Product' })],
+                  },
+                },
+              ],
+            },
+            {
+              artifactId: 'message',
+              parts: [{ kind: 'text', text: 'Query completed successfully' }],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a');
+
+      assert.strictEqual(result.products[0].product_id, 'final');
+      assert.strictEqual(result._message, 'Query completed successfully');
+    });
+
     test('should throw error when A2A artifact has no DataPart', () => {
       const a2aResponse = {
         result: {

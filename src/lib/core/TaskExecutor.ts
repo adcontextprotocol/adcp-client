@@ -22,6 +22,7 @@ import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extra
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
+import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { cancelA2ATask } from '../protocols/a2a';
 import type {
   Message,
@@ -105,7 +106,7 @@ function mapTasksGetResponseToTaskInfo(payload: unknown): TaskInfo {
   const obj = payload as Record<string, unknown>;
   // Walk the transport-level wrappers in priority order:
   //   1. MCP `structuredContent` — the typed AdCP payload from `tools/call`
-  //   2. A2A `result.artifacts[0].parts[0].data` — the AdCP payload
+  //   2. A2A latest structured DataPart — the AdCP payload
   //      surfaced via the artifact (per #899)
   //   3. Legacy nested `{ task: TaskInfo }` — pre-3.0 sellers and
   //      existing test mocks
@@ -174,25 +175,14 @@ function unwrapTasksGetEnvelope(obj: Record<string, unknown>, depth = 0): Record
     return unwrapTasksGetEnvelope(sc as Record<string, unknown>, depth + 1);
   }
   // A2A: `message/send` response is a JSON-RPC envelope wrapping a
-  // Task; the AdCP payload sits on the first artifact's first
-  // DataPart.
+  // Task; the AdCP payload sits on the latest structured DataPart.
   const result = obj.result;
   if (result != null && typeof result === 'object' && !Array.isArray(result)) {
     const r = result as Record<string, unknown>;
     if (r.kind === 'task') {
-      if (Array.isArray(r.artifacts) && r.artifacts.length > 0) {
-        const artifact = r.artifacts[0] as Record<string, unknown> | null;
-        if (
-          artifact != null &&
-          typeof artifact === 'object' &&
-          Array.isArray(artifact.parts) &&
-          artifact.parts.length > 0
-        ) {
-          const firstPart = artifact.parts[0] as Record<string, unknown> | null;
-          if (firstPart?.kind === 'data' && firstPart.data != null && typeof firstPart.data === 'object') {
-            return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>, depth + 1);
-          }
-        }
+      const extracted = getLatestA2ADataPartFromResponse(obj);
+      if (extracted) {
+        return unwrapTasksGetEnvelope(extracted.data, depth + 1);
       }
       // adcp-client#1612: When the A2A Task has no DataPart artifacts (e.g. the
       // seller returns an A2A transport-level state without an AdCP DataPart
@@ -959,9 +949,9 @@ export class TaskExecutor {
             return sum + (artifact.parts?.length || 0);
           }, 0);
 
-          // Extract data keys from first part for debugging
-          const firstPart = artifacts[0]?.parts?.[0];
-          const dataKeys = firstPart?.data ? Object.keys(firstPart.data) : [];
+          // Extract canonical DataPart keys for debugging.
+          const latestDataPart = getLatestA2ADataPartFromResponse(response);
+          const dataKeys = latestDataPart?.data ? Object.keys(latestDataPart.data) : [];
 
           this.logDebug(debugLogs, 'info', 'Processing A2A artifact structure', {
             artifactCount: artifacts.length,
@@ -1422,7 +1412,7 @@ export class TaskExecutor {
     // request rejection), so we map the raw response directly. The
     // mapper handles the AdCP-spec flat shape, the legacy
     // `{ task: ... }` nested wrapper, and MCP `structuredContent` /
-    // A2A `result.artifacts[0].parts[0].data` envelopes.
+    // A2A latest structured DataPart envelopes.
     return mapTasksGetResponseToTaskInfo(response);
   }
 
