@@ -155,6 +155,8 @@ export type { McpToolResponse } from './responses';
 
 export { validActionsForStatus } from './media-buy-helpers';
 export type { ValidAction, CancelMediaBuyInput } from './media-buy-helpers';
+export { assertUpdateMediaBuyAllowed } from './media-buy-actions';
+export type { AssertUpdateMediaBuyAllowedOptions } from './media-buy-actions';
 
 export { createMediaBuyStore, DEFAULT_MEDIA_BUY_STORE_COLLECTION } from './media-buy-store';
 export type {
