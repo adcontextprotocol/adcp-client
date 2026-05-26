@@ -1271,20 +1271,28 @@ serve(
         simulate: {
           delivery: ({ media_buy_id, impressions, clicks, reported_spend, viewability }) => {
             const viewabilityMetrics = viewability as ViewabilityMetrics | undefined;
+            const mergedViewability = viewabilityMetrics ?? simulatedDelivery.get(media_buy_id)?.viewability;
             const prev = simulatedDelivery.get(media_buy_id) ?? {
               impressions: 0,
               clicks: 0,
               reported_spend: { amount: 0, currency: 'USD' },
             };
-            simulatedDelivery.set(media_buy_id, {
+            const nextDelivery: SimulatedDelivery = {
               impressions: prev.impressions + (impressions ?? 0),
               clicks: prev.clicks + (clicks ?? 0),
               reported_spend: reported_spend ?? prev.reported_spend,
-              viewability: viewabilityMetrics ?? prev.viewability,
-            });
+            };
+            if (mergedViewability) nextDelivery.viewability = mergedViewability;
+            simulatedDelivery.set(media_buy_id, nextDelivery);
             return {
               success: true,
-              simulated: { media_buy_id, impressions, clicks, reported_spend, viewability: viewabilityMetrics },
+              simulated: {
+                media_buy_id,
+                impressions,
+                clicks,
+                reported_spend,
+                ...(viewabilityMetrics && { viewability: viewabilityMetrics }),
+              },
             };
           },
         },

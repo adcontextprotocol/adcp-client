@@ -13,7 +13,8 @@
  *
  * Headline behavior: `create_media_buy` returns `media_buy_id` synchronously
  * on `success` — auction is immediate, no IO-review task. Floor-priced
- * products (`pricing_options[].fixed_price = product.min_cpm`); pacing
+ * products (`pricing_options[].floor_price = product.min_cpm` when auction
+ * filters are requested); pacing
  * propagated to upstream order; spend-only forecast surfaced inline.
  *
  * Fork this. Replace `upstream` with calls to your real backend. The
@@ -86,10 +87,14 @@ import type {
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
   GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
 type Product = NonNullable<GetProductsResponse['products']>[number];
+type ViewabilityMetrics = NonNullable<
+  GetMediaBuyDeliveryResponse['media_buy_deliveries'][number]['totals']['viewability']
+>;
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4451';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_non_guaranteed_key_do_not_use_in_prod';
@@ -364,12 +369,38 @@ interface NetworkMeta {
 }
 
 const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** Project upstream product onto AdCP `Product`. Auction-cleared inventory
- *  surfaces `min_cpm` as the `pricing_options[].fixed_price` (floor); buyers
- *  bid at or above. Production sellers can layer `auction` pricing models or
- *  deal-id-keyed alternative pricing options on top. */
-function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
+ *  surfaces `min_cpm` as `floor_price` when buyers request auction pricing,
+ *  while unfiltered protocol storyboards still get a fixed CPM option first. */
+function projectProduct(
+  p: UpstreamProduct,
+  publisherDomain: string,
+  pricingMode: 'fixed' | 'auction' = 'fixed'
+): Product {
+  const auctionMidpoint = p.pricing.target_cpm ?? round2(p.pricing.min_cpm * 1.3);
+  const pricingOption =
+    pricingMode === 'auction'
+      ? {
+          pricing_option_id: 'cpm_floor',
+          pricing_model: 'cpm' as const,
+          currency: p.pricing.currency,
+          floor_price: p.pricing.min_cpm,
+          price_guidance: {
+            p50: auctionMidpoint,
+            p75: round2(auctionMidpoint * 1.2),
+          },
+          ...(p.pricing.min_spend !== undefined && { min_spend: p.pricing.min_spend }),
+        }
+      : {
+          pricing_option_id: 'cpm_standard',
+          pricing_model: 'cpm' as const,
+          currency: p.pricing.currency,
+          fixed_price: auctionMidpoint,
+          ...(p.pricing.min_spend !== undefined && { min_spend: p.pricing.min_spend }),
+        };
+
   return {
     product_id: p.product_id,
     name: p.name,
@@ -386,19 +417,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
     ],
     format_ids: p.format_ids.map(id => ({ agent_url: FORMAT_AGENT_URL, id })),
     delivery_type: 'non_guaranteed',
-    pricing_options: [
-      {
-        pricing_option_id: 'cpm_floor',
-        pricing_model: 'cpm',
-        currency: p.pricing.currency,
-        // Floor pricing — sellers accept any bid ≥ this. Auction-cleared
-        // effective CPM lands somewhere between `min_cpm` and `target_cpm`
-        // depending on bid pressure; we surface the floor as the firm
-        // commitment.
-        fixed_price: p.pricing.min_cpm,
-        ...(p.pricing.min_spend !== undefined && { min_spend: p.pricing.min_spend }),
-      },
-    ],
+    pricing_options: [pricingOption],
     reporting_capabilities: {
       available_reporting_frequencies: ['daily'],
       expected_delay_minutes: 60,
@@ -594,8 +613,9 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
+      const pricingMode = req.filters?.is_fixed_price === false ? 'auction' : 'fixed';
       return {
-        products: products.map(p => projectProduct(p, publisherDomain)),
+        products: products.map(p => projectProduct(p, publisherDomain, pricingMode)),
         cache_scope: 'account',
       };
     },
@@ -801,11 +821,19 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         requestedIds.map(async id => {
           const d = await upstream.getDelivery(networkCode, id);
           if (!d) return null;
+          const simulated = simulatedDelivery.get(d.order_id);
+          const totals = {
+            impressions: simulated?.impressions ?? d.totals.impressions,
+            clicks: simulated?.clicks ?? d.totals.clicks,
+            spend: simulated?.reported_spend.amount ?? d.totals.spend,
+            budget_remaining: d.totals.budget_remaining,
+            ...(simulated?.viewability && { viewability: simulated.viewability }),
+          };
           return {
             media_buy_id: d.order_id,
             currency: d.currency,
             reporting_period: d.reporting_period,
-            totals: d.totals,
+            totals,
             packages: d.line_items.map(li => ({
               package_id: li.line_item_id,
               product_id: li.product_id,
@@ -851,6 +879,9 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
             package_id: p.package_id,
             impressions: p.impressions,
             spend: p.spend,
+            pricing_model: 'cpm' as const,
+            rate: p.impressions > 0 ? round2((p.spend / p.impressions) * 1000) : 0,
+            currency: p.currency,
           })),
         })),
       };
@@ -1014,7 +1045,12 @@ const mediaBuyStore = createMediaBuyStore({ store: stateStore });
 const seededMediaBuys = new Map<string, { status: string; revision: number }>();
 const simulatedDelivery = new Map<
   string,
-  { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
+  {
+    impressions: number;
+    clicks: number;
+    reported_spend: { amount: number; currency: string };
+    viewability?: ViewabilityMetrics;
+  }
 >();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
@@ -1052,18 +1088,36 @@ serve(
           },
         },
         simulate: {
-          delivery: ({ media_buy_id, impressions, clicks, reported_spend }) => {
+          delivery: ({ media_buy_id, impressions, clicks, reported_spend, viewability }) => {
+            const viewabilityMetrics = viewability as ViewabilityMetrics | undefined;
             const prev = simulatedDelivery.get(media_buy_id) ?? {
               impressions: 0,
               clicks: 0,
               reported_spend: { amount: 0, currency: 'USD' },
             };
-            simulatedDelivery.set(media_buy_id, {
+            const mergedViewability = viewabilityMetrics ?? prev.viewability;
+            const nextDelivery: {
+              impressions: number;
+              clicks: number;
+              reported_spend: { amount: number; currency: string };
+              viewability?: ViewabilityMetrics;
+            } = {
               impressions: prev.impressions + (impressions ?? 0),
               clicks: prev.clicks + (clicks ?? 0),
               reported_spend: reported_spend ?? prev.reported_spend,
-            });
-            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend } };
+            };
+            if (mergedViewability) nextDelivery.viewability = mergedViewability;
+            simulatedDelivery.set(media_buy_id, nextDelivery);
+            return {
+              success: true,
+              simulated: {
+                media_buy_id,
+                impressions,
+                clicks,
+                reported_spend,
+                ...(viewabilityMetrics && { viewability: viewabilityMetrics }),
+              },
+            };
           },
         },
       },
