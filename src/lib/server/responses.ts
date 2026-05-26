@@ -58,6 +58,7 @@ import type {
   PreviewCreativeVariantResponse,
   GetCreativeDeliveryResponse,
   ListCreativesResponse,
+  SyncCreativesError,
   SyncCreativesSuccess,
   GetSignalsResponse,
   ActivateSignalSuccess,
@@ -130,6 +131,12 @@ function completedStructuredContent(data: object, opts?: { splitMediaBuyStatus?:
     delete structured.status;
   }
   if (structured.status === undefined) structured.status = 'completed';
+  return structured;
+}
+
+function failedStructuredContent(data: object): Record<string, unknown> {
+  const structured = { ...toStructuredContent(data) };
+  if (structured.status === undefined) structured.status = 'failed';
   return structured;
 }
 
@@ -568,11 +575,32 @@ export function getPlanAuditLogsResponse(
   };
 }
 
+type SyncCreativesResponsePayload = ServerPayload<SyncCreativesSuccess> | ServerPayload<SyncCreativesError>;
+
+function isSyncCreativesErrorPayload(data: SyncCreativesResponsePayload): data is ServerPayload<SyncCreativesError> {
+  return (
+    Array.isArray((data as { errors?: unknown }).errors) && !Array.isArray((data as { creatives?: unknown }).creatives)
+  );
+}
+
 /**
- * Build a successful sync_creatives response.
+ * Build a sync_creatives response. Accepts both row-level success payloads
+ * and operation-level error payloads. If a payload includes `creatives`, the
+ * builder treats it as success-shaped even when advisory row errors are also
+ * present; operation-level errors are the errors-only arm.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function syncCreativesResponse(data: ServerPayload<SyncCreativesSuccess>, summary?: string): McpToolResponse {
+export function syncCreativesResponse(data: SyncCreativesResponsePayload, summary?: string): McpToolResponse {
+  if (isSyncCreativesErrorPayload(data)) {
+    const firstError = data.errors[0];
+    const defaultSummary = firstError ? `${firstError.code}: ${firstError.message}` : 'Sync creatives failed';
+    return {
+      content: [{ type: 'text', text: summary ?? defaultSummary }],
+      isError: true,
+      structuredContent: failedStructuredContent(data),
+    };
+  }
+
   return {
     content: [
       {

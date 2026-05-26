@@ -26,7 +26,7 @@ export type {
 // so SDK consumers don't break across the version bump.
 export type { FormatReferenceStructuredObject } from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
-export type { ServerPayload } from './server-payload';
+export type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 export * from './server-payload-aliases';
 /**
  * @deprecated AdCP 3.0.1 renamed this type to `FormatReferenceStructuredObject`
@@ -192,6 +192,8 @@ export type {
   CreativeAsset,
   CreativeQuality,
   Format,
+  ProductFormatDeclaration,
+  FormatIDParameter,
 } from './tools.generated';
 
 // Governance — property lists

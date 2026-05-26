@@ -143,6 +143,14 @@ export {
   hasAdvisorySuccessPayload,
 } from './response-unwrapper';
 export type { AdCPResponse } from './response-unwrapper';
+export {
+  ensureGetProductsCacheScope,
+  validateGetProductsCacheScope,
+  type EnsureGetProductsCacheScopeOptions,
+  type GetProductsCacheScope,
+  type GetProductsResponseWithCacheScope,
+  type GetProductsCacheScopeValidation,
+} from './get-products-cache-scope';
 export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from './media-buy-status';
 
 // Lightweight MCP CallToolResult extractor (prefers structuredContent, falls back to JSON text).

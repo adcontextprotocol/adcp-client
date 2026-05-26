@@ -506,6 +506,13 @@ function _server_payload_preserves_domain_status_fields(): void {
   void payload;
 }
 
+function _sync_creatives_payload_accepts_operation_level_error(): void {
+  const payload: SyncCreativesPayload = {
+    errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
+  };
+  void payload;
+}
+
 function _server_payload_strips_write_only_notification_credentials(): void {
   const listAccounts: ListAccountsPayload = {
     accounts: [

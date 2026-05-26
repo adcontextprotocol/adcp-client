@@ -453,6 +453,29 @@ describe('syncCreativesResponse', () => {
     });
     assert.strictEqual(result.content[0].text, 'Synced 1 creative');
   });
+
+  it('supports operation-level error payloads', () => {
+    const result = syncCreativesResponse({
+      errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.status, 'failed');
+    assert.strictEqual(result.structuredContent.errors[0].code, 'INVALID_REQUEST');
+    assert.match(result.content[0].text, /INVALID_REQUEST/);
+  });
+
+  it('treats creatives plus row errors as success-shaped data', () => {
+    const result = syncCreativesResponse({
+      creatives: [{ creative_id: 'c1', action: 'created' }],
+      errors: [{ code: 'INVALID_REQUEST', message: 'row warning' }],
+    });
+
+    assert.strictEqual(result.isError, undefined);
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.creatives[0].creative_id, 'c1');
+    assert.strictEqual(result.structuredContent.errors[0].message, 'row warning');
+  });
 });
 
 describe('getSignalsResponse', () => {

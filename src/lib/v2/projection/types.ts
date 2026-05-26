@@ -1,15 +1,13 @@
 /**
- * Hand-rolled type surface for the v2 → v1 projection prototype.
+ * Hand-rolled type surface for the v2 → v1 projection layer.
  *
  * These shadow `schemas/cache/3.1.0-beta.0/core/{product,product-format-declaration,format-id}.json`
  * at the precision the projection layer cares about — slot-level fields
  * like `slots[]`, `platform_extensions[]`, and per-canonical params blocks
  * are kept loose (`Record<string, unknown>`) because the projection
- * algorithm doesn't read them. When the SDK's full versioned codegen
- * lands (separate piece of 8.0), these get replaced by generated types.
- *
- * Not exported from the SDK barrel — projection callers consume the
- * normalized shape via `projectV2ProductToV1`'s return type.
+ * algorithm doesn't read them. Root-level canonical format builders use the
+ * generated `ProductFormatDeclaration` types; these projection-local shapes
+ * remain for legacy projection APIs and diagnostics.
  */
 
 /** v1 format_id (`{ agent_url, id }`). Same shape in 3.0 and 3.1. */
@@ -37,6 +35,7 @@ export type CanonicalFormatKind =
   | 'audio_hosted'
   | 'audio_daast'
   | 'sponsored_placement'
+  | 'native_in_feed'
   | 'responsive_creative'
   | 'agent_placement'
   | 'custom';
@@ -55,6 +54,7 @@ export interface V2ProductFormatDeclaration {
   format_option_id?: string;
   publisher_domain?: string;
   display_name?: string;
+  seller_preference?: 'preferred' | 'accepted' | 'discouraged';
   applies_to_channels?: string[];
   canonical_formats_only?: boolean;
   experimental?: boolean;
