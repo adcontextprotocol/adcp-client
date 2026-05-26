@@ -164,6 +164,10 @@ populated or unchanged response is not cache-safe.
 8.1 makes the canonical-format migration path easier to find from the package
 root and from `@adcp/sdk/v2/projection`.
 
+The package root exposes the `CanonicalFormat.*` namespace and migration
+types. Individual builder functions such as `imageFormatDeclaration()` remain
+available from `@adcp/sdk/v2/projection` for callers who prefer named imports.
+
 Use `format_options[]` as the canonical product surface. Keep `format_ids[]`
 only as the v1 fallback during the migration window, using the v2 declaration's
 `v1_format_ref[]` as the authoritative pairing:

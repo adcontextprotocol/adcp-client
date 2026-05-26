@@ -22,11 +22,11 @@ export interface GetProductsCacheScopeValidation {
   reason?: 'missing_cache_scope' | 'invalid_cache_scope';
 }
 
-type NormalizedCacheScopeInput<T extends Record<string, unknown>> = Omit<T, 'cache_scope'> & {
+type NormalizedCacheScopeInput<T extends object> = Omit<T, 'cache_scope'> & {
   cache_scope?: GetProductsCacheScope;
 };
 
-export type GetProductsResponseWithCacheScope<T extends Record<string, unknown>> = T extends {
+export type GetProductsResponseWithCacheScope<T extends object> = T extends {
   products: infer TProducts;
 }
   ? Omit<T, 'cache_scope'> & { products: TProducts; cache_scope: GetProductsCacheScope }
@@ -69,14 +69,14 @@ export function validateGetProductsCacheScope(response: unknown): GetProductsCac
  * sources have not yet adopted the 3.1 cache-scope field. Defaulting to
  * 'account' avoids accidentally keying account overlays under a public cache.
  */
-export function ensureGetProductsCacheScope<T extends Record<string, unknown>>(
+export function ensureGetProductsCacheScope<T extends object>(
   response: T,
   options: EnsureGetProductsCacheScopeOptions = {}
 ): GetProductsResponseWithCacheScope<T> {
   const requirement = getScopeRequirement(response);
   if (!requirement) return response as unknown as GetProductsResponseWithCacheScope<T>;
 
-  const current = response.cache_scope;
+  const current = (response as { cache_scope?: unknown }).cache_scope;
   if (isCacheScope(current)) return response as unknown as GetProductsResponseWithCacheScope<T>;
   if (current !== undefined) {
     throw new Error(
@@ -86,10 +86,14 @@ export function ensureGetProductsCacheScope<T extends Record<string, unknown>>(
 
   const cacheScope = options.defaultCacheScope ?? 'account';
   const normalized = { ...response, cache_scope: cacheScope };
+  const productCount = (response as { products?: unknown }).products;
   options.onInject?.({
     cache_scope: cacheScope,
     reason: requirement,
-    product_count: Array.isArray(response.products) ? response.products.length : undefined,
+    product_count: Array.isArray(productCount) ? productCount.length : undefined,
   });
+  // Runtime guards above prove the returned branch has a valid cache_scope.
+  // TypeScript cannot express that conditional augmentation for arbitrary
+  // generated interfaces, especially ones without index signatures.
   return normalized as unknown as GetProductsResponseWithCacheScope<T>;
 }

@@ -18,6 +18,7 @@ import {
   CanonicalFormat,
   ensureGetProductsCacheScope,
   type CanonicalFormatParams,
+  type GetProductsResponse,
   type ProductFormatDeclaration,
   type SyncCreativesPayload,
 } from '@adcp/sdk';
@@ -56,11 +57,26 @@ const scope: 'public' | 'account' = scoped.cache_scope;
 
 const required: RequireCacheScopeWhenProducts<{ products: unknown[]; cache_scope?: 'public' | 'account' }> = scoped;
 
+const normalizeGeneratedResponse = (response: GetProductsResponse) => ensureGetProductsCacheScope(response);
+void normalizeGeneratedResponse;
+
+const generatedResponse = { status: 'completed', products: [], cache_scope: 'public' } satisfies GetProductsResponse;
+const generatedScoped = ensureGetProductsCacheScope(generatedResponse);
+const generatedScope: 'public' | 'account' = generatedScoped.cache_scope;
+
+const generatedMissingScope = ensureGetProductsCacheScope({
+  status: 'completed',
+  products: [],
+} satisfies Omit<GetProductsResponse, 'cache_scope'>);
+const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache_scope;
+
 void typedNative;
 void builtKind;
 void serverSyncError;
 void scope;
 void required;
+void generatedScope;
+void generatedInjectedScope;
 `,
     'utf8'
   );

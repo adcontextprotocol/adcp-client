@@ -585,7 +585,9 @@ function isSyncCreativesErrorPayload(data: SyncCreativesResponsePayload): data i
 
 /**
  * Build a sync_creatives response. Accepts both row-level success payloads
- * and operation-level error payloads.
+ * and operation-level error payloads. If a payload includes `creatives`, the
+ * builder treats it as success-shaped even when advisory row errors are also
+ * present; operation-level errors are the errors-only arm.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncCreativesResponse(data: SyncCreativesResponsePayload, summary?: string): McpToolResponse {
