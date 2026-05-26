@@ -669,7 +669,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       this.webhookScope?.senderId ?? 'default',
       webhook.account_id,
       webhook.subscriber_id,
-      webhook.notification_id,
+      webhook.event.event_id,
     ].join(':');
   }
 
