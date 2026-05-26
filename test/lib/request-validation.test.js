@@ -275,6 +275,94 @@ describe('SingleAgentClient Request Validation', () => {
         }
       }, 'brand takes precedence; brand_manifest stripped without causing a validation error');
     });
+
+    test('should accept vendor_metric optimization goals with vendor committed_metrics', async () => {
+      const originalCallTool = ProtocolClient.callTool;
+      const captured = [];
+      ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+        captured.push({ toolName, args });
+        return {
+          status: 'completed',
+          media_buy_id: 'mb-vendor-metric',
+          packages: [],
+        };
+      };
+
+      const mockMCPAgent = {
+        ...mockAgent,
+        agent_uri: 'https://test.example/mcp',
+        protocol: 'mcp',
+      };
+      const client = new AdCPClient([mockMCPAgent]);
+      const agent = client.agent(mockMCPAgent.id);
+      const inner = agent.client;
+      inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+      inner.cachedCapabilities = {
+        version: 'v3',
+        majorVersions: [3],
+        protocols: ['media_buy'],
+        features: {
+          inlineCreativeManagement: false,
+          conversionTracking: false,
+          audienceTargeting: false,
+          propertyListFiltering: false,
+          contentStandards: false,
+        },
+        extensions: [],
+        _synthetic: false,
+      };
+
+      try {
+        await assert.doesNotReject(async () => {
+          await agent.createMediaBuy({
+            account: { account_id: 'test-account' },
+            brand: { domain: 'example.com' },
+            start_time: 'asap',
+            end_time: '2026-06-01T00:00:00Z',
+            packages: [
+              {
+                product_id: 'prod123',
+                pricing_option_id: 'cpm-fixed',
+                budget: 5000,
+                optimization_goals: [
+                  {
+                    kind: 'vendor_metric',
+                    vendor: { domain: 'attentionvendor.example' },
+                    metric_id: 'attention_score',
+                    target: { kind: 'threshold_rate', value: 70 },
+                    priority: 1,
+                  },
+                ],
+                committed_metrics: [
+                  {
+                    scope: 'vendor',
+                    vendor: { domain: 'attentionvendor.example' },
+                    metric_id: 'attention_score',
+                  },
+                ],
+              },
+            ],
+          });
+        }, 'vendor_metric optimization goal shape should not trigger SDK request validation');
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+
+      const call = captured.find(c => c.toolName === 'create_media_buy');
+      assert.ok(call, 'create_media_buy should be dispatched after validation');
+      assert.deepStrictEqual(call.args.packages[0].optimization_goals[0], {
+        kind: 'vendor_metric',
+        vendor: { domain: 'attentionvendor.example' },
+        metric_id: 'attention_score',
+        target: { kind: 'threshold_rate', value: 70 },
+        priority: 1,
+      });
+      assert.deepStrictEqual(call.args.packages[0].committed_metrics[0], {
+        scope: 'vendor',
+        vendor: { domain: 'attentionvendor.example' },
+        metric_id: 'attention_score',
+      });
+    });
   });
 
   // AdCP v3 schemas have additionalProperties: true for extensibility.

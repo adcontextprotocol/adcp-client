@@ -94,6 +94,109 @@ export type AdCPResponse =
   | GetSignalsResponse
   | ActivateSignalResponse;
 
+const SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL: Readonly<Record<string, readonly (readonly string[])[]>> = {
+  get_adcp_capabilities: [['adcp', 'supported_protocols']],
+  list_accounts: [['accounts']],
+  sync_accounts: [['accounts']],
+  sync_governance: [['accounts']],
+  report_usage: [['accepted']],
+  get_account_financials: [['account', 'currency', 'period', 'timezone']],
+  get_products: [['products'], ['unchanged']],
+  list_creative_formats: [['formats']],
+  create_media_buy: [['media_buy_id', 'packages']],
+  update_media_buy: [['media_buy_id']],
+  get_media_buys: [['media_buys']],
+  get_media_buy_delivery: [['reporting_period', 'currency', 'media_buy_deliveries']],
+  provide_performance_feedback: [['success']],
+  sync_event_sources: [['event_sources']],
+  log_event: [['events_received', 'events_processed']],
+  sync_audiences: [['audiences']],
+  sync_catalogs: [['catalogs']],
+  sync_creatives: [['creatives']],
+  list_creatives: [['query_summary', 'pagination', 'creatives']],
+  build_creative: [['creative_manifest'], ['creative_manifests']],
+  preview_creative: [['response_type', 'previews']],
+  get_creative_delivery: [['currency', 'reporting_period', 'creatives']],
+  validate_input: [['results']],
+  get_signals: [['signals'], ['unchanged']],
+  activate_signal: [['deployments']],
+  create_property_list: [['list', 'auth_token']],
+  update_property_list: [['list']],
+  get_property_list: [['list']],
+  list_property_lists: [['lists']],
+  delete_property_list: [['deleted', 'list_id']],
+  create_collection_list: [['list', 'auth_token']],
+  update_collection_list: [['list']],
+  get_collection_list: [['list']],
+  list_collection_lists: [['lists']],
+  delete_collection_list: [['deleted', 'list_id']],
+  list_content_standards: [['standards']],
+  create_content_standards: [['standards_id']],
+  update_content_standards: [['success', 'standards_id']],
+  calibrate_content: [['verdict']],
+  validate_content_delivery: [['summary', 'results']],
+  get_media_buy_artifacts: [['media_buy_id', 'artifacts']],
+  get_creative_features: [['results']],
+  sync_plans: [['plans']],
+  check_governance: [['check_id', 'verdict', 'plan_id', 'explanation']],
+  report_plan_outcome: [['outcome_id', 'outcome_state']],
+  get_plan_audit_logs: [['plans']],
+  si_get_offering: [['available']],
+  si_initiate_session: [['session_id', 'session_status']],
+  si_send_message: [['session_id', 'session_status']],
+  si_terminate_session: [['session_id', 'terminated']],
+  comply_test_controller: [['success']],
+  validate_property_delivery: [['list_id', 'summary', 'results', 'validated_at']],
+  get_brand_identity: [['brand_id', 'house', 'names']],
+  verify_brand_claim: [['claim_type', 'verification_status']],
+  get_rights: [['rights']],
+  acquire_rights: [['rights_id', 'rights_status', 'brand_id']],
+  update_rights: [['rights_id']],
+  creative_approval: [['decision']],
+  verify_brand_claims: [['results']],
+  search_brands: [['brands']],
+};
+
+function hasOwnField(value: Record<string, unknown>, field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+/**
+ * Top-level `errors[]` can be either a terminal Error arm or non-fatal
+ * advisory diagnostics on a Success/Submitted arm. Envelope-only fields
+ * (`status`, `context`, `ext`, version fields) do not prove success, so this
+ * requires per-tool success-field evidence or the universal submitted envelope.
+ * Completed payloads still flow through normal tool-schema validation after
+ * this check.
+ */
+export function hasAdvisorySuccessPayload(response: unknown, toolName?: string): boolean {
+  if (response == null || typeof response !== 'object' || Array.isArray(response)) return false;
+  const obj = response as Record<string, unknown>;
+
+  if (obj.status === 'failed' || obj.status === 'rejected') return false;
+  if (obj.success === false) return false;
+
+  if (obj.status === 'submitted' && (typeof obj.task_id === 'string' || typeof obj.taskId === 'string')) {
+    return true;
+  }
+
+  if (!toolName) return false;
+
+  const successFieldGroups = SUCCESS_PAYLOAD_FIELD_GROUPS_BY_TOOL[toolName];
+  if (!successFieldGroups) return false;
+  return successFieldGroups.some(group => group.every(field => hasOwnField(obj, field)));
+}
+
+export function isTerminalAdcpError(response: unknown, toolName?: string): boolean {
+  const obj = response as Record<string, unknown> | null | undefined;
+  if (obj?.status === 'failed' || obj?.status === 'rejected') return true;
+  if (obj?.adcp_error && typeof (obj.adcp_error as { code?: unknown }).code === 'string') return true;
+  if (Array.isArray(obj?.errors) && obj.errors.length > 0) {
+    return !hasAdvisorySuccessPayload(obj, toolName);
+  }
+  return false;
+}
+
 /**
  * Extract raw AdCP response from protocol wrapper
  *
@@ -150,7 +253,7 @@ export function unwrapProtocolResponse(
   // Skip schema validation for error responses — they don't include
   // tool-specific fields like `products`. Handles both AdCP-standard
   // { errors: [...] } and legacy singular { error: "..." } patterns.
-  if (isAdcpError(unwrapped) || (unwrapped?.error && typeof unwrapped.error === 'string')) {
+  if (isTerminalAdcpError(unwrapped, toolName) || (unwrapped?.error && typeof unwrapped.error === 'string')) {
     return retag(unwrapped);
   }
 
@@ -586,6 +689,11 @@ function unwrapA2AResponse(response: any): AdCPResponse {
  * Check if a response is an AdCP error response.
  * Recognizes both `{ adcp_error: { code: string } }` (MCP structured errors)
  * and `{ errors: [{ code, message }] }` (legacy/A2A format).
+ *
+ * This helper is structural and intentionally does not know which tool
+ * produced the payload. For AdCP 3.1 success/submitted payloads that can
+ * carry advisory `errors[]`, prefer {@link isTerminalAdcpError} with a
+ * `toolName`.
  */
 export function isAdcpError(response: any): boolean {
   if (Array.isArray(response?.errors) && response.errors.length > 0) return true;
@@ -601,7 +709,7 @@ export function isAdcpError(response: any): boolean {
  */
 export function isAdcpSuccess(response: any, taskName: string): boolean {
   // First check if it's an error response
-  if (isAdcpError(response)) {
+  if (isTerminalAdcpError(response, taskName)) {
     return false;
   }
 

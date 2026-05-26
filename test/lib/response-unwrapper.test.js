@@ -3,7 +3,13 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 // Import the unwrapper utilities
-const { unwrapProtocolResponse, isAdcpError, isAdcpSuccess } = require('../../dist/lib/utils/index.js');
+const {
+  unwrapProtocolResponse,
+  isAdcpError,
+  isAdcpSuccess,
+  isTerminalAdcpError,
+  hasAdvisorySuccessPayload,
+} = require('../../dist/lib/utils/index.js');
 const { createTestProduct, createTestCreative, createTestFormat, createTestPackage } = require('./test-fixtures');
 
 describe('Response Unwrapper', () => {
@@ -25,6 +31,29 @@ describe('Response Unwrapper', () => {
       assert.ok(result.packages);
       assert.strictEqual(result.packages[0].package_id, 'pkg1');
       assert.strictEqual(result._message, 'Media buy created successfully');
+    });
+
+    test('should preserve get_products success payloads with advisory errors[]', () => {
+      const mcpResponse = {
+        structuredContent: {
+          status: 'completed',
+          cache_scope: 'public',
+          products: [createTestProduct({ product_id: 'canonical_formats_divergent_display' })],
+          errors: [
+            {
+              code: 'FORMAT_DECLARATION_DIVERGENT',
+              source: 'producer',
+              message: 'Dual-emitted canonical format metadata differs from the v1 projection',
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp');
+
+      assert.strictEqual(result.products[0].product_id, 'canonical_formats_divergent_display');
+      assert.strictEqual(result.errors[0].code, 'FORMAT_DECLARATION_DIVERGENT');
+      assert.strictEqual(isAdcpSuccess(result, 'get_products'), true);
     });
 
     test('should unwrap A2A result.artifacts response with validation', () => {
@@ -1151,6 +1180,66 @@ describe('Response Unwrapper', () => {
     test('should return false for adcp_error without code', () => {
       assert.strictEqual(isAdcpError({ adcp_error: {} }), false);
     });
+
+    test('isAdcpError remains structural; isTerminalAdcpError is task-aware for advisory errors[]', () => {
+      const advisorySuccess = {
+        status: 'completed',
+        cache_scope: 'public',
+        products: [createTestProduct({ product_id: 'prod-advisory' })],
+        errors: [{ code: 'FORMAT_DECLARATION_DIVERGENT', message: 'advisory' }],
+      };
+
+      assert.strictEqual(isAdcpError(advisorySuccess), true);
+      assert.strictEqual(hasAdvisorySuccessPayload(advisorySuccess, 'get_products'), true);
+      assert.strictEqual(isTerminalAdcpError(advisorySuccess, 'get_products'), false);
+    });
+
+    test('task-aware terminal detection accepts report_usage partial success errors[]', () => {
+      const partialSuccess = {
+        status: 'completed',
+        accepted: 2,
+        errors: [{ code: 'INVALID_USAGE_ROW', message: 'one row rejected' }],
+      };
+
+      assert.strictEqual(isAdcpError(partialSuccess), true);
+      assert.strictEqual(hasAdvisorySuccessPayload(partialSuccess, 'report_usage'), true);
+      assert.strictEqual(isTerminalAdcpError(partialSuccess, 'report_usage'), false);
+      assert.strictEqual(isAdcpSuccess(partialSuccess, 'report_usage'), true);
+    });
+
+    test('explicit terminal status wins over advisory success fields', () => {
+      const terminalPayload = {
+        status: 'failed',
+        accepted: 0,
+        errors: [{ code: 'INVALID_USAGE_ROW', message: 'all rows rejected' }],
+      };
+
+      assert.strictEqual(hasAdvisorySuccessPayload(terminalPayload, 'report_usage'), false);
+      assert.strictEqual(isTerminalAdcpError(terminalPayload, 'report_usage'), true);
+      assert.strictEqual(isAdcpSuccess(terminalPayload, 'report_usage'), false);
+    });
+
+    test('task-aware terminal detection rejects envelope-only errors[] as failures', () => {
+      const envelopeOnly = {
+        status: 'completed',
+        context: { correlation_id: 'corr-envelope-only' },
+        errors: [{ code: 'INVALID_REQUEST', message: 'no success payload' }],
+      };
+
+      assert.strictEqual(hasAdvisorySuccessPayload(envelopeOnly, 'get_products'), false);
+      assert.strictEqual(isTerminalAdcpError(envelopeOnly, 'get_products'), true);
+    });
+
+    test('submitted envelopes can carry advisory errors[] without becoming terminal failures', () => {
+      const submitted = {
+        status: 'submitted',
+        task_id: 'task-advisory',
+        errors: [{ code: 'GOVERNANCE_OBSERVATION', message: 'queued with advisory' }],
+      };
+
+      assert.strictEqual(hasAdvisorySuccessPayload(submitted, 'create_media_buy'), true);
+      assert.strictEqual(isTerminalAdcpError(submitted, 'create_media_buy'), false);
+    });
   });
 
   describe('isAdcpSuccess', () => {
@@ -1243,6 +1332,49 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].product_id, 'p1');
       // Should NOT have protocol envelope fields
       assert.strictEqual(result.content, undefined, 'Should not return raw MCP envelope');
+    });
+
+    test('executeTask returns completed success when get_products has advisory errors[]', async () => {
+      const { TaskExecutor } = require('../../dist/lib/core/TaskExecutor');
+      const { ProtocolClient } = require('../../dist/lib/protocols');
+      const executor = new TaskExecutor({ validation: { responses: 'strict' } });
+      const originalCallTool = ProtocolClient.callTool;
+
+      ProtocolClient.callTool = async () => ({
+        structuredContent: {
+          status: 'completed',
+          cache_scope: 'public',
+          products: [createTestProduct({ product_id: 'canonical_formats_divergent_display' })],
+          errors: [
+            {
+              code: 'FORMAT_DECLARATION_DIVERGENT',
+              source: 'producer',
+              message: 'Dual-emitted canonical format metadata differs from the v1 projection',
+            },
+          ],
+        },
+      });
+
+      try {
+        const result = await executor.executeTask(
+          {
+            id: 'agent-1',
+            name: 'Agent 1',
+            agent_uri: 'https://seller.example/mcp',
+            protocol: 'mcp',
+          },
+          'get_products',
+          {}
+        );
+
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(result.status, 'completed');
+        assert.strictEqual(result.data.products[0].product_id, 'canonical_formats_divergent_display');
+        assert.strictEqual(result.data.errors[0].code, 'FORMAT_DECLARATION_DIVERGENT');
+        assert.strictEqual(result.adcpError, undefined);
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
     });
 
     test('should return raw response when unwrapping fails completely', () => {
