@@ -23,6 +23,10 @@ export {
 } from './available-actions';
 
 export type {
+  DecomposedUpdateMediaBuy,
+  DecomposedUpdateMediaBuyMutation,
+  MediaBuyMutationDirection,
+  MediaBuyMutationScope,
   ModeMismatchRecovery,
   PreflightAllowed,
   PreflightDenial,
@@ -48,6 +52,7 @@ export {
   canUpdateFrequencyCaps,
   canUpdatePacing,
   canUpdateTargeting,
+  decomposeUpdateMediaBuy,
   getActionForMutation,
   preflightUpdateMediaBuy,
   recoveryForModeMismatch,
