@@ -232,6 +232,9 @@ export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
  */
 function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
+  const externalRoot = externalSchemaRoots.get(key);
+  if (externalRoot && existsSync(externalRoot)) return externalRoot;
+
   const distCandidate = path.join(__dirname, '..', 'schemas-data', key);
   if (existsSync(distCandidate)) return distCandidate;
 
@@ -312,6 +315,39 @@ interface LoaderState {
 }
 
 const states: Map<string, LoaderState> = new Map();
+const externalSchemaRoots: Map<string, string> = new Map();
+
+function hasSchemaRootShape(root: string): boolean {
+  if (!existsSync(root)) return false;
+  const bundledRoot = path.join(root, 'bundled');
+  if (existsSync(bundledRoot) && walkJsonFiles(bundledRoot).length > 0) return true;
+  return walkJsonFiles(root).length > 0;
+}
+
+/**
+ * Register a schema bundle supplied outside the installed SDK package.
+ *
+ * Compliance runners use this when `--compliance-dir` points at another
+ * package/check-out whose storyboards and schema bundle should be used
+ * together. The root must be the schema-data directory itself, e.g.
+ * `.../dist/lib/schemas-data/3.0`.
+ */
+export function registerExternalSchemaRoot(version: string, root: string): void {
+  const key = resolveBundleKey(version);
+  if (!hasSchemaRootShape(root)) {
+    throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
+  }
+  const previous = externalSchemaRoots.get(key);
+  externalSchemaRoots.set(key, root);
+  if (previous !== root) states.delete(key);
+}
+
+/** Test/helper hook for unregistering an external schema bundle. */
+export function unregisterExternalSchemaRoot(version: string): void {
+  const key = resolveBundleKey(version);
+  externalSchemaRoots.delete(key);
+  states.delete(key);
+}
 
 function walkJsonFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];

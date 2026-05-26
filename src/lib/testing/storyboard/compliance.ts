@@ -9,11 +9,12 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
+import { registerExternalSchemaRoot, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
@@ -210,7 +211,31 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
   if (!existsSync(indexPath)) {
     throw new Error(complianceMissingMessage('Compliance cache', dir));
   }
-  return JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
+  const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
+  registerExternalComplianceSchemaRoot(options.complianceDir, index.adcp_version);
+  return index;
+}
+
+function registerExternalComplianceSchemaRoot(complianceDir: string | undefined, adcpVersion: string): void {
+  if (!complianceDir) return;
+  const root = findExternalSchemaRoot(complianceDir, adcpVersion);
+  if (root) registerExternalSchemaRoot(adcpVersion, root);
+}
+
+function findExternalSchemaRoot(complianceDir: string, adcpVersion: string): string | undefined {
+  const key = resolveBundleKey(adcpVersion);
+  const packageRoot = dirname(dirname(dirname(resolve(complianceDir))));
+  const candidates = [
+    complianceDir,
+    join(packageRoot, 'dist', 'lib', 'schemas-data', key),
+    join(packageRoot, 'schemas', 'cache', adcpVersion),
+    join(packageRoot, 'schemas', 'cache', key),
+  ];
+  return candidates.find(hasSchemaRootShape);
+}
+
+function hasSchemaRootShape(root: string): boolean {
+  return existsSync(join(root, 'bundled')) || existsSync(join(root, 'core'));
 }
 
 /**

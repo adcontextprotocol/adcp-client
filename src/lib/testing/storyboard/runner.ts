@@ -3900,6 +3900,7 @@ async function executeStep(
 
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
+      ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(taskResult && { taskResult }),
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
@@ -4364,6 +4365,7 @@ async function executeProbeStep(
 
   const vctx: ValidationContext = {
     taskName: step.task,
+    ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
     httpResult,
     agentUrl: runState.agentUrl,
     contributions: runState.contributions,
