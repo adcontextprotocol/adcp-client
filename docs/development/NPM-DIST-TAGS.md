@@ -30,6 +30,8 @@ This is intentionally a publish-time tag, not a post-publish `npm dist-tag add`.
 npm trusted publishing via GitHub OIDC authenticates `npm publish`, so the
 compatibility tag works without a long-lived npm token. Post-publish dist-tag
 mutation is a separate registry operation and is not covered by OIDC.
+Emergency retags can still be repaired manually with `npm dist-tag add`, but
+normal releases should not need a registry token.
 
 Changesets pre-mode normally uses the pre-mode tag for both the npm dist-tag and
 the semver prerelease identifier. The release wrapper temporarily changes the
