@@ -34,6 +34,7 @@ import type {
 } from '../types/tools.generated';
 import { TOOL_RESPONSE_SCHEMAS } from './response-schemas';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from './envelope-status-compat';
+import { getLatestA2ADataPartFromResponse } from './a2a-artifacts';
 
 /**
  * Typed error thrown when the response unwrapper's Zod schema rejects an
@@ -497,18 +498,7 @@ function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
   if (r.kind !== 'task') return false;
   const status = r.status as { state?: unknown } | undefined;
   if (typeof status?.state !== 'string' || !TERMINAL_A2A_STATES.has(status.state)) return false;
-  if (!Array.isArray(r.artifacts) || r.artifacts.length === 0) return false;
-  for (const artifact of r.artifacts) {
-    if (!artifact || typeof artifact !== 'object') continue;
-    const parts = (artifact as { parts?: unknown }).parts;
-    if (!Array.isArray(parts)) continue;
-    for (const part of parts) {
-      if (!part || typeof part !== 'object') continue;
-      const p = part as { kind?: unknown; data?: unknown };
-      if (p.kind === 'data' && p.data && typeof p.data === 'object') return true;
-    }
-  }
-  return false;
+  return getLatestA2ADataPartFromResponse(response) !== undefined;
 }
 
 function unwrapA2AResponse(response: any): AdCPResponse {
@@ -554,29 +544,29 @@ function unwrapA2AResponse(response: any): AdCPResponse {
     throw new Error('A2A response must have at least one artifact');
   }
 
-  // Take last artifact (conversational protocols append artifacts over time)
-  // Note: A2A artifacts don't have a status field - only Tasks have status.
   const artifact = artifacts[artifacts.length - 1];
-  if (!artifact) {
+  if (!artifact || typeof artifact !== 'object' || Array.isArray(artifact)) {
     throw new Error('A2A response must have at least one artifact');
   }
 
-  if (!artifact.parts || !Array.isArray(artifact.parts)) {
+  if (!('parts' in artifact) || !Array.isArray((artifact as { parts?: unknown }).parts)) {
     throw new Error('A2A artifact missing parts array');
   }
 
-  // Extract DataPart (required) and TextParts (optional)
-  // Get last data part to be consistent with taking last artifact in conversational protocol
-  const dataParts = artifact.parts.filter((p: any) => p.kind === 'data');
-  const dataPart = dataParts[dataParts.length - 1];
-  if (!dataPart?.data) {
+  // Extract DataPart (required) and TextParts (optional). Use the shared
+  // latest structured DataPart helper so parser and validator agree.
+  const extracted = getLatestA2ADataPartFromResponse(response);
+  if (!extracted) {
     throw new Error('A2A response must have a DataPart with AdCP data');
   }
 
-  const textParts = artifact.parts.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text);
+  const parts = (artifact as { parts: unknown[] }).parts;
+  const textParts = parts
+    .filter((p: any) => p && typeof p === 'object' && p.kind === 'text' && p.text)
+    .map((p: any) => p.text);
 
   // Unwrap nested response field if present (some agents wrap AdCP responses)
-  let data = dataPart.data;
+  let data: any = extracted.data;
   if (data?.response && typeof data.response === 'object' && !Array.isArray(data.response)) {
     data = data.response;
   }
