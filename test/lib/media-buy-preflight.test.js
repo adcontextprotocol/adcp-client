@@ -146,10 +146,11 @@ describe('decomposeUpdateMediaBuy', () => {
       ],
     });
 
-    assert.deepStrictEqual(
-      plan.actions.map(a => a.action).sort(),
-      ['extend_flight', 'increase_budget', 'update_frequency_caps']
-    );
+    assert.deepStrictEqual(plan.actions.map(a => a.action).sort(), [
+      'extend_flight',
+      'increase_budget',
+      'update_frequency_caps',
+    ]);
     assert.deepStrictEqual(plan.touched_fields, [
       'end_time',
       'packages[].budget',
@@ -349,10 +350,7 @@ describe('preflightUpdateMediaBuy', () => {
     assert.strictEqual(result.ok, true);
     assert.strictEqual(result.actions.length, 2);
     assert.strictEqual(result.mutations.length, 2);
-    assert.deepStrictEqual(
-      result.mutations.map(m => m.path).sort(),
-      ['end_time', 'packages[0].budget']
-    );
+    assert.deepStrictEqual(result.mutations.map(m => m.path).sort(), ['end_time', 'packages[0].budget']);
     assert.deepStrictEqual(result.modes.sort(), ['requires_approval', 'self_serve']);
     assert.strictEqual(result.requiresAsyncFlow, true);
     assert.strictEqual(result.compat, undefined);

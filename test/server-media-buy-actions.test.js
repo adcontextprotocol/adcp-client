@@ -28,14 +28,8 @@ describe('assertUpdateMediaBuyAllowed', () => {
     );
 
     assert.strictEqual(result.ok, true);
-    assert.deepStrictEqual(
-      result.actions.map(a => a.action).sort(),
-      ['extend_flight', 'increase_budget']
-    );
-    assert.deepStrictEqual(
-      result.mutations.map(m => m.path).sort(),
-      ['end_time', 'packages[0].budget']
-    );
+    assert.deepStrictEqual(result.actions.map(a => a.action).sort(), ['extend_flight', 'increase_budget']);
+    assert.deepStrictEqual(result.mutations.map(m => m.path).sort(), ['end_time', 'packages[0].budget']);
   });
 
   test('throws ACTION_NOT_ALLOWED with details for unavailable actions', () => {
