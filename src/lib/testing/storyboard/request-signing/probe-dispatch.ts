@@ -1,4 +1,4 @@
-import type { HttpProbeResult, StoryboardRunOptions } from '../types';
+import type { HttpProbeResult, RunnerDetailedSkipReason, StoryboardRunOptions } from '../types';
 import { gradeOneVector } from './grader';
 import { parseRequestSigningStepId } from './synthesize';
 import { loadRequestSigningVectors } from './vector-loader';
@@ -33,14 +33,14 @@ export async function probeRequestSigningVector(
       const loaded = loadRequestSigningVectors();
       const vector = loaded.negative.find(v => v.id === parsed.vector_id);
       if (vector?.requires_contract === 'rate_abuse') {
-        return skipProbe(agentUrl, `${parsed.vector_id} skipped via request_signing.skipRateAbuse`);
+        return skipProbe(agentUrl, 'rate_abuse_opt_out');
       }
     } catch {
       // fall through — surfaces as a grader error below
     }
   }
   if (rsOpts.skipVectors?.includes(parsed.vector_id)) {
-    return skipProbe(agentUrl, `${parsed.vector_id} skipped via request_signing.skipVectors`);
+    return skipProbe(agentUrl, 'operator_skip');
   }
   try {
     const result = await gradeOneVector(parsed.vector_id, parsed.kind, agentUrl, {
@@ -53,7 +53,7 @@ export async function probeRequestSigningVector(
       ...(rsOpts.transport && { transport: rsOpts.transport }),
     });
     if (result.skipped) {
-      return skipProbe(agentUrl, result.skip_reason ?? 'grader_skipped');
+      return skipProbe(agentUrl, (result.skip_reason as RunnerDetailedSkipReason | undefined) ?? 'grader_skipped');
     }
     const headers: Record<string, string> = {};
     if (result.actual_error_code) {
@@ -77,6 +77,6 @@ export async function probeRequestSigningVector(
   }
 }
 
-function skipProbe(url: string, reason: string): HttpProbeResult {
+function skipProbe(url: string, reason: RunnerDetailedSkipReason): HttpProbeResult {
   return { url, status: 0, headers: {}, body: null, skipped: true, skip_reason: reason };
 }

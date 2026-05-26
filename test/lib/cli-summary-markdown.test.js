@@ -28,15 +28,35 @@ test('compliance summary: passing result with no failures field omits the table'
   const md = buildComplianceSummaryMarkdown(
     {
       overall_status: 'passing',
-      summary: { steps_passed: 8, steps_failed: 0, steps_skipped: 1 },
+      summary: { steps_passed: 8, steps_failed: 0, steps_skipped: 1, steps_not_selected: 2 },
     },
     'https://agent.example.com'
   );
 
   assert.match(md, /^# Storyboard run: https:\/\/agent\.example\.com$/m);
-  assert.match(md, /\*\*Overall:\*\* passing — 8 passed \/ 0 failed \/ 1 skipped/);
+  assert.match(md, /\*\*Overall:\*\* passing — 8 passed \/ 0 failed \/ 1 skipped \/ 2 not selected/);
   assert.doesNotMatch(md, /## Failures/);
   assert.doesNotMatch(md, /No per-step failure details/);
+});
+
+test('compliance summary: renders skip and not-selected reason counts', () => {
+  const md = buildComplianceSummaryMarkdown(
+    {
+      overall_status: 'passing',
+      summary: {
+        steps_passed: 8,
+        steps_failed: 0,
+        steps_skipped: 1,
+        steps_not_selected: 2,
+        skipped_by_reason: { missing_tool: 1 },
+        not_selected_by_reason: { explicit_scope_excluded: 2 },
+      },
+    },
+    'https://agent.example.com'
+  );
+
+  assert.match(md, /\*\*Not selected:\*\* explicit_scope_excluded=2/);
+  assert.match(md, /\*\*Skipped:\*\* missing_tool=1/);
 });
 
 test('compliance summary: failing result with undefined failures emits placeholder', () => {
