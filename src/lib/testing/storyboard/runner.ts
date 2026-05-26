@@ -3483,25 +3483,16 @@ async function executeStep(
   // `omit_account: true` the runner has already suppressed account synthesis
   // in `applyBrandInvariant` (above — ordering is load-bearing: this must
   // come after `applyBrandInvariant` so the comment "above" stays accurate
-  // if either block is reordered). Track the flag here so the raw-probe
-  // defense-in-depth path is also triggered and no SDK-layer normalization
-  // can silently re-inject an account before the wire call.
+  // if either block is reordered). Track the flag here so the SDK call below
+  // can also skip client-side account validation/injection before the wire call.
   const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';
 
-  // Defense-in-depth for the missing-field vectors: when a step sets
-  // `omit_idempotency_key: true` or `omit_account: true` and `step.auth` is
-  // unset, route via `rawMcpProbe` anyway so no SDK-layer normalization can
-  // slip the missing field onto the wire. The SDK's `skipIdempotencyAutoInject`
-  // / `skipAccountValidation` plumbing already honors these flags, but the
-  // raw-HTTP path removes the escape hatch entirely. A2A and oauth stay on
-  // the SDK path — their dispatch can't be replicated here (A2A uses a
-  // different envelope; oauth needs refresh semantics).
+  // Raw MCP dispatch is reserved for steps that explicitly override auth.
+  // Missing-field vectors stay on the SDK transport with the skip flags below
+  // so Streamable HTTP session setup completes before the malformed tool call
+  // reaches the seller handler.
   const rawProbeHeaders: Record<string, string> | undefined =
-    step.auth !== undefined
-      ? authHeadersForStep(step.auth, options)
-      : (testsMissingIdempotencyKey || testsMissingAccount) && options.protocol !== 'a2a'
-        ? defaultAuthHeadersForRawProbe(options)
-        : undefined;
+    step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
   const useRawProbe = rawProbeHeaders !== undefined;
 
   let taskResult: TaskResult | undefined;
@@ -4687,11 +4678,10 @@ function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): s
 }
 
 /**
- * Build headers for the raw MCP probe when a step needs raw dispatch without
- * an explicit `auth` override (defense-in-depth for `omit_idempotency_key`).
- * Returns `undefined` for `oauth` so the caller falls back to the SDK path —
- * refreshable-token semantics can't be replicated here and the SDK honors
- * `skipIdempotencyAutoInject` on that path anyway.
+ * Build SDK-equivalent default headers for raw MCP probe tests. Runtime raw
+ * probe dispatch is reserved for explicit per-step `auth` overrides; ordinary
+ * missing-field vectors stay on the SDK path so Streamable HTTP sessions are
+ * initialized before the malformed tool call.
  */
 function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<string, string> | undefined {
   // Reject control chars and non-printable ASCII. Without this, undici's header

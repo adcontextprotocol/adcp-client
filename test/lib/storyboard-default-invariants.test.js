@@ -703,28 +703,45 @@ describe('default-invariants: idempotency.conflict_no_payload_leak (widened allo
     assert.strictEqual(out[0].passed, true);
   });
 
-  test('passes on the exact shape adcpError() emits (code+message, recovery dropped)', () => {
-    // `adcpError()` consults ADCP_ERROR_FIELD_ALLOWLIST and drops
-    // `recovery` for IDEMPOTENCY_CONFLICT — the classifier is redundant
-    // with `code` and would widen the stolen-key-read surface. The SDK's
-    // own builder output must therefore pass the invariant with just
-    // `code + message` on the wire.
-    const out = spec.onStep({ state: {} }, step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict' }));
-    assert.strictEqual(out.length, 1);
-    assert.strictEqual(out[0].passed, true, out[0].error);
-  });
-
-  test('flags recovery when a non-SDK handler emits it (invariant stays strict)', () => {
-    // If a seller hand-rolls an envelope with `recovery` on conflict,
-    // the invariant catches it — option-1 posture from #826: the
-    // allowlist is the contract, the SDK's own builder respects it, and
-    // non-SDK emitters are held to the same bar.
+  test('passes on the exact shape adcpError() emits, including standard recovery metadata', () => {
     const out = spec.onStep(
       { state: {} },
       step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', recovery: 'correctable' })
     );
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0].passed, true, out[0].error);
+  });
+
+  test('passes recovery when a non-SDK handler emits standard metadata', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', recovery: 'correctable' })
+    );
+    assert.strictEqual(out[0].passed, true, out[0].error);
+  });
+
+  test('flags non-standard recovery metadata', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({ code: 'IDEMPOTENCY_CONFLICT', message: 'conflict', recovery: 'terminal' })
+    );
     assert.strictEqual(out[0].passed, false);
-    assert.match(out[0].error, /recovery/);
+    assert.match(out[0].error, /non-standard recovery metadata/);
+    assert.doesNotMatch(out[0].error, /terminal/);
+  });
+
+  test('flags payload-shaped recovery metadata without echoing the value', () => {
+    const out = spec.onStep(
+      { state: {} },
+      step({
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'conflict',
+        recovery: { prior_payload: { secret: 'tok-123' } },
+      })
+    );
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /non-standard recovery metadata/);
+    assert.doesNotMatch(out[0].error, /tok-123/);
   });
 
   test('flags retry_after as a cached-entry-age oracle', () => {

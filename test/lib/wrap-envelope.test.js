@@ -114,6 +114,7 @@ describe('wrapEnvelope: error envelopes', () => {
       context: { correlation_id: 'corr_1' },
     });
     assert.equal(out.adcp_error.code, 'IDEMPOTENCY_CONFLICT');
+    assert.equal(out.adcp_error.recovery, 'correctable');
     assert.deepEqual(out.context, { correlation_id: 'corr_1' });
   });
 
@@ -135,6 +136,7 @@ describe('wrapEnvelope: error envelopes', () => {
       operationId: 'op_xyz',
     });
     assert.ok(!('replayed' in out), 'replayed must be stripped');
+    assert.equal(out.adcp_error.recovery, 'correctable');
     assert.deepEqual(out.context, { correlation_id: 'corr_1' });
     assert.equal(out.operation_id, 'op_xyz');
   });
@@ -149,6 +151,19 @@ describe('wrapEnvelope: error envelopes', () => {
     };
     const out = wrapEnvelope(err, { operationId: 'op_abc' });
     assert.equal(out.operation_id, 'op_abc');
+    assert.equal(out.adcp_error.recovery, 'correctable');
+  });
+
+  it('normalizes payload-shaped conflict recovery metadata', () => {
+    const err = {
+      adcp_error: {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'key reused',
+        recovery: { prior_payload: { secret: 'tok-123' } },
+      },
+    };
+    const out = wrapEnvelope(err, {});
+    assert.equal(out.adcp_error.recovery, 'correctable');
   });
 
   it('unknown error code fails closed — only context echoes', () => {
@@ -255,7 +270,7 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     // response must NOT echo the prior request payload inside adcp_error.
     // Only spec-defined metadata keys are permitted.
     assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST instanceof Set);
-    for (const expected of ['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']) {
+    for (const expected of ['code', 'message', 'recovery', 'status', 'correlation_id', 'request_id', 'operation_id']) {
       assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has(expected), `missing ${expected}`);
     }
     // Common payload fields that would leak prior state must NOT be in the set.
@@ -264,13 +279,8 @@ describe('CONFLICT_ADCP_ERROR_ALLOWLIST: exported shape', () => {
     }
   });
 
-  it('excludes recovery — adcpError() drops it on IDEMPOTENCY_CONFLICT', () => {
-    // The `recovery` classifier is redundant with `code` (derivable from
-    // STANDARD_ERROR_CODES) and widens the surface the stolen-key-read
-    // invariant has to defend. `adcpError()` consults this allowlist
-    // per-code and strips `recovery` from the output on conflict, so the
-    // allowlist stays strict (keeping option 1 from #826).
-    assert.ok(!CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
+  it('allows recovery — standard metadata is not a payload leak', () => {
+    assert.ok(CONFLICT_ADCP_ERROR_ALLOWLIST.has('recovery'));
   });
 
   it('excludes retry_after — a computed value would leak cached-entry age', () => {
