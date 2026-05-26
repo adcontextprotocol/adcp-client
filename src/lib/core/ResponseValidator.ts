@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { getBestUnionErrors } from '../utils/union-errors';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
+import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
 export interface ValidationResult {
   valid: boolean;
@@ -174,31 +175,32 @@ export class ResponseValidator {
       return;
     }
 
-    // Validate first artifact structure
-    const firstArtifact = response.result.artifacts[0];
-    if (!firstArtifact.parts) {
+    // Validate latest artifact structure. A2A conversational tasks append
+    // artifacts over time, and the final artifact is authoritative.
+    const latestArtifact = response.result.artifacts[response.result.artifacts.length - 1];
+    if (!latestArtifact || typeof latestArtifact !== 'object') {
+      errors.push('A2A response must have at least one artifact');
+      return;
+    }
+
+    if (!latestArtifact.parts) {
       errors.push('A2A artifact missing parts field');
       return;
     }
 
-    if (!Array.isArray(firstArtifact.parts)) {
+    if (!Array.isArray(latestArtifact.parts)) {
       errors.push('A2A artifact.parts must be an array');
       return;
     }
 
-    if (firstArtifact.parts.length === 0) {
+    if (latestArtifact.parts.length === 0) {
       warnings.push('A2A artifact parts array is empty');
       return;
     }
 
-    // Validate first part
-    const firstPart = firstArtifact.parts[0];
-    if (!firstPart.kind && !firstPart.type) {
-      warnings.push('A2A part missing kind/type field');
-    }
-
-    if (!firstPart.data) {
-      warnings.push('A2A part missing data field');
+    const hasDataPart = getLatestA2ADataPartFromResponse(response) !== undefined;
+    if (!hasDataPart) {
+      warnings.push('A2A artifact missing DataPart with data field');
     }
   }
 
@@ -218,7 +220,7 @@ export class ResponseValidator {
     if (protocol === 'mcp') {
       data = response.structuredContent;
     } else if (protocol === 'a2a') {
-      data = response.result?.artifacts?.[0]?.parts?.[0]?.data;
+      data = getLatestA2ADataPartFromResponse(response)?.data;
     } else {
       data = response.data || response;
     }
@@ -249,8 +251,9 @@ export class ResponseValidator {
       }
     }
 
-    if (protocol === 'a2a' && response.result?.artifacts?.[0]?.parts?.[0]?.data) {
-      const data = response.result.artifacts[0].parts[0].data;
+    if (protocol === 'a2a') {
+      const data = getLatestA2ADataPartFromResponse(response)?.data;
+      if (!data) return;
       const keys = Object.keys(data);
       if (keys.length === 0) {
         warnings.push('A2A data is empty object');
@@ -302,7 +305,7 @@ export class ResponseValidator {
     if (protocol === 'mcp') {
       return response.structuredContent;
     } else if (protocol === 'a2a') {
-      return response.result?.artifacts?.[0]?.parts?.[0]?.data;
+      return getLatestA2ADataPartFromResponse(response)?.data;
     } else {
       return response.data || response;
     }

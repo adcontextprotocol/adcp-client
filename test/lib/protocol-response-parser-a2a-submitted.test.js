@@ -23,10 +23,10 @@
 // branch. `getTaskId` returned the A2A Task.id (which the seller's
 // AdCP `tasks/get` tool would not recognize).
 
-const { test, describe } = require('node:test');
+const { test, describe, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 
-const { ProtocolResponseParser, ADCP_STATUS } = require('../../dist/lib/index.js');
+const { ProtocolResponseParser, ADCP_STATUS, TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
 
 const parser = new ProtocolResponseParser();
 
@@ -52,6 +52,25 @@ function a2aWrappedSubmittedResponse({ adcpTaskId = 'tk_X', a2aTaskId = 'a2a-uui
             },
           ],
           metadata: { adcp_task_id: adcpTaskId },
+        },
+      ],
+    },
+  };
+}
+
+function a2aWrappedCompletedArtifactData(data) {
+  return {
+    jsonrpc: '2.0',
+    id: 1,
+    result: {
+      kind: 'task',
+      id: 'a2a-uuid',
+      contextId: 'ctx-uuid',
+      status: { state: 'completed', timestamp: '2026-05-26T00:00:00Z' },
+      artifacts: [
+        {
+          artifactId: 'art-uuid',
+          parts: [{ kind: 'data', data }],
         },
       ],
     },
@@ -120,6 +139,81 @@ describe('ProtocolResponseParser.getStatus — A2A submitted arm (#973)', () => 
   });
 });
 
+describe('ProtocolResponseParser.getStatus — A2A artifact domain status collision (#2009)', () => {
+  test('domain payload status="canceled" falls back to completed transport state', () => {
+    const response = a2aWrappedCompletedArtifactData({
+      media_buy_id: 'mb_canceled',
+      status: 'canceled',
+      affected_packages: [],
+      context: { correlation_id: 'corr-1' },
+    });
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+  });
+
+  for (const status of ['failed', 'rejected']) {
+    test(`domain payload status="${status}" falls back to completed transport state`, () => {
+      const response = a2aWrappedCompletedArtifactData({
+        creative_id: `cr_${status}`,
+        status,
+        review_feedback: 'Domain object status, not task lifecycle status',
+      });
+
+      assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+    });
+  }
+
+  test('envelope-only artifact status="canceled" remains a task cancellation', () => {
+    const response = a2aWrappedCompletedArtifactData({
+      status: 'canceled',
+      message: 'Task canceled by caller',
+      task_id: 'tk_canceled',
+    });
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.CANCELED);
+  });
+
+  test('exclusive task status wins even when other fields are present', () => {
+    const response = a2aWrappedCompletedArtifactData({
+      status: 'submitted',
+      media_buy_id: 'mb_async',
+      task_id: 'tk_submitted',
+    });
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
+  });
+
+  test('uses latest artifact status, not stale first artifact status', () => {
+    const response = a2aWrappedCompletedArtifactData({
+      status: 'submitted',
+      task_id: 'tk_stale',
+    });
+    response.result.artifacts.push({
+      artifactId: 'art-final',
+      parts: [
+        {
+          kind: 'data',
+          data: {
+            media_buy_id: 'mb_canceled',
+            status: 'canceled',
+            affected_packages: [],
+          },
+        },
+      ],
+    });
+
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+  });
+
+  test('ignores trailing text-only artifact when reading task status', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_submitted' });
+    response.result.artifacts.push({
+      artifactId: 'art-progress-text',
+      metadata: { adcp_task_id: 'tk_latest_text' },
+      parts: [{ kind: 'text', text: 'Submitted for async processing' }],
+    });
+
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
+  });
+});
+
 describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => {
   test('reads `artifact.metadata.adcp_task_id` for AdCP submitted arms (NOT A2A `result.id`)', () => {
     const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_seller', a2aTaskId: 'a2a-transport-id' });
@@ -144,6 +238,28 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
     assert.strictEqual(parser.getTaskId(response), 'a2a-uuid');
   });
 
+  test('reads adcp_task_id from the latest artifact metadata', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_stale' });
+    response.result.artifacts.push({
+      artifactId: 'art-final',
+      metadata: { adcp_task_id: 'tk_latest' },
+      parts: [{ kind: 'data', data: { status: 'submitted', task_id: 'tk_latest' } }],
+    });
+
+    assert.strictEqual(parser.getTaskId(response), 'tk_latest');
+  });
+
+  test('reads adcp_task_id from trailing text-only artifact metadata', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_stale' });
+    response.result.artifacts.push({
+      artifactId: 'art-progress-text',
+      metadata: { adcp_task_id: 'tk_latest_text' },
+      parts: [{ kind: 'text', text: 'Submitted for async processing' }],
+    });
+
+    assert.strictEqual(parser.getTaskId(response), 'tk_latest_text');
+  });
+
   test('rejects malformed `adcp_task_id` (control chars, overlong) and falls back', () => {
     const response = a2aWrappedSubmittedResponse();
     response.result.artifacts[0].metadata.adcp_task_id = 'tk\x00with-null';
@@ -160,5 +276,66 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
   test('flat AdCP envelope (no result wrapping) reads response.task_id directly', () => {
     const response = { task_id: 'flat-tk-2' };
     assert.strictEqual(parser.getTaskId(response), 'flat-tk-2');
+  });
+});
+
+describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)', () => {
+  const mockAgent = {
+    id: 'test-a2a-seller',
+    name: 'Test A2A Seller',
+    agent_uri: 'https://seller.test',
+    protocol: 'a2a',
+  };
+  let originalCallTool;
+
+  beforeEach(() => {
+    originalCallTool = ProtocolClient.callTool;
+  });
+
+  afterEach(() => {
+    if (originalCallTool) ProtocolClient.callTool = originalCallTool;
+  });
+
+  test('returns success when completed A2A task artifact has domain status="canceled"', async () => {
+    const payload = {
+      media_buy_id: 'mb_canceled',
+      status: 'canceled',
+      affected_packages: [],
+      context: { correlation_id: 'corr-1' },
+      _message: 'Completed update_media_buy',
+    };
+    ProtocolClient.callTool = mock.fn(async () => a2aWrappedCompletedArtifactData(payload));
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockAgent, 'update_media_buy', {
+      media_buy_id: 'mb_canceled',
+      canceled: true,
+      cancellation_reason: 'buyer_cancel',
+    });
+
+    assert.strictEqual(result.success, true, 'should succeed, not terminal-fail');
+    assert.strictEqual(result.status, 'completed');
+    assert.deepStrictEqual(result.data, { ...payload, media_buy_status: 'canceled' });
+    assert.notStrictEqual(result.error, 'Task canceled');
+  });
+
+  test('keeps submitted continuation when a text-only artifact follows the submitted DataPart', async () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_submitted' });
+    response.result.artifacts.push({
+      artifactId: 'art-progress-text',
+      metadata: { adcp_task_id: 'tk_latest_text' },
+      parts: [{ kind: 'text', text: 'Submitted for async processing' }],
+    });
+    ProtocolClient.callTool = mock.fn(async () => response);
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'submitted');
+    assert.strictEqual(result.submitted.taskId, 'tk_latest_text');
   });
 });

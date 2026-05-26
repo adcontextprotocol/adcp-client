@@ -146,6 +146,38 @@ describe('ResponseValidator Tests', () => {
       assert.strictEqual(result.errors.length, 0);
     });
 
+    it('should validate latest A2A artifact in conversational responses', () => {
+      const response = {
+        result: {
+          artifacts: [
+            {
+              artifactId: 'stale',
+              parts: [{ kind: 'text', text: 'old progress' }],
+            },
+            {
+              artifactId: 'final',
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    cache_scope: 'public',
+                    products: [createValidProduct({ product_id: 'latest' })],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = validator.validate(response, 'get_products', {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.errors.length, 0);
+    });
+
     it('should detect A2A JSON-RPC errors', () => {
       const response = {
         error: {
@@ -266,6 +298,7 @@ describe('ResponseValidator Tests', () => {
             {
               parts: [
                 {
+                  kind: 'data',
                   data: {
                     creatives: [{ creative_id: 'c1' }],
                   },
@@ -281,6 +314,42 @@ describe('ResponseValidator Tests', () => {
       });
 
       assert.strictEqual(result.valid, true);
+    });
+
+    it('should validate expected fields against latest A2A artifact', () => {
+      const response = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    creatives: [],
+                  },
+                },
+              ],
+            },
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [createValidProduct()],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = validator.validate(response, null, {
+        expectedFields: ['products'],
+      });
+
+      assert.strictEqual(result.valid, true);
+      assert.strictEqual(result.errors.length, 0);
     });
   });
 
