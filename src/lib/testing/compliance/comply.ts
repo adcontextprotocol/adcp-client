@@ -28,8 +28,18 @@ import {
   loadComplianceIndex,
 } from '../storyboard/compliance';
 import type { NotApplicableStoryboard, ResolveOptions } from '../storyboard/compliance';
-import type { RunnerNotice, Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
 import type {
+  RunnerSelectionReason,
+  RunnerSkipReason,
+  Storyboard,
+  StoryboardPassResult,
+  StoryboardResult,
+  StoryboardRunOptions,
+  StoryboardStepResult,
+  RunnerNotice,
+} from '../storyboard/types';
+import type {
+  ComplianceNotSelectedRecord,
   ComplianceTrack,
   ComplianceFailure,
   TrackResult,
@@ -751,6 +761,7 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
             skipped: true,
             skip_reason: 'not_applicable',
             skip: { reason: 'not_applicable', detail: na.reason },
+            ...(na.selection_result && { selection_result: na.selection_result }),
             duration_ms: 0,
             validations: [],
             context: {},
@@ -1063,7 +1074,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Resolve storyboards: explicit IDs override capability-driven selection.
     let initialStoryboards: Storyboard[];
     let notApplicable: NotApplicableStoryboard[] = [];
-    let missingToolStoryboards: NotApplicableStoryboard[] = [];
+    const missingToolStoryboards: NotApplicableStoryboard[] = [];
     if (explicitStoryboards?.length) {
       initialStoryboards = resolveExplicitStoryboards(explicitStoryboards, resolveOptions);
     } else {
@@ -1544,9 +1555,11 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
   // locally against the same artifacts.
   const stepsPassed = storyboardResults.reduce((s, r) => s + r.passed_count, 0);
   const stepsFailed = storyboardResults.reduce((s, r) => s + r.failed_count, 0);
-  const stepsSkipped = storyboardResults.reduce((s, r) => s + r.skipped_count, 0);
+  const stepDisposition = summarizeStepDisposition(storyboardResults);
+  const stepsSkipped = stepDisposition.stepsSkipped;
+  const stepsNotSelected = stepDisposition.notSelected.length;
   const validationsNotApplicable = storyboardResults.reduce((s, r) => s + (r.validations_not_applicable ?? 0), 0);
-  const totalSteps = stepsPassed + stepsFailed + stepsSkipped;
+  const totalSteps = stepsPassed + stepsFailed + stepsSkipped + stepsNotSelected;
   const schemasUsed: Array<{ schema_id: string; schema_url: string }> = [];
   const seenSchemas = new Set<string>();
   for (const r of storyboardResults) {
@@ -1568,9 +1581,90 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
     steps_passed: stepsPassed,
     steps_failed: stepsFailed,
     steps_skipped: stepsSkipped,
+    steps_not_selected: stepsNotSelected,
+    not_selected: stepDisposition.notSelected,
+    not_selected_by_reason: stepDisposition.notSelectedByReason,
+    skipped_by_reason: stepDisposition.skippedByReason,
     ...(validationsNotApplicable > 0 ? { validations_not_applicable: validationsNotApplicable } : {}),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
   };
+}
+
+function summarizeStepDisposition(storyboardResults: StoryboardResult[]): {
+  stepsSkipped: number;
+  skippedByReason: Partial<Record<RunnerSkipReason | string, number>>;
+  notSelected: ComplianceNotSelectedRecord[];
+  notSelectedByReason: Partial<Record<RunnerSelectionReason, number>>;
+} {
+  let stepsSkipped = 0;
+  const skippedByReason: Partial<Record<RunnerSkipReason | string, number>> = {};
+  const notSelected: ComplianceNotSelectedRecord[] = [];
+  const notSelectedByReason: Partial<Record<RunnerSelectionReason, number>> = {};
+
+  for (const result of storyboardResults) {
+    for (const step of iterateResultSteps(result)) {
+      if (!step.skipped) continue;
+
+      const selection = step.selection_result ?? selectionForDetailedSkip(step.skip_reason);
+      if (selection) {
+        notSelected.push({
+          reason: selection.reason,
+          detail: selection.detail,
+          storyboard_id: step.storyboard_id ?? result.storyboard_id,
+          phase_id: step.phase_id,
+          step_id: step.step_id,
+        });
+        notSelectedByReason[selection.reason] = (notSelectedByReason[selection.reason] ?? 0) + 1;
+        continue;
+      }
+
+      stepsSkipped++;
+      const reason = step.skip?.reason ?? step.skip_reason ?? 'unknown';
+      skippedByReason[reason] = (skippedByReason[reason] ?? 0) + 1;
+    }
+  }
+
+  return { stepsSkipped, skippedByReason, notSelected, notSelectedByReason };
+}
+
+function* iterateResultSteps(result: StoryboardResult): Iterable<StoryboardStepResult> {
+  const passLikeResults: Array<Pick<StoryboardPassResult, 'phases'>> =
+    result.passes && result.passes.length > 0 ? result.passes : [{ phases: result.phases }];
+  for (const pass of passLikeResults) {
+    for (const phase of pass.phases ?? []) {
+      for (const step of phase.steps ?? []) {
+        yield step;
+      }
+    }
+  }
+}
+
+function selectionForDetailedSkip(
+  reason: StoryboardStepResult['skip_reason'] | undefined
+): { reason: RunnerSelectionReason; detail: string } | undefined {
+  switch (reason) {
+    case 'live_side_effect_opt_in_required':
+      return {
+        reason: 'run_mode_excluded',
+        detail: 'Step requires live side effects and this run did not opt into live execution.',
+      };
+    case 'not_in_only_vectors':
+    case 'mcp_mode_flattens_url_edges':
+    case 'capability_profile_mismatch':
+    case 'transport_ungradable':
+      return {
+        reason: 'profile_excluded',
+        detail: 'Step is outside the selected verification profile for this run.',
+      };
+    case 'operator_skip':
+    case 'rate_abuse_opt_out':
+      return {
+        reason: 'explicit_scope_excluded',
+        detail: 'Step was excluded by an explicit operator selection option.',
+      };
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -1605,6 +1699,23 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   // Summary line
   output += `${result.summary.headline}\n\n`;
+  if (
+    result.summary.steps_passed !== undefined ||
+    result.summary.steps_failed !== undefined ||
+    result.summary.steps_skipped !== undefined ||
+    result.summary.steps_not_selected !== undefined
+  ) {
+    output +=
+      `Steps: ${result.summary.steps_passed ?? 0} passed, ` +
+      `${result.summary.steps_failed ?? 0} failed, ` +
+      `${result.summary.steps_skipped ?? 0} skipped, ` +
+      `${result.summary.steps_not_selected ?? 0} not selected\n\n`;
+    const notSelectedReasons = formatReasonCounts(result.summary.not_selected_by_reason);
+    if (notSelectedReasons) output += `Not selected: ${notSelectedReasons}\n`;
+    const skippedReasons = formatReasonCounts(result.summary.skipped_by_reason);
+    if (skippedReasons) output += `Skipped: ${skippedReasons}\n`;
+    if (notSelectedReasons || skippedReasons) output += '\n';
+  }
 
   // Track results
   output += `Capability Tracks\n`;
@@ -1722,6 +1833,18 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   output += '\n';
   return output;
+}
+
+function formatReasonCounts(counts: Partial<Record<string, number>> | undefined): string | undefined {
+  if (!counts) return undefined;
+  const entries = Object.entries(counts).filter(
+    (entry): entry is [string, number] => typeof entry[1] === 'number' && entry[1] > 0
+  );
+  if (entries.length === 0) return undefined;
+  return entries
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(', ');
 }
 
 /**

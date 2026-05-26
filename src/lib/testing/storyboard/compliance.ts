@@ -15,7 +15,7 @@ import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
-import type { Storyboard } from './types';
+import type { RunnerSelectionResult, Storyboard } from './types';
 
 /**
  * Discriminator for configuration faults `resolveStoryboardsForCapabilities`
@@ -139,6 +139,8 @@ export interface NotApplicableStoryboard {
   /** Track this storyboard would have contributed to, if known. */
   track?: string;
   reason: string;
+  /** Selection reason when the storyboard was excluded before execution. */
+  selection_result?: RunnerSelectionResult;
 }
 
 export interface ResolveOptions {
@@ -522,6 +524,7 @@ export function resolveStoryboardsForCapabilities(
           storyboard_title: sb.title,
           track: sb.track,
           reason: gate,
+          selection_result: { reason: 'version_excluded', detail: gate },
         });
         continue;
       }

@@ -255,6 +255,12 @@ export interface TestStepResult {
   /** Canonical skip reason when `skipped` is true; maps to `RunnerSkipReason`. */
   skip_reason?: string;
   /**
+   * Selection reason when a skipped-looking step was intentionally outside
+   * the caller's requested run. Summary artifacts use this to keep
+   * not-selected steps out of actionable skip-cause rollups.
+   */
+  selection_reason?: string;
+  /**
    * Names the unmet runtime requirement when `skip_reason` is
    * `'requirement_unmet'` (per adcp-client#1626). Carries the same value
    * the storyboard authored in `Storyboard.requires`. Lets skip-cause

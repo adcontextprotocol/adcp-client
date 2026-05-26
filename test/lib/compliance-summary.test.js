@@ -15,6 +15,7 @@ const {
   formatComplianceSummaryText,
   formatComplianceSummaryMarkdown,
 } = require('../../dist/lib/testing/compliance/index.js');
+const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
 
 function passingResult() {
   return {
@@ -88,6 +89,9 @@ describe('buildComplianceSummary', () => {
     assert.deepStrictEqual(s.failures, []);
     assert.strictEqual(s.overall_status, 'passing');
     assert.strictEqual(s.passed, 5);
+    assert.strictEqual(s.not_selected_count, 0);
+    assert.deepStrictEqual(s.not_selected_by_reason, {});
+    assert.deepStrictEqual(s.skipped_by_reason, {});
   });
 
   test('failing run flattens failures into the contract shape', () => {
@@ -107,9 +111,9 @@ describe('buildComplianceSummary', () => {
     assert.strictEqual(s.failures[1].reason_kind, 'validation');
   });
 
-  test('schema_version is stable at 1', () => {
+  test('schema_version is stable at 2', () => {
     const s = buildComplianceSummary(passingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
-    assert.strictEqual(s.schema_version, 1);
+    assert.strictEqual(s.schema_version, 2);
   });
 
   test('includes agent_url + sdk_version + adcp_version for paste-friendliness', () => {
@@ -154,6 +158,38 @@ describe('formatComplianceSummaryText', () => {
     assert.match(text, /STORYBOARD-PARTIAL/);
     assert.doesNotMatch(text, /STORYBOARD-FAIL/);
     assert.doesNotMatch(text, /STORYBOARD-OK/);
+  });
+
+  test('renders skipped and not selected as separate step terms', () => {
+    const result = passingResult();
+    result.summary = {
+      ...result.summary,
+      steps_skipped: 2,
+      steps_not_selected: 3,
+      skipped_by_reason: { missing_tool: 2 },
+      not_selected_by_reason: { run_mode_excluded: 3 },
+      not_selected: [
+        {
+          reason: 'run_mode_excluded',
+          detail: 'live-only probe excluded from sandbox run',
+          storyboard_id: 'signed_requests',
+          phase_id: 'negative',
+          step_id: 'negative-016-replayed-nonce',
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.skipped, 2);
+    assert.strictEqual(s.not_selected_count, 3);
+    assert.deepStrictEqual(s.skipped_by_reason, { missing_tool: 2 });
+    assert.deepStrictEqual(s.not_selected_by_reason, { run_mode_excluded: 3 });
+    assert.strictEqual(s.not_selected.length, 1);
+
+    const text = formatComplianceSummaryText(s);
+    assert.match(text, /2 skipped, 3 not selected/);
+    assert.match(text, /Not selected: run_mode_excluded=3/);
+    assert.match(text, /Skipped:\s+missing_tool=2/);
+    assert.match(text, /selected steps passed/);
   });
 
   test('always names the agent and sdk version', () => {
@@ -561,6 +597,122 @@ describe('buildComplianceSummary — skip causes', () => {
     assert.ok(csf, 'controller_seeding_failed should be present (maps canonical prerequisite_failed)');
   });
 
+  test('excludes not-selected steps from actionable skip causes', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      summary: {
+        ...base.summary,
+        steps_skipped: 0,
+        steps_not_selected: 1,
+        not_selected_by_reason: { run_mode_excluded: 1 },
+        not_selected: [
+          {
+            reason: 'run_mode_excluded',
+            detail: 'Step requires live side effects and this run did not opt into live execution.',
+            storyboard_id: 'signed_requests',
+            phase_id: 'negative',
+            step_id: 'negative-020-rate-abuse',
+          },
+        ],
+      },
+      tracks: [
+        {
+          track: 'core',
+          status: 'skip',
+          label: 'Core Protocol',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'signed_requests/negative',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'rate-abuse',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'live_side_effect_opt_in_required',
+                  selection_reason: 'run_mode_excluded',
+                  duration_ms: 0,
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.not_selected_count, 1);
+    assert.strictEqual(s.skip_causes, undefined);
+  });
+
+  test('storyboard track mapping preserves selection_reason for not-selected skips', () => {
+    const base = passingResult();
+    const storyboardResult = {
+      storyboard_id: 'signed_requests',
+      storyboard_title: 'Signed requests',
+      agent_url: 'https://agent.example/mcp',
+      overall_passed: true,
+      phases: [
+        {
+          phase_id: 'negative',
+          phase_title: 'Negative',
+          passed: true,
+          duration_ms: 0,
+          steps: [
+            {
+              step_id: 'negative-020-rate-abuse',
+              phase_id: 'negative',
+              title: 'Rate abuse',
+              task: 'request_signing_probe',
+              passed: true,
+              skipped: true,
+              skip_reason: 'live_side_effect_opt_in_required',
+              skip: {
+                reason: 'unsatisfied_contract',
+                detail: 'Step requires live side effects and this run did not opt into live execution.',
+              },
+              selection_result: {
+                reason: 'run_mode_excluded',
+                detail: 'Step requires live side effects and this run did not opt into live execution.',
+              },
+              duration_ms: 0,
+              validations: [],
+              context: {},
+              extraction: { path: 'none' },
+            },
+          ],
+        },
+      ],
+      context: {},
+      total_duration_ms: 0,
+      passed_count: 0,
+      failed_count: 0,
+      skipped_count: 1,
+      tested_at: base.tested_at,
+    };
+    const track = mapStoryboardResultsToTrackResult('core', [storyboardResult], { name: 'Agent', tools: [] });
+    assert.strictEqual(track.scenarios[0].steps[0].selection_reason, 'run_mode_excluded');
+
+    const result = {
+      ...base,
+      summary: {
+        ...base.summary,
+        steps_not_selected: 1,
+        not_selected_by_reason: { run_mode_excluded: 1 },
+      },
+      tracks: [track],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.skip_causes, undefined);
+  });
+
   test('caps affected list at SKIP_CAUSE_AFFECTED_LIMIT in the JSON artifact', () => {
     const base = passingResult();
     const steps = Array.from({ length: 10 }, (_, i) => ({
@@ -679,7 +831,7 @@ describe('formatComplianceSummaryMarkdown — skip causes', () => {
 });
 
 describe('buildCrashSummary', () => {
-  test('produces a schema_version-1 artifact when comply() throws', () => {
+  test('produces a schema_version-2 artifact when comply() throws', () => {
     const summary = buildCrashSummary({
       sdkVersion: '6.9.0',
       adcpVersion: '3.0.6',
@@ -688,9 +840,10 @@ describe('buildCrashSummary', () => {
       startedAt: '2026-01-01T00:00:00Z',
       durationMs: 42,
     });
-    assert.strictEqual(summary.schema_version, 1);
+    assert.strictEqual(summary.schema_version, 2);
     assert.strictEqual(summary.overall_status, 'unreachable');
     assert.strictEqual(summary.failed, 1);
+    assert.strictEqual(summary.not_selected_count, 0);
     assert.strictEqual(summary.failures.length, 1);
     assert.strictEqual(summary.failures[0].storyboard_id, 'pre-flight');
     assert.strictEqual(summary.failures[0].reason_kind, 'error');

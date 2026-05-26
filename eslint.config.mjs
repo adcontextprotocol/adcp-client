@@ -11,7 +11,7 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   // Global ignores
   {
-    ignores: ['dist/', 'node_modules/', '**/*.js', '!eslint.config.js'],
+    ignores: ['dist/', 'node_modules/', '**/*.js', '!eslint.config.js', '**/*.test.ts'],
   },
 
   // Base TypeScript rules (all .ts files)
