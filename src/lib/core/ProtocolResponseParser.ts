@@ -4,6 +4,7 @@
  */
 
 import type { InputRequest } from './ConversationTypes';
+import { getLatestA2ADataPartFromTask } from '../utils/a2a-artifacts';
 
 /**
  * ADCP standardized status values as per spec PR #78
@@ -33,7 +34,8 @@ export type ADCPStatus = (typeof ADCP_STATUS)[keyof typeof ADCP_STATUS];
  * `errors` / `context` / `ext` fields that AdCP task-response schemas place at
  * envelope level. Used to disambiguate `structuredContent.status` from AdCP v3
  * domain status enums (MediaBuyStatus, CreativeStatus, etc.) that share
- * literals like `completed` / `canceled` / `failed` / `rejected` — see #646.
+ * literals like `completed` / `canceled` / `failed` / `rejected` — see #646
+ * and #2009.
  */
 const TASK_ENVELOPE_FIELDS: ReadonlySet<string> = new Set([
   'status',
@@ -52,7 +54,8 @@ const TASK_ENVELOPE_FIELDS: ReadonlySet<string> = new Set([
 
 /**
  * ADCP task-lifecycle statuses that never overlap with AdCP domain status
- * enums and can be trusted from `structuredContent.status` unconditionally.
+ * enums and can be trusted from `structuredContent.status` or A2A DataPart
+ * `status` unconditionally.
  * The other literals (`completed` / `canceled` / `failed` / `rejected`) share
  * values with `MediaBuyStatus` et al and require envelope-shape disambiguation.
  */
@@ -89,11 +92,18 @@ function isSafeSessionId(v: unknown): v is string {
 
 /**
  * Extract the AdCP work-layer status from an A2A wrapped Task result,
- * if present. The AdCP `submitted` / `working` / `completed` lifecycle
- * lives on `artifact.parts[0].data.status` (per adcp-client#899's
- * two-lifecycle contract); the transport-layer `result.status.state`
- * tracks the HTTP-call lifecycle and is `'completed'` for AdCP
- * submitted arms.
+ * if present. Exclusive AdCP task statuses (`submitted` / `working` /
+ * `input-required` / `auth-required`) live on the latest structured DataPart
+ * `status` (per adcp-client#899's two-lifecycle contract); the transport-layer
+ * `result.status.state` tracks the HTTP-call lifecycle and is `'completed'`
+ * for AdCP submitted arms.
+ *
+ * Shared literals (`completed` / `canceled` / `failed` / `rejected`) are
+ * ambiguous in A2A artifact data because domain payloads also have a
+ * `status` field. A completed `update_media_buy` task can return
+ * `{ media_buy_id, status: "canceled" }`; that means the media buy was
+ * canceled, not the A2A task. Use the same envelope-shape guard as MCP
+ * structuredContent. See issue #2009.
  *
  * Returns `undefined` for non-AdCP A2A responses (no artifact, no
  * DataPart, or `data.status` not in the AdCP enum) so callers can
@@ -102,18 +112,18 @@ function isSafeSessionId(v: unknown): v is string {
 function extractAdcpStatusFromA2aTaskResult(result: any): ADCPStatus | undefined {
   if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
   if (result.kind !== 'task') return undefined;
-  const artifacts = result.artifacts;
-  if (!Array.isArray(artifacts) || artifacts.length === 0) return undefined;
-  const artifact = artifacts[0];
-  if (artifact == null || typeof artifact !== 'object') return undefined;
-  const parts = artifact.parts;
-  if (!Array.isArray(parts) || parts.length === 0) return undefined;
-  const firstPart = parts[0];
-  if (firstPart == null || typeof firstPart !== 'object' || firstPart.kind !== 'data') return undefined;
-  const data = firstPart.data;
-  if (data == null || typeof data !== 'object' || Array.isArray(data)) return undefined;
-  const status = (data as Record<string, unknown>).status;
+  const extracted = getLatestA2ADataPartFromTask(result);
+  if (!extracted) return undefined;
+  const data = extracted.data;
+  const status = data.status;
   if (typeof status === 'string' && (Object.values(ADCP_STATUS) as string[]).includes(status)) {
+    if (EXCLUSIVE_TASK_STATUSES.has(status)) {
+      return status as ADCPStatus;
+    }
+    const hasDomainPayload = Object.keys(data).some(k => !TASK_ENVELOPE_FIELDS.has(k));
+    if (hasDomainPayload) {
+      return undefined;
+    }
     return status as ADCPStatus;
   }
   return undefined;
@@ -121,21 +131,25 @@ function extractAdcpStatusFromA2aTaskResult(result: any): ADCPStatus | undefined
 
 /**
  * Extract the AdCP task handle from an A2A wrapped Task result. The
- * handle lives on `artifact.metadata.adcp_task_id` (per
- * adcp-client#899). Returns `undefined` for non-AdCP A2A responses or
- * when the metadata extension wasn't emitted, so callers fall back
- * to the transport-layer `result.id`.
+ * handle lives on artifact `metadata.adcp_task_id` (per adcp-client#899).
+ * Walk artifacts backward so trailing text-only artifacts with metadata still
+ * win, while responses with metadata only on the latest DataPart-bearing
+ * artifact continue to work.
  */
 function extractAdcpTaskIdFromA2aTaskResult(result: any): string | undefined {
   if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
   if (result.kind !== 'task') return undefined;
   const artifacts = result.artifacts;
-  if (!Array.isArray(artifacts) || artifacts.length === 0) return undefined;
-  const artifact = artifacts[0];
-  if (artifact == null || typeof artifact !== 'object') return undefined;
-  const metadata = artifact.metadata;
-  if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
-  return firstSafeSessionId((metadata as Record<string, unknown>).adcp_task_id);
+  if (!Array.isArray(artifacts)) return undefined;
+  for (let i = artifacts.length - 1; i >= 0; i -= 1) {
+    const artifact = artifacts[i];
+    if (artifact == null || typeof artifact !== 'object' || Array.isArray(artifact)) continue;
+    const metadata = (artifact as { metadata?: unknown }).metadata;
+    if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) continue;
+    const taskId = firstSafeSessionId((metadata as Record<string, unknown>).adcp_task_id);
+    if (taskId) return taskId;
+  }
+  return undefined;
 }
 
 /** Return the first argument that passes {@link isSafeSessionId}, else `undefined`. */

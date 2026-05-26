@@ -19,6 +19,7 @@ import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
+import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -408,18 +409,7 @@ function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
   if (r.kind !== 'task') return false;
   const status = r.status as { state?: unknown } | undefined;
   if (typeof status?.state !== 'string' || !TERMINAL_A2A_STATES.has(status.state)) return false;
-  if (!Array.isArray(r.artifacts) || r.artifacts.length === 0) return false;
-  for (const artifact of r.artifacts) {
-    if (!artifact || typeof artifact !== 'object') continue;
-    const parts = (artifact as { parts?: unknown }).parts;
-    if (!Array.isArray(parts)) continue;
-    for (const part of parts) {
-      if (!part || typeof part !== 'object') continue;
-      const p = part as { kind?: unknown; data?: unknown };
-      if (p.kind === 'data' && p.data && typeof p.data === 'object') return true;
-    }
-  }
-  return false;
+  return getLatestA2ADataPartFromResponse(response) !== undefined;
 }
 
 /**

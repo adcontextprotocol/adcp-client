@@ -103,6 +103,62 @@ describe('pollTaskCompletion terminal state handling', () => {
     assert.strictEqual(result.data.media_buy_status, 'pending_creatives');
   });
 
+  test('tasks/get A2A envelope uses latest artifact result, not stale first artifact', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      result: {
+        kind: 'task',
+        id: 'a2a-task-id',
+        status: { state: 'completed' },
+        artifacts: [
+          {
+            artifactId: 'stale',
+            parts: [
+              {
+                kind: 'data',
+                data: {
+                  task_id: 'task-latest-artifact',
+                  task_type: 'create_media_buy',
+                  status: 'completed',
+                  result: {
+                    media_buy_id: 'mb_stale',
+                    status: 'pending_creatives',
+                    packages: [],
+                  },
+                },
+              },
+            ],
+          },
+          {
+            artifactId: 'final',
+            parts: [
+              {
+                kind: 'data',
+                data: {
+                  task_id: 'task-latest-artifact',
+                  task_type: 'create_media_buy',
+                  status: 'completed',
+                  result: {
+                    media_buy_id: 'mb_latest',
+                    status: 'active',
+                    packages: [],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    }));
+
+    const executor = new TaskExecutor();
+    const result = await executor.pollTaskCompletion(mockAgent, 'task-latest-artifact', 10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.data.media_buy_id, 'mb_latest');
+    assert.strictEqual(result.data.status, 'active');
+  });
+
   test('does not add synthetic status to completed task result with media_buy_status only', async () => {
     ProtocolClient.callTool = mock.fn(async () => ({
       task: {
