@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { getBestUnionErrors } from '../utils/union-errors';
-import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
@@ -28,6 +28,8 @@ export interface ValidationOptions {
   allowEmpty?: boolean;
   /** Validate against AdCP Zod schemas */
   validateSchema?: boolean;
+  /** Server-declared AdCP version for response-shape compatibility. */
+  responseAdcpVersion?: string;
 }
 
 export class ResponseValidator {
@@ -71,7 +73,7 @@ export class ResponseValidator {
     // Schema validation if enabled
     let schemaErrors: z.ZodIssue[] | undefined;
     if (options.validateSchema !== false && toolName) {
-      const schemaResult = this.validateWithSchema(response, toolName, protocol);
+      const schemaResult = this.validateWithSchema(response, toolName, protocol, options.responseAdcpVersion);
       if (schemaResult) {
         schemaErrors = schemaResult.issues;
 
@@ -314,7 +316,12 @@ export class ResponseValidator {
   /**
    * Validate response data against AdCP Zod schema
    */
-  private validateWithSchema(response: any, toolName: string, protocol: string): z.ZodError | null {
+  private validateWithSchema(
+    response: any,
+    toolName: string,
+    protocol: string,
+    responseAdcpVersion?: string
+  ): z.ZodError | null {
     const data = this.extractDataForValidation(response, protocol);
 
     if (!data) {
@@ -335,7 +342,7 @@ export class ResponseValidator {
         : data;
 
     // Validate
-    const result = schema.safeParse(validatePayload);
+    const result = schema.safeParse(prepareResponseForSchemaValidation(toolName, validatePayload, responseAdcpVersion));
     return result.success ? null : result.error;
   }
 

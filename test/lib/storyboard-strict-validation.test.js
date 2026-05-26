@@ -24,6 +24,10 @@ function ctx(taskName, data, responseSchemaRef) {
   };
 }
 
+function ctxWith(taskName, data, responseSchemaRef, extra) {
+  return { ...ctx(taskName, data, responseSchemaRef), ...extra };
+}
+
 describe('storyboard validations: strict/lenient response_schema delta', () => {
   test('clean response: strict.valid=true, passed=true, no issues emitted', () => {
     // Minimal valid list_creative_formats response — `formats` is the only
@@ -58,6 +62,28 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
       assert.ok(issue.keyword, 'every AJV issue carries a keyword');
       assert.ok(typeof issue.message === 'string', 'every AJV issue has a message');
     }
+  });
+
+  test('server-declared 3.0 get_products response may omit 3.1 cache_scope without echoing version', () => {
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctxWith('get_products', { products: [] }, 'media-buy/get-products-response.json', {
+        responseAdcpVersion: '3.0',
+      })
+    );
+    const v = results[0];
+    assert.strictEqual(v.passed, true, v.error);
+    if (v.strict) assert.strictEqual(v.strict.valid, true, 'strict validation must not apply 3.1 cache_scope');
+  });
+
+  test('current 3.1 get_products response still requires cache_scope', () => {
+    const results = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctx('get_products', { products: [] }, 'media-buy/get-products-response.json')
+    );
+    const v = results[0];
+    assert.strictEqual(v.passed, false);
+    assert.match(v.error, /cache_scope/);
   });
 
   test('strictness-delta scenario: Zod accepts a bad URI, AJV rejects format: uri', () => {

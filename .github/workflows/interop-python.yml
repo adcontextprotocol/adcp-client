@@ -289,3 +289,94 @@ jobs:
           path: |
             storyboard-result-typescript.json
             storyboard-seller-typescript.log
+
+  typescript-strict-adcp-3-0-reference-seller:
+    name: TypeScript strict AdCP 3.0 reference seller
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    needs: pack-sdk-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-typescript-strict-3-0.json
+      SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-typescript-strict-3-0.log
+      # v5.22.0 is the final tagged TypeScript SDK release line pinned to
+      # AdCP 3.0.x before the 3.1 beta envelope shipped. The harness runs it
+      # behind a strict proxy that rejects the 3.1-only adcp_version marker.
+      STRICT_ADCP_3_0_REF: 88bacfdcc0fca4066462d5b621ffc2d7f7a5d348
+
+    steps:
+      - name: Checkout candidate @adcp/sdk
+        uses: actions/checkout@v5
+        with:
+          path: candidate-sdk
+          persist-credentials: false
+
+      - name: Checkout pinned strict AdCP 3.0 TypeScript reference seller
+        uses: actions/checkout@v5
+        with:
+          repository: adcontextprotocol/adcp-client
+          ref: ${{ env.STRICT_ADCP_3_0_REF }}
+          path: reference-typescript-strict-3-0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Download SDK runner tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: adcp-sdk-runner-tarball
+          path: ${{ runner.temp }}/adcp-sdk-pack
+
+      - name: Resolve SDK runner tarball
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find "$RUNNER_TEMP/adcp-sdk-pack" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ "${#tarballs[@]}" -ne 1 ]]; then
+            echo "::error::Expected one SDK runner tarball, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+          echo "Using SDK runner tarball ${tarballs[0]}"
+
+      - name: Run strict AdCP 3.0 reference seller storyboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x candidate-sdk/scripts/ci/run_storyboard_strict_3_0_reference_seller.sh
+          ADCP_SDK_TARBALL="${{ steps.pack.outputs.tarball }}" \
+            ADCP_REFERENCE_REPO_ROOT="${{ github.workspace }}/reference-typescript-strict-3-0" \
+            ADCP_PORT=3003 \
+            ADCP_INTERNAL_PORT=3004 \
+            STORYBOARD_RESULT_PATH="$STORYBOARD_RESULT_PATH" \
+            SELLER_LOG_PATH="$SELLER_LOG_PATH" \
+            candidate-sdk/scripts/ci/run_storyboard_strict_3_0_reference_seller.sh
+
+      - name: Add interop summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Strict AdCP 3.0 reference seller interop"
+            echo ""
+            echo "- Repository: \`adcontextprotocol/adcp-client\`"
+            echo "- Ref: \`${STRICT_ADCP_3_0_REF}\`"
+            echo "- Protocol pin: AdCP 3.0.x"
+            echo "- Harness: \`scripts/ci/run_storyboard_strict_3_0_reference_seller.sh\`"
+            echo "- Advisory: \`false\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload storyboard artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-strict-adcp-3-0-reference-seller-storyboard
+          if-no-files-found: ignore
+          path: |
+            storyboard-result-typescript-strict-3-0.json
+            storyboard-seller-typescript-strict-3-0.log

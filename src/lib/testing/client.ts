@@ -16,7 +16,7 @@ import type {
   BrandReference,
 } from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
-import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { injectLegacyEnvelopeStatus } from '../utils/envelope-status-compat';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
@@ -401,6 +401,7 @@ export async function discoverAgentProfile(
         profile.adcp_version = parsed.version;
         profile.adcp_major_versions = parsed.majorVersions;
         if (parsed.supportedVersions !== undefined) profile.adcp_supported_versions = parsed.supportedVersions;
+        if (parsed.buildVersion !== undefined) profile.adcp_build_version = parsed.buildVersion;
         profile.supported_protocols = parsed.protocols;
         profile.supports_governance = parsed.protocols.includes('governance');
         profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
@@ -724,7 +725,7 @@ export async function discoverSignals(
  *  - constraint keyword (`minimum`, `maximum`, `enum`, `format`, …) — the
  *    field is present but violates a JSON Schema keyword constraint.
  */
-export function validateResponseSchema(toolName: string, data: unknown): TestStepResult {
+export function validateResponseSchema(toolName: string, data: unknown, responseAdcpVersion?: string): TestStepResult {
   const schema = TOOL_RESPONSE_SCHEMAS[toolName];
   if (!schema) {
     return {
@@ -743,7 +744,7 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     data && typeof data === 'object' && !Array.isArray(data)
       ? injectLegacyEnvelopeStatus(data as Record<string, unknown>, { toolName })
       : data;
-  const result = schema.safeParse(compatData);
+  const result = schema.safeParse(prepareResponseForSchemaValidation(toolName, compatData, responseAdcpVersion));
   if (result.success) {
     return {
       step: `Schema validation: ${toolName}`,
