@@ -87,17 +87,14 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
  * by falling back to the recovery classification" — so dropping
  * `recovery` on a vendor / non-standard code makes the response
  * genuinely lossy for any buyer agent that doesn't have the code in
- * its local vocabulary. `IDEMPOTENCY_CONFLICT` is safe because it is
- * a standard code whose `recovery` (`correctable`) is fixed in the
- * enum schema and derivable client-side.
+ * its local vocabulary.
  *
  * `IDEMPOTENCY_CONFLICT` is narrow on purpose: a conflict response MUST
  * NOT echo the prior request payload or cached response (stolen-key
- * read oracle defence). `recovery` is deliberately excluded — the
- * classifier is redundant with `code` (same information, derivable from
- * the standard error-code table), and adding it widens the surface the
- * invariant has to defend for future fields. `retry_after` is excluded
- * too: no framework path currently emits it on conflict, and a seller
+ * read oracle defence). Standard recovery metadata is allowed because it
+ * is normalized to the fixed classifier, not trusted as caller-provided
+ * prior request or cached response data.
+ * `retry_after` is excluded: no framework path currently emits it on conflict, and a seller
  * that computed `retry_after = cached_entry_age` would leak the prior
  * payload's creation time (a distinguisher between "key never seen" vs
  * "key seen N seconds ago"). Retry hints belong on transient codes
@@ -105,7 +102,15 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
  * `adcpError()` and the dispatcher sanitizer both enforce this.
  */
 export const ADCP_ERROR_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
-  IDEMPOTENCY_CONFLICT: new Set(['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']),
+  IDEMPOTENCY_CONFLICT: new Set([
+    'code',
+    'message',
+    'recovery',
+    'status',
+    'correlation_id',
+    'request_id',
+    'operation_id',
+  ]),
   // `IDEMPOTENCY_IN_FLIGHT` (AdCP 3.1) carries `recovery: transient` plus a
   // store-derived `retry_after` so transient-aware buyer SDKs can replay
   // shortly. Allowlist registration is defense-in-depth — `adcpError()` at

@@ -20,8 +20,8 @@ export interface AdcpErrorOptions {
    * Override the recovery classification. Defaults to
    * `STANDARD_ERROR_CODES[code].recovery` for known codes, `'terminal'`
    * otherwise. Dropped from the wire shape for codes whose entry in
-   * `ADCP_ERROR_FIELD_ALLOWLIST` excludes it (`IDEMPOTENCY_CONFLICT`
-   * excludes `recovery` — the classifier is derivable from the code).
+   * `ADCP_ERROR_FIELD_ALLOWLIST` excludes it; normalized back to the
+   * standard table value for allowlisted standard-code envelopes.
    */
   recovery?: ErrorRecovery;
   /**
@@ -69,9 +69,8 @@ export interface AdcpErrorPayload {
    * Closed-enum classifier. Populated by `adcpError()` from
    * `STANDARD_ERROR_CODES[code].recovery` unless the caller provides an
    * override. Marked optional because per-code inside-`adcp_error`
-   * allowlists (e.g. `IDEMPOTENCY_CONFLICT`) deliberately drop it from the
-   * wire shape — consumers reading a payload parsed off the wire MUST
-   * tolerate `undefined`.
+   * allowlists may deliberately drop it from the wire shape — consumers
+   * reading a payload parsed off the wire MUST tolerate `undefined`.
    */
   recovery?: ErrorRecovery;
   field?: string;
@@ -109,9 +108,10 @@ export interface AdcpErrorResponse {
  * {@link ADCP_ERROR_FIELD_ALLOWLIST} is dropped — sellers get the builder's
  * ergonomics for every code AND the strict wire shape for codes that have
  * a registered allowlist. `IDEMPOTENCY_CONFLICT` is the canonical case:
- * `recovery`, `field`, `suggestion`, and `details` all silently drop so
- * the envelope can't become a stolen-key read oracle. Codes without a
- * registered allowlist pass through unchanged.
+ * payload-shaped diagnostics like `field`, `suggestion`, and `details`
+ * silently drop while standard `recovery` metadata is preserved as the
+ * canonical standard-table value. Codes without a registered allowlist
+ * pass through unchanged.
  *
  * **Two-layer wire shape.** This builder emits the envelope layer
  * (`structuredContent.adcp_error`) only. For tools whose response
@@ -140,9 +140,7 @@ export interface AdcpErrorResponse {
  * ```
  */
 export function adcpError(code: StandardErrorCode | (string & {}), options: AdcpErrorOptions): AdcpErrorResponse {
-  const recovery: ErrorRecovery =
-    options.recovery ??
-    (isStandardErrorCode(code) ? STANDARD_ERROR_CODES[code as StandardErrorCode].recovery : 'terminal');
+  const recovery = normalizeRecoveryForCode(code, options.recovery);
 
   const adcp_error: AdcpErrorPayload = {
     code,
@@ -155,7 +153,7 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     ...(options.details != null && { details: options.details }),
   };
 
-  const filtered = applyAdcpErrorAllowlist(code, adcp_error);
+  const filtered = applyAdcpErrorAllowlist(code, adcp_error as unknown as Record<string, unknown>);
 
   return {
     content: [{ type: 'text', text: JSON.stringify({ adcp_error: filtered }) }],
@@ -166,6 +164,9 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
 
 /**
  * Drop every field not in {@link ADCP_ERROR_FIELD_ALLOWLIST} for `code`.
+ * When an allowlisted standard code carries `recovery`, normalize it to
+ * the fixed classifier from `STANDARD_ERROR_CODES` instead of trusting a
+ * caller-supplied value.
  * Codes without an entry pass through unchanged — the allowlist is
  * opt-in per code, not a global filter. The returned object is re-typed
  * as `AdcpErrorPayload` on the assumption that `code` and `message`
@@ -173,12 +174,28 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
  * invariant is re-asserted at runtime by the module-load check in
  * `envelope-allowlist.ts`.
  */
-function applyAdcpErrorAllowlist(code: string, payload: AdcpErrorPayload): AdcpErrorPayload {
+export function applyAdcpErrorAllowlist(code: string, payload: Record<string, unknown>): AdcpErrorPayload {
   const allowlist = ADCP_ERROR_FIELD_ALLOWLIST[code];
-  if (!allowlist) return payload;
+  if (!allowlist) return payload as unknown as AdcpErrorPayload;
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(payload)) {
-    if (allowlist.has(key)) out[key] = value;
+    if (!allowlist.has(key)) continue;
+    out[key] = key === 'recovery' ? normalizeAllowlistedRecoveryForCode(code, value) : value;
   }
   return out as unknown as AdcpErrorPayload;
+}
+
+function isErrorRecovery(value: unknown): value is ErrorRecovery {
+  return value === 'transient' || value === 'correctable' || value === 'terminal';
+}
+
+function normalizeRecoveryForCode(code: string, value: unknown): ErrorRecovery {
+  return isErrorRecovery(value) ? value : isStandardErrorCode(code) ? STANDARD_ERROR_CODES[code].recovery : 'terminal';
+}
+
+function normalizeAllowlistedRecoveryForCode(code: string, value: unknown): ErrorRecovery {
+  if (isStandardErrorCode(code)) {
+    return STANDARD_ERROR_CODES[code].recovery;
+  }
+  return normalizeRecoveryForCode(code, value);
 }

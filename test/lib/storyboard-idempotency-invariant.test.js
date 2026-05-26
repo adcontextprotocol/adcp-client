@@ -314,91 +314,71 @@ describe('runStoryboard: idempotency_key invariant on the wire', () => {
     }
   });
 
-  // Defense-in-depth (issue #678): an agent that authenticates with a bearer
-  // token (no per-step auth override) MUST still see a missing-key request
-  // when the storyboard declares omit_idempotency_key: true. Before this fix,
-  // the SDK's request normalizer/adapter had three injection sites — any one
-  // failing to honor skipIdempotencyAutoInject would silently populate a key
-  // and the compliance vector would pass vacuously. The runner now routes
-  // the call via the raw MCP probe so no SDK layer can touch the body.
-  it('bypasses the SDK via raw probe when omit_idempotency_key=true on a bearer-authenticated mutating step (defense-in-depth for SDK injection)', async () => {
+  // A bearer-authenticated agent with no per-step auth override MUST still
+  // see a missing-key request when the storyboard declares
+  // omit_idempotency_key: true. The runner keeps this on the SDK transport so
+  // strict Streamable HTTP servers get the initialize/session handshake before
+  // the intentionally malformed tools/call request.
+  it('uses the SDK transport when omit_idempotency_key=true on a bearer-authenticated mutating step', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({
-        name: rpc.params.name,
-        args: rpc.params.arguments,
-        authorization: req.headers['authorization'],
-        sessionId: req.headers['x-test-session-id'],
-      });
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          error: { code: -32000, message: 'INVALID_REQUEST: idempotency_key is required' },
-        })
-      );
-    });
-    await new Promise(r => server.listen(0, r));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
-    try {
-      const storyboard = {
-        id: 'missing_key_bearer_sb',
-        version: '1.0.0',
-        title: 'Missing key (bearer auth, no step auth override)',
-        category: 'compliance',
-        summary: '',
-        narrative: '',
-        agent: { interaction_model: '*', capabilities: [] },
-        caller: { role: 'buyer_agent' },
-        phases: [
-          {
-            id: 'p',
-            title: 'error',
-            steps: [
-              {
-                id: 's1_bearer_missing_key',
-                title: 'bearer-authenticated missing-key vector must reach the server without a key',
-                task: 'create_property_list',
-                expect_error: true,
-                omit_idempotency_key: true,
-                sample_request: { name: 'pl-bearer', entries: [] },
-                validations: [],
-              },
-            ],
-          },
-        ],
-      };
-      await runStoryboard(agentUrl, storyboard, {
-        protocol: 'mcp',
-        allow_http: true,
-        auth: { type: 'bearer', token: 'tok-678' },
-        test_session_id: 'sess-678',
-        agentTools: ['create_property_list'],
-        _profile: { name: 'Test', tools: ['create_property_list'] },
-        _client: {
-          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_property_list' }] }),
+    const storyboard = {
+      id: 'missing_key_bearer_sb',
+      version: '1.0.0',
+      title: 'Missing key (bearer auth, no step auth override)',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'error',
+          steps: [
+            {
+              id: 's1_bearer_missing_key',
+              title: 'bearer-authenticated missing-key vector must reach the server without a key',
+              task: 'create_property_list',
+              expect_error: true,
+              omit_idempotency_key: true,
+              sample_request: { name: 'pl-bearer', entries: [] },
+              validations: [],
+            },
+          ],
         },
-      });
+      ],
+    };
+    await runStoryboard('http://127.0.0.1:1/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      auth: { type: 'bearer', token: 'tok-678' },
+      test_session_id: 'sess-678',
+      agentTools: ['create_property_list'],
+      _profile: { name: 'Test', tools: ['create_property_list'] },
+      _client: {
+        getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_property_list' }] }),
+        createPropertyList: async (args, _inputHandler, options) => {
+          seen.push({ args, options });
+          return {
+            success: false,
+            error: 'INVALID_REQUEST: idempotency_key is required',
+            adcpError: { code: 'INVALID_REQUEST', message: 'idempotency_key is required' },
+          };
+        },
+      },
+    });
 
-      assert.strictEqual(seen.length, 1, `expected 1 tool call, got ${seen.length}`);
-      assert.strictEqual(
-        seen[0].args.idempotency_key,
-        undefined,
-        'SDK-layer normalization must not inject idempotency_key when omit_idempotency_key=true'
-      );
-      assert.strictEqual(
-        seen[0].authorization,
-        'Bearer tok-678',
-        'raw probe must forward the bearer token so the agent can still authenticate'
-      );
-      assert.strictEqual(seen[0].sessionId, 'sess-678', 'raw probe must forward X-Test-Session-ID for test isolation');
-    } finally {
-      server.close();
-    }
+    assert.strictEqual(seen.length, 1, `expected 1 SDK tool call, got ${seen.length}`);
+    assert.strictEqual(
+      seen[0].args.idempotency_key,
+      undefined,
+      'SDK-layer normalization must not inject idempotency_key when omit_idempotency_key=true'
+    );
+    assert.strictEqual(
+      seen[0].options.skipIdempotencyAutoInject,
+      true,
+      'runner must signal the SDK transport to leave idempotency_key absent'
+    );
   });
 });
 
@@ -407,10 +387,9 @@ describe('runStoryboard: idempotency_key invariant on the wire', () => {
 // ────────────────────────────────────────────────────────────
 
 /**
- * The helper the dispatcher consults to decide whether the defense-in-depth
- * raw-probe path is available (non-undefined return) and what headers to send
- * when it is. Direct unit coverage keeps the gates explicit without requiring
- * a full MCP handshake to run through the SDK.
+ * The helper mirrors SDK default auth/session headers for raw-probe tests.
+ * Runtime missing-field vectors now use the SDK path; direct unit coverage
+ * keeps the non-echoing header validation behavior pinned.
  */
 describe('defaultAuthHeadersForRawProbe', () => {
   test('no auth → empty headers (public agent; raw dispatch still valid)', () => {

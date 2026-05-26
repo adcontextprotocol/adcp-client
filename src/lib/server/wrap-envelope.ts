@@ -23,6 +23,7 @@
  */
 
 import { DEFAULT_ERROR_ENVELOPE_FIELDS, ERROR_ENVELOPE_FIELD_ALLOWLIST } from './envelope-allowlist';
+import { applyAdcpErrorAllowlist } from './errors';
 
 /**
  * Options accepted by {@link wrapEnvelope}.
@@ -123,7 +124,7 @@ function isEchoableContext(value: unknown): boolean {
  *       // Conflict is NOT a replay — replayed is dropped by the allowlist,
  *       // but context still echoes for correlation tracing.
  *       return wrapEnvelope(
- *         { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: err.message, recovery: 'terminal' } },
+ *         { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: err.message, recovery: 'correctable' } },
  *         { context: request.context }
  *       );
  *     }
@@ -153,7 +154,7 @@ function isEchoableContext(value: unknown): boolean {
  * @example Conflict error — `replayed` is dropped, `context` is echoed
  * ```ts
  * const response = wrapEnvelope(
- *   { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: '...', recovery: 'terminal' } },
+ *   { adcp_error: { code: 'IDEMPOTENCY_CONFLICT', message: '...', recovery: 'correctable' } },
  *   { replayed: true, context: { correlation_id: 'abc' }, operationId: 'op_123' }
  * );
  * // `replayed: true` is intentionally dropped — IDEMPOTENCY_CONFLICT's
@@ -184,6 +185,11 @@ export function wrapEnvelope<T extends object>(
   };
 
   const errorCode = detectErrorCode(inner, opts.errorCode);
+  const adcpError = clone.adcp_error;
+  if (errorCode != null && adcpError != null && typeof adcpError === 'object' && !Array.isArray(adcpError)) {
+    clone.adcp_error = applyAdcpErrorAllowlist(errorCode, adcpError as Record<string, unknown>);
+  }
+
   // Error responses: registered codes use their explicit allowlist;
   // unregistered codes fail closed to DEFAULT_ERROR_ENVELOPE_FIELDS
   // (context only). Success responses (no error code) allow all fields.

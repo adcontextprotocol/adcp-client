@@ -1357,7 +1357,7 @@ describe('createAdcpServer', () => {
               adcp_error: {
                 code: 'IDEMPOTENCY_CONFLICT',
                 message: 'key reused',
-                recovery: 'correctable',
+                recovery: { prior_payload: { secret: 'tok-123' } },
                 retry_after: 30,
                 details: { prior_budget: 5000, prior_account: 'acct_123' },
               },
@@ -1368,7 +1368,7 @@ describe('createAdcpServer', () => {
           adcp_error: {
             code: 'IDEMPOTENCY_CONFLICT',
             message: 'key reused',
-            recovery: 'correctable',
+            recovery: { prior_payload: { secret: 'tok-123' } },
             retry_after: 30,
             details: { prior_budget: 5000, prior_account: 'acct_123' },
           },
@@ -1389,11 +1389,12 @@ describe('createAdcpServer', () => {
       const sanitized = result.structuredContent.adcp_error;
       assert.strictEqual(sanitized.code, 'IDEMPOTENCY_CONFLICT');
       assert.strictEqual(sanitized.message, 'key reused');
-      assert.ok(!('recovery' in sanitized));
+      assert.strictEqual(sanitized.recovery, 'correctable');
       assert.ok(!('retry_after' in sanitized));
       assert.ok(!('details' in sanitized));
       // L2 text payload stays in lockstep.
       const text = JSON.parse(result.content[0].text).adcp_error;
+      assert.strictEqual(text.recovery, 'correctable');
       assert.ok(!('details' in text));
       assert.ok(!('retry_after' in text));
     });

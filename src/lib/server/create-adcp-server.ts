@@ -56,7 +56,7 @@ import {
 } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
-import { adcpError } from './errors';
+import { adcpError, applyAdcpErrorAllowlist } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
 import { AdcpError } from './decisioning/async-outcome';
@@ -2425,16 +2425,16 @@ function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
   const allow = ADCP_ERROR_FIELD_ALLOWLIST[code];
   if (!allow) return;
 
-  const filtered: Record<string, unknown> = {};
-  let droppedAny = false;
-  for (const [k, v] of Object.entries(err)) {
-    if (allow.has(k)) {
-      filtered[k] = v;
-    } else {
-      droppedAny = true;
+  const filtered = applyAdcpErrorAllowlist(code, err);
+  const filteredRecord = filtered as unknown as Record<string, unknown>;
+  let changed = false;
+  for (const key of new Set([...Object.keys(err), ...Object.keys(filtered)])) {
+    if (err[key] !== filteredRecord[key]) {
+      changed = true;
+      break;
     }
   }
-  if (!droppedAny) return;
+  if (!changed) return;
 
   sc.adcp_error = filtered;
   if (Array.isArray(response.content)) {

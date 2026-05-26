@@ -42,6 +42,7 @@
 
 import { ADCP_VERSION } from '../../version';
 import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
+import { STANDARD_ERROR_CODES } from '../../types/error-codes';
 import {
   CREATIVE_ASSET_TRANSITIONS as CREATIVE_ASSET_TRANSITIONS_TYPED,
   MEDIA_BUY_TRANSITIONS as MEDIA_BUY_TRANSITIONS_TYPED,
@@ -72,6 +73,19 @@ registerOnce('idempotency.conflict_no_payload_leak', {
     const leaked: string[] = [];
     for (const key of Object.keys(err.details)) {
       if (!CONFLICT_ADCP_ERROR_ALLOWLIST.has(key)) leaked.push(key);
+    }
+    const expectedRecovery = STANDARD_ERROR_CODES.IDEMPOTENCY_CONFLICT.recovery;
+    if ('recovery' in err.details && err.details.recovery !== expectedRecovery) {
+      return [
+        {
+          passed: false,
+          description,
+          step_id: stepResult.step_id,
+          error:
+            `IDEMPOTENCY_CONFLICT error envelope carried non-standard recovery metadata: ` +
+            `expected ${JSON.stringify(expectedRecovery)}.`,
+        },
+      ];
     }
     if (leaked.length === 0) {
       return [{ passed: true, description, step_id: stepResult.step_id }];

@@ -213,81 +213,69 @@ describe('runStoryboard: omit_account wire-level behavior', () => {
     }
   });
 
-  it('bypasses the SDK via raw probe when omit_account=true (defense-in-depth for SDK account injection)', async () => {
+  it('uses the SDK transport when omit_account=true without a per-step auth override', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({
-        name: rpc.params.name,
-        args: rpc.params.arguments,
-        authorization: req.headers['authorization'],
-      });
-      res.writeHead(400, { 'content-type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          error: { code: -32000, message: 'INVALID_REQUEST: account is required' },
-        })
-      );
-    });
-    await new Promise(r => server.listen(0, r));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
-    try {
-      const storyboard = {
-        id: 'raw_probe_account_sb',
-        version: '1.0.0',
-        title: 'Raw probe: missing account (bearer auth)',
-        category: 'compliance',
-        summary: '',
-        narrative: '',
-        agent: { interaction_model: '*', capabilities: [] },
-        caller: { role: 'buyer_agent' },
-        phases: [
-          {
-            id: 'p',
-            title: 'error',
-            steps: [
-              {
-                id: 's1_bearer_missing_account',
-                title: 'bearer-authenticated missing-account vector must reach the server',
-                task: 'create_media_buy',
-                expect_error: true,
-                omit_account: true,
-                sample_request: {
-                  brand: { name: 'Acme', domain: 'acme.com' },
-                  packages: [],
-                },
-                validations: [],
+    const storyboard = {
+      id: 'sdk_account_sb',
+      version: '1.0.0',
+      title: 'SDK path: missing account (bearer auth)',
+      category: 'compliance',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'error',
+          steps: [
+            {
+              id: 's1_bearer_missing_account',
+              title: 'bearer-authenticated missing-account vector must reach the server',
+              task: 'create_media_buy',
+              expect_error: true,
+              omit_account: true,
+              sample_request: {
+                brand: { name: 'Acme', domain: 'acme.com' },
+                packages: [],
               },
-            ],
-          },
-        ],
-      };
-      await runStoryboard(agentUrl, storyboard, {
-        protocol: 'mcp',
-        allow_http: true,
-        auth: { type: 'bearer', token: 'tok-1696' },
-        brand: { name: 'Acme', domain: 'acme.com' },
-        agentTools: ['create_media_buy'],
-        _profile: { name: 'Test', tools: ['create_media_buy'] },
-        _client: {
-          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+              validations: [],
+            },
+          ],
         },
-      });
+      ],
+    };
+    await runStoryboard('http://127.0.0.1:1/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      auth: { type: 'bearer', token: 'tok-1696' },
+      brand: { name: 'Acme', domain: 'acme.com' },
+      agentTools: ['create_media_buy'],
+      _profile: { name: 'Test', tools: ['create_media_buy'] },
+      _client: {
+        getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+        createMediaBuy: async (args, _inputHandler, options) => {
+          seen.push({ args, options });
+          return {
+            success: false,
+            error: 'INVALID_REQUEST: account is required',
+            adcpError: { code: 'INVALID_REQUEST', message: 'account is required' },
+          };
+        },
+      },
+    });
 
-      assert.strictEqual(seen.length, 1, `expected 1 tool call, got ${seen.length}`);
-      assert.strictEqual(
-        seen[0].args.account,
-        undefined,
-        'SDK-layer normalization must not inject account when omit_account=true'
-      );
-      assert.strictEqual(seen[0].authorization, 'Bearer tok-1696', 'raw probe must forward the bearer token');
-    } finally {
-      server.close();
-    }
+    assert.strictEqual(seen.length, 1, `expected 1 SDK tool call, got ${seen.length}`);
+    assert.strictEqual(
+      seen[0].args.account,
+      undefined,
+      'SDK-layer normalization must not inject account when omit_account=true'
+    );
+    assert.strictEqual(
+      seen[0].options.skipAccountValidation,
+      true,
+      'runner must signal the SDK transport to leave account absent'
+    );
   });
 });
 

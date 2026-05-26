@@ -3,10 +3,10 @@
  *
  * The builder consults the per-code inside-`adcp_error` allowlist and
  * drops any field not listed for the given code. `IDEMPOTENCY_CONFLICT`
- * is the canonical strict case — `recovery`, `field`, `suggestion`, and
- * `details` all silently drop so the envelope can't become a stolen-key
- * read oracle. Codes without a registered allowlist pass through
- * unchanged (default behavior).
+ * is the canonical strict case — `field`, `suggestion`, and `details`
+ * all silently drop so the envelope can't become a stolen-key read
+ * oracle, while standard `recovery` metadata is preserved. Codes without
+ * a registered allowlist pass through unchanged (default behavior).
  */
 
 const { describe, it } = require('node:test');
@@ -19,12 +19,28 @@ const {
 } = require('../../dist/lib/server/index.js');
 
 describe('adcpError: IDEMPOTENCY_CONFLICT allowlist', () => {
-  it('drops recovery even though STANDARD_ERROR_CODES declares it "correctable"', () => {
+  it('preserves recovery from STANDARD_ERROR_CODES', () => {
     const res = adcpError('IDEMPOTENCY_CONFLICT', { message: 'key reused' });
     const payload = res.structuredContent.adcp_error;
     assert.equal(payload.code, 'IDEMPOTENCY_CONFLICT');
     assert.equal(payload.message, 'key reused');
-    assert.ok(!('recovery' in payload), 'recovery must be dropped on conflict');
+    assert.equal(payload.recovery, 'correctable');
+  });
+
+  it('normalizes caller-supplied conflict recovery to the standard classifier', () => {
+    const res = adcpError('IDEMPOTENCY_CONFLICT', {
+      message: 'key reused',
+      recovery: 'terminal',
+    });
+    assert.equal(res.structuredContent.adcp_error.recovery, 'correctable');
+  });
+
+  it('does not allow recovery to carry payload-shaped data', () => {
+    const res = adcpError('IDEMPOTENCY_CONFLICT', {
+      message: 'key reused',
+      recovery: { prior_payload: { secret: 'tok-123' } },
+    });
+    assert.equal(res.structuredContent.adcp_error.recovery, 'correctable');
   });
 
   it('drops field, suggestion, details even when the caller passes them', () => {
@@ -93,10 +109,10 @@ describe('adcpError: unlisted codes pass through unchanged', () => {
 });
 
 describe('ADCP_ERROR_FIELD_ALLOWLIST: registered shape', () => {
-  it('IDEMPOTENCY_CONFLICT entry is frozen and excludes recovery', () => {
+  it('IDEMPOTENCY_CONFLICT entry is frozen and includes recovery', () => {
     const conflict = ADCP_ERROR_FIELD_ALLOWLIST.IDEMPOTENCY_CONFLICT;
     assert.ok(conflict instanceof Set);
-    assert.ok(!conflict.has('recovery'));
+    assert.ok(conflict.has('recovery'));
     assert.ok(conflict.has('code'));
     assert.ok(conflict.has('message'));
   });
