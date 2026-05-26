@@ -231,7 +231,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       request_signing: { skipRateAbuse: true },
     });
     assert.strictEqual(result.skipped, true, `expected skipped, got: ${JSON.stringify(result)}`);
-    assert.match(result.skip_reason ?? '', /rate_abuse_opt_out|skipRateAbuse/);
+    assert.strictEqual(result.skip_reason, 'rate_abuse_opt_out');
     assert.strictEqual(result.error, undefined, 'skipped probe should not set error');
   });
 
@@ -241,7 +241,7 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       request_signing: { skipVectors: ['003-expired-signature'] },
     });
     assert.strictEqual(result.skipped, true, `expected skipped, got: ${JSON.stringify(result)}`);
-    assert.match(result.skip_reason ?? '', /operator_skip|skipVectors/);
+    assert.strictEqual(result.skip_reason, 'operator_skip');
   });
 
   test('probe dispatch rejects unknown step id', async () => {
@@ -325,7 +325,8 @@ describe('request-signing: runner dispatch against reference verifier', () => {
       // Skipped ≠ failed — this is the bug the review caught.
       assert.strictEqual(result.skipped, true, 'step marked skipped');
       assert.strictEqual(result.passed, true, 'skipped steps do not count as failures');
-      assert.match(result.skip_reason ?? '', /rate_abuse_opt_out|skipRateAbuse/);
+      assert.strictEqual(result.skip_reason, 'rate_abuse_opt_out');
+      assert.strictEqual(result.selection_result?.reason, 'explicit_scope_excluded');
     } finally {
       fresh.server.close();
     }

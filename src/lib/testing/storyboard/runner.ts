@@ -81,6 +81,7 @@ import type {
   RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
+  RunnerSelectionResult,
   RequirementName,
   RunnerSkipReason,
   RunnerNotice,
@@ -194,7 +195,28 @@ function soleStatefulExemptionDetail(phaseId: string): string {
 const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> = {
   oauth_not_advertised: OAUTH_NOT_ADVERTISED_DETAIL,
   controller_seeding_failed: CONTROLLER_SEEDING_FAILED_DETAIL,
+  operator_skip: 'Step was excluded by request_signing.skipVectors.',
+  rate_abuse_opt_out: 'Rate-abuse vector was excluded by request_signing.skipRateAbuse.',
+  capability_profile_mismatch: 'Vector is outside the agent capability profile selected for this run.',
+  transport_ungradable: 'Vector cannot be graded faithfully by the selected transport.',
 };
+
+function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string): RunnerSelectionResult | undefined {
+  switch (reason) {
+    case 'live_side_effect_opt_in_required':
+      return { reason: 'run_mode_excluded', detail };
+    case 'operator_skip':
+    case 'rate_abuse_opt_out':
+      return { reason: 'explicit_scope_excluded', detail };
+    case 'not_in_only_vectors':
+    case 'mcp_mode_flattens_url_edges':
+    case 'capability_profile_mismatch':
+    case 'transport_ungradable':
+      return { reason: 'profile_excluded', detail };
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Walk a dotted key path (e.g. `"adcp.idempotency.supported"`) through a
@@ -4327,6 +4349,7 @@ async function executeProbeStep(
     const detailedReason = (httpResult.skip_reason ?? 'probe_skipped') as RunnerDetailedSkipReason;
     const canonicalReason = DETAILED_SKIP_TO_CANONICAL[detailedReason] ?? 'not_applicable';
     const detail = httpResult.error ?? DETAILED_SKIP_DETAILS[detailedReason] ?? SKIP_DETAILS[canonicalReason];
+    const selectionResult = selectionForProbeSkip(detailedReason, detail);
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -4336,6 +4359,7 @@ async function executeProbeStep(
       skipped: true,
       skip_reason: detailedReason,
       skip: { reason: canonicalReason, detail },
+      ...(selectionResult && { selection_result: selectionResult }),
       duration_ms: duration,
       response: httpResult,
       validations: [],

@@ -4,7 +4,7 @@
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
-import type { RunnerNotice } from '../storyboard/types';
+import type { RunnerNotice, RunnerSelectionReason, RunnerSkipReason } from '../storyboard/types';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -201,6 +201,14 @@ export interface ComplianceSummary {
   steps_failed?: number;
   /** Storyboard steps that were skipped. */
   steps_skipped?: number;
+  /** Storyboard steps excluded before execution by run selection. */
+  steps_not_selected?: number;
+  /** Machine-readable selection exclusions, one record per excluded step/item. */
+  not_selected?: ComplianceNotSelectedRecord[];
+  /** Aggregate counts by selection-exclusion reason. */
+  not_selected_by_reason?: Partial<Record<RunnerSelectionReason, number>>;
+  /** Aggregate counts by canonical selected-but-skipped reason. */
+  skipped_by_reason?: Partial<Record<RunnerSkipReason | string, number>>;
   /**
    * Validation results graded `not_applicable` because the runner did not
    * implement the storyboard's authored `check` kind (forward-compat
@@ -214,6 +222,14 @@ export interface ComplianceSummary {
    * locally against the same artifacts the runner used.
    */
   schemas_used?: Array<{ schema_id: string; schema_url: string }>;
+}
+
+export interface ComplianceNotSelectedRecord {
+  reason: RunnerSelectionReason;
+  detail: string;
+  storyboard_id?: string;
+  phase_id?: string;
+  step_id?: string;
 }
 
 // ============================================================

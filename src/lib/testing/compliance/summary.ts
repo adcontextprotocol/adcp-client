@@ -11,16 +11,23 @@
  *   - `formatComplianceSummaryText`   → stderr block with greppable `STORYBOARD-FAIL` prefix
  *   - `formatComplianceSummaryMarkdown` → table for $GITHUB_STEP_SUMMARY
  *
- * The `skip_causes` field on `ComplianceSummaryArtifact` is an additive v1
- * extension — treat unknown fields as ignorable per schema_version semantics.
+ * The v2 summary separates selected-but-skipped steps from not-selected
+ * exclusions. Treat unknown fields as ignorable per schema_version semantics.
  * Crash-path summaries built by `buildCrashSummary` omit `skip_causes`
  * because the runner never reached the storyboard execution phase.
  */
 
-import type { ComplianceFailure, ComplianceResult, ComplianceTrack, OverallStatus } from './types';
+import type {
+  ComplianceFailure,
+  ComplianceNotSelectedRecord,
+  ComplianceResult,
+  ComplianceTrack,
+  OverallStatus,
+} from './types';
+import type { RunnerSelectionReason, RunnerSkipReason } from '../storyboard/types';
 import { DETAILED_SKIP_TO_CANONICAL, type RunnerDetailedSkipReason } from '../storyboard/types';
 
-const SUMMARY_SCHEMA_VERSION = 1;
+const SUMMARY_SCHEMA_VERSION = 2;
 
 /**
  * A grouped skip-cause entry for the always-on summary block.
@@ -48,6 +55,10 @@ export interface ComplianceSummaryArtifact {
   passed: number;
   failed: number;
   skipped: number;
+  not_selected_count: number;
+  not_selected_by_reason: Partial<Record<RunnerSelectionReason, number>>;
+  skipped_by_reason: Partial<Record<RunnerSkipReason | string, number>>;
+  not_selected?: ComplianceNotSelectedRecord[];
   total_duration_ms: number;
   tested_at: string;
   storyboards_executed: string[];
@@ -90,6 +101,10 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     passed: result.summary.steps_passed ?? 0,
     failed: result.summary.steps_failed ?? 0,
     skipped: result.summary.steps_skipped ?? 0,
+    not_selected_count: result.summary.steps_not_selected ?? 0,
+    not_selected_by_reason: result.summary.not_selected_by_reason ?? {},
+    skipped_by_reason: result.summary.skipped_by_reason ?? {},
+    ...(result.summary.not_selected?.length ? { not_selected: result.summary.not_selected } : {}),
     total_duration_ms: result.total_duration_ms,
     tested_at: result.tested_at,
     storyboards_executed: result.storyboards_executed ?? [],
@@ -227,6 +242,7 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
       const scenarioId = String(scenario.scenario);
       for (const step of scenario.steps ?? []) {
         if (!step.skipped || !step.skip_reason) continue;
+        if (step.selection_reason) continue;
         if (!isActionableSkipReason(step.skip_reason)) continue;
 
         // missing_tool: sub-group by tool name. Storyboard-level matches
@@ -283,6 +299,18 @@ function isHardFail(s: ComplianceSummaryArtifact): boolean {
   return HARD_FAIL_STATUSES.has(s.overall_status) || s.failures.length > 0;
 }
 
+function formatReasonCounts(counts: Partial<Record<string, number>> | undefined): string | undefined {
+  if (!counts) return undefined;
+  const entries = Object.entries(counts).filter(
+    (entry): entry is [string, number] => typeof entry[1] === 'number' && entry[1] > 0
+  );
+  if (entries.length === 0) return undefined;
+  return entries
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(', ');
+}
+
 /**
  * stderr-style summary block. Always starts with `STORYBOARD-FAIL` (kebab,
  * no spaces) on any hard-failing run, so CI scripts can `grep -q STORYBOARD-FAIL`
@@ -297,7 +325,13 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`Agent:     ${s.agent_url}`);
   lines.push(`SDK:       @adcp/sdk ${s.sdk_version} (AdCP ${s.adcp_version})`);
   lines.push(`Status:    ${s.overall_status}`);
-  lines.push(`Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped`);
+  lines.push(
+    `Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
+  );
+  const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
+  if (notSelectedReasons) lines.push(`Not selected: ${notSelectedReasons}`);
+  const skippedReasons = formatReasonCounts(s.skipped_by_reason);
+  if (skippedReasons) lines.push(`Skipped:   ${skippedReasons}`);
   if (s.skip_causes?.length) {
     const countWidth = String(Math.max(...s.skip_causes.map(c => c.count))).length;
     // "    [" + countWidth chars + "] " — derived so Affected: aligns under the cause text
@@ -323,7 +357,7 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
 
   if (!isHardFail(s)) {
     if (s.overall_status === 'passing') {
-      lines.push(`STORYBOARD-OK ${s.passed}/${s.passed + s.failed + s.skipped} steps passed`);
+      lines.push(`STORYBOARD-OK ${s.passed}/${s.passed + s.failed + s.skipped} selected steps passed`);
     } else {
       // `partial` and `silent` — some tracks were wired but not exercised.
       // Distinct marker so dashboards can surface this without lighting CI red.
@@ -363,7 +397,13 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
   lines.push(`- **Agent:** \`${s.agent_url}\``);
   lines.push(`- **SDK:** \`@adcp/sdk ${s.sdk_version}\` (AdCP \`${s.adcp_version}\`)`);
   lines.push(`- **Status:** \`${s.overall_status}\``);
-  lines.push(`- **Steps:** ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped`);
+  lines.push(
+    `- **Steps:** ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped, ${s.not_selected_count} not selected`
+  );
+  const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
+  if (notSelectedReasons) lines.push(`- **Not selected:** ${notSelectedReasons}`);
+  const skippedReasons = formatReasonCounts(s.skipped_by_reason);
+  if (skippedReasons) lines.push(`- **Skipped:** ${skippedReasons}`);
   lines.push(`- **Duration:** ${(s.total_duration_ms / 1000).toFixed(1)}s`);
   lines.push('');
 
@@ -414,7 +454,7 @@ function escapeTableCell(s: string): string {
 /**
  * Synthesize a summary artifact when the runner itself crashed before
  * `comply()` produced a result (network down, capabilities parse error,
- * auth handshake exception). Schema-stable on the same `schema_version: 1`
+ * auth handshake exception). Schema-stable on the same summary artifact
  * contract so a Slack bot built against the artifact sees a valid payload
  * — rather than nothing — precisely when the agent is broken hardest.
  */
@@ -436,6 +476,9 @@ export function buildCrashSummary(opts: BuildCrashSummaryOptions): ComplianceSum
     passed: 0,
     failed: 1,
     skipped: 0,
+    not_selected_count: 0,
+    not_selected_by_reason: {},
+    skipped_by_reason: {},
     total_duration_ms: opts.durationMs,
     tested_at: opts.startedAt,
     storyboards_executed: [],

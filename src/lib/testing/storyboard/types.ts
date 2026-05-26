@@ -1532,6 +1532,10 @@ export type RunnerDetailedSkipReason =
   | 'operator_skip'
   | 'not_in_only_vectors'
   | 'grader_skipped'
+  /** Request-signing vector is outside the agent's declared signing capability profile. */
+  | 'capability_profile_mismatch'
+  /** Request-signing vector cannot be graded faithfully by the selected transport. */
+  | 'transport_ungradable'
   /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
   | 'mcp_mode_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
@@ -1578,6 +1582,8 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   probe_skipped: 'not_applicable',
   not_in_only_vectors: 'not_applicable',
   grader_skipped: 'not_applicable',
+  capability_profile_mismatch: 'not_applicable',
+  transport_ungradable: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
@@ -1600,6 +1606,17 @@ export interface RunnerSkipResult {
    * cause. Absent for every other skip reason. Spec: adcp-client#1626.
    */
   requirement?: RequirementName;
+}
+
+export type RunnerSelectionReason =
+  | 'run_mode_excluded'
+  | 'explicit_scope_excluded'
+  | 'version_excluded'
+  | 'profile_excluded';
+
+export interface RunnerSelectionResult {
+  reason: RunnerSelectionReason;
+  detail: string;
 }
 
 /**
@@ -1864,6 +1881,12 @@ export interface StoryboardStepResult {
   skip_reason?: RunnerSkipReason | RunnerDetailedSkipReason;
   /** Structured skip result with canonical spec reason + human-readable detail. */
   skip?: RunnerSkipResult;
+  /**
+   * Structured selection result for steps that were outside the caller's
+   * requested run before execution. Kept separate from `skip`: skipped means
+   * selected-but-not-executed, selection means not selected for this run.
+   */
+  selection_result?: RunnerSelectionResult;
   /** True when the step expected an error (inverted pass/fail) */
   expect_error?: boolean;
   duration_ms: number;

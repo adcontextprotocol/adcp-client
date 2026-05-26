@@ -126,6 +126,7 @@ function mapStepToTestStep(stepResult: StoryboardStepResult): TestStepResult {
       : undefined,
     ...(stepResult.skipped && { skipped: true as const }),
     ...(stepResult.skip_reason && { skip_reason: stepResult.skip_reason }),
+    ...(stepResult.selection_result?.reason && { selection_reason: stepResult.selection_result.reason }),
     ...(stepResult.skip?.requirement && { requirement: stepResult.skip.requirement }),
   };
 }
