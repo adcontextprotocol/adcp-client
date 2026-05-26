@@ -29,8 +29,8 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/sdk        # 7.x (current latest, AdCP 3.0)
-npm install @adcp/sdk@beta   # 8.x beta (AdCP 3.1.0-beta)
+npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
+npm install @adcp/sdk@adcp-3.1   # 8.x beta, AdCP 3.1
 ```
 
 Upgrading from v7? See **[MIGRATION-v8.md](./MIGRATION-v8.md)** — TL;DR is three changes for most adopters; full guide covers wire shape, type shape, and SDK behavior deltas. Moving from 8.0 beta to 8.1? See [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md), plus the inbound webhook recipe at [`docs/recipes/verifying-inbound-webhooks.md`](./docs/recipes/verifying-inbound-webhooks.md).
@@ -678,13 +678,13 @@ Save agents for quick access:
 
 ```bash
 # Save an agent with an alias
-npx @adcp/sdk@latest --save-auth test https://test-agent.adcontextprotocol.org
+npx @adcp/sdk@adcp-3.0 --save-auth test https://test-agent.adcontextprotocol.org
 
 # Use the alias
-npx @adcp/sdk@latest test get_products '{"brief":"Coffee brands"}'
+npx @adcp/sdk@adcp-3.0 test get_products '{"brief":"Coffee brands"}'
 
 # List saved agents
-npx @adcp/sdk@latest --list-agents
+npx @adcp/sdk@adcp-3.0 --list-agents
 ```
 
 ### Direct URL Usage
@@ -693,20 +693,20 @@ Auto-detect protocol and call directly:
 
 ```bash
 # Protocol auto-detection (default)
-npx @adcp/sdk@latest https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+npx @adcp/sdk@adcp-3.0 https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
 
 # Force specific protocol with --protocol flag
-npx @adcp/sdk@latest https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
-npx @adcp/sdk@latest https://agent.example.com list_authorized_properties --protocol a2a
+npx @adcp/sdk@adcp-3.0 https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/sdk@adcp-3.0 https://agent.example.com list_authorized_properties --protocol a2a
 
 # List available tools
-npx @adcp/sdk@latest https://agent.example.com
+npx @adcp/sdk@adcp-3.0 https://agent.example.com
 
 # Use a file for payload
-npx @adcp/sdk@latest https://agent.example.com create_media_buy @payload.json
+npx @adcp/sdk@adcp-3.0 https://agent.example.com create_media_buy @payload.json
 
 # JSON output for scripting
-npx @adcp/sdk@latest https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
+npx @adcp/sdk@adcp-3.0 https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
 ```
 
 ### Authentication
@@ -715,44 +715,44 @@ Three ways to provide auth tokens (priority order):
 
 ```bash
 # 1. Explicit flag (highest priority)
-npx @adcp/sdk@latest test get_products '{"brief":"..."}' --auth your-token
+npx @adcp/sdk@adcp-3.0 test get_products '{"brief":"..."}' --auth your-token
 
 # 2. Saved in agent config (recommended)
-npx @adcp/sdk@latest --save-auth prod https://prod-agent.com
+npx @adcp/sdk@adcp-3.0 --save-auth prod https://prod-agent.com
 # Will prompt for auth token securely
 
 # 3. Environment variable (fallback)
 export ADCP_AUTH_TOKEN=your-token
-npx @adcp/sdk@latest test get_products '{"brief":"..."}'
+npx @adcp/sdk@adcp-3.0 test get_products '{"brief":"..."}'
 ```
 
 ### Agent Management
 
 ```bash
 # Save agent with auth
-npx @adcp/sdk@latest --save-auth prod https://prod-agent.com mcp
+npx @adcp/sdk@adcp-3.0 --save-auth prod https://prod-agent.com mcp
 
 # List all saved agents
-npx @adcp/sdk@latest --list-agents
+npx @adcp/sdk@adcp-3.0 --list-agents
 
 # Remove an agent
-npx @adcp/sdk@latest --remove-agent test
+npx @adcp/sdk@adcp-3.0 --remove-agent test
 
 # Show config file location
-npx @adcp/sdk@latest --show-config
+npx @adcp/sdk@adcp-3.0 --show-config
 ```
 
 ### Testing & Compliance
 
 ```bash
 # Run test scenarios against an agent
-npx @adcp/sdk@latest test test-mcp full_sales_flow
-npx @adcp/sdk@latest test test-mcp --list-scenarios
+npx @adcp/sdk@adcp-3.0 test test-mcp full_sales_flow
+npx @adcp/sdk@adcp-3.0 test test-mcp --list-scenarios
 
 # Run compliance assessment
-npx @adcp/sdk@latest comply test-mcp
-npx @adcp/sdk@latest comply test-mcp --platform-type social_platform
-npx @adcp/sdk@latest comply --list-platform-types
+npx @adcp/sdk@adcp-3.0 comply test-mcp
+npx @adcp/sdk@adcp-3.0 comply test-mcp --platform-type social_platform
+npx @adcp/sdk@adcp-3.0 comply --list-platform-types
 ```
 
 **Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
@@ -852,7 +852,7 @@ The skill guides domain decisions, scaffolds code, and tells you how to validate
 
 ```bash
 npx tsx agent.ts
-npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
+npx @adcp/sdk@adcp-3.0 storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 Available skills:

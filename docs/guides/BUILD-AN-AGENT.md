@@ -9,7 +9,7 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 ## Prerequisites
 
 - Node.js 18+
-- `@adcp/sdk` installed from the beta line while validating AdCP 3.1 (`npm install @adcp/sdk@beta`)
+- `@adcp/sdk` installed from the AdCP 3.1 line while validating AdCP 3.1 (`npm install @adcp/sdk@adcp-3.1`)
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
 ## The server entry point
@@ -86,8 +86,8 @@ Start it and test immediately:
 
 ```bash
 npx tsx agent.ts
-npx @adcp/sdk@beta http://localhost:3001/mcp                    # discover tools
-npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{}'   # call get_signals
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp                    # discover tools
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_signals '{}'   # call get_signals
 ```
 
 `definePlatform` / `defineSignalsPlatform` (and the sibling
@@ -724,7 +724,7 @@ const httpServer = createServer(async (req, res) => {
 ### Tool Discovery
 
 ```bash
-npx @adcp/sdk@beta http://localhost:3001/mcp
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp
 ```
 
 This lists all tools your agent exposes, their descriptions, and parameters. If `get_signals` appears with the correct schema, your agent is wired up correctly.
@@ -733,16 +733,16 @@ This lists all tools your agent exposes, their descriptions, and parameters. If 
 
 ```bash
 # All segments
-npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
 
 # Filtered by text
-npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
 
 # Filtered by catalog type
-npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
 
 # JSON output for scripting
-npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{}' --json
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp get_signals '{}' --json
 ```
 
 ```bash
@@ -750,7 +750,7 @@ npx @adcp/sdk@beta http://localhost:3001/mcp get_signals '{}' --json
 # Schema traps: idempotency_key must be 16-255 chars (UUID v4 recommended);
 # package-level budget is a plain number (not {amount,currency}); brand uses {domain} (not {brand_id});
 # packages require product_id, budget, and pricing_option_id
-npx @adcp/sdk@beta http://localhost:3001/mcp create_media_buy '{
+npx @adcp/sdk@adcp-3.1 http://localhost:3001/mcp create_media_buy '{
   "idempotency_key": "550e8400-e29b-41d4-a716-446655440000",
   "account": { "account_id": "acct_123" },
   "brand": { "domain": "acme.example" },
@@ -765,7 +765,7 @@ npx @adcp/sdk@beta http://localhost:3001/mcp create_media_buy '{
 ### Compliance Check
 
 ```bash
-npx @adcp/sdk@beta storyboard run http://localhost:3001/mcp
+npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp
 ```
 
 This runs a standard validation suite against your agent to check AdCP compliance. For the full validation picture — storyboard runner, property-based fuzzing (`adcp fuzz`), multi-instance testing, webhook conformance, request-signing, schema-driven validation, and the skill→agent→grader dogfood harness — see [**VALIDATE-YOUR-AGENT.md**](./VALIDATE-YOUR-AGENT.md).
