@@ -25,6 +25,7 @@ const {
   cancelMediaBuyResponse,
 } = require('../dist/lib/server/responses');
 const { validActionsForStatus } = require('../dist/lib/server/media-buy-helpers');
+const { validateResponse } = require('../dist/lib/validation/schema-validator');
 
 describe('capabilitiesResponse', () => {
   it('returns MCP-compatible shape with structuredContent', () => {
@@ -73,10 +74,23 @@ describe('productsResponse', () => {
     assert.strictEqual(result.content[0].text, 'Found 0 products');
   });
 
-  it('does not default cache_scope when omitted', () => {
+  it('describes unchanged wholesale-feed responses without a zero-product summary', () => {
+    const result = productsResponse({ unchanged: true, wholesale_feed_version: 'wf_v1', cache_scope: 'public' });
+    assert.strictEqual(result.content[0].text, 'Product feed unchanged');
+  });
+
+  it('leaves cache_scope unset for plain JS direct builder callers', () => {
     const result = productsResponse({ products: [{ product_id: 'p1' }] });
     assert.strictEqual(result.structuredContent.status, 'completed');
     assert.strictEqual(result.structuredContent.cache_scope, undefined);
+  });
+
+  it('runtime validation catches plain JS direct callers that omit cache_scope with products', () => {
+    const result = productsResponse({ products: [] });
+    const outcome = validateResponse('get_products', result.structuredContent);
+    assert.strictEqual(outcome.valid, false);
+    const issue = outcome.issues.find(i => i.pointer === '/cache_scope' && i.keyword === 'required');
+    assert.ok(issue, `expected missing cache_scope, got: ${JSON.stringify(outcome.issues)}`);
   });
 });
 

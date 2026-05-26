@@ -136,7 +136,7 @@ Every validation failure produces:
 }
 ```
 
-Returns `{ products: [{ product_id, name, description, delivery_type, pricing_options, ... }] }`.
+Returns `{ cache_scope: "public" | "account", products: [{ product_id, name, description, delivery_type, pricing_options, ... }] }`.
 
 ### create_media_buy
 

@@ -26,6 +26,9 @@
  *      `daast_url`.
  *   9. Mutating tool missing `idempotency_key` — required UUID, reused
  *      on retries.
+ *   10. `get_products.cache_scope` — required whenever `products` is
+ *       present or `unchanged: true` so buyers key public feeds separately
+ *       from account overlays.
  *
  * Quality bar: a hint earns its slot if at least three adopters or
  * blind-LLM matrix runs hit the same shape and lost ≥1 iteration to
@@ -195,6 +198,14 @@ const RULES: readonly HintRule[] = [
     keyword: 'type',
     pointerPattern: /\/signal_ids\/\d+$/,
     hint: '`signal_ids` is an array of provenance objects: `{ source: "catalog", data_provider_domain, id }` or `{ source: "agent", agent_url, id }`. Bare ID strings are rejected.',
+  },
+  // 10. get_products.cache_scope — required on populated and unchanged product responses.
+  {
+    tool: 'get_products',
+    keyword: 'required',
+    pointerEquals: '/cache_scope',
+    missingProperty: 'cache_scope',
+    hint: '`get_products` responses with `products` or `unchanged: true` must include `cache_scope`: use `public` for the universal rate card, `account` for account-specific overlays.',
   },
 ];
 

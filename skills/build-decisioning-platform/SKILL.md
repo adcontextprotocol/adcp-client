@@ -104,6 +104,7 @@ class MyPlatform implements DecisioningPlatform {
     getProducts: async (req, ctx) => {
       const products = await this.platform.searchInventory(req.brief, req.promoted_offering);
       return {
+        cache_scope: 'account',
         products: products.map(p => ({
           product_id: p.id,
           name: p.name,

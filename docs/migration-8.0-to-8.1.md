@@ -123,9 +123,43 @@ autocomplete/type-checking and fewer accidental unknown-field escapes.
 ### `get_products` response shape
 
 `products` can be absent in valid response arms such as unchanged/cache-hit
-responses. Any response that does carry `products` must now also carry
-`cache_scope`. Test fixtures that assumed `products` was always present or
-omitted `cache_scope` on populated product responses need to be updated.
+responses. Any response that carries `products` or `unchanged: true` must now
+also carry `cache_scope`. Test fixtures that assumed `products` was always
+present or omitted `cache_scope` on populated or unchanged responses need to be
+updated.
+
+Use this decision table for server payloads:
+
+| Request / pricing shape | `cache_scope` |
+|---|---|
+| No inline `account` and no auth-derived/resolved account context | `public` |
+| Request has `account`, but response uses the universal rate card | `public` |
+| Request has `account` and response includes account-specific pricing or overlays | `account` |
+
+The SDK framework may fill `public` only when there is no inline `account`
+and no auth-derived/resolved account context. It does **not** infer `public`
+for account-scoped requests because agents may omit overlay capability
+declarations for confidentiality; account-scoped product responses should set
+`cache_scope` explicitly.
+
+## Handler Payloads vs Wire Envelopes
+
+Framework server adopters should return SDK server payload aliases from
+handlers. Do not hand-stamp protocol envelope fields such as `status`,
+`task_id`, or `adcp_version` when using `createAdcpServerFromPlatform`; the
+framework owns those fields and validates after wrapping.
+
+Raw/manual server adopters using response builders still need to pass
+schema-valid payloads into the builder. For example:
+
+```ts
+productsResponse({ products, cache_scope: 'public' });
+mediaBuyResponse({ media_buy_id, media_buy_status: 'pending_creatives', packages: [] });
+```
+
+Buyer, CLI, and testing users should use `@adcp/sdk@beta` or an exact
+`8.1.0-beta.N` pin while validating AdCP 3.1 behavior. `@latest` remains on
+the last GA line until 8.1 exits prerelease.
 
 ## The Two `TaskStatus` Types
 

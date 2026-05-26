@@ -47,6 +47,7 @@ import {
   type DecisioningPlatform,
   type FinalizeProposalRequest,
   type FinalizeProposalSuccess,
+  type GetProductsPayload,
   type ProposalManager,
   type SalesCorePlatform,
 } from '@adcp/sdk/server';
@@ -349,11 +350,11 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
     availabilityReservations: true,
   },
 
-  async getProducts(req: GetProductsRequest, ctx): Promise<GetProductsResponse> {
+  async getProducts(req: GetProductsRequest, ctx): Promise<GetProductsPayload> {
     const networkCode = ctx.account.ctx_metadata.network_code;
     const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
     const products = await upstream.listProducts(networkCode);
-    if (products.length === 0) return { status: 'completed', products: [], cache_scope: 'account' };
+    if (products.length === 0) return { products: [], cache_scope: 'account' };
 
     // brief + total_budget signals → curated proposal. Without a brief
     // the buyer is browsing the catalog; skip proposal generation.
@@ -362,7 +363,7 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
     if (!brief) {
       // Catalog mode — return products with recipes, no proposals.
       const productsOut = products.map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
-      return { status: 'completed', products: productsOut, cache_scope: 'account' };
+      return { products: productsOut, cache_scope: 'account' };
     }
 
     const draft = await upstream.createProposal(networkCode, {
@@ -374,14 +375,13 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
       .filter(p => referencedIds.has(p.product_id))
       .map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
     return {
-      status: 'completed',
       products: productsOut,
       proposals: [projectProposal(draft, totalBudget)],
       cache_scope: 'account',
     };
   },
 
-  async refineProducts(req: GetProductsRequest, ctx): Promise<GetProductsResponse> {
+  async refineProducts(req: GetProductsRequest, ctx): Promise<GetProductsPayload> {
     const networkCode = ctx.account.ctx_metadata.network_code;
     const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
     const refine =
@@ -402,7 +402,6 @@ const proposalManager: ProposalManager<GAMLikeRecipe, NetworkMeta> = {
       .filter(p => referencedIds.has(p.product_id))
       .map(p => projectProduct(p, publisherDomain, buildGAMLikeRecipe(p)));
     return {
-      status: 'completed',
       products: productsOut,
       proposals: [projectProposal(refined)],
       cache_scope: 'account',
@@ -463,7 +462,7 @@ const sales: SalesCorePlatform<NetworkMeta> = {
   // getProducts is owned by proposalManager when wired; the framework
   // routes there. We keep this empty at the type level — the framework
   // never reaches it.
-  getProducts: async () => ({ status: 'completed', products: [], cache_scope: 'account' }),
+  getProducts: async () => ({ products: [], cache_scope: 'account' }),
 
   async createMediaBuy(req: CreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess> {
     const networkCode = ctx.account.ctx_metadata.network_code;

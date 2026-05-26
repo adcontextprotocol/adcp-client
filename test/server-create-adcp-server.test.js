@@ -36,11 +36,14 @@ async function callTool(server, toolName, params) {
   return raw.structuredContent;
 }
 
-async function callToolRaw(server, toolName, params) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: { name: toolName, arguments: params ?? {} },
-  });
+async function callToolRaw(server, toolName, params, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: { name: toolName, arguments: params ?? {} },
+    },
+    extras
+  );
 }
 
 function registeredTools(server) {
@@ -401,6 +404,105 @@ describe('createAdcpServer', () => {
       });
       assert.strictEqual(result.content[0].text, 'Found 1 products');
       assert.strictEqual(result.structuredContent.products.length, 1);
+    });
+
+    it('defaults get_products cache_scope to public only when request has no account', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { responses: 'strict' },
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+        },
+      });
+      const result = await callTool(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+      });
+      assert.strictEqual(result.cache_scope, 'public');
+    });
+
+    it('syncs inferred get_products cache_scope into JSON text fallback', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({
+            content: [{ type: 'text', text: JSON.stringify({ products: [] }) }],
+            structuredContent: { products: [] },
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+      });
+      assert.strictEqual(result.structuredContent.cache_scope, 'public');
+      assert.strictEqual(JSON.parse(result.content[0].text).cache_scope, 'public');
+    });
+
+    it('fails closed for auth-scoped get_products responses missing cache_scope without response validation', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+        },
+      });
+      const result = await callToolRaw(
+        server,
+        'get_products',
+        {
+          buying_mode: 'brief',
+          brief: 'test',
+        },
+        {
+          authInfo: { token: 'caller-token', clientId: 'buyer-1', scopes: ['adcp.media_buy'] },
+        }
+      );
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      const issue = result.structuredContent.adcp_error.issues.find(i => i.pointer === '/cache_scope');
+      assert.ok(issue, `expected missing cache_scope issue, got: ${JSON.stringify(result.structuredContent)}`);
+    });
+
+    it('does not infer get_products cache_scope for auth-derived account context', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resolveAccountFromAuth: async () => ({ account_id: 'derived_acct' }),
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      const issue = result.structuredContent.adcp_error.issues.find(i => i.pointer === '/cache_scope');
+      assert.ok(issue, `expected missing cache_scope issue, got: ${JSON.stringify(result.structuredContent)}`);
+    });
+
+    it('does not infer get_products cache_scope for account-scoped requests', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+        },
+      });
+      const result = await callToolRaw(server, 'get_products', {
+        buying_mode: 'brief',
+        brief: 'test',
+        account: { account_id: 'acct_1' },
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      const issue = result.structuredContent.adcp_error.issues.find(i => i.pointer === '/cache_scope');
+      assert.ok(issue, `expected missing cache_scope issue, got: ${JSON.stringify(result.structuredContent)}`);
+      assert.match(issue.hint ?? '', /public.*account-specific overlays/);
     });
 
     it('wraps create_media_buy with mediaBuyResponse defaults', async () => {
@@ -980,7 +1082,7 @@ describe('createAdcpServer', () => {
         mediaBuy: {
           getProducts: async (_params, ctx) => {
             assert.strictEqual(ctx.account.id, 'legacy-1');
-            return { products: [] };
+            return { products: [], cache_scope: 'account' };
           },
         },
       });

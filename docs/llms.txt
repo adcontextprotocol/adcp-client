@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-22
-> Library: @adcp/sdk v8.1.0-beta.0
+> Generated at: 2026-05-26
+> Library: @adcp/sdk v8.1.0-beta.11
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -312,6 +312,10 @@ Request parameters for discovering available advertising products.
 **Response (success branch):**
 - Optional: `products: object[]`, `extensions: object`, `proposals: object[]`, `errors: object[]`, `property_list_applied: boolean`, `catalog_applied: boolean`, `refinement_applied: object[]`, `incomplete: object[]`, +8 more
 
+**Watch out:**
+- `cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.
+- SDK server handlers may omit `cache_scope` only for no-account product feeds; the framework can safely infer `public` only when there is no inline account and no auth-derived/resolved account.
+
 #### `list_creative_formats`
 
 Request parameters for discovering format IDs and creative agents supported by this sales agent.
@@ -340,6 +344,9 @@ Request parameters for creating a media buy.
 - Required: `media_buy_id: string`, `packages: object[]`
 - Optional: `account: Account`, `invoice_recipient: Business Entity`, `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `confirmed_at: string`, `creative_deadline: string`, `revision: integer`, `currency: string`, +6 more
 
+**Watch out:**
+- Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
+
 #### `update_media_buy`
 
 Request parameters for updating campaign and package settings.
@@ -351,6 +358,9 @@ Request parameters for updating campaign and package settings.
 **Response (success branch):**
 - Required: `media_buy_id: string`
 - Optional: `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `revision: integer`, `currency: string`, `total_budget: number`, `implementation_date: string,null`, `invoice_recipient: Business Entity`, `affected_packages: object[]`, +4 more
+
+**Watch out:**
+- Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
 
 #### `get_media_buys`
 
@@ -1416,4 +1426,4 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
 - npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/sdk@latest`
+- CLI: `npx @adcp/sdk@beta` for the 8.1 / AdCP 3.1 beta line

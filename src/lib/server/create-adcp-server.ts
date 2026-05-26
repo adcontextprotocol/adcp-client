@@ -117,7 +117,7 @@ function hasIdempotencyClearAll(store: IdempotencyStore): boolean {
   return typeof store.clearAll === 'function';
 }
 import { isMutatingTask, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
-import { validateRequest, validateResponse, formatIssues } from '../validation/schema-validator';
+import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import type { IdempotencyStore } from './idempotency';
 import {
@@ -310,7 +310,7 @@ import type {
 
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
 import type { MediaChannel } from '../types/tools.generated';
-import type { ServerPayload } from '../types/server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
 import {
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -506,7 +506,7 @@ export function requireSessionKey<TAccount = unknown>(ctx: HandlerContext<TAccou
 export interface AdcpToolMap {
   get_products: {
     params: z.input<typeof GetProductsRequestSchema>;
-    result: ServerPayload<GetProductsResponse>;
+    result: RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
     response: GetProductsResponse;
   };
   create_media_buy: {
@@ -2596,12 +2596,10 @@ function applyArmDiscriminators(sc: Record<string, unknown>, descriptor: ErrorAr
 }
 
 /**
- * Mirror a mutated `structuredContent` back into the L2 JSON text
- * fallback so MCP clients reading either transport layer see the same
- * shape. Same pattern as `sanitizeAdcpErrorEnvelope` and
- * `injectContextIntoResponse`. Silent no-op when the L2 text isn't a
- * JSON envelope (legitimate for non-JSON `content[0].text` summaries
- * from `wrapErrorArm`).
+ * Mirror a mutated `structuredContent` back into the L2 JSON text fallback
+ * so MCP clients reading either transport layer see the same shape. Silent
+ * no-op when the L2 text isn't a JSON envelope (legitimate for non-JSON
+ * `content[0].text` summaries from `wrapErrorArm`).
  */
 function syncContentJsonText(response: McpToolResponse, structuredContent: Record<string, unknown>): void {
   if (!Array.isArray(response.content)) return;
@@ -2617,11 +2615,50 @@ function syncContentJsonText(response: McpToolResponse, structuredContent: Recor
     // still extract the code via pattern match.
     return;
   }
-  if (parsed == null || typeof parsed !== 'object') return;
-  const obj = parsed as Record<string, unknown>;
-  if ('adcp_error' in structuredContent) obj.adcp_error = structuredContent.adcp_error;
-  if ('errors' in structuredContent) obj.errors = structuredContent.errors;
-  first.text = JSON.stringify(obj);
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+  first.text = JSON.stringify(structuredContent);
+}
+
+function missingGetProductsCacheScopeIssue(): ValidationIssue {
+  return {
+    pointer: '/cache_scope',
+    message: "must have required property 'cache_scope'",
+    keyword: 'required',
+    schemaPath: '#/required',
+    hint: '`get_products` responses with `products` or `unchanged: true` must include `cache_scope`: use `public` for the universal rate card, `account` for account-specific overlays.',
+  };
+}
+
+function normalizeGetProductsCacheScope(
+  response: McpToolResponse,
+  params: unknown,
+  account: unknown,
+  authInfo: unknown,
+  exposeSchemaPath: boolean
+): McpToolResponse | undefined {
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return undefined;
+  if (!Array.isArray(sc.products) && sc.unchanged !== true) return undefined;
+  if (sc.cache_scope !== undefined) return undefined;
+
+  const request =
+    params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+  if (request.account != null || account != null || authInfo != null) {
+    return adcpError(
+      'VALIDATION_ERROR',
+      buildAdcpValidationErrorPayload('get_products', 'response', [missingGetProductsCacheScopeIssue()], {
+        exposeSchemaPath,
+      })
+    );
+  }
+
+  // Safe inference only: a product feed with neither an inline account nor an
+  // auth context cannot contain an account-specific overlay, so it is cacheable
+  // as the public layer. Any account or auth context makes omission ambiguous;
+  // strict response validation should surface that.
+  sc.cache_scope = 'public';
+  syncContentJsonText(response, sc);
+  return undefined;
 }
 
 // Echo the request context into a formatted MCP tool response so buyers can
@@ -4727,8 +4764,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
 
           if (!isErrorResponse(formatted)) {
-            normalizeMediaBuyStatusCollision(formatted, toolName);
-            injectEnvelopeStatusIntoResponse(formatted);
+            if (toolName === 'get_products') {
+              formatted =
+                normalizeGetProductsCacheScope(formatted, params, ctx.account, ctx.authInfo, exposeErrorDetails) ??
+                formatted;
+            }
+            if (!isErrorResponse(formatted)) {
+              normalizeMediaBuyStatusCollision(formatted, toolName);
+              injectEnvelopeStatusIntoResponse(formatted);
+            }
           }
 
           // --- Response schema validation (opt-in) ---

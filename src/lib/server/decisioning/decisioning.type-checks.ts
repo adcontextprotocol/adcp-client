@@ -343,7 +343,7 @@ function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPl
 // assignment site.
 function _sales_guaranteed_field_annotation_pattern() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
-    getProducts: async () => ({ status: 'completed' as const, products: [] }),
+    getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
     createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
     updateMediaBuy: async () => ({ media_buy_id: 'x' }),
     getMediaBuyDelivery: async () => ({
@@ -368,7 +368,7 @@ function _sales_guaranteed_field_annotation_pattern() {
 function _sales_guaranteed_spread_helpers_pattern() {
   const sales = {
     ...defineSalesCorePlatform<_SocialMeta>({
-      getProducts: async () => ({ status: 'completed' as const, products: [] }),
+      getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
       createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
       updateMediaBuy: async () => ({ media_buy_id: 'x' }),
       getMediaBuyDelivery: async () => ({
@@ -606,7 +606,7 @@ function _operational_platform_payload_returns_do_not_require_protocol_status():
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
     }),
-    getProducts: async () => ({ products: [] }),
+    getProducts: async () => ({ products: [], cache_scope: 'public' as const }),
   };
 }
 
@@ -618,7 +618,7 @@ function _operational_platform_payload_returns_do_not_require_protocol_status():
 // inference-through-defaults don't silently regress the adopter migration.
 function _define_sales_platform_widens_post_1341() {
   const sales = defineSalesPlatform<_SocialMeta>({
-    getProducts: async () => ({ status: 'completed' as const, products: [] }),
+    getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
     createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
     updateMediaBuy: async () => ({ media_buy_id: 'x' }),
     getMediaBuyDelivery: async () => ({

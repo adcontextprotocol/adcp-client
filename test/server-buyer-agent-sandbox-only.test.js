@@ -56,6 +56,7 @@ function buildPlatform(overrides = {}) {
     statusMappers: {},
     sales: {
       getProducts: async (_req, ctx) => ({
+        cache_scope: 'account',
         products: [],
         _ctxAgent: ctx?.agent,
         _accountSandbox: ctx?.account?.sandbox,
@@ -117,7 +118,7 @@ describe('Phase 1.5 — sandbox-only buyer agent enforcement', () => {
       sales: {
         getProducts: async () => {
           handlerInvoked = true;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -187,7 +188,7 @@ describe('Phase 1.5 — sandbox-only buyer agent enforcement', () => {
       sales: {
         getProducts: async () => {
           handlerInvoked = true;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),

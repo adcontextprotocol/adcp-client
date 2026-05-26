@@ -98,7 +98,7 @@ import type {
   GetAdCPCapabilitiesResponse,
   SyncGovernanceRequest,
 } from '../../../types/tools.generated';
-import type { ServerPayload } from '../../../types/server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
@@ -3576,7 +3576,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // Refine routing per Python's _select_proposal_method:
             // refine_products iff buying_mode='refine' AND
             // capabilities.refine AND the manager implements it.
-            let result: ServerPayload<import('../../../types/tools.generated').GetProductsResponse>;
+            let result: RequireCacheScopeWhenProducts<
+              ServerPayload<import('../../../types/tools.generated').GetProductsResponse>
+            >;
             if (proposalManager) {
               const buyingMode = (params as { buying_mode?: string }).buying_mode;
               const useRefine =

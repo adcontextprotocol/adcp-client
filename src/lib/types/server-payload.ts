@@ -69,3 +69,37 @@ type StripWriteOnlyResponseFields<T> = T extends JsonPrimitive
 export type ServerPayload<T> = T extends unknown
   ? StripWriteOnlyResponseFields<Omit<T, ProtocolEnvelopeKeys<T>>>
   : never;
+
+/**
+ * Product-feed payloads have one response-shape invariant that the generated
+ * TypeScript currently cannot express: when `products` is present or a
+ * wholesale feed is `unchanged`, 3.1 requires `cache_scope` so buyers do not
+ * key account-specific overlays under the public cache. Keep the stricter
+ * server-facing alias here until the generated schema types learn that
+ * conditional requirement directly.
+ */
+export type RequireCacheScopeWhenProducts<T> = T extends {
+  products?: infer TProducts;
+  cache_scope?: infer TScope;
+  unchanged?: infer TUnchanged;
+}
+  ?
+      | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
+          products: Exclude<TProducts, undefined>;
+          unchanged?: undefined;
+          cache_scope: NonNullable<TScope>;
+        })
+      | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
+          products?: undefined;
+          unchanged: Extract<TUnchanged, true>;
+          cache_scope: NonNullable<TScope>;
+        })
+      | (Omit<T, 'products' | 'unchanged'> & { products?: undefined; unchanged?: undefined })
+  : T extends { products?: infer TProducts; cache_scope?: infer TScope }
+    ?
+        | (Omit<T, 'products' | 'cache_scope'> & {
+            products: Exclude<TProducts, undefined>;
+            cache_scope: NonNullable<TScope>;
+          })
+        | (Omit<T, 'products'> & { products?: undefined })
+    : T;

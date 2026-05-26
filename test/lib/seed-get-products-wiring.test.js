@@ -40,7 +40,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
       testController: {
         getSeededProducts: () => seeded,
@@ -63,7 +66,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
       testController: {
         getSeededProducts: () => {
@@ -92,7 +98,7 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'public' }),
       },
       testController: {
         getSeededProducts: () => [makeSeededProduct('seed-1')],
@@ -120,6 +126,7 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
             { product_id: 'shared', name: 'Handler Copy' },
             { product_id: 'handler-only', name: 'Handler Only' },
           ],
+          cache_scope: 'account',
         }),
       },
       testController: {
@@ -142,7 +149,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
       testController: {}, // no getSeededProducts → bridge stays off
     });
@@ -165,7 +175,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       version: '1.0.0',
       resolveAccount: async () => ({ account_id: 'prod-999', sandbox: false }),
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
       testController: {
         getSeededProducts: () => {
@@ -193,7 +206,7 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
       },
       testController: {
         getSeededProducts: () => [
@@ -220,7 +233,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
       testController: {
         getSeededProducts: () => 'not-an-array',
@@ -290,7 +306,7 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       version: '1.0.0',
       resolveAccount: async () => ({ account_id: 'resolved-123', sandbox: true }),
       mediaBuy: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
       },
       testController: {
         getSeededProducts: ctx => {
@@ -314,7 +330,10 @@ describe('createAdcpServer — test-controller seeded get_products wiring', () =
       name: 'Test',
       version: '1.0.0',
       mediaBuy: {
-        getProducts: async () => ({ products: [{ product_id: 'handler-1', name: 'Handler Own' }] }),
+        getProducts: async () => ({
+          products: [{ product_id: 'handler-1', name: 'Handler Own' }],
+          cache_scope: 'account',
+        }),
       },
     });
     const result = await callGetProducts(server, {
@@ -390,6 +409,35 @@ describe('createAdcpServer — seeded get_products under strict response validat
       ['handler-1', 'seed-1', 'seed-2']
     );
     assert.strictEqual(payload.sandbox, true);
+  });
+
+  it('does not default cache_scope on account-scoped seeded sandbox merges', async () => {
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'strict' },
+      mediaBuy: {
+        getProducts: async () => ({ products: [] }),
+      },
+      testController: {
+        getSeededProducts: () => [makeStrictProduct('seed-1')],
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          buying_mode: 'brief',
+          account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    const issue = result.structuredContent.adcp_error.issues.find(i => i.pointer === '/cache_scope');
+    assert.ok(issue, `expected missing cache_scope issue, got: ${JSON.stringify(result.structuredContent)}`);
   });
 
   // ---------------------------------------------------------------------------

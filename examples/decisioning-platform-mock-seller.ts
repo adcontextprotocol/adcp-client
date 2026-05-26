@@ -47,11 +47,11 @@ import {
   type SalesIngestionPlatform,
   type AccountStore,
   type AdcpStructuredError,
+  type GetProductsPayload,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
-  GetProductsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -146,8 +146,8 @@ function rejectPreflight(errors: AdcpStructuredError[]): never {
   });
 }
 
-const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
-  status: 'completed' as const,
+const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsPayload> => ({
+  cache_scope: 'account' as const,
   products: [
     {
       product_id: 'prod_premium_video',

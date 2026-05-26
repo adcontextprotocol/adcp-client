@@ -43,7 +43,7 @@ import type { GetAdCPCapabilitiesResponse } from '../types/tools.generated';
 import type { GetProductsResponse } from '../types/core.generated';
 import type { CreateMediaBuySuccess } from '../types/core.generated';
 import type { GetMediaBuyDeliveryResponse } from '../types/tools.generated';
-import type { ServerPayload } from '../types/server-payload';
+import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
 import { validActionsForStatus } from './media-buy-helpers';
 import type { CancelMediaBuyInput } from './media-buy-helpers';
 import type {
@@ -249,10 +249,15 @@ export function capabilitiesResponse(
  * Build a get_products response.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
-export function productsResponse(data: ServerPayload<GetProductsResponse>, summary?: string): McpToolResponse {
+export function productsResponse(
+  data: RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>,
+  summary?: string
+): McpToolResponse {
   const structured = completedStructuredContent(data);
+  const defaultSummary =
+    data.unchanged === true ? 'Product feed unchanged' : `Found ${(data.products ?? []).length} products`;
   return {
-    content: [{ type: 'text', text: summary ?? `Found ${(data.products ?? []).length} products` }],
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
     structuredContent: structured,
   };
 }

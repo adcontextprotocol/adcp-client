@@ -49,6 +49,7 @@ function buildPlatform(overrides = {}) {
             pricing_options: [{ pricing_model: 'cpm', rate: 5.0, currency: 'USD' }],
           },
         ],
+        cache_scope: 'account',
       }),
       createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
       updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -90,6 +91,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
                 pricing_options: [{ pricing_model: 'cpm', rate: 1, currency: 'USD' }],
               },
             ],
+            cache_scope: 'account',
           };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -121,6 +123,54 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
+  });
+
+  it('fails closed for auth-derived get_products responses missing cache_scope', async () => {
+    let sawCtx;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async (req, ctx) => {
+          sawCtx = ctx;
+          return {
+            products: [
+              {
+                product_id: 'p_auth_scoped',
+                name: 'auth scoped',
+                description: '',
+                format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+                delivery_type: 'non_guaranteed',
+                publisher_properties: { reportable: true },
+                reporting_capabilities: { available_dimensions: ['geo'] },
+                pricing_options: [{ pricing_model: 'cpm', rate: 1, currency: 'USD' }],
+              },
+            ],
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          buying_mode: 'brief',
+          brief: 'premium',
+        },
+      },
+    });
+
+    assert.ok(sawCtx?.account, 'auth-derived platform path should populate ctx.account before response defaults');
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    const issue = result.structuredContent.adcp_error.issues.find(i => i.pointer === '/cache_scope');
+    assert.ok(issue, `expected missing cache_scope issue, got: ${JSON.stringify(result.structuredContent)}`);
   });
 
   it('catches AccountNotFoundError from accounts.resolve and returns ACCOUNT_NOT_FOUND envelope', async () => {
@@ -171,7 +221,7 @@ describe('SalesPlatform — full surface dispatch', () => {
       },
       statusMappers: {},
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -577,7 +627,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       statusMappers: {},
       sales: {
         // Default sync createMediaBuy; tests override with handoff variant.
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_default' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -800,7 +850,7 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
       },
       statusMappers: {},
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -931,7 +981,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
     let sawCtx;
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -968,7 +1018,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
         },
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1014,7 +1064,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1684,6 +1734,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
               pricing_options: [{ pricing_model: 'cpm', rate: 1, currency: 'USD' }],
             },
           ],
+          cache_scope: 'account',
         }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -1711,6 +1762,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
               pricing_options: [],
             },
           ],
+          cache_scope: 'account',
         }),
       },
     });
@@ -1792,7 +1844,7 @@ describe('SalesPlatform retail-media tools (M2)', () => {
     let received;
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1836,7 +1888,7 @@ describe('SalesPlatform retail-media tools (M2)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1868,7 +1920,7 @@ describe('SalesPlatform retail-media tools (M2)', () => {
   it('syncEventSources dispatches via sales.syncEventSources', async () => {
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1952,7 +2004,7 @@ describe('Merge-seam collision warning (M3)', () => {
     const warnings = [];
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -1982,7 +2034,7 @@ describe('Merge-seam collision warning (M3)', () => {
   it('throws PlatformConfigError on collision in strict mode', () => {
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2012,7 +2064,7 @@ describe('Merge-seam collision warning (M3)', () => {
     function buildCollidingPlatform() {
       return buildPlatform({
         sales: {
-          getProducts: async () => ({ products: [] }),
+          getProducts: async () => ({ products: [], cache_scope: 'account' }),
           createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
           updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
           syncCreatives: async () => [],
@@ -2053,7 +2105,7 @@ describe('Merge-seam collision warning (M3)', () => {
     const warnings = [];
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2101,7 +2153,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2150,7 +2202,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2466,7 +2518,7 @@ describe('HITL push notification webhook on terminal state', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2630,7 +2682,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -2811,7 +2863,7 @@ describe('tasks_get wire tool (B9)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
@@ -2919,7 +2971,7 @@ describe('tasks_get wire tool (B9)', () => {
           }),
         },
         sales: {
-          getProducts: async () => ({ products: [] }),
+          getProducts: async () => ({ products: [], cache_scope: 'account' }),
           createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42' })),
           updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
           syncCreatives: async () => [],
@@ -2967,7 +3019,7 @@ describe('tasks_get wire tool (B9)', () => {
           },
         },
         sales: {
-          getProducts: async () => ({ products: [] }),
+          getProducts: async () => ({ products: [], cache_scope: 'account' }),
           createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42', status: 'active' })),
           updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
           syncCreatives: async () => [],
@@ -3023,7 +3075,7 @@ describe('getTaskState account-scoping (B7)', () => {
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_42' })),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
@@ -3184,7 +3236,7 @@ describe('validatePlatform', () => {
     // the specialism declaration matches the implemented interfaces.
     const platform = buildPlatform({
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'mb_1' })),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -3378,7 +3430,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
         }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({
           media_buy_id: 'mb_1',
           status: 'pending_creatives',
@@ -3457,7 +3509,7 @@ describe('signed-requests specialism forwarding (#1886)', () => {
       },
       statusMappers: {},
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],

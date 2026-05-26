@@ -35,6 +35,7 @@ function buildPlatform(overrides = {}) {
     statusMappers: {},
     sales: {
       getProducts: async (_req, ctx) => ({
+        cache_scope: 'account',
         products: [
           {
             product_id: 'p1',
@@ -184,7 +185,7 @@ describe('buyer-agent registry resolve seam — Stage 2 of #1269', () => {
       sales: {
         getProducts: async () => {
           handlerInvoked = true;
-          return { products: [] };
+          return { cache_scope: 'account', products: [] };
         },
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
@@ -303,7 +304,7 @@ describe('buyer-agent registry resolve seam — Stage 2 of #1269', () => {
         list: async () => ({ items: [], nextCursor: null }),
       },
       sales: {
-        getProducts: async () => ({ products: [] }),
+        getProducts: async () => ({ cache_scope: 'account', products: [] }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
