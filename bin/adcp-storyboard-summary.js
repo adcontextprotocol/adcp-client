@@ -37,8 +37,13 @@ function buildComplianceSummaryMarkdown(result, agentUrl) {
   lines.push('');
   lines.push(
     `**Overall:** ${result.overall_status} — ` +
-      `${s.steps_passed ?? 0} passed / ${s.steps_failed ?? 0} failed / ${s.steps_skipped ?? 0} skipped`
+      `${s.steps_passed ?? 0} passed / ${s.steps_failed ?? 0} failed / ${s.steps_skipped ?? 0} skipped / ` +
+      `${s.steps_not_selected ?? 0} not selected`
   );
+  const notSelectedReasons = formatReasonCounts(s.not_selected_by_reason);
+  if (notSelectedReasons) lines.push(`**Not selected:** ${notSelectedReasons}`);
+  const skippedReasons = formatReasonCounts(s.skipped_by_reason);
+  if (skippedReasons) lines.push(`**Skipped:** ${skippedReasons}`);
   const specialisms = result.agent_profile?.specialisms;
   if (specialisms?.length) {
     lines.push(`**Specialisms:** ${specialisms.join(', ')}`);
@@ -62,6 +67,16 @@ function buildComplianceSummaryMarkdown(result, agentUrl) {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+function formatReasonCounts(counts) {
+  if (!counts) return undefined;
+  const entries = Object.entries(counts).filter(([, count]) => count > 0);
+  if (entries.length === 0) return undefined;
+  return entries
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([reason, count]) => `${reason}=${count}`)
+    .join(', ');
 }
 
 /**
