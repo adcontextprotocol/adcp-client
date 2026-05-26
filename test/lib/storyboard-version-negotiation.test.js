@@ -1,5 +1,8 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 describe('storyboard runner AdCP version negotiation', () => {
   test('derives legacy-major-only version envelope for 3.0 storyboards', () => {
@@ -148,5 +151,49 @@ describe('storyboard runner AdCP version negotiation', () => {
         /Compliance cache version/.test(err.message) &&
         /supported_versions \[3\.0\]/.test(err.message)
     );
+  });
+
+  test('external compliance dir registers its sibling schema bundle', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+    const {
+      getValidator,
+      unregisterExternalSchemaRoot,
+      _resetValidationLoader,
+    } = require('../../dist/lib/validation/schema-loader.js');
+    const { resolveAdcpVersion } = require('../../dist/lib/utils/adcp-version-config.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-compliance-'));
+    const complianceDir = path.join(tempRoot, 'package', 'compliance', 'cache', '3.0.12');
+    const schemaRoot = path.join(tempRoot, 'package', 'dist', 'lib', 'schemas-data', '3.0');
+    try {
+      fs.mkdirSync(complianceDir, { recursive: true });
+      fs.mkdirSync(path.join(schemaRoot, 'bundled', 'media-buy'), { recursive: true });
+      fs.writeFileSync(
+        path.join(complianceDir, 'index.json'),
+        JSON.stringify({ adcp_version: '3.0.12', universal: [], protocols: [], specialisms: [] })
+      );
+      fs.writeFileSync(
+        path.join(schemaRoot, 'bundled', 'media-buy', 'get-products-request.json'),
+        JSON.stringify({
+          $id: '/schemas/3.0/bundled/media-buy/get-products-request.json',
+          type: 'object',
+          properties: { sentinel: { const: 'external' } },
+          required: ['sentinel'],
+          additionalProperties: false,
+        })
+      );
+
+      loadComplianceIndex({ complianceDir });
+
+      assert.strictEqual(resolveAdcpVersion('3.0.12'), '3.0.12');
+      const validator = getValidator('get_products', 'request', '3.0.12');
+      assert.ok(validator, 'external 3.0 request validator should compile');
+      assert.strictEqual(validator({ sentinel: 'external' }), true);
+      assert.strictEqual(validator({ sentinel: 'installed-sdk-default' }), false);
+    } finally {
+      unregisterExternalSchemaRoot('3.0.12');
+      _resetValidationLoader('3.0.12');
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -41,6 +41,8 @@ import { PROBE_TASK_ALLOWLIST } from './test-kit';
  */
 export interface ValidationContext {
   taskName: string;
+  /** AdCP schema bundle to use for strict AJV validation. */
+  adcpVersion?: string;
   taskResult?: TaskResult;
   httpResult?: HttpProbeResult;
   agentUrl: string;
@@ -488,7 +490,7 @@ function validateResponseSchema(
   // enforces `format` keywords and `additionalProperties: false` that Zod's
   // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
   // overall pass/fail stays Zod-driven to preserve backwards compatibility.
-  const strict = computeStrictVerdict(taskName, dataWithoutMessage);
+  const strict = computeStrictVerdict(taskName, dataWithoutMessage, ctx.adcpVersion);
 
   // Shape-drift no longer rides on `ValidationResult.warning` — issue #935
   // moved that diagnostic to `StoryboardStepResult.hints[]` as a structured
@@ -542,8 +544,12 @@ function validateResponseSchema(
  * the SDK — notably the brand-rights and governance schemas that live
  * outside the `bundled/` tree the loader walks today).
  */
-function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
-  const outcome = validateResponse(taskName, payload);
+function computeStrictVerdict(
+  taskName: string,
+  payload: unknown,
+  adcpVersion?: string
+): StrictValidationVerdict | undefined {
+  const outcome = validateResponse(taskName, payload, adcpVersion);
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
   if (outcome.variant === 'skipped') return undefined;

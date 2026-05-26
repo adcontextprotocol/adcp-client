@@ -3391,7 +3391,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       ...(opts.complianceVersion || opts.noSandbox || opts.assertsSeededState
         ? {
             runStoryboardOptions: {
-              ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
+              ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
             },
@@ -3780,7 +3780,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
+    ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
@@ -4041,7 +4041,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     agents: routing.agents,
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.complianceVersion && { adcpVersion: opts.complianceVersion }),
+    ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
