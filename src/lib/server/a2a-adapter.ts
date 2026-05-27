@@ -126,7 +126,9 @@ export interface A2AAgentCardOverrides {
    * Override the auto-generated skills list. When omitted the adapter
    * derives one `AgentSkill` per registered AdCP tool from the server's
    * capability object. Supply this to add descriptions, examples, tags,
-   * or per-skill input/output modes the SDK can't infer.
+   * or per-skill input/output modes the SDK can't infer. Framework-private
+   * tools such as `comply_test_controller` are still filtered from the public
+   * A2A agent card.
    */
   skills?: AgentSkill[];
 
@@ -580,6 +582,7 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
 
 const DEFAULT_MODES = ['application/json'] as const;
 const DEFAULT_PROTOCOL_VERSION = '0.3.0';
+const PUBLIC_AGENT_CARD_EXCLUDED_SKILLS = new Set(['get_adcp_capabilities', 'comply_test_controller']);
 
 /**
  * Derive one `AgentSkill` per registered AdCP tool. Skills without
@@ -599,12 +602,23 @@ function deriveSkills(toolNames: string[]): AgentSkill[] {
 function listRegisteredTools(server: AdcpServer): string[] {
   const sdk = getSdkServer(server);
   if (!sdk) return [];
-  return listRegisteredToolNames(sdk).filter(name => name !== 'get_adcp_capabilities');
+  return listRegisteredToolNames(sdk).filter(name => !PUBLIC_AGENT_CARD_EXCLUDED_SKILLS.has(name));
+}
+
+function filterPublicAgentCardSkills(skills: AgentSkill[]): AgentSkill[] {
+  return skills.filter(skill => {
+    const id = typeof skill.id === 'string' ? skill.id : undefined;
+    const name = typeof skill.name === 'string' ? skill.name : undefined;
+    return !(
+      (id != null && PUBLIC_AGENT_CARD_EXCLUDED_SKILLS.has(id)) ||
+      (name != null && PUBLIC_AGENT_CARD_EXCLUDED_SKILLS.has(name))
+    );
+  });
 }
 
 function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): AgentCard {
   const tools = listRegisteredTools(server);
-  const skills = overrides.skills ?? deriveSkills(tools);
+  const skills = filterPublicAgentCardSkills(overrides.skills ?? deriveSkills(tools));
 
   const card: AgentCard = {
     name: overrides.name,

@@ -378,17 +378,23 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
   };
 
   accounts: AccountStore<NetworkMeta> = {
-    resolve: async ref => {
+    resolve: async (ref, ctx) => {
       // No-account tools (`previewCreative`, `listCreativeFormats`) hand
       // `undefined` to resolve. Return the default-listing network so
-      // the format catalog query has tenant context.
+      // the format catalog query has tenant context. This worked example
+      // uses the same auth-derived path for the conformance runner's
+      // controller discovery, so authenticated ref-less calls are stamped
+      // sandbox. Production sellers replace this with a real principal →
+      // account lookup and only stamp sandbox for sandbox tenants.
       if (!ref) {
+        if (!ctx?.authInfo) return null;
         const network = await upstream.lookupNetwork(KNOWN_PUBLISHERS[0] ?? 'creative-network.example');
         if (!network) return null;
         return {
           id: network.network_code,
           name: network.display_name,
           status: 'active',
+          mode: 'sandbox',
           brand: { domain: network.adcp_publisher },
           ctx_metadata: { network_code: network.network_code, publisher_domain: network.adcp_publisher },
         };
