@@ -421,10 +421,31 @@ function writeJson(res: ServerResponse, status: number, body: unknown, headers: 
     res.end();
     return;
   }
-  const payload = JSON.stringify(body);
+  const payload = JSON.stringify(sanitizeJsonBody(body));
   res.setHeader('content-type', headers['content-type'] ?? 'application/json; charset=utf-8');
   res.setHeader('content-length', Buffer.byteLength(payload));
   res.end(payload);
+}
+
+function sanitizeJsonBody(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value instanceof Error) {
+    return { code: 'internal_error', message: 'Internal error.' };
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeJsonBody(item, seen));
+  }
+  if (isRecord(value)) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (key.toLowerCase() === 'stack') continue;
+      out[key] = sanitizeJsonBody(item, seen);
+    }
+    seen.delete(value);
+    return out;
+  }
+  return value;
 }
 
 async function readJsonObject(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {

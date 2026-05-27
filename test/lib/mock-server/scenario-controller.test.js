@@ -129,6 +129,27 @@ describe('mock-server scenario controller', () => {
     assert.equal(second.status, 200);
   });
 
+  it('does not serialize stack traces from scripted response bodies', async () => {
+    await handle.scenario.reset();
+    const err = new Error('fixture internals');
+    err.stack = 'secret stack trace';
+    handle.scenario.addScript({
+      match: { method: 'GET', path: '/v1/products' },
+      response: {
+        status: 500,
+        body: { code: 'scripted_failure', error: err, stack: 'top-level secret' },
+      },
+    });
+
+    const res = await fetch(`${handle.url}/v1/products`, { headers: authHeaders() });
+    assert.equal(res.status, 500);
+    const text = await res.text();
+    assert.equal(text.includes('secret stack trace'), false);
+    assert.equal(text.includes('top-level secret'), false);
+    const body = JSON.parse(text);
+    assert.equal(body.error.message, 'Internal error.');
+  });
+
   it('replays idempotency_key requests with the identical status and body', async () => {
     await handle.scenario.reset();
 
