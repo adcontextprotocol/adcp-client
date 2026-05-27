@@ -20,11 +20,13 @@
  *     `digest`. Mismatch is a hard fail.
  *   - **Cache**: keyed by `uri@digest`; immutable.
  *
- * Out of scope (deferred to a future follow-up):
- *   - `$ref` resolution + depth/count bounds — Ajv loaderHook job.
- *   - Schema-compile DoS bounds (re2 pattern engine, allOf expansion
- *     bounds, per-manifest validation budget) — applied at the Ajv
- *     compile step in the manifest validator, not here.
+ * Higher-level helper:
+ *   - `createCanonicalReferenceResolver()` wraps this fetcher with
+ *     per-caller caching, `$ref` sandboxing, JSON Schema compilation,
+ *     and non-throwing structured statuses for both `format_schema` and
+ *     `platform_extensions` references.
+ *
+ * Out of scope for this low-level fetcher:
  *   - Stronger transparency-log / signed-body verification — tracked
  *     separately in the spec; mirror-trust hardening is future work.
  */
@@ -110,6 +112,12 @@ export interface FetchFormatSchemaOptions {
    */
   maxBodyBytes?: number;
   /**
+   * Caller-scoped test/dev opt-in for loopback/private HTTP fetches.
+   * Production callers should leave this false. IMDS/link-local
+   * metadata endpoints remain blocked by `ssrfSafeFetch`.
+   */
+  allowInternalReferences?: boolean;
+  /**
    * Override the module-level cache. Useful when callers want
    * per-session caches or to disable caching entirely
    * (`{ get: () => undefined, set: () => {} }`).
@@ -127,25 +135,33 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
+function cloneJsonRecord<T extends Record<string, unknown>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneFetchResult(result: FormatSchemaFetchResult, fromCache: boolean): FormatSchemaFetchResult {
+  return {
+    schema: cloneJsonRecord(result.schema),
+    ref: { ...result.ref },
+    fromCache,
+  };
+}
+
 function defaultCache(): FormatSchemaCache {
   const store = new Map<string, FormatSchemaFetchResult>();
   return {
     get: key => store.get(key),
     set: (key, value) => {
-      store.set(key, value);
+      store.set(key, cloneFetchResult(value, false));
     },
   };
 }
 
-const moduleCache = defaultCache();
+let moduleCache = defaultCache();
 
 /** Test hook: drop the module-level cache. */
 export function _resetFormatSchemaCache(): void {
-  // We can't actually drop a Map referenced by the closure; expose a
-  // recreate-the-store path that callers can use in tests.
-  // Module re-initialization is the supported reset mechanism for the
-  // default cache.
-  // For now consumers needing isolation should pass a fresh cache via options.
+  moduleCache = defaultCache();
 }
 
 /**
@@ -165,7 +181,7 @@ export async function fetchFormatSchema(
   // Production: HTTPS-only per spec. Loopback test runs (gated by
   // ADCP_ALLOW_INTERNAL_PROBES=1) may use `http://` against a 127.0.0.1
   // mock — same opt-in pattern as the discovery layer.
-  const allowHttp = isInternalProbesAllowed();
+  const allowHttp = options.allowInternalReferences === true || isInternalProbesAllowed();
   if (!ref.uri.startsWith('https://') && !(allowHttp && ref.uri.startsWith('http://'))) {
     throw new FormatSchemaFetchError('invalid_ref', 'format_schema.uri must use https:// (spec normative)', {
       uri: ref.uri,
@@ -183,7 +199,7 @@ export async function fetchFormatSchema(
   const cacheKey = `${ref.uri}@${ref.digest}`;
   const cached = cache.get(cacheKey);
   if (cached) {
-    return { ...cached, fromCache: true };
+    return cloneFetchResult(cached, true);
   }
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -204,6 +220,9 @@ export async function fetchFormatSchema(
     });
   } catch (err) {
     if (err instanceof SsrfRefusedError) {
+      if (err.code === 'body_exceeds_limit') {
+        throw new FormatSchemaFetchError('body_too_large', err.message, { uri: ref.uri, digest: ref.digest });
+      }
       throw new FormatSchemaFetchError('ssrf_refused', `SSRF guard refused: ${err.message}`, {
         uri: ref.uri,
         digest: ref.digest,
@@ -271,9 +290,9 @@ export async function fetchFormatSchema(
 
   const result: FormatSchemaFetchResult = {
     schema: parsed as Record<string, unknown>,
-    ref,
+    ref: { ...ref },
     fromCache: false,
   };
   cache.set(cacheKey, result);
-  return result;
+  return cloneFetchResult(result, false);
 }
