@@ -23,28 +23,18 @@ const { ADCP_VERSION } = require('../../dist/lib/version');
 // Cached schema — UpstreamTrafficSuccess.recorded_calls[].items
 // ────────────────────────────────────────────────────────────
 
-const COMPLY_RESPONSE_SCHEMA = require(path.resolve(
-  __dirname,
-  '../../schemas/cache',
-  ADCP_VERSION,
-  'compliance/comply-test-controller-response.json'
-));
-const CONTEXT_SCHEMA = require(path.resolve(
-  __dirname,
-  '../../schemas/cache',
-  ADCP_VERSION,
-  'core/context.json'
-));
-const EXT_SCHEMA = require(path.resolve(
-  __dirname,
-  '../../schemas/cache',
-  ADCP_VERSION,
-  'core/ext.json'
-));
+const COMPLY_RESPONSE_SCHEMA = require(
+  path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION, 'compliance/comply-test-controller-response.json')
+);
+const CONTEXT_SCHEMA = require(path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION, 'core/context.json'));
+const EXT_SCHEMA = require(path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION, 'core/ext.json'));
 const UPSTREAM_TRAFFIC_SUCCESS_SCHEMA = COMPLY_RESPONSE_SCHEMA.oneOf.find(
   branch => branch.title === 'UpstreamTrafficSuccess'
 );
-assert.ok(UPSTREAM_TRAFFIC_SUCCESS_SCHEMA, 'cached comply_test_controller response schema must include UpstreamTrafficSuccess');
+assert.ok(
+  UPSTREAM_TRAFFIC_SUCCESS_SCHEMA,
+  'cached comply_test_controller response schema must include UpstreamTrafficSuccess'
+);
 const RECORDED_CALL_SCHEMA = UPSTREAM_TRAFFIC_SUCCESS_SCHEMA.properties.recorded_calls.items;
 
 const ajv = new Ajv({ strict: false, allErrors: true });

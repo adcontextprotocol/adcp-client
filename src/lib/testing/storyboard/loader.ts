@@ -90,15 +90,11 @@ function validateRequiredAnyOfTools(storyboard: Storyboard): void {
     }
     const { tools, rationale } = family as { tools?: unknown; rationale?: unknown };
     if (!Array.isArray(tools) || tools.length < 2) {
-      throw new Error(
-        `[${storyboard.id}] required_any_of_tools[${i}].tools: must list at least two tool names`
-      );
+      throw new Error(`[${storyboard.id}] required_any_of_tools[${i}].tools: must list at least two tool names`);
     }
     for (const tool of tools) {
       if (typeof tool !== 'string' || tool.length === 0) {
-        throw new Error(
-          `[${storyboard.id}] required_any_of_tools[${i}].tools: entries must be non-empty strings`
-        );
+        throw new Error(`[${storyboard.id}] required_any_of_tools[${i}].tools: entries must be non-empty strings`);
       }
     }
     if (rationale !== undefined && typeof rationale !== 'string') {
