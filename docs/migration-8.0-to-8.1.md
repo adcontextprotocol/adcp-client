@@ -33,6 +33,9 @@
   `AuthMissingError` or `AuthInvalidError`. The SDK still reads legacy
   `AUTH_REQUIRED` responses, and `AuthRequiredError` remains as a deprecated
   `AUTH_REQUIRED` wrapper for source and wire compatibility.
+- `comply_test_controller` is now hidden from live principals. Sandbox/mock
+  principals still see it; targeting a live or unresolved non-sandbox account
+  from that sandbox surface returns `PERMISSION_DENIED`.
 
 ## Signing Surface Changes
 
@@ -181,6 +184,35 @@ default table already escalates `AUTH_MISSING` as an auth problem and
 Buyer code must continue to handle legacy `AUTH_REQUIRED`: older sellers and
 some compatibility helper paths still surface it during the 3.x deprecation
 window.
+
+## Compliance Controller Visibility
+
+AdCP 3.1 tightens deterministic-test discovery: production callers must be
+byte-equivalent to a seller that never wired `comply_test_controller`.
+
+For `createAdcpServerFromPlatform` adopters that supply `complyTest`, the
+framework now resolves the auth-derived principal with
+`platform.accounts.resolve(undefined, ctx)` before answering
+`get_adcp_capabilities`, `tools/list`, or a direct controller call:
+
+| Principal mode | Capability block | `tools/list` | Direct controller call |
+|---|---|---|---|
+| `sandbox` / `mock` | Includes `compliance_testing` | Includes `comply_test_controller` | Dispatches, then target-account gate applies |
+| legacy resolved `{ sandbox: true }` | Includes `compliance_testing` | Includes `comply_test_controller` | Dispatches, then target-account gate applies |
+| `live` / unresolved | Omits `compliance_testing` | Filters the tool | MCP method-not-found |
+
+Within the visible sandbox/mock surface, the target account is resolved from
+the request parameters. If that target resolves to live or cannot be resolved
+as sandbox/mock, the controller returns `PERMISSION_DENIED`; this is the
+intentional denial path for "sandbox caller, non-sandbox target." Keep
+`capabilities.compliance_testing` declared when using `complyTest`, and make
+`accounts.resolve(undefined, ctx)` resolve the authenticated principal if you
+want discovery without the legacy env bridge. Legacy `ADCP_SANDBOX=1` still
+exposes the controller for old conformance deployments, but it fails closed if
+the process has resolved any explicit live-mode account. A buyer-supplied
+`account.sandbox: true` is only consulted as an unresolved target-account
+fallback after the principal visibility check has already passed; it never makes
+a live principal visible and never overrides a resolved live target account.
 
 ### `ProductSchema` is a `ZodObject` again
 

@@ -494,20 +494,52 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
      *  tenant resolution against the durable buyer-agent identity here
      *  rather than re-deriving from the credential. */
     resolve: async (ref, ctx) => {
-      if (!ref) return null;
+      let effectiveRef = ref;
+      if (!effectiveRef) {
+        const inputAccount = readRequestAccountRef(ctx?.input as Record<string, unknown> | undefined);
+        // TEST-ONLY: comply_test_controller discovery and account-less
+        // controller calls resolve through this auth-derived path. When the
+        // caller supplied an account in the controller payload/context, use
+        // it; otherwise fall back to the single operator this worked example
+        // uses for the conformance harness. Production sellers replace this
+        // with a real principal → sandbox-account lookup.
+        if (inputAccount != null && 'account_id' in inputAccount) return null;
+        const inputBrand = inputAccount?.['brand'];
+        const inputBrandDomain =
+          inputBrand != null && typeof inputBrand === 'object'
+            ? (inputBrand as { domain?: unknown }).domain
+            : undefined;
+        const inputOperator = inputAccount?.['operator'];
+        const inputSandbox = inputAccount?.['sandbox'];
+        effectiveRef =
+          typeof inputOperator === 'string'
+            ? {
+                brand: { domain: typeof inputBrandDomain === 'string' ? inputBrandDomain : 'acmeoutdoor.example' },
+                operator: inputOperator,
+                ...(typeof inputSandbox === 'boolean' && { sandbox: inputSandbox }),
+              }
+            : {
+                brand: { domain: 'acmeoutdoor.example' },
+                operator: 'pinnacle-agency.example',
+                sandbox: true,
+              };
+      }
+      if (!effectiveRef) return null;
       // AccountReference discriminated union: `{ account_id }` post-sync,
       // or `{ brand, operator, sandbox? }` on initial discovery. Mock has
       // no account_id index; SWAP: production keeps an account_id →
       // operator_id index populated during list_accounts.
-      if ('account_id' in ref) return null;
-      const adcpOperator = ref.operator;
+      if ('account_id' in effectiveRef) return null;
+      const adcpOperator = effectiveRef.operator;
       if (!adcpOperator) return null;
       // Optional: gate the operator on the buyer agent's allowed_brands /
       // billing_capabilities. Sellers who don't cross-check operator vs.
       // agent here let any onboarded agent operate on any operator —
       // legitimate for some marketplaces, a leak for others.
       const buyerAgent =
-        ctx?.agent && ctx.input ? overlayBuyerAgent(ctx.agent, ctx.input, ref as Record<string, unknown>) : ctx?.agent;
+        ctx?.agent && ctx.input
+          ? overlayBuyerAgent(ctx.agent, ctx.input, effectiveRef as Record<string, unknown>)
+          : ctx?.agent;
       if (buyerAgent?.status === 'suspended' || buyerAgent?.status === 'blocked') {
         throw new AdcpError(buyerAgent.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_BLOCKED', {
           message:
@@ -524,6 +556,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         name: adcpOperator,
         status: 'active',
         operator: adcpOperator,
+        mode: 'sandbox',
         ctx_metadata: { operator_id: operatorId },
         // The upstream here is the AdCP mock-server. Every account it
         // returns is a sandbox account by definition. Production

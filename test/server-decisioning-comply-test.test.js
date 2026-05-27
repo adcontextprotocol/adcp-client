@@ -1,10 +1,10 @@
 // Integration tests for first-class `comply_test_controller` wiring on
 // `createAdcpServerFromPlatform`. Adopters declare `complyTest`
-// adapters; the framework auto-registers the wire tool and projects
-// `compliance_testing.scenarios` onto get_adcp_capabilities.
+// adapters; the framework registers the wire tool and projects
+// `compliance_testing.scenarios` onto sandbox-visible discovery.
 
 process.env.NODE_ENV = 'test';
-process.env.ADCP_SANDBOX = '1'; // suppress the ungated-warning
+process.env.ADCP_SANDBOX = '1'; // legacy conformance deployment visibility bridge
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
@@ -51,8 +51,12 @@ function basePlatform({ withComplianceTesting = false } = {}) {
   };
 }
 
+async function listTools(server) {
+  return server.dispatchTestRequest({ method: 'tools/list' });
+}
+
 describe('createAdcpServerFromPlatform — comply_test_controller wiring', () => {
-  it('registers comply_test_controller when complyTest adapters are supplied', async () => {
+  it('registers comply_test_controller when complyTest adapters are supplied under the sandbox env bridge', async () => {
     let forcedCreativeId = null;
     const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
       name: 'comply-host',
@@ -92,7 +96,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.strictEqual(result.structuredContent.current_state, 'approved');
   });
 
-  it('list_scenarios returns the auto-derived scenarios from supplied adapters', async () => {
+  it('list_scenarios returns auto-derived scenarios under the sandbox env bridge', async () => {
     const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
       name: 'comply-host',
       version: '0.0.1',
@@ -207,7 +211,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     );
   });
 
-  it('projects compliance_testing.scenarios onto get_adcp_capabilities', async () => {
+  it('projects compliance_testing.scenarios onto get_adcp_capabilities under the sandbox env bridge', async () => {
     // Round-5 spike (training-agent): framework validates the
     // capability/adapter consistency but doesn't project scenarios onto
     // wire. Adopter sees compliance_testing: {} on get_adcp_capabilities
@@ -261,9 +265,12 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.ok(ct.scenarios.includes('force_media_buy_status'));
     assert.ok(ct.scenarios.includes('simulate_delivery'));
     assert.ok(!ct.scenarios.includes('force_account_status'), 'unwired scenario must not appear');
+
+    const listed = await listTools(server);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
   });
 
-  it('explicit capabilities.compliance_testing.scenarios overrides auto-derivation', async () => {
+  it('explicit capabilities.compliance_testing.scenarios overrides auto-derivation under the sandbox env bridge', async () => {
     const platform = basePlatform({ withComplianceTesting: true });
     // Adopter wires three adapters but only wants to advertise two.
     platform.capabilities.compliance_testing = {
@@ -324,7 +331,7 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.strictEqual(result.structuredContent?.compliance_testing, undefined);
   });
 
-  it('sandboxGate denial returns FORBIDDEN', async () => {
+  it('sandboxGate denial returns FORBIDDEN under the sandbox env bridge', async () => {
     const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
       name: 'gated-host',
       version: '0.0.1',
