@@ -315,6 +315,11 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
   });
 
   test('computePayloadDigestSha256 rejects prenormalized payloads with unredacted secret keys', () => {
+    assert.throws(() => computePayloadDigestSha256({ ok: true }, 'application/json', { redactPattern: false }), {
+      name: 'PayloadDigestError',
+      message: /redactPattern=false requires prenormalized=true/,
+    });
+
     assert.throws(
       () =>
         computePayloadDigestSha256(

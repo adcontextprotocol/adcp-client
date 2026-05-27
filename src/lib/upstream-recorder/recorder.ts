@@ -590,6 +590,15 @@ export function computePayloadDigestSha256(
       ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
       : DEFAULT_MAX_PAYLOAD_BYTES;
   try {
+    if (
+      typeof options === 'object' &&
+      options !== null &&
+      !(options instanceof RegExp) &&
+      options.redactPattern === false &&
+      options.prenormalized !== true
+    ) {
+      throw new PayloadDigestError('PayloadDigestOptions.redactPattern=false requires prenormalized=true');
+    }
     const payloadForDigest =
       redactPattern === false
         ? assertPrenormalizedPayloadSafe(payload, contentType, SECRET_KEY_PATTERN)
@@ -607,6 +616,10 @@ export function computePayloadDigestSha256(
 }
 
 export type PayloadDigestOptions = {
+  /**
+   * Custom redaction pattern. Passing `false` is accepted only with
+   * `prenormalized: true`; otherwise it would silently bypass redaction.
+   */
   redactPattern?: RegExp | false;
   maxPayloadBytes?: number;
   prenormalized?: boolean;

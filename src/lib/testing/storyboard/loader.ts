@@ -19,6 +19,9 @@ import { MUTATING_TASKS } from '../../utils/idempotency';
  */
 export const BRANCH_SET_SEMANTICS = ['any_of'] as const;
 
+const IDENTIFIER_PATH_SEGMENT = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
+const IDENTIFIER_PATH_PATTERN = new RegExp(`^${IDENTIFIER_PATH_SEGMENT}(?:\\.${IDENTIFIER_PATH_SEGMENT})*$`);
+
 /** Parse a YAML string into a Storyboard. Throws if required fields are missing. */
 export function parseStoryboard(yamlContent: string): Storyboard {
   const parsed = parse(yamlContent) as Storyboard;
@@ -123,9 +126,7 @@ function validateUpstreamIdentifierPaths(
 function validateIdentifierPathSyntax(path: string): { normalized: string; firstSegment: string } {
   const trimmed = path.trim();
   const normalized = trimmed.startsWith('$.') ? trimmed.slice(2) : trimmed;
-  const segment = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
-  const pathPattern = new RegExp(`^${segment}(?:\\.${segment})*$`);
-  if (!pathPattern.test(normalized)) {
+  if (!IDENTIFIER_PATH_PATTERN.test(normalized)) {
     throw new Error('unsupported identifier path syntax');
   }
   return { normalized, firstSegment: normalized.split(/[.[\]]/, 1)[0] ?? '' };
