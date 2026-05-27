@@ -104,8 +104,8 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 // (adcp#4028). The runner authenticates with this bearer to probe the
 // seller's live-mode denial path. The resolver below stamps
 // `mode: 'live'` on the matching principal so the framework gate inside
-// `createAdcpServerFromPlatform` refuses `comply_test_controller`
-// dispatch with FORBIDDEN. Test-kit value pinned by
+// `createAdcpServerFromPlatform` hides `comply_test_controller` from that
+// principal. Test-kit value pinned by
 // `compliance/cache/<ver>/test-kits/acme-outdoor-live.yaml`.
 //
 // ⚠️ This bearer is published in the open-source SDK and in the public
@@ -571,24 +571,27 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         //   (1) the cascade-scenario sandbox arm below, keyed by
         //       `ref.sandbox === true` and stamped with `mode: 'sandbox'`
         //       and a `${SANDBOX_ID_PREFIX}${network_code}` id.
-        //   (2) the production path below, keyed by `ref.brand.domain`
+        //   (2) the conformance principal path here, keyed by auth and
+        //       stamped with `mode: 'sandbox'` but using the bare
+        //       `network_code` id so tasks/get polls match direct-buy tasks.
+        //   (3) the production path below, keyed by `ref.brand.domain`
         //       and stamped with the bare `network_code` id (no mode).
         // The compliance runner exercises path (2) for the
         // sales_guaranteed HITL flow (no `sandbox: true` on the create
         // step's account), so the auth-derived ref-less fallback
-        // returns the matching production account here. Production
-        // sellers key this off `ctx.authInfo.credential.key_id` /
-        // `client_id` against a real tenant store.
+        // returns the matching account id with sandbox principal mode here.
+        // Production sellers key this off `ctx.authInfo.credential.key_id`
+        // / `client_id` against a real tenant store.
         const publisherDomain = 'acmeoutdoor.example';
         const network = await upstream.lookupNetwork(publisherDomain);
         if (!network) return null;
         // Live-mode probe principal (comply_controller_mode_gate
         // storyboard) — stamp `mode: 'live'` so the framework gate inside
-        // `createAdcpServerFromPlatform` refuses `comply_test_controller`
-        // dispatch with FORBIDDEN. The probe never reaches a mutating
-        // dispatch path; the live-mode caller is denied before scenario
-        // execution. Production sellers source `mode` from their tenant
-        // store, not from the principal name.
+        // `createAdcpServerFromPlatform` hides `comply_test_controller`
+        // from that principal. The probe never reaches a mutating dispatch
+        // path; the live-mode caller is denied before scenario execution.
+        // Production sellers source `mode` from their tenant store, not
+        // from the principal name.
         //
         // Detection: ResolvedAuthInfo doesn't surface the principal name
         // directly (the framework propagates AuthPrincipal.principal as
@@ -602,7 +605,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           name: network.display_name,
           status: 'active',
           brand: { domain: network.adcp_publisher },
-          ...(isLiveModeProbe ? { mode: 'live' as const } : {}),
+          mode: isLiveModeProbe ? 'live' : 'sandbox',
           ctx_metadata: {
             network_code: network.network_code,
             publisher_domain: network.adcp_publisher,
@@ -1246,10 +1249,11 @@ serve(
       // `createAdcpServerFromPlatform` resolves the calling principal
       // through `accounts.resolve` and admits only when the resolved
       // account's `mode` is `'sandbox'` or `'mock'` (per `Account.mode`
-      // in AdCP 6.7+). The synthesis branch in `accounts.resolve` above
-      // stamps `mode: 'sandbox'` on cascade-scenario refs; production
-      // refs flow through the live path with the field unset (default
-      // `'live'`), so the framework gate refuses dispatch for them.
+      // in AdCP 6.7+). The auth-derived conformance branch and the
+      // cascade-scenario ref branch in `accounts.resolve` above stamp
+      // `mode: 'sandbox'`; production refs flow through the live path with
+      // the field unset (default `'live'`), so the framework gate hides the
+      // controller for them.
       // See `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
       complyTest: {
         seed: {
@@ -1306,8 +1310,8 @@ serve(
         [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' },
         // Live-mode probe principal — see comply_controller_mode_gate
         // storyboard. The resolver below stamps `mode: 'live'` when this
-        // bearer is presented; the framework gate then refuses
-        // comply_test_controller dispatch with FORBIDDEN.
+        // bearer is presented; the framework gate then hides
+        // comply_test_controller from that principal.
         [ADCP_LIVE_MODE_AUTH_TOKEN]: { principal: LIVE_MODE_PROBE_PRINCIPAL },
       },
     }),

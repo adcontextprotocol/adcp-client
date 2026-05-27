@@ -268,6 +268,21 @@ controller.register(server);
 
 Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. `controller.register(server)` auto-emits `capabilities.compliance_testing.scenarios` per AdCP 3.0 — don't declare `compliance_testing` in `supported_protocols`.
 
+If you build with `createAdcpServerFromPlatform`, pass the same adapters as
+`complyTest` instead of calling `controller.register(server)` yourself, keep
+`capabilities.compliance_testing` declared, and make
+`accounts.resolve(undefined, ctx)` resolve the authenticated principal. The
+framework derives `compliance_testing.scenarios`; hides the capability and tool
+from live principals; filters `tools/list`; and makes live direct controller
+calls look like MCP method-not-found. Sandbox/mock principals still see the
+controller. Legacy resolved `{ sandbox: true }` accounts remain visible during
+the migration, and `ADCP_SANDBOX=1` remains a temporary conformance deployment
+bridge that fails closed after a live account is observed. `account.sandbox:
+true` on the request is only an unresolved-target fallback after visibility; it
+never makes a live principal visible and never overrides a resolved live target.
+`PERMISSION_DENIED` is reserved for a visible sandbox/mock principal targeting a
+live or unresolved non-sandbox account.
+
 When a storyboard declares `fixtures.buyer_agents[]`, the runner sends `seed_buyer_agent` before product, pricing, creative, plan, or media-buy seeds. Use it to populate a session- or account-scoped `BuyerAgentRegistry` overlay so `accounts.resolve` / `sync_accounts` gates see the intended per-agent commercial state without inventing a test bearer prefix. Do not store these overlays process-wide by `agent_url` alone; the same compliance runner can seed different buyer-agent states for different sessions or accounts. The shipped AdCP 3.1 billing-gate storyboard still uses a static test-kit precondition until the upstream storyboard switches to this seed; supporting the seed now makes your agent ready for that switch.
 
 ```yaml

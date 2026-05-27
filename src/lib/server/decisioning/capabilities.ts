@@ -199,9 +199,12 @@ export interface DecisioningCapabilities<TConfig = unknown> {
 
   /**
    * Compliance-testing capabilities. The presence of this block declares
-   * the agent supports deterministic state-machine testing via the
-   * `comply_test_controller` wire tool. Omit entirely if the agent
-   * doesn't support compliance testing.
+   * the deployment supports deterministic state-machine testing via the
+   * `comply_test_controller` wire tool. Keep this block declared when using
+   * `createAdcpServerFromPlatform(..., { complyTest })`; the framework makes
+   * live principals byte-identical to a production seller that never wired the
+   * controller by hiding this block, filtering `tools/list`, and returning MCP
+   * method-not-found for direct live calls.
    *
    * When this block is present, `createAdcpServerFromPlatform` REQUIRES
    * `opts.complyTest` (the `ComplyControllerConfig` adapter set) to be
@@ -211,9 +214,8 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Inversely, supplying `opts.complyTest` without declaring this
    * capability is also caught — the framework derives `scenarios` from
    * the declared force/simulate/seed adapters and emits the discovery
-   * field on `get_adcp_capabilities` automatically. Adopters who want
-   * to explicitly declare a narrower or wider scenarios list can supply
-   * this block; otherwise the auto-derivation wins.
+   * field on `get_adcp_capabilities` automatically for sandbox/mock
+   * principals. Live principals do not see the block.
    */
   compliance_testing?: ComplianceTestingCapabilities;
 

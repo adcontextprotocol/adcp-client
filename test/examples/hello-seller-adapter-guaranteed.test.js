@@ -25,6 +25,8 @@
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { Client: McpClient } = require('@modelcontextprotocol/sdk/client/index.js');
+const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
 const { runHelloAdapterGates } = require('./_helpers/runHelloAdapterGates');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -37,6 +39,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * not silent).
  */
 const EXPECTED_FAILURES = [];
+const ADCP_LIVE_MODE_AUTH_TOKEN = 'demo-acme-outdoor-live-v1';
 
 function isExpectedFailure(f) {
   return EXPECTED_FAILURES.some(e => e.storyboard_id === (f.storyboard_id || '') && e.step_id === (f.step_id || ''));
@@ -64,17 +67,30 @@ runHelloAdapterGates({
     'GET /v1/orders/{id}',
     'POST /v1/orders/{id}/lineitems',
   ],
-  // adcp#4028 denial gate — verify the framework refuses comply_test_controller
-  // dispatch when the resolver stamps mode: 'live'. The storyboard uses
-  // `auth.from_test_kit: true` so the grader resolves the bearer from the
-  // test-kit (acme-outdoor-live → demo-acme-outdoor-live-v1); the adapter's
-  // resolver recognises that principal and stamps mode: 'live', triggering the
-  // framework's FORBIDDEN refusal in createAdcpServerFromPlatform.
-  extraStoryboards: [
+  extraMcpAssertions: [
     {
-      id: 'comply_controller_mode_gate',
-      label: 'denies live-mode comply_test_controller calls with FORBIDDEN (adcp#4028)',
-      testKitPath: path.join(REPO_ROOT, 'compliance', 'cache', 'latest', 'test-kits', 'acme-outdoor-live.yaml'),
+      label: 'hides comply_test_controller from live-mode principals over MCP (adcp#4028)',
+      run: async ({ agentUrl, authToken }) => {
+        const sandboxList = await withMcpClient(agentUrl, authToken, client => client.listTools());
+        assert.ok(
+          sandboxList.tools.some(tool => tool.name === 'comply_test_controller'),
+          'conformance sandbox principal should discover comply_test_controller'
+        );
+
+        const liveList = await withMcpClient(agentUrl, ADCP_LIVE_MODE_AUTH_TOKEN, client => client.listTools());
+        assert.ok(
+          !liveList.tools.some(tool => tool.name === 'comply_test_controller'),
+          'live-mode principal must not discover comply_test_controller'
+        );
+
+        await assert.rejects(
+          () =>
+            withMcpClient(agentUrl, ADCP_LIVE_MODE_AUTH_TOKEN, client =>
+              client.callTool({ name: 'comply_test_controller', arguments: {} })
+            ),
+          err => err?.code === -32601 && /Method not found/.test(err.message)
+        );
+      },
     },
   ],
   filterFailures: grader => {
@@ -100,3 +116,20 @@ runHelloAdapterGates({
 // Surface assert is a no-op if `node --test` doesn't import it; placed at
 // module top-level to keep the gate self-checking even without invocation.
 void test;
+
+async function withMcpClient(agentUrl, authToken, fn) {
+  const transport = new StreamableHTTPClientTransport(new URL(agentUrl), {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    },
+  });
+  const client = new McpClient({ name: 'hello-seller-adapter-guaranteed-test', version: '0' }, { capabilities: {} });
+  await client.connect(transport);
+  try {
+    return await fn(client);
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
