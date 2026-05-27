@@ -629,6 +629,71 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.deepEqual(wireShape.recorded_calls, []);
     assert.equal(wireShape.total_count, 0);
   });
+
+  test('dropped_count counts entries dropped by digest canonicalization failure', async () => {
+    const digestErrors = [];
+    // NaN records cleanly as raw (JSON.stringify converts it to null for size
+    // checks, but the object is stored verbatim), yet JCS canonicalize throws
+    // on non-finite numbers — so the entry fails at digest-projection time.
+    const recorder = createUpstreamRecorder({
+      enabled: true,
+      onError: e => { if (e.kind === 'digest_canonicalization_failed') digestErrors.push(e); },
+    });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/nan-payload',
+        content_type: 'application/json',
+        payload: { count: NaN },
+      });
+      // A second, normal entry that projects fine.
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/normal',
+        content_type: 'application/json',
+        payload: { ok: true },
+      });
+    });
+
+    const result = recorder.query({ principal: 'p', attestationMode: 'digest' });
+    // The NaN entry fails projection; the normal one succeeds.
+    assert.equal(result.items.length, 1);
+    assert.equal(result.total, 1);
+    assert.equal(result.dropped_count, 1);
+    assert.equal(digestErrors.length, 1);
+    // Wire shape MUST NOT expose dropped_count (schema-gated).
+    const wireShape = toQueryUpstreamTrafficResponse(result);
+    assert.ok(!Object.prototype.hasOwnProperty.call(wireShape, 'dropped_count'));
+    assert.ok(validateUpstreamTrafficSuccess(wireShape), explain(validateUpstreamTrafficSuccess.errors));
+  });
+
+  test('dropped_count is 0 in raw mode even when entries would fail digest', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    await recorder.runWithPrincipal('p', async () => {
+      // NaN would fail digest canonicalization — raw mode must not count it.
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/nan-payload',
+        content_type: 'application/json',
+        payload: { count: NaN },
+      });
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/normal',
+        content_type: 'application/json',
+        payload: { ok: true },
+      });
+    });
+    const result = recorder.query({ principal: 'p', attestationMode: 'raw' });
+    assert.equal(result.items.length, 2);
+    assert.equal(result.dropped_count, 0);
+  });
+
+  test('noop recorder query returns dropped_count: 0', () => {
+    const recorder = createUpstreamRecorder({ enabled: false });
+    const result = recorder.query({ principal: 'p' });
+    assert.equal(result.dropped_count, 0);
+  });
 });
 
 function sha256Hex(value) {

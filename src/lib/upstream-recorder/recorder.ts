@@ -339,9 +339,13 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
 
     const items: RecordedCall[] = [];
     let total = 0;
+    let dropped_count = 0;
     for (const entry of matched) {
       const projected = safeProjectRecordedCall(entry.call, params, emitError);
-      if (!projected) continue;
+      if (!projected) {
+        if (params.attestationMode === 'digest') dropped_count++;
+        continue;
+      }
       total++;
       if (items.length < limit) items.push(projected);
     }
@@ -352,6 +356,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       total,
       truncated: total > items.length,
       since_timestamp,
+      dropped_count,
     };
   }
 
@@ -809,6 +814,7 @@ function makeNoopRecorder(): UpstreamRecorder {
       total: 0,
       truncated: false,
       since_timestamp: params.sinceTimestamp ?? new Date(0).toISOString(),
+      dropped_count: 0,
     }),
     clear: () => undefined,
     debug: (): UpstreamRecorderDebugInfo => ({

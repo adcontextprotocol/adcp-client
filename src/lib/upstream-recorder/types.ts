@@ -279,7 +279,9 @@ export interface UpstreamRecorderQueryResult {
   items: RecordedCall[];
   /**
    * Total count BEFORE `limit` truncation. `items.length` may be smaller
-   * when limit clipped the result.
+   * when limit clipped the result. Digest-mode entries dropped by
+   * canonicalization failure are excluded from this count and reported in
+   * `dropped_count` instead.
    */
   total: number;
   /** True when `total > items.length`. */
@@ -291,6 +293,18 @@ export interface UpstreamRecorderQueryResult {
    * epoch). Lets the runner verify the controller honored the bound.
    */
   since_timestamp: string;
+  /**
+   * Number of matched entries that were silently dropped because digest
+   * projection failed (`digest_canonicalization_failed` via `onError`).
+   * Only relevant when `attestationMode: 'digest'` was requested; always
+   * `0` in raw mode. A non-zero value means matched traffic existed but
+   * could not be attested — the runner's `upstream_traffic` check may
+   * grade it `missing` rather than `present`. Not projected onto the
+   * current wire response (the spec's `UpstreamTrafficSuccess` does not
+   * yet define this field); wire projection will be added when the schema
+   * adopts it.
+   */
+  dropped_count: number;
 }
 
 /**
