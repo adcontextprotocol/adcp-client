@@ -393,6 +393,7 @@ const input = {
           params: {
             properties: {
               mode: { type: 'string', enum: ['programmatic', 'managed'] },
+              mixed: { enum: [1, '1', true, 'true'] },
             },
           },
         },
@@ -404,6 +405,7 @@ const input = {
           params: {
             properties: {
               mode: { enum: ['managed', 'programmatic'], type: 'string' },
+              mixed: { enum: ['true', true, '1', 1] },
             },
           },
         },

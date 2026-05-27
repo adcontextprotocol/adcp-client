@@ -294,15 +294,16 @@ export interface UpstreamRecorderQueryResult {
    */
   since_timestamp: string;
   /**
-   * Number of matched entries that were silently dropped because digest
-   * projection failed (`digest_canonicalization_failed` via `onError`).
-   * Only relevant when `attestationMode: 'digest'` was requested; always
-   * `0` in raw mode. A non-zero value means matched traffic existed but
-   * could not be attested — the runner's `upstream_traffic` check may
-   * grade it `missing` rather than `present`. Not projected onto the
-   * current wire response (the spec's `UpstreamTrafficSuccess` does not
-   * yet define this field); wire projection will be added when the schema
-   * adopts it.
+   * Number of matched entries omitted from returned items after digest
+   * projection failed; `digest_canonicalization_failed` is surfaced through
+   * `onError` when that hook is configured. Only relevant when
+   * `attestationMode: 'digest'` was requested; always `0` in raw mode. A
+   * non-zero value means matched traffic existed but could not be attested
+   * — the runner's
+   * `upstream_traffic` check may grade it `missing` rather than `present`.
+   * Not projected onto the current wire response (the spec's
+   * `UpstreamTrafficSuccess` does not yet define this field); wire
+   * projection will be added when the schema adopts it.
    */
   dropped_count: number;
 }

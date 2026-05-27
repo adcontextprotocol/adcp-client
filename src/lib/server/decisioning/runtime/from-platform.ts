@@ -1025,7 +1025,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   };
 
   if (process.env.NODE_ENV !== 'production') {
-    if (explicitSom != null) {
+    if (explicitSom != null && explicitSom.length > 0) {
       fwLogger.info(
         `[adcp/decisioning] using explicit media_buy.supported_optimization_metrics override (${explicitSom.length} metric${explicitSom.length === 1 ? '' : 's'}).`
       );

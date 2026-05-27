@@ -32,6 +32,19 @@ import { MAX_JSON_DEPTH } from './json-depth';
 export const SECRET_KEY_PATTERN =
   /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
 
+export function normalizeSecretKeyPattern(pattern: RegExp): RegExp {
+  if (!/[gy]/.test(pattern.flags)) return pattern;
+  return new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''));
+}
+
+export function secretKeyPatternMatches(pattern: RegExp, key: string): boolean {
+  const lastIndex = pattern.lastIndex;
+  pattern.lastIndex = 0;
+  const matched = pattern.test(key);
+  pattern.lastIndex = lastIndex;
+  return matched;
+}
+
 /**
  * Maximum recursion depth for the redaction walk. Keep this aligned with the
  * upstream-recorder JSON canonicalization depth; recorder paths also run the
@@ -53,11 +66,12 @@ export function redactSecrets(
   depth = 0,
   seen: WeakSet<object> = new WeakSet()
 ): unknown {
+  const effectivePattern = normalizeSecretKeyPattern(pattern);
   if (depth > MAX_JSON_DEPTH) return value;
   if (Array.isArray(value)) {
     if (seen.has(value)) return '[Circular]';
     seen.add(value);
-    const out = value.map(v => redactSecrets(v, pattern, depth + 1, seen));
+    const out = value.map(v => redactSecrets(v, effectivePattern, depth + 1, seen));
     seen.delete(value);
     return out;
   }
@@ -67,9 +81,9 @@ export function redactSecrets(
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       out[k] =
-        pattern.test(k) && (typeof v === 'string' || typeof v === 'number')
+        secretKeyPatternMatches(effectivePattern, k) && (typeof v === 'string' || typeof v === 'number')
           ? '[redacted]'
-          : redactSecrets(v, pattern, depth + 1, seen);
+          : redactSecrets(v, effectivePattern, depth + 1, seen);
     }
     seen.delete(value);
     return out;

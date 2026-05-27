@@ -5,7 +5,12 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
+import {
+  normalizeSecretKeyPattern,
+  redactSecrets,
+  secretKeyPatternMatches,
+  SECRET_KEY_PATTERN,
+} from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
 import { canonicalize } from '../utils/jcs';
 import { MAX_JSON_DEPTH } from '../utils/json-depth';
@@ -94,7 +99,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   // who legitimately want recording in prod.
   warnIfEnabledInProduction();
 
-  const redactPattern = options.redactPattern ?? SECRET_KEY_PATTERN;
+  const redactPattern = normalizeSecretKeyPattern(options.redactPattern ?? SECRET_KEY_PATTERN);
   const bufferSize = clamp(options.bufferSize, 1, MAX_BUFFER_SIZE, DEFAULT_BUFFER_SIZE);
   const ttlMs = clamp(options.ttlMs, 1, MAX_TTL_MS, DEFAULT_TTL_MS);
   const maxPayloadBytes = clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES);
@@ -141,7 +146,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers)) {
       const lower = k.toLowerCase();
-      out[lower] = redactPattern.test(lower) ? '[redacted]' : v;
+      out[lower] = secretKeyPatternMatches(redactPattern, lower) ? '[redacted]' : v;
     }
     return out;
   }
@@ -550,16 +555,20 @@ function sha256Hex(value: string): string {
  * normalized/redacted exactly as the recorder would store it; legacy `false`
  * remains accepted as the same prenormalized sentinel. The prenormalized path
  * skips redaction, so the helper rejects secret-shaped keys whose values are
- * not already the literal `"[redacted]"` marker or an explicit null/boolean
- * placeholder.
+ * not already the literal `"[redacted]"` marker or an explicit null
+ * placeholder. For form-encoded bodies, duplicate secret-shaped keys are also
+ * rejected because last-wins maps cannot prove that every original value was
+ * inspected before hashing.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
  * it first so semantically equivalent JSON strings and objects hash to the
- * same value. If a JSON-shaped string cannot be parsed, it is treated as the
- * emitted body bytes and hashed verbatim. Unsupported JSON values and payloads
- * deeper than the recorder's depth cap throw rather than producing a
- * non-canonical digest.
+ * same value. On the normalizing path, an unparseable JSON-shaped string is
+ * treated as the emitted body bytes and hashed verbatim after best-effort
+ * redaction. On the prenormalized path, malformed JSON strings throw because
+ * their secret-key structure cannot be proven safe. Unsupported JSON values
+ * and payloads deeper than the recorder's depth cap throw rather than
+ * producing a non-canonical digest.
  *
  * The returned digest is lowercase hex, matching the 3.1
  * `query_upstream_traffic` wire contract.
@@ -586,10 +595,21 @@ export function computePayloadDigestSha256(
 ): string {
   const redactPattern =
     options instanceof RegExp || options === false
-      ? options
+      ? options === false
+        ? false
+        : normalizeSecretKeyPattern(options)
       : options?.prenormalized
         ? false
-        : (options?.redactPattern ?? SECRET_KEY_PATTERN);
+        : options?.redactPattern === false
+          ? false
+          : normalizeSecretKeyPattern(options?.redactPattern ?? SECRET_KEY_PATTERN);
+  const prenormalizedSafetyPattern =
+    typeof options === 'object' &&
+    options !== null &&
+    !(options instanceof RegExp) &&
+    options.redactPattern instanceof RegExp
+      ? normalizeSecretKeyPattern(options.redactPattern)
+      : SECRET_KEY_PATTERN;
   const maxPayloadBytes =
     typeof options === 'object' && options !== null && !(options instanceof RegExp)
       ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
@@ -606,7 +626,7 @@ export function computePayloadDigestSha256(
     }
     const payloadForDigest =
       redactPattern === false
-        ? assertPrenormalizedPayloadSafe(payload, contentType, SECRET_KEY_PATTERN)
+        ? assertPrenormalizedPayloadSafe(payload, contentType, prenormalizedSafetyPattern)
         : normalizeRecordedPayload(
             normalizeFetchPayloadInput(payload, contentType),
             contentType,
@@ -626,7 +646,16 @@ export type PayloadDigestOptions = {
    * `prenormalized: true`; otherwise it would silently bypass redaction.
    */
   redactPattern?: RegExp | false;
+  /**
+   * Match `createUpstreamRecorder({ maxPayloadBytes })` when computing
+   * digests outside the recorder.
+   */
   maxPayloadBytes?: number;
+  /**
+   * Set only for payloads that have already been normalized and redacted.
+   * The helper skips redaction but still scans secret-shaped keys, rejects
+   * malformed JSON strings, and rejects duplicate secret-shaped form keys.
+   */
   prenormalized?: boolean;
 };
 
@@ -636,10 +665,13 @@ function assertPrenormalizedPayloadSafe(payload: unknown, contentType: string, p
     try {
       scanTarget = JSON.parse(payload);
     } catch {
-      scanTarget = payload;
+      throw new PayloadDigestError(
+        'Prenormalized JSON payload is malformed; hash the recorder-normalized payload or omit prenormalized.'
+      );
     }
   } else if (typeof payload === 'string' && isFormUrlEncoded(contentType)) {
-    scanTarget = Object.fromEntries(new URLSearchParams(payload));
+    assertPrenormalizedFormUrlEncodedSafe(payload, pattern);
+    return payload;
   }
   const unsafePath = findUnredactedSecretPath(scanTarget, pattern);
   if (unsafePath) {
@@ -648,6 +680,29 @@ function assertPrenormalizedPayloadSafe(payload: unknown, contentType: string, p
     );
   }
   return payload;
+}
+
+function assertPrenormalizedFormUrlEncodedSafe(body: string, pattern: RegExp): void {
+  const seenSecretKeys = new Set<string>();
+  const params = Array.from(new URLSearchParams(body));
+  for (const [key] of params) {
+    if (!secretKeyPatternMatches(pattern, key)) continue;
+    const normalizedKey = key.toLowerCase();
+    if (seenSecretKeys.has(normalizedKey)) {
+      throw new PayloadDigestError(
+        `Prenormalized form payload contains duplicate secret-shaped key "${key}"; hash the recorder-normalized payload or omit prenormalized.`
+      );
+    }
+    seenSecretKeys.add(normalizedKey);
+  }
+  for (const [key, value] of params) {
+    if (!secretKeyPatternMatches(pattern, key)) continue;
+    if (!isSafelyRedactedSecretValue(value)) {
+      throw new PayloadDigestError(
+        `Prenormalized payload contains unredacted secret-shaped key "${key}"; hash the recorder-normalized payload or omit prenormalized.`
+      );
+    }
+  }
 }
 
 function findUnredactedSecretPath(value: unknown, pattern: RegExp): string | null {
@@ -670,7 +725,7 @@ function findUnredactedSecretPath(value: unknown, pattern: RegExp): string | nul
     for (let i = entries.length - 1; i >= 0; i--) {
       const [key, childValue] = entries[i]!;
       const childPath = path ? `${path}.${key}` : key;
-      if (pattern.test(key) && !isSafelyRedactedSecretValue(childValue)) return childPath;
+      if (secretKeyPatternMatches(pattern, key) && !isSafelyRedactedSecretValue(childValue)) return childPath;
       stack.push({ value: childValue, path: childPath });
     }
   }
@@ -678,7 +733,7 @@ function findUnredactedSecretPath(value: unknown, pattern: RegExp): string | nul
 }
 
 function isSafelyRedactedSecretValue(value: unknown): boolean {
-  return value === '[redacted]' || value === null || value === true || value === false;
+  return value === '[redacted]' || value === null;
 }
 
 function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
@@ -920,7 +975,7 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
     const params = new URLSearchParams(body);
     const out = new URLSearchParams();
     params.forEach((v, k) => {
-      out.append(k, pattern.test(k.toLowerCase()) ? '[redacted]' : v);
+      out.append(k, secretKeyPatternMatches(pattern, k.toLowerCase()) ? '[redacted]' : v);
     });
     return out.toString();
   } catch {
@@ -932,9 +987,8 @@ function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
   // Best-effort diagnostic scrub for malformed JSON strings. The output is
   // not guaranteed to be valid JSON; the invariant is that secret-shaped keys
   // with scalar/string values are not stored verbatim. Because malformed JSON
-  // has no trustworthy parse tree, object/array-valued secret entries can
-  // leave nested diagnostic fragments behind; callers must treat this only as
-  // a bounded last-resort scrub before storage.
+  // has no trustworthy parse tree, object/array-valued secret entries are
+  // replaced wholesale rather than traversed.
   let out = '';
   let i = 0;
   while (i < body.length) {
@@ -970,7 +1024,7 @@ function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
     let value = valueStart;
     while (value < body.length && isJsonWhitespace(body[value])) value++;
     out += body.slice(i, value);
-    if (typeof key !== 'string' || !pattern.test(key)) {
+    if (typeof key !== 'string' || !secretKeyPatternMatches(pattern, key)) {
       i = value;
       continue;
     }
@@ -994,6 +1048,26 @@ function skipJsonLikeValue(input: string, start: number): number {
   if (input[start] === '"') {
     const token = readJsonStringToken(input, start);
     return token?.end ?? input.length;
+  }
+  if (input[start] === '[' || input[start] === '{') {
+    const opener = input[start];
+    const closer = opener === '[' ? ']' : '}';
+    let depth = 0;
+    for (let i = start; i < input.length; i++) {
+      const ch = input[i];
+      if (ch === '"') {
+        const token = readJsonStringToken(input, i);
+        if (!token) return input.length;
+        i = token.end - 1;
+        continue;
+      }
+      if (ch === opener) depth++;
+      if (ch === closer) {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return input.length;
   }
   let i = start;
   while (i < input.length && input[i] !== ',' && input[i] !== '}' && input[i] !== ']' && !isJsonWhitespace(input[i])) {

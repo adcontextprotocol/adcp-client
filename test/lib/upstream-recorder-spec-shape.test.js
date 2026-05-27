@@ -342,6 +342,42 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     );
 
     assert.throws(
+      () =>
+        computePayloadDigestSha256(
+          'authorization=fake_test_fixture&authorization=%5Bredacted%5D',
+          'application/x-www-form-urlencoded',
+          false
+        ),
+      {
+        name: 'PayloadDigestError',
+        message: /duplicate secret-shaped key "authorization"/,
+      }
+    );
+
+    assert.throws(
+      () =>
+        computePayloadDigestSha256('{"authorization":"[redacted]", "broken":', 'application/json', {
+          prenormalized: true,
+        }),
+      {
+        name: 'PayloadDigestError',
+        message: /Prenormalized JSON payload is malformed/,
+      }
+    );
+
+    assert.throws(
+      () =>
+        computePayloadDigestSha256({ x_vendor_token: 'fake_test_fixture_not_a_real_token_aaaa' }, 'application/json', {
+          prenormalized: true,
+          redactPattern: /^(authorization|x_vendor_token)$/i,
+        }),
+      {
+        name: 'PayloadDigestError',
+        message: /x_vendor_token/,
+      }
+    );
+
+    assert.throws(
       () => computePayloadDigestSha256({ authorization: { nested: 'fake_test_fixture' } }, 'application/json', false),
       {
         name: 'PayloadDigestError',
@@ -350,7 +386,11 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     );
 
     assert.doesNotThrow(() =>
-      computePayloadDigestSha256({ authorization: null, token: false, password: true }, 'application/json', false)
+      computePayloadDigestSha256(
+        { authorization: null, token: '[redacted]', password: '[redacted]' },
+        'application/json',
+        false
+      )
     );
   });
 
@@ -407,6 +447,32 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(
       computePayloadDigestSha256(defaultRedacted, 'application/json', { prenormalized: true }),
       computePayloadDigestSha256(defaultRedacted, 'application/json', false)
+    );
+  });
+
+  test('custom global redaction patterns do not skip repeated secret keys', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true, redactPattern: /token/g });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/x-www-form-urlencoded',
+        payload: 'a_token=one&b_token=two&c_token=three',
+      });
+    });
+    const [call] = recorder.query({ principal: 'p' }).items;
+    assert.equal(call.payload, 'a_token=%5Bredacted%5D&b_token=%5Bredacted%5D&c_token=%5Bredacted%5D');
+
+    assert.throws(
+      () =>
+        computePayloadDigestSha256('a_token=%5Bredacted%5D&b_token=secret', 'application/x-www-form-urlencoded', {
+          prenormalized: true,
+          redactPattern: /token/g,
+        }),
+      {
+        name: 'PayloadDigestError',
+        message: /b_token/,
+      }
     );
   });
 
@@ -595,6 +661,22 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].kind, 'json_payload_parse_failed');
     assert.equal(events[0].content_type, 'application/json');
+  });
+
+  test('malformed JSON string redaction consumes bracket-shaped secret values', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: '{"password":["s1","s2"], "public":"ok"',
+      });
+    });
+    const [call] = recorder.query({ principal: 'p' }).items;
+    assert.equal(call.payload.includes('s1'), false);
+    assert.equal(call.payload.includes('s2'), false);
+    assert.match(call.payload, /"password":"\[redacted\]"/);
   });
 
   test('digest-mode identifier proof scan avoids false negatives in large payloads', async () => {
