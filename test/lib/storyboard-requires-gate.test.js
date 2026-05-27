@@ -564,3 +564,66 @@ describe('Storyboard.requires gate (#1702): implicit request_signer', () => {
     assert.ok(!phaseIds.includes('requirement_unmet'), 'no autodetect on unrelated storyboards');
   });
 });
+
+describe('Storyboard.required_any_of_tools gate (#1642)', () => {
+  test('skips with requirement_unmet when no tool in a required family is advertised', async () => {
+    const sb = buildStoryboard({
+      required_any_of_tools: [{ tools: ['list_accounts', 'sync_accounts'], rationale: 'AdCP account discovery' }],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, undefined);
+    assert.match(step.skip.detail, /^missing_required_tool_family: needs list_accounts or sync_accounts/);
+    assert.match(step.skip.detail, /AdCP account discovery/);
+  });
+
+  test('enforces gate for reused-client callers that provide _profile.tools but omit agentTools', async () => {
+    const sb = buildStoryboard({
+      required_any_of_tools: [{ tools: ['list_accounts', 'sync_accounts'] }],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _client: {},
+      _profile: profileWithoutController,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.match(step.skip.detail, /^missing_required_tool_family: needs list_accounts or sync_accounts/);
+  });
+
+  test('runs when any tool in a required family is advertised', async () => {
+    const sb = buildStoryboard({
+      required_any_of_tools: [{ tools: ['list_accounts', 'sync_accounts'] }],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: { ...profileWithoutController, tools: ['get_adcp_capabilities', 'sync_accounts'] },
+      agentTools: ['get_adcp_capabilities', 'sync_accounts'],
+    });
+
+    const phaseIds = result.phases.map(p => p.phase_id);
+    assert.ok(!phaseIds.includes('requirement_unmet'), 'one advertised tool satisfies the family');
+  });
+
+  test('loader rejects malformed required_any_of_tools gates', () => {
+    assert.throws(
+      () => validateStoryboardShape(buildStoryboard({ required_any_of_tools: [] })),
+      /required_any_of_tools: \[\] is not allowed/
+    );
+    assert.throws(
+      () => validateStoryboardShape(buildStoryboard({ required_any_of_tools: [{ tools: ['sync_accounts'] }] })),
+      /must list at least two tool names/
+    );
+  });
+});

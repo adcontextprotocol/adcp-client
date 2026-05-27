@@ -3285,6 +3285,23 @@ describe('validatePlatform', () => {
     };
     assert.doesNotThrow(() => validatePlatform(platform));
   });
+
+  it('requires sponsoredIntelligence when sponsored-intelligence specialism is claimed', () => {
+    const base = buildPlatform();
+    const platform = {
+      ...base,
+      sales: undefined,
+      sponsoredIntelligence: undefined,
+      capabilities: {
+        specialisms: ['sponsored-intelligence'],
+        config: {},
+      },
+    };
+    assert.throws(
+      () => validatePlatform(platform),
+      err => err instanceof PlatformConfigError && /sponsored-intelligence.*sponsoredIntelligence/.test(err.message)
+    );
+  });
 });
 
 describe('server.statusChange — per-server bus', () => {

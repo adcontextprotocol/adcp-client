@@ -53,6 +53,9 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   // Marketplace = third-party data brokers; owned = first-party providers.
   'signal-marketplace': ['signals'],
   'signal-owned': ['signals'],
+  // Sponsored Intelligence — brand-side conversational sponsored
+  // experiences.
+  'sponsored-intelligence': ['sponsoredIntelligence'],
   // Campaign governance — today's two specialisms share one platform
   // interface; consolidates to `campaign-governance` when adcp#3329 lands.
   'governance-spend-authority': ['campaignGovernance'],
@@ -94,14 +97,6 @@ export function validatePlatform(platform: DecisioningPlatform): void {
   const errors: string[] = [];
 
   // 1. Specialism declarations match required interfaces.
-  // Sponsored Intelligence is currently a *protocol* in AdCP 3.0
-  // (`supported_protocols: ['sponsored_intelligence']`), not a specialism,
-  // so it has no entry here — `platform.sponsoredIntelligence` is its own
-  // declaration and the framework auto-derives the wire-side protocol
-  // claim from the four SI tools getting registered. When AdCP 3.1
-  // promotes SI to a specialism (adcontextprotocol/adcp#3961), add a
-  // `'sponsored-intelligence': ['sponsoredIntelligence']` entry to
-  // SPECIALISM_REQUIREMENTS.
   for (const specialism of claimed) {
     const required = SPECIALISM_REQUIREMENTS[specialism];
     if (!required) continue; // forward-compat for unknown specialisms

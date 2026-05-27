@@ -210,11 +210,7 @@ export async function simulate(
   return result.data as SimulationSuccess | ControllerError;
 }
 
-/**
- * Single recorded outbound HTTP call returned by `query_upstream_traffic`.
- * Mirrors `comply-test-controller-response.json > UpstreamTrafficSuccess`.
- */
-export interface RecordedCall {
+interface RecordedCallBase {
   method: string;
   endpoint: string;
   url: string;
@@ -229,10 +225,38 @@ export interface RecordedCall {
    * grade `not_applicable` for `match: equals` / `match: contains_any`.
    */
   content_type: string;
-  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
-  payload: unknown;
+  /**
+   * Byte length of the post-redaction emitted payload representation. Required
+   * for both raw and digest branches by the 3.1 schema.
+   */
+  payload_length: number;
   timestamp: string;
   status_code?: number;
+}
+
+/**
+ * Single recorded outbound HTTP call returned by `query_upstream_traffic`.
+ * Mirrors `comply-test-controller-response.json > UpstreamTrafficSuccess`.
+ */
+export type RecordedCall = RawRecordedCall | DigestRecordedCall;
+
+export interface RawRecordedCall extends RecordedCallBase {
+  attestation_mode: 'raw';
+  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
+  payload: unknown;
+  payload_digest_sha256?: never;
+  identifier_match_proofs?: never;
+  [key: string]: unknown;
+}
+
+export interface DigestRecordedCall extends RecordedCallBase {
+  attestation_mode: 'digest';
+  payload?: never;
+  payload_digest_sha256: string;
+  identifier_match_proofs?: Array<{
+    identifier_value_sha256: string;
+    found: boolean;
+  }>;
   [key: string]: unknown;
 }
 
@@ -265,6 +289,8 @@ export interface UpstreamTrafficQueryParams {
   since_timestamp?: string;
   endpoint_pattern?: string;
   limit?: number;
+  attestation_mode?: 'raw' | 'digest';
+  identifier_value_digests?: string[];
 }
 
 /**

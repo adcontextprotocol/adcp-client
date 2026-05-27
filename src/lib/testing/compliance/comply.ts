@@ -1241,10 +1241,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
 
     // Cross-storyboard spec-conformance gates. Push synthetic StoryboardResults
     // for protocol-level invariants the AdCP spec mandates regardless of which
-    // specialism is being tested. Currently wires the universal account-discovery
-    // gate (adcp-client#1624 / adcp#4302; AdCP 3.0.9 §accounts/overview).
-    // Will migrate to per-storyboard `required_any_of_tools` tags once
-    // adcp#4325 lands; tracked in #1642.
+    // specialism they're testing. The storyboard runner now honors 3.1
+    // `required_any_of_tools` tags when present; keep this universal
+    // account-discovery fallback until the upstream cache tags all relevant
+    // account-bearing storyboards.
     const accountDiscoveryFailure = checkAccountDiscoveryGate(profile, agentUrl);
     if (accountDiscoveryFailure) {
       storyboardResults.push(accountDiscoveryFailure);

@@ -1,18 +1,15 @@
 /**
  * hello_si_adapter_brand — worked starting point for an AdCP Sponsored
- * Intelligence agent (protocol `sponsored_intelligence`) that wraps an
+ * Intelligence agent (`sponsored-intelligence` specialism / protocol) that wraps an
  * upstream brand-agent platform via HTTP.
  *
  * Fork this. Replace `upstream` with calls to your real backend
  * (Salesforce Agentforce, OpenAI Assistants brand mode, custom brand
  * chat). The AdCP-facing platform methods stay the same.
  *
- * **Status**: SI is a *protocol* in AdCP 3.0, not a specialism. Spec change
- * to add it to `AdCPSpecialism` is tracked at adcontextprotocol/adcp#3961
- * for 3.1. Until then the SDK dispatches off the
- * `platform.sponsoredIntelligence` field's presence — which auto-derives
- * `'sponsored_intelligence'` into the wire-side `supported_protocols`
- * via `detectProtocols`.
+ * **Status**: SI is an AdCP 3.1 specialism. The SDK still dispatches off the
+ * `platform.sponsoredIntelligence` field's presence, and that field also
+ * auto-derives the wire-side `supported_protocols` entry via `detectProtocols`.
  *
  * FORK CHECKLIST
  *   1. Replace every `// SWAP:` marker with calls to your backend.
@@ -368,11 +365,10 @@ interface SiBrandMeta {
   [key: string]: unknown;
 }
 
-// SI isn't yet a specialism (adcp#3961). The platform field's presence
-// is the declaration; framework auto-derives 'sponsored_intelligence'
-// into supported_protocols from the four SI tools getting registered.
-// Build with `definePlatform` so the empty-`specialisms[]` flows through
-// `RequiredPlatformsFor`'s `[S] extends [never]` short-circuit cleanly.
+// SI is a 3.1 specialism and a protocol-bundle surface. The platform field
+// supplies the four SI tools; claiming `specialisms: ['sponsored-intelligence']`
+// below lets the framework validate the field and auto-derive
+// 'sponsored_intelligence' into wire-side supported_protocols.
 
 const accounts: AccountStore<SiBrandMeta> = {
   resolve: async ref => {
@@ -453,14 +449,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
       ...(matching ? { matching_products: matching } : {}),
       total_matching: offering.total_matching,
     };
-    // Top-level `offering_id` mirror. The canonical AdCP wire location is
-    // `offering.offering_id` (above), but the `si_baseline` compliance
-    // storyboard captures with `path: 'offering_id'` (top-level). The
-    // schema allows `additionalProperties: true` at the response root so
-    // the mirror is permitted at the wire layer; the generated TS type
-    // doesn't model extra properties, so widen via cast. Drop once the
-    // storyboard path is corrected to `offering.offering_id` upstream.
-    return Object.assign({}, response, { offering_id: offering.offering_id }) as SIGetOfferingResponse;
+    return response;
   },
 
   initiateSession: async (req: SIInitiateSessionRequest, ctx): Promise<SIInitiateSessionResponse> => {
@@ -552,7 +541,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
 // ---------------------------------------------------------------------------
 
 const platform = definePlatform<Record<string, never>, SiBrandMeta>({
-  capabilities: { specialisms: [] as const, config: {} },
+  capabilities: { specialisms: ['sponsored-intelligence'] as const, config: {} },
   accounts,
   sponsoredIntelligence,
 });
