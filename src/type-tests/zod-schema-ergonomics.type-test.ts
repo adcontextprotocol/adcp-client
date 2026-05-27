@@ -9,6 +9,7 @@ import {
   CanonicalFormatDisplayTagSchema,
   CanonicalFormatHTML5BannerSchema,
   CanonicalFormatImageSchema,
+  MediaBuyFeaturesSchema,
   ProductSchema,
 } from '../lib/types/schemas.generated';
 
@@ -44,3 +45,10 @@ const HTML5BannerOmitted = CanonicalFormatHTML5BannerSchema.omit({
   deprecated: true,
 });
 void HTML5BannerOmitted;
+
+// Typed record/object intersections should also stay object-shaped. The
+// catchall preserves additional-property validation while keeping helpers.
+const MediaBuyFeaturesExtended = MediaBuyFeaturesSchema.extend({
+  _evaluated_at: z.string().datetime(),
+});
+void MediaBuyFeaturesExtended;
