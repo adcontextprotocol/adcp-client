@@ -10,6 +10,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { validateResponseSchema } = require('../../dist/lib/testing/client');
+const schemas = require('../../dist/lib/types/schemas.generated');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas');
 
 // --- Fixtures ---
@@ -450,6 +451,28 @@ describe('validateResponseSchema', () => {
 
   // ---- Schema registry completeness ----
   describe('schema registry', () => {
+    const NON_TOOL_RESPONSE_SCHEMAS = new Set([
+      'AAODirectoryAgentPublishersInverseLookupResponseSchema',
+      'PaginationResponseSchema',
+      'PreviewCreativeBatchResponseSchema',
+      'PreviewCreativeSingleResponseSchema',
+      'PreviewCreativeVariantResponseSchema',
+      'ProtocolResponseSchema',
+      'TasksGetResponseSchema',
+      'TasksListResponseSchema',
+      'WebhookChallengeResponseSchema',
+    ]);
+
+    const TOOL_NAME_OVERRIDES = new Map([['GetAdCPCapabilitiesResponseSchema', 'get_adcp_capabilities']]);
+
+    function schemaNameToToolName(schemaName) {
+      const baseName = schemaName.replace(/ResponseSchema$/, '');
+      return baseName
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase();
+    }
+
     it('has schemas for all tools used in compliance scenarios', () => {
       const scenarioTools = [
         'get_products',
@@ -462,6 +485,17 @@ describe('validateResponseSchema', () => {
       ];
       for (const tool of scenarioTools) {
         assert.ok(TOOL_RESPONSE_SCHEMAS[tool], `Missing schema for scenario tool: ${tool}`);
+      }
+    });
+
+    it('registers every generated tool response schema', () => {
+      const generatedToolSchemas = Object.keys(schemas)
+        .filter(name => name.endsWith('ResponseSchema'))
+        .filter(name => !NON_TOOL_RESPONSE_SCHEMAS.has(name));
+
+      for (const schemaName of generatedToolSchemas) {
+        const toolName = TOOL_NAME_OVERRIDES.get(schemaName) ?? schemaNameToToolName(schemaName);
+        assert.ok(TOOL_RESPONSE_SCHEMAS[toolName], `Missing schema registration for tool: ${toolName}`);
       }
     });
   });
