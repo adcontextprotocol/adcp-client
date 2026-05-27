@@ -59,7 +59,7 @@ function buildPlatform(overrides = {}) {
   };
 }
 
-const dispatchWithAuthInfo = (server, authInfo) =>
+const dispatchWithAuthInfo = (server, authInfo, args = {}) =>
   server.dispatchTestRequest(
     {
       method: 'tools/call',
@@ -69,6 +69,7 @@ const dispatchWithAuthInfo = (server, authInfo) =>
           brief: 'premium',
           promoted_offering: 'cars',
           account: { account_id: 'acc_test' },
+          ...args,
         },
       },
     },
@@ -574,6 +575,38 @@ describe('Stage 4 — extra forwarding: authInfo.extra surfaces to resolveByCred
     // extra only contains `credential`; no adopter-stamped fields
     assert.ok(typeof sawExtra === 'object' && sawExtra !== null);
     assert.equal('demo_token' in sawExtra, false);
+  });
+
+  it('bearerOnly resolver receives request input as third argument', async () => {
+    let sawInput;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.bearerOnly({
+        resolveByCredential: async (_cred, _extra, input) => {
+          sawInput = input;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await dispatchWithAuthInfo(
+      server,
+      {
+        token: 'plain-tok',
+        clientId: 'caller',
+        scopes: [],
+        extra: { credential: { kind: 'api_key', key_id: 'abc123hash' } },
+      },
+      {
+        account: { brand: { domain: 'acme.example' }, operator: 'seller.example', sandbox: true },
+        context: { session_id: 'session-a' },
+      }
+    );
+    assert.equal(sawInput?.context?.session_id, 'session-a');
+    assert.equal(sawInput?.account?.operator, 'seller.example');
   });
 
   it('verifyApiKey.verify returning extra preserves it on the AuthPrincipal', async () => {

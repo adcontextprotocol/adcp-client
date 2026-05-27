@@ -101,11 +101,11 @@ This pair confirms gate 2 catches things gate 1 doesn't (with the cast in place)
 
 The three gates cover most regression classes. Add a fourth gate when there's an **adapter-specific invariant** the standard three don't cover:
 
-- **`hello_signals_adapter_marketplace.test.js`** has a fourth gate for `BuyerAgentRegistry` — confirms unknown api-key tokens are rejected at the auth layer BEFORE reaching the registry. Specific to the registry-wired adapter; not a generic invariant.
+- **`hello_signals_adapter_marketplace.test.js`** has a fourth gate for `BuyerAgentRegistry` — confirms unknown api-key tokens are rejected at the auth layer BEFORE reaching the registry, and that `seed_buyer_agent` can update the test buyer's resolved commercial state through the compliance controller. Specific to the registry-wired adapter; not a generic invariant.
 - **A creative-ad-server adapter** (when it lands per #1381) might need a fourth gate that asserts `build_creative` returns a real serving tag, not a placeholder — separable from "storyboard pass" because the storyboard might assert presence but not content.
-- **An adapter wiring `comply_test_controller`** would add a gate asserting the controller scenarios resolve correctly; orthogonal to the normal storyboard.
+- **An adapter wiring `comply_test_controller` for 3.1 commercial state** should add a gate asserting controller seeding reaches the same ledger that production request dispatch reads. A green controller response is not enough; seed a suspended test buyer and verify the next normal tool call is rejected with the buyer-agent status code, or seed a billing-capability variant once the framework billing gate is enabled.
 
-For adapter-specific gates, write them inline in the test file after `runHelloAdapterGates({...})` — same `describe()` parent, additional `it()` blocks. Don't extend the helper to support every per-adapter gate; some duplication is correct.
+For adapter-specific gates that can reuse the already-booted example and mock server, pass `extraMcpAssertions` to `runHelloAdapterGates({...})`. Use separate inline `it()` blocks only when the gate needs a different process topology, a different server lifecycle, or non-MCP setup. Don't extend the helper beyond generic lifecycle plumbing; some duplication is correct for truly bespoke gates.
 
 ## Acceptance criteria for any new adapter
 

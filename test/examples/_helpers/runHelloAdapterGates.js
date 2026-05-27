@@ -18,6 +18,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { bootMockServer } = require('@adcp/sdk/mock-server');
+const { createMCPClient } = require('../../../dist/lib/protocols');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
@@ -41,6 +42,10 @@ const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
  *             passed to the grader; `testKitPath` is forwarded to the grader as
  *             `--test-kit PATH` so storyboard steps with `auth.from_test_kit: true`
  *             or `$test_kit.<path>` references resolve.
+ * @property {Array<{label: string, run: (ctx: {agentUrl: string, mockUrl: string, authToken: string, callTool: (toolName: string, args: Record<string, unknown>, auth?: string) => Promise<any>}) => Promise<void>}>} [extraMcpAssertions]
+ *           — direct MCP assertions that run against the already-booted
+ *             example and mock server. Use for adapter-specific invariants
+ *             that the current storyboard skips.
  *
  * Ports are picked dynamically per test run (kernel-assigned via `pickFreePort()`)
  * so concurrent test-file workers never race on the same hardcoded number. See
@@ -65,6 +70,7 @@ function runHelloAdapterGates(config) {
     filterFailures,
     storyboardSummary,
     extraStoryboards = [],
+    extraMcpAssertions = [],
   } = config;
 
   describe(suiteName, () => {
@@ -173,6 +179,18 @@ function runHelloAdapterGates(config) {
           `storyboard ${extra.id} reported ${failures.length} failed step(s):\n` + formatFailures(failures)
         );
         assert.notEqual(grader.overall_status, 'failing');
+      });
+    }
+
+    for (const extra of extraMcpAssertions) {
+      it(extra.label, async () => {
+        const agentUrl = `http://127.0.0.1:${agentPort}/mcp`;
+        await extra.run({
+          agentUrl,
+          mockUrl: mockHandle.url,
+          authToken: adcpAuthToken,
+          callTool: (toolName, args, auth = adcpAuthToken) => createMCPClient(agentUrl, auth).callTool(toolName, args),
+        });
       });
     }
 

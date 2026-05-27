@@ -12,10 +12,12 @@
  *   3. Replace `audience_targeting` and `conversion_tracking` capability
  *      declarations with the identifier types / event types your platform
  *      actually accepts.
- *   4. Replace the `m.uids[i]` → `external_id_sha256` projection in
+ *   4. Replace `ONBOARDING_LEDGER` and `SELLER_SUPPORTED_BILLING` with your
+ *      buyer-agent onboarding/commercial-state source of truth.
+ *   5. Replace the `m.uids[i]` → `external_id_sha256` projection in
  *      `logEvent` with your CAPI's specific UID-to-field mapping.
- *   5. Replace `eventSourceMap` with persistent storage (DB / cache).
- *   6. Validate: `node --test test/examples/hello-seller-adapter-social.test.js`
+ *   6. Replace `eventSourceMap` with persistent storage (DB / cache).
+ *   7. Validate: `node --test test/examples/hello-seller-adapter-social.test.js`
  *
  * Demo:
  *   npx @adcp/sdk@latest mock-server sales-social --port 4350
@@ -36,6 +38,7 @@ import {
   createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
+  BuyerAgentRegistry,
   defineSalesPlatform,
   defineAudiencePlatform,
   assertNoExampleTlds,
@@ -47,6 +50,8 @@ import {
   type SyncAudiencesRow,
   type SyncCreativesRow,
   type SyncAccountsResultRow,
+  type BuyerAgent,
+  type BuyerAgentBillingMode,
 } from '@adcp/sdk/server';
 import type {
   SyncCatalogsSuccess,
@@ -54,6 +59,7 @@ import type {
   SyncEventSourcesSuccess,
   GetAccountFinancialsSuccess,
 } from '@adcp/sdk/types';
+import { createHash } from 'node:crypto';
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4350';
 const UPSTREAM_CLIENT_ID = process.env['UPSTREAM_OAUTH_CLIENT_ID'] ?? 'walled_garden_test_client_001';
@@ -61,6 +67,34 @@ const UPSTREAM_CLIENT_SECRET =
   process.env['UPSTREAM_OAUTH_CLIENT_SECRET'] ?? 'walled_garden_test_secret_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3003);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
+const SELLER_SUPPORTED_BILLING = ['operator', 'agent'] as const satisfies readonly BuyerAgentBillingMode[];
+
+function hashApiKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
+}
+
+const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
+  [
+    hashApiKey(ADCP_AUTH_TOKEN),
+    {
+      agent_url: 'https://addie.example.com',
+      display_name: 'Addie (storyboard runner)',
+      status: 'active',
+      billing_capabilities: new Set(['operator']),
+      sandbox_only: true,
+    },
+  ],
+]);
+
+const agentRegistry = BuyerAgentRegistry.cached(
+  BuyerAgentRegistry.bearerOnly({
+    resolveByCredential: async credential => {
+      if (credential.kind !== 'api_key') return null;
+      return ONBOARDING_LEDGER.get(credential.key_id) ?? null;
+    },
+  }),
+  { ttlSeconds: 60 }
+);
 
 // ---------------------------------------------------------------------------
 // OAuth token cache — SWAP for production.
@@ -366,8 +400,11 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
       supported_event_types: ['purchase' as const, 'add_to_cart' as const, 'page_view' as const, 'lead' as const],
       supported_action_sources: ['website' as const, 'app' as const],
     },
+    supportedBillings: SELLER_SUPPORTED_BILLING,
     config: {},
   };
+
+  agentRegistry = agentRegistry;
 
   accounts: AccountStore<AdvertiserMeta> = {
     /** Translate AdCP `account.brand.domain` → upstream `advertiser_id`.
@@ -407,6 +444,7 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
         status: 'active',
         ...(operator !== undefined && { operator }),
         brand: { domain: upstreamAdv.adcp_advertiser },
+        sandbox: ref === undefined || !('sandbox' in ref) || ref.sandbox === true,
         ctx_metadata: {
           advertiser_id: upstreamAdv.advertiser_id,
           advertiser_domain: upstreamAdv.adcp_advertiser,
@@ -439,7 +477,7 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
      *  advertiser seats out-of-band — this is a discovery/echo, not a
      *  provisioning call. Per the storyboard, list_accounts is the
      *  canonical alternative (declared via `provides_state_for`). */
-    upsert: async refs => {
+    upsert: async (refs, ctx) => {
       const out: SyncAccountsResultRow[] = [];
       for (const ref of refs) {
         // sync_accounts always carries the brand+operator arm (the buyer is
@@ -468,6 +506,42 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
           });
           continue;
         }
+        const requestedBilling = (ref as { billing?: BuyerAgentBillingMode }).billing ?? 'operator';
+        if (!(SELLER_SUPPORTED_BILLING as readonly BuyerAgentBillingMode[]).includes(requestedBilling)) {
+          out.push({
+            brand: { domain },
+            operator,
+            action: 'failed',
+            status: 'rejected',
+            errors: [
+              {
+                code: 'BILLING_NOT_SUPPORTED',
+                message: `Billing '${requestedBilling}' is not supported by this seller.`,
+                details: {
+                  scope: 'capability',
+                  supported_billing: [...SELLER_SUPPORTED_BILLING],
+                },
+              } as unknown as { code: string; message: string },
+            ],
+          });
+          continue;
+        }
+        if (ctx?.agent && !ctx.agent.billing_capabilities.has(requestedBilling)) {
+          out.push({
+            brand: { domain },
+            operator,
+            action: 'failed',
+            status: 'rejected',
+            errors: [
+              {
+                code: 'BILLING_NOT_PERMITTED_FOR_AGENT',
+                message: `Billing '${requestedBilling}' is not permitted for this buyer agent.`,
+                details: { rejected_billing: requestedBilling, suggested_billing: 'operator' },
+              } as unknown as { code: string; message: string },
+            ],
+          });
+          continue;
+        }
         const adv = await upstream.lookupAdvertiser(domain);
         if (!adv) {
           out.push({
@@ -486,6 +560,8 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
           operator,
           action: 'unchanged',
           status: 'active',
+          billing: requestedBilling,
+          sandbox: (ref as { sandbox?: boolean }).sandbox ?? true,
         });
       }
       return out;
