@@ -1448,12 +1448,13 @@ async function generateZodSchemas() {
 
     // tools.generated.ts imports a handful of *AssetRequirements types from
     // core.generated.ts (injected by scripts/generate-types.ts so the standalone
-    // file typechecks). Since we concatenate both sources for ts-to-zod, those
-    // imports are redundant — worse, ts-to-zod treats imported names as external
-    // and emits `z.any()` stubs even when the actual interfaces are present in
-    // the combined source. Strip cross-file imports before merging.
+    // file typechecks) and may re-export core-owned compatibility aliases. Since
+    // we concatenate both sources for ts-to-zod, those cross-file statements are
+    // redundant — worse, ts-to-zod treats imported names as external and emits
+    // `z.any()` stubs even when the actual interfaces are present in the combined
+    // source. Strip cross-file imports/re-exports before merging.
     const toolsWithoutCrossImports = toolsContent.replace(
-      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"]; ?\n+/gm,
+      /^(?:import type|export type) \{[^}]*\} from ['"]\.\/core\.generated['"]; ?\n+/gm,
       ''
     );
     // Defensive: if the injector in scripts/generate-types.ts ever changes shape

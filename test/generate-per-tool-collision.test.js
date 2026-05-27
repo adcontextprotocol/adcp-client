@@ -41,16 +41,41 @@ const RESULTS = (() => {
   fs.writeFileSync(
     scriptPath,
     `
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { __test__ } from ${JSON.stringify(targetPath)};
 
-const { stripComments } = __test__;
+const { stripComments, shouldWarnOnExportCollision } = __test__;
 const cases = ${JSON.stringify(cases)};
-const results = cases.map(({ label, a, b }) => ({
+const stripResults = cases.map(({ label, a, b }) => ({
   label,
   strippedDiffer: stripComments(a).trim() !== stripComments(b).trim(),
 }));
-writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(results));
+const collisionResults = [
+  {
+    label: 'structural-difference-warns',
+    warns: shouldWarnOnExportCollision(
+      { name: 'NotBundled', kind: 'type', body: "export type NotBundled = 'a';", sourceFile: 'tools.generated.d.ts' },
+      { name: 'NotBundled', kind: 'type', body: "export type NotBundled = 'b';", sourceFile: 'core.generated.d.ts' },
+      new Set()
+    ),
+  },
+  {
+    label: 'bundled-mirror-name-suppressed',
+    warns: shouldWarnOnExportCollision(
+      { name: 'PurchaseType', kind: 'type', body: "export type PurchaseType = 'a';", sourceFile: 'tools.generated.d.ts' },
+      { name: 'PurchaseType', kind: 'type', body: "export type PurchaseType = 'b';", sourceFile: 'core.generated.d.ts' },
+      new Set(['PurchaseType'])
+    ),
+  },
+];
+const toolsGenerated = readFileSync(${JSON.stringify(path.join(REPO_ROOT, 'src/lib/types/tools.generated.ts'))}, 'utf8');
+const generatedSurface = {
+  importsCoreSharedTypes: /import type \\{[\\s\\S]*\\bAudienceConstraints\\b[\\s\\S]*\\bPurchaseType\\b[\\s\\S]*\\} from '\\.\\/core\\.generated';/.test(toolsGenerated),
+  reExportsCoreSharedTypes: toolsGenerated.includes("export type { AudienceConstraints, PurchaseType } from './core.generated';"),
+  declaresAudienceConstraints: /export interface AudienceConstraints\\b/.test(toolsGenerated),
+  declaresPurchaseType: /export type PurchaseType\\b/.test(toolsGenerated),
+};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify({ stripResults, collisionResults, generatedSurface }));
 `
   );
 
@@ -71,7 +96,7 @@ writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(results));
 })();
 
 test('stripComments: JSDoc-only difference does not make stripped bodies differ', () => {
-  const jsdocCase = RESULTS.find(r => r.label === 'jsdoc-only-difference');
+  const jsdocCase = RESULTS.stripResults.find(r => r.label === 'jsdoc-only-difference');
   assert.ok(jsdocCase, 'jsdoc-only-difference case should exist');
   assert.strictEqual(
     jsdocCase.strippedDiffer,
@@ -81,7 +106,7 @@ test('stripComments: JSDoc-only difference does not make stripped bodies differ'
 });
 
 test('stripComments: structural type difference still makes stripped bodies differ', () => {
-  const structCase = RESULTS.find(r => r.label === 'structural-difference');
+  const structCase = RESULTS.stripResults.find(r => r.label === 'structural-difference');
   assert.ok(structCase, 'structural-difference case should exist');
   assert.strictEqual(
     structCase.strippedDiffer,
@@ -91,17 +116,33 @@ test('stripComments: structural type difference still makes stripped bodies diff
 });
 
 test('stripComments: identical bodies produce no difference', () => {
-  const identCase = RESULTS.find(r => r.label === 'identical');
+  const identCase = RESULTS.stripResults.find(r => r.label === 'identical');
   assert.ok(identCase, 'identical case should exist');
   assert.strictEqual(identCase.strippedDiffer, false, 'Identical bodies should compare equal');
 });
 
 test('stripComments: asymmetric JSDoc (one body has it, other does not) produces no difference', () => {
-  const asymCase = RESULTS.find(r => r.label === 'asymmetric-jsdoc');
+  const asymCase = RESULTS.stripResults.find(r => r.label === 'asymmetric-jsdoc');
   assert.ok(asymCase, 'asymmetric-jsdoc case should exist');
   assert.strictEqual(
     asymCase.strippedDiffer,
     false,
     'Bodies where only one has JSDoc should compare equal after stripComments + trim'
   );
+});
+
+test('collision warning: structural drift still warns unless it is a bundled mirror export', () => {
+  const structuralCase = RESULTS.collisionResults.find(r => r.label === 'structural-difference-warns');
+  const bundledCase = RESULTS.collisionResults.find(r => r.label === 'bundled-mirror-name-suppressed');
+  assert.ok(structuralCase, 'structural-difference-warns case should exist');
+  assert.ok(bundledCase, 'bundled-mirror-name-suppressed case should exist');
+  assert.strictEqual(structuralCase.warns, true, 'Non-bundled structural drift should still warn');
+  assert.strictEqual(bundledCase.warns, false, 'Bundled mirror export names should not warn');
+});
+
+test('tools.generated: core-authored shared types are imported and re-exported without local duplicates', () => {
+  assert.strictEqual(RESULTS.generatedSurface.importsCoreSharedTypes, true);
+  assert.strictEqual(RESULTS.generatedSurface.reExportsCoreSharedTypes, true);
+  assert.strictEqual(RESULTS.generatedSurface.declaresAudienceConstraints, false);
+  assert.strictEqual(RESULTS.generatedSurface.declaresPurchaseType, false);
 });
