@@ -13,15 +13,26 @@ Upgrade when you're ready to track AdCP 3.1 features. Stay on 7.x if you need GA
 
 ## TL;DR
 
-If you only do these three things, most v7 code keeps working:
+If you only do these four things, most v7 code keeps working:
 
 1. **On every response your code emits**, set `status` to one of `'completed'` / `'failed'` / `'submitted'` / `'working'`. v8 makes envelope `status` a required field on every wire response.
 2. **Run a search-and-replace for the two governance field renames**: `verdict` (was `status`) for `check_governance`, `outcome_state` (was `status`) for `report_plan_outcome`. And `rights_status` (was `status`) for `acquire_rights` / `update_rights`.
-3. **If you hit `FATAL: mark-compact: Allocation failed`** during `tsc` against your code: either set `NODE_OPTIONS=--max-old-space-size=8192` _or_ switch to per-tool subpath imports (see "Bundle-split — opt-in adopter affordance" below). The full surface needs 4-6 GB on strict + skipLibCheck:false.
+3. **Remove any preview RFC 9421 transport response-signing helpers** (`signResponse`, `signResponseAsync`, `verifyResponseSignature`, `createResponseVerifier`, and related response-signing types/constants). The current 8.x beta removed that orphaned preview surface; AdCP 3.x does not define a generic transport response-signing replacement.
+4. **If you hit `FATAL: mark-compact: Allocation failed`** during `tsc` against your code: either set `NODE_OPTIONS=--max-old-space-size=8192` _or_ switch to per-tool subpath imports (see "Bundle-split — opt-in adopter affordance" below). The full surface needs 4-6 GB on strict + skipLibCheck:false.
 
 The rest of this guide is the detail for adopters whose code touches the changed surfaces.
 
 ---
+
+## Current 8.x beta signing change
+
+The current 8.x beta includes the 8.1 signing cleanup: generic RFC 9421 §2.2.9 transport response signing was removed from `@adcp/sdk/signing`, `@adcp/sdk/signing/client`, and `@adcp/sdk/signing/server`.
+
+Removed APIs include `signResponse`, `signResponseAsync`, `verifyResponseSignature`, `createResponseVerifier`, `ResponseSignatureError`, `RESPONSE_SIGNING_TAG`, `RESPONSE_MANDATORY_COMPONENTS`, `buildResponseSignatureBase`, `ResponseLike`, `prepareResponseSignature`, `finalizeResponseSignature`, `SignResponseOptions`, `PreparedResponseSignature`, `SignedResponse`, the response-verifier option/result types, and the `AdcpUse` value `'response-signing'`.
+
+Runtime helpers reject the retired purpose. `pemToAdcpJwk({ adcp_use: 'response-signing' })` and `mintEphemeralEd25519Key({ adcp_use: 'response-signing' })` now throw. `InMemorySigningProvider` preserves retired or unknown raw purpose strings so `signRequestAsync()` and `signWebhookAsync()` fail closed instead of silently treating the key as unscoped.
+
+Request signing and webhook signing are unchanged. There is no conformant AdCP 3.x replacement for generic transport response signing; future designated-task payload JWS support should land under a fresh spec-defined purpose and helper surface.
 
 ## Wire-level changes (affect both client and server adopters)
 
