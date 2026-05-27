@@ -433,8 +433,9 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     });
   });
 
-  test('digest-mode query rejects payloads that cannot be canonicalized', async () => {
-    const recorder = createUpstreamRecorder({ enabled: true });
+  test('digest-mode query drops payloads that cannot be canonicalized without poisoning the whole query', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({ enabled: true, onError: event => events.push(event) });
     await recorder.runWithPrincipal('p', async () => {
       recorder.record({
         method: 'POST',
@@ -443,7 +444,12 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         payload: { value: Number.NaN },
       });
     });
-    assert.throws(() => recorder.query({ principal: 'p', attestationMode: 'digest' }), /JCS: non-finite number/);
+    const result = recorder.query({ principal: 'p', attestationMode: 'digest' });
+    assert.equal(result.total, 0);
+    assert.deepEqual(result.items, []);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'payload_build_failed');
+    assert.match(String(events[0].err), /JCS: non-finite number/);
   });
 
   test('raw recording rejects structured payloads beyond the redaction depth cap', async () => {
@@ -485,7 +491,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.match(String(events[0].err), /JSON payload exceeds max canonicalization depth/);
   });
 
-  test('malformed JSON strings emit onError when digest identifier scanning cannot parse them', async () => {
+  test('malformed JSON strings scrub secret-shaped keys and emit onError when digest scanning cannot parse them', async () => {
     const events = [];
     const recorder = createUpstreamRecorder({ enabled: true, onError: event => events.push(event) });
     await recorder.runWithPrincipal('p', async () => {
@@ -496,6 +502,11 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         payload: '{"authorization":"fake_test_fixture_not_a_real_token_aaaa"',
       });
     });
+
+    const rawResult = recorder.query({ principal: 'p' });
+    assert.equal(rawResult.total, 1);
+    assert.equal(rawResult.items[0].payload, '{"authorization":"[redacted]"');
+    assert.doesNotMatch(String(rawResult.items[0].payload), /fake_test_fixture_not_a_real_token_aaaa/);
 
     const result = recorder.query({
       principal: 'p',

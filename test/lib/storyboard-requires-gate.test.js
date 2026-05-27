@@ -231,9 +231,20 @@ phases:
     assert.doesNotThrow(() => parseStoryboard(storyboardWithIdentifierPath('$.audiences[*].add[*].hashed_email')));
   });
 
-  test('normalizes accepted identifier_paths before runtime resolution', () => {
-    const storyboard = parseStoryboard(storyboardWithIdentifierPath(' $.audiences[*].add[*].hashed_email '));
-    assert.equal(storyboard.phases[0].steps[0].validations[0].identifier_paths[0], 'audiences[*].add[*].hashed_email');
+  test('validates leading-dollar identifier_paths without mutating caller-owned strings', () => {
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'valid programmatic authoring',
+        identifier_paths: [' $.audiences[*].add[*].hashed_email '],
+      },
+    ];
+    validateStoryboardShape(storyboard);
+    assert.equal(
+      storyboard.phases[0].steps[0].validations[0].identifier_paths[0],
+      ' $.audiences[*].add[*].hashed_email '
+    );
   });
 
   test('runStoryboardStep invokes identifier_paths authoring validation', async () => {

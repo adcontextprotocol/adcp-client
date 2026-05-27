@@ -572,19 +572,21 @@ export function enforceStrictSchema(schema: any): any {
   return flattenMutualExclusiveOneOf(strictSchema);
 }
 
-function canonicalCodegenJson(value: unknown): string {
+function canonicalCodegenJson(value: unknown, keyHint?: string): string {
   // Build-time JSON Schema snippets only need deterministic key order; avoid
   // routing the generator through runtime JCS semantics it does not depend on.
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalCodegenJson).join(',')}]`;
+    const items = value.map(item => canonicalCodegenJson(item));
+    if (keyHint === 'enum') items.sort();
+    return `[${items.join(',')}]`;
   }
   const obj = value as Record<string, unknown>;
   return `{${Object.keys(obj)
     .sort()
-    .map(key => `${JSON.stringify(key)}:${canonicalCodegenJson(obj[key])}`)
+    .map(key => `${JSON.stringify(key)}:${canonicalCodegenJson(obj[key], key)}`)
     .join(',')}}`;
 }
 

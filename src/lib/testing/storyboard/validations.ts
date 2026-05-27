@@ -2980,7 +2980,7 @@ function anyMatchedCallSatisfies(
  */
 function resolveJsonPathLite(root: unknown, path: string): unknown[] {
   if (!path) return [];
-  let p = path;
+  let p = path.trim();
   if (p.startsWith('$.')) p = p.slice(2);
   else if (p.startsWith('$')) p = p.slice(1);
   if (p.startsWith('.')) p = p.slice(1);
@@ -3046,12 +3046,7 @@ function anyMatchedCallEchoesValue(
       if (!isJsonContentType(call.content_type)) continue;
       if (!valueDigest) continue;
       sawApplicableCall = true;
-      if (
-        valueDigest &&
-        call.identifier_match_proofs?.some(
-          proof => proof.identifier_value_sha256 === valueDigest && proof.found === true
-        )
-      ) {
+      if (call.identifier_match_proofs?.some(proof => proof.identifier_value_sha256 === valueDigest && proof.found)) {
         return { satisfied: true, not_applicable: false };
       }
       continue;

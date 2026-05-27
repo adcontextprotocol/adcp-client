@@ -55,8 +55,9 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  * `parseStoryboard`, and should also be called by any runner entry point
  * that accepts a programmatically-built `Storyboard` object so the same
  * loud-fail-on-drift guarantee holds regardless of how the storyboard was
- * constructed. Mutates steps (resolves `contributes: true` to
- * `contributes_to`) and is idempotent on already-validated inputs.
+ * constructed. Mutates only legacy shorthand fields (resolves
+ * `contributes: true` to `contributes_to`) and is idempotent on
+ * already-validated inputs.
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequires(storyboard);
@@ -100,11 +101,9 @@ function validateUpstreamIdentifierPaths(
         );
       }
       const pathErrorPrefix = `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]`;
-      let normalizedPath: string;
       let firstSegment: string;
       try {
         const validated = validateIdentifierPathSyntax(path);
-        normalizedPath = validated.normalized;
         firstSegment = validated.firstSegment;
       } catch {
         throw new Error(
@@ -116,7 +115,6 @@ function validateUpstreamIdentifierPaths(
           `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
         );
       }
-      validation.identifier_paths[pathIndex] = normalizedPath;
     }
   }
 }

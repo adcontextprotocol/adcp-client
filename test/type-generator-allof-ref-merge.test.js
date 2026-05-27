@@ -373,6 +373,57 @@ writeFileSync(__OUT_PATH__, JSON.stringify({ message }));
   assert.match(result.message, /first promoted from allOf\[0\]\.then\.properties\.params\.properties\.cursor/);
 });
 
+test('enforceStrictSchema accepts reordered enum conditional params promotions', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  type: 'object',
+  properties: {
+    params: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  allOf: [
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              mode: { type: 'string', enum: ['programmatic', 'managed'] },
+            },
+          },
+        },
+      },
+    },
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              mode: { enum: ['managed', 'programmatic'], type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+let ok = false;
+let message = null;
+try {
+  enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+  ok = true;
+} catch (err) {
+  message = err instanceof Error ? err.message : String(err);
+}
+writeFileSync(__OUT_PATH__, JSON.stringify({ ok, message }));
+`);
+  assert.equal(result.ok, true, result.message);
+});
+
 test('enforceStrictSchema accepts cached 3.1 comply controller conditionals', () => {
   const result = runHarness(`
 import { writeFileSync, readFileSync } from 'fs';

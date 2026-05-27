@@ -62,6 +62,7 @@
  */
 
 export { computePayloadDigestSha256, createUpstreamRecorder, toQueryUpstreamTrafficResponse } from './recorder';
+export type { PayloadDigestOptions } from './recorder';
 export { UpstreamRecorderScopeError } from './types';
 export type {
   PurposeClassifier,

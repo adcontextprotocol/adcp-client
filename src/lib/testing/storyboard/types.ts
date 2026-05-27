@@ -1051,8 +1051,11 @@ export interface StoryboardValidation {
    * value appears in at least one matching `recorded_call`'s payload at any
    * depth. Each path MAY resolve to a single value or an array; ALL resolved
    * values MUST be present in the recorded payload — single-placeholder
-   * fabrication is the threat model. Path syntax: same dotted-with-`[*]`
-   * form as `payload_must_contain.path`. Per spec PR
+   * fabrication is the threat model. Portable path syntax is a request-rooted
+   * dotted grammar with optional `[*]` wildcard selectors on segments, for
+   * example `audiences[*].add[*].hashed_email`; bracket-quoted keys,
+   * recursive descent (`$..foo`), and numeric indexes are rejected so
+   * controllers do not silently resolve zero vectors. Per spec PR
    * adcontextprotocol/adcp#3816, replaces the earlier
    * `buyer_identifier_echo: boolean` shorthand.
    */

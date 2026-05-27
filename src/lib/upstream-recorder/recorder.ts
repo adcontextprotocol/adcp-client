@@ -327,8 +327,14 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       return true;
     });
 
-    const total = matched.length;
-    const items = matched.slice(0, limit).map(e => projectRecordedCall(e.call, params, emitError));
+    const items: RecordedCall[] = [];
+    let total = 0;
+    for (const entry of matched) {
+      const projected = safeProjectRecordedCall(entry.call, params, emitError);
+      if (!projected) continue;
+      total++;
+      if (items.length < limit) items.push(projected);
+    }
     const since_timestamp =
       params.sinceTimestamp ?? matched[0]?.call.timestamp ?? new Date(nowMs - ttlMs).toISOString();
     return {
@@ -366,6 +372,19 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     debug,
     enabled: true,
   };
+}
+
+function safeProjectRecordedCall(
+  call: RawRecordedCall,
+  params: UpstreamRecorderQueryParams,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): RecordedCall | null {
+  try {
+    return projectRecordedCall(call, params, emitError);
+  } catch (err) {
+    emitError?.({ kind: 'payload_build_failed', err });
+    return null;
+  }
 }
 
 function projectRecordedCall(
@@ -521,11 +540,23 @@ function sha256Hex(value: string): string {
  */
 export function computePayloadDigestSha256(
   payload: unknown,
+  contentType?: string,
+  options?: PayloadDigestOptions
+): string;
+/**
+ * @deprecated Pass `{ redactPattern: /.../ }` instead of the bare `RegExp`
+ * form. The legacy form remains accepted for this major.
+ */
+export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: RegExp): string;
+/**
+ * @deprecated Pass `{ prenormalized: true }` instead of `false`. The legacy
+ * form remains accepted for this major.
+ */
+export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: false): string;
+export function computePayloadDigestSha256(
+  payload: unknown,
   contentType = 'application/json',
-  options:
-    | RegExp
-    | false
-    | { redactPattern?: RegExp | false; maxPayloadBytes?: number; prenormalized?: boolean } = SECRET_KEY_PATTERN
+  options: RegExp | false | PayloadDigestOptions = SECRET_KEY_PATTERN
 ): string {
   const redactPattern =
     options instanceof RegExp || options === false
@@ -548,6 +579,12 @@ export function computePayloadDigestSha256(
         );
   return sha256Hex(canonicalPayloadBytes(payloadForDigest, contentType));
 }
+
+export type PayloadDigestOptions = {
+  redactPattern?: RegExp | false;
+  maxPayloadBytes?: number;
+  prenormalized?: boolean;
+};
 
 function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
   if (payload === undefined) return undefined;
@@ -608,7 +645,7 @@ function normalizeRecordedPayload(
       } catch {
         // Malformed JSON strings remain raw strings so diagnostics keep the
         // original body shape instead of pretending the payload was absent.
-        return cap(payload, maxPayloadBytes);
+        return cap(redactJsonLikeSecretValues(payload, redactPattern), maxPayloadBytes);
       }
       const redacted = redactSecrets(parsed, redactPattern);
       assertJsonDepth(redacted);
@@ -793,6 +830,18 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
   } catch {
     return body;
   }
+}
+
+function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
+  return body.replace(/("(?:\\.|[^"\\])*")(\s*:\s*)("(?:\\.|[^"\\])*"|[^,\s}\]]+)/g, (match, keyLiteral, sep) => {
+    let key: unknown;
+    try {
+      key = JSON.parse(keyLiteral);
+    } catch {
+      return match;
+    }
+    return typeof key === 'string' && pattern.test(key) ? `${keyLiteral}${sep}"[redacted]"` : match;
+  });
 }
 
 function safeStringify(value: unknown): string | undefined {

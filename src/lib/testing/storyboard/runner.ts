@@ -5252,7 +5252,7 @@ function collectUpstreamIdentifierDigests(
 }
 
 function normalizeStoryboardJsonPath(path: string): string {
-  let p = path;
+  let p = path.trim();
   if (p.startsWith('$.')) p = p.slice(2);
   else if (p.startsWith('$')) p = p.slice(1);
   if (p.startsWith('.')) p = p.slice(1);
