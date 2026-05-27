@@ -3200,6 +3200,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  validateStoryboardShape(storyboard);
   options = applyStoryboardVersionOptions(storyboard, options);
   registerRunSchemaRoot(options);
   validateTestKit(options.test_kit);

@@ -30,6 +30,14 @@ const DEFAULT_MAX_PAYLOAD_BYTES = 65_536; // mirrors spec's `recorded_calls[].pa
 const MAX_BUFFER_SIZE = 100_000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const MAX_JSON_DEPTH = 256;
+const VALID_PURPOSES = new Set([
+  'platform_primary',
+  'measurement',
+  'attribution',
+  'creative_serving',
+  'identity',
+  'other',
+]);
 
 /**
  * Wrapped per-call entry stored in the buffer. Carries the public
@@ -151,7 +159,11 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   ): string | undefined {
     if (!purpose) return undefined;
     try {
-      return purpose({ method, url, host, path, headers });
+      const value = purpose({ method, url, host, path, headers }) as unknown;
+      if (value === undefined) return undefined;
+      if (typeof value === 'string' && VALID_PURPOSES.has(value)) return value;
+      emitError({ kind: 'classifier_invalid_purpose', purpose: typeof value === 'string' ? value : String(value) });
+      return undefined;
     } catch (err) {
       emitError({ kind: 'classifier_threw', err });
       return undefined;
@@ -481,10 +493,10 @@ function sha256Hex(value: string): string {
 /**
  * Compute the `RecordedCall.payload_digest_sha256` value. By default this
  * applies the same body snapshot normalization, payload normalization, and
- * canonical secret-key redaction used by the wrapped fetch recorder before
- * hashing; pass a custom redaction pattern and `maxPayloadBytes` when your
- * recorder uses matching options, or `false` only when the payload has
- * already been normalized/redacted exactly as the recorder would store it.
+ * canonical secret-key redaction used by the recorder before hashing; pass a
+ * custom redaction pattern and `maxPayloadBytes` when your recorder uses
+ * matching options, or `false` only when the payload has already been
+ * normalized/redacted exactly as the recorder would store it.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -572,6 +584,19 @@ function normalizeRecordedPayload(
   }
 
   if (typeof payload === 'string') {
+    if (isJsonContentType(contentType)) {
+      try {
+        const redacted = redactSecrets(JSON.parse(payload), redactPattern);
+        const json = safeStringify(redacted);
+        if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
+          return `[truncated ${byteLengthOf(json)} bytes]`;
+        }
+        return redacted;
+      } catch {
+        // Malformed JSON strings remain raw strings so diagnostics keep the
+        // original body shape instead of pretending the payload was absent.
+      }
+    }
     // Form-urlencoded redaction: parse, redact, re-stringify so
     // `access_token=...` bodies don't slip through unredacted.
     if (isFormUrlEncoded(contentType)) {
@@ -634,7 +659,7 @@ function makeNoopRecorder(): UpstreamRecorder {
       items: [],
       total: 0,
       truncated: false,
-      since_timestamp: params.sinceTimestamp ?? '',
+      since_timestamp: params.sinceTimestamp ?? new Date(0).toISOString(),
     }),
     clear: () => undefined,
     debug: (): UpstreamRecorderDebugInfo => ({

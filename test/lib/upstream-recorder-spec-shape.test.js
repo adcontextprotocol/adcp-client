@@ -191,6 +191,101 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.deepEqual(call.identifier_match_proofs, [{ identifier_value_sha256: sha256Hex('vec-1'), found: true }]);
   });
 
+  test('manual JSON string payloads are parsed and redacted before storage and digesting', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    const payload = JSON.stringify({
+      authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa',
+      users: [{ hashed_email: 'vec-1' }],
+    });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload,
+      });
+    });
+
+    const [rawCall] = recorder.query({ principal: 'p' }).items;
+    assert.deepEqual(rawCall.payload, {
+      authorization: '[redacted]',
+      users: [{ hashed_email: 'vec-1' }],
+    });
+
+    const [digestCall] = recorder.query({ principal: 'p', attestationMode: 'digest' }).items;
+    assert.equal(digestCall.payload_digest_sha256, computePayloadDigestSha256(payload, 'application/json'));
+  });
+
+  test('redaction depth covers payloads that digest canonicalization accepts', async () => {
+    let payload = { access_token: 'fake_test_fixture_not_a_real_token_aaaa' };
+    for (let i = 0; i < 255; i++) payload = { nested: payload };
+
+    const recorder = createUpstreamRecorder({ enabled: true });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload,
+      });
+    });
+
+    let cursor = recorder.query({ principal: 'p' }).items[0].payload;
+    for (let i = 0; i < 255; i++) cursor = cursor.nested;
+    assert.equal(cursor.access_token, '[redacted]');
+  });
+
+  test('off-spec string purpose tags are omitted and surfaced through onError', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({
+      enabled: true,
+      purpose: () => 'not_a_spec_purpose',
+      onError: event => events.push(event),
+    });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: {},
+      });
+    });
+
+    const [call] = recorder.query({ principal: 'p' }).items;
+    assert.equal(call.purpose, undefined);
+    assert.deepEqual(events, [{ kind: 'classifier_invalid_purpose', purpose: 'not_a_spec_purpose' }]);
+    assert.ok(validateRecordedCall(call), explain(validateRecordedCall.errors));
+  });
+
+  test('non-string purpose tags are stringified before onError emission', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({
+      enabled: true,
+      purpose: () => 42,
+      onError: event => events.push(event),
+    });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: {},
+      });
+    });
+
+    const [call] = recorder.query({ principal: 'p' }).items;
+    assert.equal(call.purpose, undefined);
+    assert.deepEqual(events, [{ kind: 'classifier_invalid_purpose', purpose: '42' }]);
+    assert.ok(validateRecordedCall(call), explain(validateRecordedCall.errors));
+  });
+
+  test('disabled recorder returns a schema-valid since_timestamp', () => {
+    const recorder = createUpstreamRecorder({ enabled: false });
+    const wireShape = toQueryUpstreamTrafficResponse(recorder.query({ principal: 'p' }));
+    assert.equal(wireShape.since_timestamp, '1970-01-01T00:00:00.000Z');
+    assert.ok(validateUpstreamTrafficSuccess(wireShape), explain(validateUpstreamTrafficSuccess.errors));
+  });
+
   test('computePayloadDigestSha256 pins the JCS lowercase-hex digest vector', () => {
     const payload = { b: 1.25, é: ['z'], a: { c: true } };
     const reordered = { a: { c: true }, é: ['z'], b: 1.25 };
@@ -313,6 +408,12 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
       contentType: 'application/json',
       recorderOptions: { maxPayloadBytes: 20 },
       helperOptions: { maxPayloadBytes: 20 },
+    });
+    await assertDigestParity({
+      payload: { long_field: 'x'.repeat(100) },
+      contentType: 'application/json',
+      recorderOptions: { maxPayloadBytes: 0 },
+      helperOptions: { maxPayloadBytes: 0 },
     });
     await assertDigestParity({
       payload: { long_field: 'x'.repeat(100) },

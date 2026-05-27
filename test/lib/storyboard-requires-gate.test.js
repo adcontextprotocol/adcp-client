@@ -14,7 +14,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runStoryboard } = require('../../dist/lib/testing/storyboard/index.js');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/index.js');
 const { parseStoryboard, validateStoryboardShape } = require('../../dist/lib/testing/storyboard/loader.js');
 
 function buildStoryboard(overrides = {}) {
@@ -234,6 +234,25 @@ phases:
   test('normalizes accepted identifier_paths before runtime resolution', () => {
     const storyboard = parseStoryboard(storyboardWithIdentifierPath(' $.audiences[*].add[*].hashed_email '));
     assert.equal(storyboard.phases[0].steps[0].validations[0].identifier_paths[0], 'audiences[*].add[*].hashed_email');
+  });
+
+  test('runStoryboardStep invokes identifier_paths authoring validation', async () => {
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'invalid programmatic authoring',
+        identifier_paths: ['response.audiences[*].hashed_email'],
+      },
+    ];
+
+    await assert.rejects(
+      () =>
+        runStoryboardStep('https://stub.example/mcp', storyboard, 'step1', {
+          _profile: profileWithController,
+        }),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
   });
 });
 

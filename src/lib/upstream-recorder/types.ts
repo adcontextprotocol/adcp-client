@@ -94,8 +94,11 @@ export type RecordedCall = RawRecordedCall | DigestRecordedCall;
 /**
  * Optional classifier callback. Invoked at recording time on each call so
  * the recorder can stamp a `purpose` tag without the adopter wiring it
- * through their HTTP layer manually. Returning `undefined` leaves the
- * `purpose` field unset on the resulting `RecordedCall`.
+ * through their HTTP layer manually. Return one of
+ * `platform_primary`, `measurement`, `attribution`, `creative_serving`,
+ * `identity`, or `other`. Returning `undefined` leaves the `purpose` field
+ * unset; returning any other string omits `purpose` and emits
+ * `classifier_invalid_purpose` through `onError`.
  */
 export type PurposeClassifier = (input: {
   method: string;
@@ -171,8 +174,8 @@ export interface UpstreamRecorderOptions {
   /**
    * Optional observability hook. Invoked when the recorder swallows an
    * error that would otherwise be invisible (purpose classifier throw,
-   * URL parse failure, payload-build throw on a hostile getter, record
-   * outside scope when `strict: false`). Adopters wire this to their
+   * invalid purpose tag, URL parse failure, payload-build throw on a hostile
+   * getter, record outside scope when `strict: false`). Adopters wire this to their
    * logger so silent failures surface in dev sessions. Throwing inside
    * `onError` is itself swallowed — the hook MUST NOT crash the recorder.
    */
@@ -185,6 +188,7 @@ export interface UpstreamRecorderOptions {
  */
 export type UpstreamRecorderErrorEvent =
   | { kind: 'classifier_threw'; err: unknown }
+  | { kind: 'classifier_invalid_purpose'; purpose: string }
   | { kind: 'url_parse_failed'; url: string }
   | { kind: 'payload_build_failed'; err: unknown }
   | { kind: 'unscoped_record'; method: string; url: string };
@@ -271,8 +275,8 @@ export interface UpstreamRecorderQueryResult {
   /**
    * Echo of the requested `sinceTimestamp` (or the recorder-substituted
    * default — the earliest record retained in the buffer when no
-   * `sinceTimestamp` was passed). Lets the runner verify the controller
-   * honored the bound.
+   * `sinceTimestamp` was passed; disabled no-op recorders use the Unix
+   * epoch). Lets the runner verify the controller honored the bound.
    */
   since_timestamp: string;
 }

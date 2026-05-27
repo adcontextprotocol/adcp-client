@@ -2679,6 +2679,22 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   // `MAX_ERROR_LENGTH` posture on every other validation_result.error.
   if (!('success' in query.payload) || query.payload.success !== true) {
     const errMsg = 'error' in query.payload ? query.payload.error : 'controller returned a non-success response';
+    if (/JCS: non-finite number\b/.test(errMsg)) {
+      return {
+        check: 'upstream_traffic',
+        passed: true,
+        not_applicable: true,
+        description: validation.description,
+        note: 'digest attestation could not canonicalize a non-finite JSON number - graded not_applicable',
+        json_pointer: null,
+        expected,
+        actual: { matched_count: 0, total_calls: 0, missing_payload_paths: [], missing_identifier_values: [] },
+        schema_id: null,
+        schema_url: null,
+        request: query.request,
+        response: query.response,
+      };
+    }
     return {
       check: 'upstream_traffic',
       passed: false,

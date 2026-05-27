@@ -370,6 +370,7 @@ writeFileSync(__OUT_PATH__, JSON.stringify({ message }));
 `);
   assert.match(result.message, /Conflicting conditional params property "cursor"/);
   assert.match(result.message, /allOf\[1\]\.then\.properties\.params\.properties\.cursor/);
+  assert.match(result.message, /first promoted from allOf\[0\]\.then\.properties\.params\.properties\.cursor/);
 });
 
 test('enforceStrictSchema accepts cached 3.1 comply controller conditionals', () => {

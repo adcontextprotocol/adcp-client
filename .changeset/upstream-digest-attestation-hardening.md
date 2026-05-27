@@ -10,4 +10,8 @@ Harden digest-mode upstream traffic attestations with JCS length alignment, boun
 
 The `payload_length` docs now spell out the existing attestation semantics: raw calls report the redacted emitted payload length, while digest calls report the canonical byte length covered by `payload_digest_sha256`.
 
-Storyboard `identifier_paths` are request-payload-relative. Loader validation now rejects request/response/context-prefixed forms including `request.*`, `$["request"].*`, and `$..request.*`; use paths such as `audiences[*].add[*].hashed_email`.
+Manual `record()` calls with JSON-string payloads now parse and secret-redact the stored payload just like wrapped `fetch()` calls, so raw and digest attestations use the same redacted body view. Redaction now walks to the recorder's 256-level JSON canonicalization cap, invalid purpose classifier values are omitted instead of emitting off-spec strings, and disabled recorder queries without a caller-supplied bound return a schema-valid epoch `since_timestamp`.
+
+Storyboard `identifier_paths` are request-payload-relative. Loader validation now rejects request/response/context-prefixed forms including `request.*`, `$["request"].*`, and `$..request.*`; use paths such as `audiences[*].add[*].hashed_email`. `runStoryboardStep()` now runs the same shape validation as full storyboard runs for programmatic callers.
+
+Digest-mode `upstream_traffic` validations now grade controller-side non-finite-number canonicalization failures as `not_applicable`, matching the 3.1 runner contract for JSON values that cannot be portably canonicalized.

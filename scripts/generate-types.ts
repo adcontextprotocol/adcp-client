@@ -603,7 +603,7 @@ export function promoteConditionalParamProperties(strictSchema: any): void {
   const params = strictSchema.properties?.params;
   if (!params || typeof params !== 'object' || !params.properties || !Array.isArray(strictSchema.allOf)) return;
   const rootParamKeys = new Set(Object.keys(params.properties));
-  const promoted = new Map<string, unknown>();
+  const promoted = new Map<string, { value: unknown; memberIndex: number }>();
   for (const [memberIndex, member] of strictSchema.allOf.entries()) {
     const conditionalParams = member?.then?.properties?.params;
     if (!conditionalParams || typeof conditionalParams !== 'object' || !conditionalParams.properties) continue;
@@ -613,12 +613,13 @@ export function promoteConditionalParamProperties(strictSchema: any): void {
       }
       if (!promoted.has(key)) {
         params.properties[key] = value;
-        promoted.set(key, value);
+        promoted.set(key, { value, memberIndex });
         continue;
       }
-      if (canonicalCodegenJson(promoted.get(key)) !== canonicalCodegenJson(value)) {
+      const existing = promoted.get(key)!;
+      if (canonicalCodegenJson(existing.value) !== canonicalCodegenJson(value)) {
         throw new Error(
-          `Conflicting conditional params property "${key}" while promoting allOf[${memberIndex}].then.properties.params.properties.${key}`
+          `Conflicting conditional params property "${key}" while promoting allOf[${memberIndex}].then.properties.params.properties.${key}; first promoted from allOf[${existing.memberIndex}].then.properties.params.properties.${key}`
         );
       }
     }

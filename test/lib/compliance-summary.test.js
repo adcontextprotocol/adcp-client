@@ -591,6 +591,95 @@ describe('buildComplianceSummary — skip causes', () => {
     assert.equal(s.skip_causes[0].cause, 'missing_required_tool_family: needs list_accounts or sync_accounts');
   });
 
+  test('malformed missing-tool-family warning with no family falls back to bare requirement_unmet cause', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'accounts/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'requires-account-discovery',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'requirement_unmet',
+                  duration_ms: 0,
+                  warnings: ['missing_required_tool_family: needs    '],
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.1.0-beta.5' });
+    assert.ok(s.skip_causes);
+    assert.equal(s.skip_causes[0].cause, 'requirement_unmet');
+  });
+
+  test('required_any_of_tools skip cause trims tabs and newlines before rationale text', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'accounts/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'requires-account-discovery-tab',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'requirement_unmet',
+                  duration_ms: 0,
+                  warnings: ['missing_required_tool_family: needs list_accounts or sync_accounts\t(rationale text)'],
+                },
+                {
+                  step: 'requires-account-discovery-newline',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'requirement_unmet',
+                  duration_ms: 0,
+                  warnings: ['missing_required_tool_family: needs list_accounts or sync_accounts\n(rationale text)'],
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.1.0-beta.5' });
+    assert.ok(s.skip_causes);
+    assert.equal(s.skip_causes[0].cause, 'missing_required_tool_family: needs list_accounts or sync_accounts');
+    assert.equal(s.skip_causes[0].count, 2);
+  });
+
   test('storyboard-level missing-tool emits one cause per tool (#1623)', () => {
     // Per #1624: "agent does not advertise any of [sync_accounts, list_accounts]"
     // is one warning that names two distinct gaps. Each tool gets its own

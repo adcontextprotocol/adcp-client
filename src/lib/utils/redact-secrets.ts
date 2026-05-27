@@ -5,7 +5,8 @@
  * the `comply-test-controller-response.json` `recorded_calls[].payload`
  * description both mandate the same recursive walk: any property whose
  * final-path-segment key matches the canonical pattern below has its scalar
- * value replaced with the literal string `"[redacted]"`. Walks at any depth.
+ * value replaced with the literal string `"[redacted]"`. The walk is capped
+ * at the same depth the upstream-recorder accepts for JSON canonicalization.
  *
  * Spec: `static/compliance/source/universal/runner-output-contract.yaml`
  * (`payload_redaction.pattern`). The runner uses this to redact request /
@@ -28,13 +29,11 @@ export const SECRET_KEY_PATTERN =
   /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
 
 /**
- * Maximum recursion depth for the redaction walk. Cheap cycle / hostile-
- * payload guard — a payload deeper than this stops being recursed (the
- * remaining structure passes through verbatim, which is acceptable: a
- * 32-deep nested object would already be an attack surface for any
- * downstream consumer).
+ * Maximum recursion depth for the redaction walk. Keep this aligned with the
+ * upstream-recorder JSON canonicalization depth so a digest-mode payload is
+ * either redacted and hashable, or rejected before hashing.
  */
-const REDACT_MAX_DEPTH = 32;
+const REDACT_MAX_DEPTH = 256;
 
 /**
  * Recursively walk `value`, returning a structurally-identical clone with

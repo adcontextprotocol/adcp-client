@@ -270,9 +270,9 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
           continue;
         }
         if (step.skip_reason === 'requirement_unmet' && step.warnings?.[0]) {
-          const prefix = step.warnings[0].match(/^(missing_required_tool_family: needs [^;(]*[^ ;(])/);
-          if (prefix) {
-            recordCause(prefix[1]!, 'requirement_unmet', scenarioId);
+          const requiredFamily = parseMissingRequiredToolFamilyCause(step.warnings[0]);
+          if (requiredFamily) {
+            recordCause(requiredFamily, 'requirement_unmet', scenarioId);
             continue;
           }
         }
@@ -293,6 +293,13 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
       // about the cap documented on `ComplianceSummarySkipCause.affected`.
       affected: Array.from(affectedSet).slice(0, SKIP_CAUSE_AFFECTED_LIMIT),
     }));
+}
+
+function parseMissingRequiredToolFamilyCause(warning: string): string | null {
+  const match = warning.match(/^missing_required_tool_family: needs\s+([\s\S]*)$/);
+  if (!match) return null;
+  const family = match[1]!.replace(/\s*[;(][\s\S]*$/, '').trim();
+  return family ? `missing_required_tool_family: needs ${family}` : null;
 }
 
 /**
