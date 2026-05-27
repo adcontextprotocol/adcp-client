@@ -572,15 +572,46 @@ export function enforceStrictSchema(schema: any): any {
   return flattenMutualExclusiveOneOf(strictSchema);
 }
 
-function promoteConditionalParamProperties(strictSchema: any): void {
+function canonicalCodegenJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalCodegenJson).join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalCodegenJson(obj[key])}`)
+    .join(',')}}`;
+}
+
+/**
+ * json-schema-to-typescript strips `if` / `then` before it can infer params
+ * declared only inside conditionals. Promote the narrow authorial shape we use
+ * today (`allOf[].then.properties.params.properties`) into the root params
+ * object, then let Ajv keep enforcing the full conditional schema at runtime.
+ *
+ * This intentionally does not chase nested `then.allOf`, `else`, `oneOf`, or
+ * arbitrary conditional schemas. If upstream starts authoring those shapes,
+ * the generator should learn that explicit pattern rather than silently
+ * guessing a wider transform.
+ */
+export function promoteConditionalParamProperties(strictSchema: any): void {
   const params = strictSchema.properties?.params;
   if (!params || typeof params !== 'object' || !params.properties || !Array.isArray(strictSchema.allOf)) return;
-  for (const member of strictSchema.allOf) {
+  for (const [memberIndex, member] of strictSchema.allOf.entries()) {
     const conditionalParams = member?.then?.properties?.params;
     if (!conditionalParams || typeof conditionalParams !== 'object' || !conditionalParams.properties) continue;
     for (const [key, value] of Object.entries(conditionalParams.properties)) {
       if (params.properties[key] === undefined) {
         params.properties[key] = value;
+        continue;
+      }
+      if (canonicalCodegenJson(params.properties[key]) !== canonicalCodegenJson(value)) {
+        throw new Error(
+          `Conflicting conditional params property "${key}" while promoting allOf[${memberIndex}].then.properties.params.properties.${key}`
+        );
       }
     }
   }

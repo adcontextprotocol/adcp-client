@@ -158,6 +158,126 @@ writeFileSync(__OUT_PATH__, JSON.stringify({
   );
 });
 
+test('enforceStrictSchema promotes conditional params properties', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  type: 'object',
+  properties: {
+    params: {
+      type: 'object',
+      properties: {
+        request_type: { type: 'string', enum: ['snapshot', 'incremental'] },
+      },
+      required: ['request_type'],
+    },
+  },
+  allOf: [
+    {
+      if: { properties: { params: { properties: { request_type: { const: 'incremental' } } } } },
+      then: {
+        properties: {
+          params: {
+            properties: {
+              cursor: { type: 'string', description: 'Incremental cursor' },
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+const out = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({
+  paramKeys: Object.keys(out.properties.params.properties ?? {}),
+  cursor: out.properties.params.properties.cursor,
+}));
+`);
+  assert.deepStrictEqual(result.paramKeys.sort(), ['cursor', 'request_type']);
+  assert.deepStrictEqual(result.cursor, { type: 'string', description: 'Incremental cursor' });
+});
+
+test('enforceStrictSchema allows duplicate identical conditional params properties', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const cursorSchema = { description: 'Incremental cursor', type: 'string' };
+const input = {
+  type: 'object',
+  properties: {
+    params: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string', description: 'Incremental cursor' },
+      },
+    },
+  },
+  allOf: [
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              cursor: cursorSchema,
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+const out = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({
+  cursor: out.properties.params.properties.cursor,
+}));
+`);
+  assert.deepStrictEqual(result.cursor, { type: 'string', description: 'Incremental cursor' });
+});
+
+test('enforceStrictSchema throws on conflicting conditional params promotions', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  type: 'object',
+  properties: {
+    params: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string' },
+      },
+    },
+  },
+  allOf: [
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              cursor: { type: 'number' },
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+let message = null;
+try {
+  enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+} catch (err) {
+  message = err instanceof Error ? err.message : String(err);
+}
+writeFileSync(__OUT_PATH__, JSON.stringify({ message }));
+`);
+  assert.match(result.message, /Conflicting conditional params property "cursor"/);
+  assert.match(result.message, /allOf\[0\]\.then\.properties\.params\.properties\.cursor/);
+});
+
 test('compiled oneOf with two broken-pattern variants emits a clean discriminated union', () => {
   // Uses a real cached schema (signal-pricing.json) so the cache resolver
   // path is exercised end-to-end without depending on every $ref the base
