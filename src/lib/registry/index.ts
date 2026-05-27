@@ -13,8 +13,11 @@ import type {
   FederatedAgentWithDetails,
   FederatedPublisher,
   DomainLookupResult,
+  ListBrandsOptions,
   ListOptions,
   ListAgentsOptions,
+  ListAgentsResponse,
+  ListPublishersResponse,
   ValidateAdagentsRequest,
   CreateAdagentsRequest,
   ValidateProductAuthorizationRequest,
@@ -72,8 +75,11 @@ export type {
   FederatedAgentWithDetails,
   FederatedPublisher,
   DomainLookupResult,
+  ListBrandsOptions,
   ListOptions,
   ListAgentsOptions,
+  ListAgentsResponse,
+  ListPublishersResponse,
   ValidateAdagentsRequest,
   CreateAdagentsRequest,
   ValidateProductAuthorizationRequest,
@@ -146,7 +152,11 @@ export type { CursorStore } from './cursor-store';
 export { PropertyRegistry } from './property-registry';
 export type { PropertyRegistryConfig } from './property-registry';
 
-const DEFAULT_BASE_URL = 'https://adcontextprotocol.org';
+const DEFAULT_BASE_URL = 'https://agenticadvertising.org';
+const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const ERROR_BODY_PREVIEW_CHARS = 200;
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
 
@@ -167,15 +177,33 @@ const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
 export class RegistryClient {
   private readonly baseUrl: string;
   private readonly apiKey: string | undefined;
+  private readonly timeoutMs: number;
+  private readonly maxBodyBytes: number;
+  private readonly hasCustomMaxBodyBytes: boolean;
+  private readonly redirect: 'follow' | 'error';
+  private readonly fetchImpl: typeof globalThis.fetch;
 
   constructor(config?: RegistryClientConfig) {
     this.baseUrl = (config?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
     this.apiKey = config?.apiKey ?? process.env.ADCP_REGISTRY_API_KEY;
+    this.timeoutMs = config?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxBodyBytes = config?.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    this.hasCustomMaxBodyBytes = config?.maxBodyBytes != null;
+    this.redirect = config?.redirect ?? 'error';
+    this.fetchImpl = config?.fetch ?? globalThis.fetch;
   }
 
   // ====== Brand Resolution ======
 
-  /** Resolve a single domain to its canonical brand identity. */
+  /**
+   * Resolve a single domain to its canonical brand identity.
+   *
+   * @remarks
+   * Resolved registry data may include `brand_manifest` and `source` fields
+   * suitable for downstream request construction. Treat all registry-supplied
+   * strings as untrusted input and sanitize before injecting them into LLM
+   * prompts, instructions, or tool-planning context.
+   */
   async lookupBrand(domain: string): Promise<ResolvedBrand | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const url = `${this.baseUrl}/api/brands/resolve?domain=${encodeURIComponent(domain)}`;
@@ -201,12 +229,20 @@ export class RegistryClient {
   }
 
   /** List brands in the registry with optional search and pagination. */
-  async listBrands(options?: ListOptions): Promise<{ brands: BrandRegistryItem[]; stats: Record<string, unknown> }> {
+  async listBrands(
+    options?: ListBrandsOptions
+  ): Promise<{ brands: BrandRegistryItem[]; stats: Record<string, unknown> }> {
     const params = this.buildParams(options);
     return this.get(`${this.baseUrl}/api/brands/registry${params}`);
   }
 
-  /** Fetch raw brand.json data for a domain. */
+  /**
+   * Fetch raw brand.json data for a domain.
+   *
+   * @remarks
+   * This returns registry-supplied manifest content. Sanitize strings before
+   * using them in LLM prompts, instructions, or other executable context.
+   */
   async getBrandJson(domain: string): Promise<Record<string, unknown> | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const url = `${this.baseUrl}/api/brands/brand-json?domain=${encodeURIComponent(domain)}`;
@@ -332,25 +368,25 @@ export class RegistryClient {
   // ====== Agent Discovery ======
 
   /** List registered agents with optional filtering. */
-  async listAgents(
-    options?: ListAgentsOptions
-  ): Promise<{ agents: FederatedAgentWithDetails[]; count: number; sources: Record<string, unknown> }> {
+  async listAgents(options?: ListAgentsOptions): Promise<ListAgentsResponse> {
     const params = new URLSearchParams();
     if (options?.type) params.set('type', options.type);
-    if (options?.health) params.set('health', 'true');
-    if (options?.capabilities) params.set('capabilities', 'true');
-    if (options?.properties) params.set('properties', 'true');
+    this.setTrueParam(params, 'health', options?.health);
+    this.setTrueParam(params, 'capabilities', options?.capabilities);
+    this.setTrueParam(params, 'properties', options?.properties);
+    this.setTrueParam(params, 'compliance', options?.compliance);
+    this.appendParamValues(params, 'metric_id', options?.metric_id);
+    this.appendParamValues(params, 'accreditation', options?.accreditation);
+    if (options?.q) params.set('q', options.q);
+    this.appendParamValues(params, 'verification_mode', options?.verification_mode);
+    this.setTrueParam(params, 'verified', options?.verified);
     const qs = params.toString();
-    return this.get(`${this.baseUrl}/api/registry/agents${qs ? '?' + qs : ''}`);
+    return this.withSources(await this.get(`${this.baseUrl}/api/registry/agents${qs ? '?' + qs : ''}`));
   }
 
   /** List publishers in the registry. */
-  async listPublishers(): Promise<{
-    publishers: FederatedPublisher[];
-    count: number;
-    sources: Record<string, unknown>;
-  }> {
-    return this.get(`${this.baseUrl}/api/registry/publishers`);
+  async listPublishers(): Promise<ListPublishersResponse> {
+    return this.withSources(await this.get(`${this.baseUrl}/api/registry/publishers`));
   }
 
   /** Get aggregate registry statistics. */
@@ -624,7 +660,15 @@ export class RegistryClient {
     return this.post(`${this.baseUrl}/api/adagents/validate`, { domain });
   }
 
-  /** Generate a valid adagents.json from an agent configuration. */
+  /**
+   * Generate a valid adagents.json from an agent configuration.
+   *
+   * @remarks
+   * In community mirror catalog files, `v1_format_ref[].agent_url` is a
+   * format-shape namespace. It is not a seller authorization claim and does
+   * not imply platform adoption. Seller authorization is expressed only by
+   * `authorized_agents`.
+   */
   async createAdagents(config: CreateAdagentsRequest): Promise<Record<string, unknown>> {
     return this.post(`${this.baseUrl}/api/adagents/create`, config);
   }
@@ -799,52 +843,182 @@ export class RegistryClient {
   // ====== Private helpers ======
 
   private async get<T = any>(url: string, opts?: { nullOn404?: boolean }): Promise<T> {
-    const res = await fetch(url, { headers: this.getHeaders() });
+    const { res, text } = await this.requestText(url, { headers: this.getHeaders() });
     if (opts?.nullOn404 && res.status === 404) return null as T;
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Registry request failed (${res.status}): ${body}`);
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
     }
-    return this.parseJson(res);
+    return this.parseJson(text);
   }
 
   private async post<T = any>(url: string, body: unknown): Promise<T> {
-    const res = await fetch(url, {
+    const { res, text } = await this.requestText(url, {
       method: 'POST',
       headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Registry request failed (${res.status}): ${text}`);
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
     }
-    return this.parseJson(res);
+    return this.parseJson(text);
+  }
+
+  private async requestText(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
+    const controller = new AbortController();
+    let timedOut = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        reject(new Error(`Registry request timed out after ${this.timeoutMs}ms`));
+      }, this.timeoutMs);
+    });
+    const requestPromise = Promise.resolve().then(async () => {
+      const res = await this.fetchImpl(url, {
+        ...init,
+        redirect: this.redirect,
+        signal: controller.signal,
+      });
+      const text = await this.readBody(res, this.bodyLimitForUrl(url));
+      return { res, text };
+    });
+    requestPromise.catch(() => {});
+    try {
+      return await Promise.race([requestPromise, timeoutPromise]);
+    } catch (err) {
+      if (timedOut || controller.signal.aborted) {
+        throw new Error(`Registry request timed out after ${this.timeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
   }
 
   private getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { Accept: 'application/json' };
     if (this.apiKey) {
       headers['Authorization'] = `Bearer ${this.apiKey}`;
     }
     return headers;
   }
 
-  private async parseJson(res: Response): Promise<any> {
-    const text = await res.text();
+  private bodyLimitForUrl(url: string): number {
+    if (this.hasCustomMaxBodyBytes) return this.maxBodyBytes;
+
+    const path = new URL(url).pathname;
+    if (
+      path === '/api/brands/registry' ||
+      path === '/api/brands/resolve/bulk' ||
+      path === '/api/properties/registry' ||
+      path === '/api/properties/resolve/bulk' ||
+      path === '/api/registry/agents' ||
+      path === '/api/registry/publishers' ||
+      path === '/api/registry/feed' ||
+      path === '/api/registry/agents/search' ||
+      path === '/api/registry/authorizations' ||
+      path === '/api/registry/authorizations/snapshot' ||
+      path === '/api/search' ||
+      path === '/api/policies/registry' ||
+      path === '/api/policies/resolve/bulk' ||
+      path === '/api/public/discover-agent' ||
+      path === '/api/public/agent-formats' ||
+      path === '/api/public/agent-products' ||
+      path === '/api/public/validate-publisher' ||
+      path === '/api/registry/agents/storyboard-status' ||
+      (path.startsWith('/api/registry/agents/') && path.endsWith('/storyboard-status')) ||
+      path.startsWith('/api/properties/check')
+    ) {
+      return DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES;
+    }
+
+    return this.maxBodyBytes;
+  }
+
+  private async readBody(res: Response, maxBodyBytes: number): Promise<string> {
+    const contentLength = res.headers.get('content-length');
+    if (contentLength) {
+      const declaredBytes = Number(contentLength);
+      if (Number.isFinite(declaredBytes) && declaredBytes > maxBodyBytes) {
+        throw new Error(`Registry response exceeded ${maxBodyBytes} bytes`);
+      }
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      const text = await res.text();
+      if (new TextEncoder().encode(text).byteLength > maxBodyBytes) {
+        throw new Error(`Registry response exceeded ${maxBodyBytes} bytes`);
+      }
+      return text;
+    }
+
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maxBodyBytes) {
+          await reader.cancel();
+          throw new Error(`Registry response exceeded ${maxBodyBytes} bytes`);
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+
+    const buf = new Uint8Array(bytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buf.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(buf);
+  }
+
+  private parseJson(text: string): any {
     try {
       return JSON.parse(text);
     } catch {
-      throw new Error(`Registry returned invalid JSON: ${text.slice(0, 200)}`);
+      throw new Error(`Registry returned invalid JSON: ${this.preview(text)}`);
     }
   }
 
-  private buildParams(options?: ListOptions): string {
+  private withSources<T extends object>(value: T): T & { sources: Record<string, unknown> } {
+    if ('sources' in value) return value as T & { sources: Record<string, unknown> };
+    return { ...value, sources: {} };
+  }
+
+  private preview(text: string): string {
+    return text
+      .slice(0, ERROR_BODY_PREVIEW_CHARS)
+      .replace(/[\u0000-\u001f\u007f]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  }
+
+  private buildParams(options?: ListOptions & { source?: string }): string {
     if (!options) return '';
     const params = new URLSearchParams();
     if (options.search) params.set('search', options.search);
     if (options.limit != null) params.set('limit', String(options.limit));
     if (options.offset != null) params.set('offset', String(options.offset));
+    if ('source' in options && options.source) params.set('source', options.source);
     const qs = params.toString();
     return qs ? '?' + qs : '';
+  }
+
+  private setTrueParam(params: URLSearchParams, key: string, value: boolean | 'true' | undefined): void {
+    if (value === true || value === 'true') params.set(key, 'true');
+  }
+
+  private appendParamValues(params: URLSearchParams, key: string, value: string | string[] | undefined): void {
+    if (Array.isArray(value)) {
+      for (const item of value) params.append(key, item);
+    } else if (value) {
+      params.set(key, value);
+    }
   }
 }

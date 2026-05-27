@@ -617,6 +617,221 @@ describe('RegistryClient', () => {
     });
   });
 
+  // ============ transport options ============
+
+  describe('transport options', () => {
+    test('uses safe default request options', async () => {
+      let capturedUrl, capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(JSON.stringify(BRAND), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupBrand('nike.com');
+
+      assert.ok(capturedUrl.startsWith('https://agenticadvertising.org/api/brands/resolve'));
+      assert.strictEqual(capturedOpts.redirect, 'error');
+      assert.strictEqual(capturedOpts.headers.Accept, 'application/json');
+      assert.ok(capturedOpts.signal instanceof AbortSignal);
+    });
+
+    test('allows callers to opt into following redirects', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedOpts = opts;
+        return new Response(JSON.stringify(BRAND), { status: 200 });
+      });
+
+      const client = new RegistryClient({ redirect: 'follow' });
+      await client.lookupBrand('nike.com');
+
+      assert.strictEqual(capturedOpts.redirect, 'follow');
+    });
+
+    test('uses injected fetch implementation', async () => {
+      let capturedUrl;
+      const client = new RegistryClient({
+        fetch: async (url, opts) => {
+          capturedUrl = url;
+          assert.strictEqual(opts.redirect, 'error');
+          return new Response(JSON.stringify(BRAND), { status: 200 });
+        },
+      });
+
+      const result = await client.lookupBrand('nike.com');
+
+      assert.ok(capturedUrl.includes('/api/brands/resolve?domain=nike.com'));
+      assert.strictEqual(result.brand_name, 'Nike');
+    });
+
+    test('times out hung requests', async () => {
+      const client = new RegistryClient({
+        timeoutMs: 5,
+        fetch: async () => new Promise(() => {}),
+      });
+
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('timed out after 5ms'));
+          return true;
+        }
+      );
+    });
+
+    test('times out responses that send headers but stall the body', async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"brand_name"'));
+        },
+      });
+      const client = new RegistryClient({
+        timeoutMs: 5,
+        fetch: async () => new Response(stream, { status: 200 }),
+      });
+
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('timed out after 5ms'));
+          return true;
+        }
+      );
+    });
+
+    test('clears timeout when injected fetch throws synchronously', async () => {
+      const client = new RegistryClient({
+        timeoutMs: 5,
+        fetch: () => {
+          throw new Error('sync fetch failure');
+        },
+      });
+
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('sync fetch failure'));
+          return true;
+        }
+      );
+      await new Promise(resolve => setTimeout(resolve, 10));
+    });
+
+    test('rejects oversized responses declared by content-length', async () => {
+      restore = mockFetch(async () => {
+        return new Response('{}', { status: 200, headers: { 'content-length': '5' } });
+      });
+
+      const client = new RegistryClient({ maxBodyBytes: 4 });
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('exceeded 4 bytes'));
+          return true;
+        }
+      );
+    });
+
+    test('rejects oversized responses while reading the body', async () => {
+      restore = mockFetch(async () => {
+        return new Response('hello', { status: 200 });
+      });
+
+      const client = new RegistryClient({ maxBodyBytes: 4 });
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('exceeded 4 bytes'));
+          return true;
+        }
+      );
+    });
+
+    test('truncates error response bodies in thrown messages', async () => {
+      restore = mockFetch(async () => {
+        return new Response('x'.repeat(300), { status: 500 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          const prefix = 'Registry request failed (500): ';
+          assert.ok(err.message.startsWith(prefix));
+          assert.strictEqual(err.message.length, prefix.length + 200);
+          return true;
+        }
+      );
+    });
+
+    test('allows large public agent catalog responses by default', async () => {
+      const largeResponse = { formats: [{ id: 'large', payload: 'x'.repeat(300 * 1024) }] };
+      restore = mockFetch(async () => new Response(JSON.stringify(largeResponse), { status: 200 }));
+
+      const client = new RegistryClient();
+      const result = await client.getAgentFormats('https://agent.example.com');
+
+      assert.strictEqual(result.formats[0].id, 'large');
+    });
+
+    test('allows large storyboard status responses by default', async () => {
+      const largeResponse = { status: 'passing', detail: 'x'.repeat(300 * 1024) };
+      restore = mockFetch(async () => new Response(JSON.stringify(largeResponse), { status: 200 }));
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.getAgentStoryboardStatus('https://agent.example.com');
+
+      assert.strictEqual(result.status, 'passing');
+    });
+
+    test('allows large bulk resolution responses by default', async () => {
+      const payload = 'x'.repeat(300 * 1024);
+      restore = mockFetch(async url => {
+        if (url.includes('/api/brands/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: { 'nike.com': { ...BRAND, payload } } }), { status: 200 });
+        }
+        if (url.includes('/api/properties/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: { 'nytimes.com': { ...PROPERTY, payload } } }), {
+            status: 200,
+          });
+        }
+        if (url.includes('/api/policies/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: [{ policy_id: 'policy_1', payload }] }), { status: 200 });
+        }
+        throw new Error(`unexpected URL: ${url}`);
+      });
+
+      const client = new RegistryClient();
+
+      const brands = await client.lookupBrands(['nike.com']);
+      assert.strictEqual(brands['nike.com'].payload, payload);
+
+      const properties = await client.lookupProperties(['nytimes.com']);
+      assert.strictEqual(properties['nytimes.com'].payload, payload);
+
+      const policies = await client.resolvePoliciesBulk({ policy_ids: ['policy_1'] });
+      assert.strictEqual(policies.results[0].payload, payload);
+    });
+
+    test('escapes control characters in error response previews', async () => {
+      restore = mockFetch(async () => {
+        return new Response('bad\n\u001b[31m', { status: 500 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(
+        () => client.lookupBrand('nike.com'),
+        err => {
+          assert.ok(err.message.includes('bad\\u000a\\u001b[31m'));
+          assert.ok(!err.message.includes('bad\n'));
+          return true;
+        }
+      );
+    });
+  });
+
   // ============ saveBrand ============
 
   describe('saveBrand', () => {
@@ -897,6 +1112,19 @@ describe('RegistryClient', () => {
       assert.ok(capturedUrl.includes('offset=20'));
     });
 
+    test('passes source filter', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ brands: [], stats: {} }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.listBrands({ source: 'brand_json' });
+
+      assert.ok(capturedUrl.includes('source=brand_json'));
+    });
+
     test('throws on server error', async () => {
       restore = mockFetch(async () => {
         return new Response('Internal Server Error', { status: 500 });
@@ -1053,7 +1281,7 @@ describe('RegistryClient', () => {
 
   describe('listAgents', () => {
     test('lists agents without options', async () => {
-      const responseData = { agents: [{ url: 'https://agent.example.com', type: 'sales' }], count: 1, sources: {} };
+      const responseData = { agents: [{ url: 'https://agent.example.com', type: 'sales' }], count: 1 };
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
@@ -1066,22 +1294,67 @@ describe('RegistryClient', () => {
       assert.ok(capturedUrl.includes('/api/registry/agents'));
       assert.ok(!capturedUrl.includes('?'));
       assert.strictEqual(result.count, 1);
+      assert.deepStrictEqual(result.sources, {});
     });
 
-    test('passes type, health, capabilities, and properties params', async () => {
+    test('passes current list filters', async () => {
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
-        return new Response(JSON.stringify({ agents: [], count: 0, sources: {} }), { status: 200 });
+        return new Response(JSON.stringify({ agents: [], count: 0 }), { status: 200 });
       });
 
       const client = new RegistryClient();
-      await client.listAgents({ type: 'sales', health: true, capabilities: true, properties: true });
+      await client.listAgents({
+        type: 'measurement',
+        health: true,
+        capabilities: true,
+        properties: true,
+        compliance: true,
+        metric_id: ['attention_units', 'viewability'],
+        accreditation: 'MRC',
+        q: 'attention',
+        verification_mode: ['spec', 'live'],
+        verified: true,
+      });
 
-      assert.ok(capturedUrl.includes('type=sales'));
+      assert.ok(capturedUrl.includes('type=measurement'));
       assert.ok(capturedUrl.includes('health=true'));
       assert.ok(capturedUrl.includes('capabilities=true'));
       assert.ok(capturedUrl.includes('properties=true'));
+      assert.ok(capturedUrl.includes('compliance=true'));
+      assert.ok(capturedUrl.includes('metric_id=attention_units'));
+      assert.ok(capturedUrl.includes('metric_id=viewability'));
+      assert.ok(capturedUrl.includes('accreditation=MRC'));
+      assert.ok(capturedUrl.includes('q=attention'));
+      assert.ok(capturedUrl.includes('verification_mode=spec'));
+      assert.ok(capturedUrl.includes('verification_mode=live'));
+      assert.ok(capturedUrl.includes('verified=true'));
+    });
+
+    test('preserves legacy si type alias', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ agents: [], count: 0 }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.listAgents({ type: 'si' });
+
+      assert.ok(capturedUrl.includes('type=si'));
+    });
+
+    test('preserves server-provided sources summary', async () => {
+      const sources = { registry: 2 };
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ agents: [], count: 0, sources }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.listAgents();
+
+      assert.deepStrictEqual(result.sources, sources);
     });
   });
 
@@ -1089,7 +1362,7 @@ describe('RegistryClient', () => {
 
   describe('listPublishers', () => {
     test('lists publishers', async () => {
-      const responseData = { publishers: [{ domain: 'nytimes.com' }], count: 1, sources: {} };
+      const responseData = { publishers: [{ domain: 'nytimes.com' }], count: 1 };
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
@@ -1101,6 +1374,7 @@ describe('RegistryClient', () => {
 
       assert.ok(capturedUrl.includes('/api/registry/publishers'));
       assert.strictEqual(result.count, 1);
+      assert.deepStrictEqual(result.sources, {});
     });
   });
 
@@ -1352,7 +1626,11 @@ describe('RegistryClient', () => {
 
   describe('createAdagents', () => {
     test('creates adagents.json via POST', async () => {
-      const created = { adagents: { version: '1.0', agents: [] } };
+      const created = {
+        success: true,
+        data: { success: true, adagents_json: { version: '1.0', agents: [] } },
+        timestamp: '2026-05-27T00:00:00Z',
+      };
       let capturedUrl, capturedOpts;
       restore = mockFetch(async (url, opts) => {
         capturedUrl = url;
@@ -1360,15 +1638,48 @@ describe('RegistryClient', () => {
         return new Response(JSON.stringify(created), { status: 200 });
       });
 
-      const config = { publisher_domain: 'nytimes.com', agents: [{ url: 'https://agent.example.com' }] };
+      const config = { authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'sell' }] };
       const client = new RegistryClient();
       const result = await client.createAdagents(config);
 
       assert.ok(capturedUrl.includes('/api/adagents/create'));
       assert.strictEqual(capturedOpts.method, 'POST');
       const body = JSON.parse(capturedOpts.body);
-      assert.strictEqual(body.publisher_domain, 'nytimes.com');
-      assert.strictEqual(result.adagents.version, '1.0');
+      assert.strictEqual(body.authorized_agents[0].url, 'https://agent.example.com');
+      assert.strictEqual(result.data.adagents_json.version, '1.0');
+    });
+
+    test('passes catalog-only community mirror fields through to the registry', async () => {
+      const created = { success: true, data: { success: true, adagents_json: {} } };
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedOpts = opts;
+        return new Response(JSON.stringify(created), { status: 200 });
+      });
+
+      const config = {
+        authorized_agents: [],
+        catalog_etag: 'meta-creative-formats-2026-05',
+        properties: [{ domain: 'creative.adcontextprotocol.org', platform: 'meta' }],
+        formats: [
+          {
+            format_option_id: 'meta-feed-image',
+            format_kind: 'display',
+            v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/translated/meta', id: 'feed_image' }],
+          },
+        ],
+        placements: [{ placement_id: 'feed', format_option_ids: ['meta-feed-image'] }],
+        placement_tags: { feed: { label: 'Feed' } },
+      };
+      const client = new RegistryClient();
+      await client.createAdagents(config);
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');
+      assert.strictEqual(body.formats[0].format_kind, 'display');
+      assert.strictEqual(body.placements[0].format_option_ids[0], 'meta-feed-image');
+      assert.strictEqual(body.placement_tags.feed.label, 'Feed');
     });
   });
 
