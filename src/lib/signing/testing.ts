@@ -1,7 +1,7 @@
 import { createHash, createPrivateKey, randomUUID, sign as nodeSign, type JsonWebKey } from 'node:crypto';
 import type { SigningProvider } from './provider';
 import type { SignerKey } from './signer';
-import type { AdcpUse } from './jwks-helpers';
+import { assertAdcpUse, type AdcpUse } from './jwks-helpers';
 import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
 
 /**
@@ -12,16 +12,6 @@ import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
  */
 export const ALLOW_IN_MEMORY_SIGNER_ENV = 'ADCP_ALLOW_IN_MEMORY_SIGNER';
 
-const ADCP_USE_VALUES = new Set<AdcpUse>([
-  'request-signing',
-  'webhook-signing',
-  'response-signing',
-  'governance-signing',
-]);
-function isAdcpUse(value: unknown): value is AdcpUse {
-  return typeof value === 'string' && ADCP_USE_VALUES.has(value as AdcpUse);
-}
-
 export interface InMemorySigningProviderOptions {
   /** `kid` published in `Signature-Input`. */
   keyid: string;
@@ -31,13 +21,13 @@ export interface InMemorySigningProviderOptions {
   privateKey: AdcpJsonWebKey;
   /**
    * Optional purpose binding. When supplied, the async signing helpers
-   * (`signRequestAsync` / `signWebhookAsync` / `signResponseAsync`) refuse
-   * to sign with a mismatched purpose — same defense-in-depth gate the
-   * sync path's `SignerKey.privateKey.adcp_use` provides. Defaults to the
-   * value carried on `privateKey.adcp_use` when present, so adapters
-   * minted via `pemToAdcpJwk({ adcp_use: ... })` get the binding for free.
+   * (`signRequestAsync` / `signWebhookAsync`) refuse to sign with a
+   * mismatched purpose — same defense-in-depth gate the sync path's
+   * `SignerKey.privateKey.adcp_use` provides. Defaults to the value carried
+   * on `privateKey.adcp_use` when present, so adapters minted via
+   * `pemToAdcpJwk({ adcp_use: ... })` get the binding for free.
    */
-  adcpUse?: AdcpUse;
+  adcpUse?: string;
 }
 
 /**
@@ -55,7 +45,7 @@ export class InMemorySigningProvider implements SigningProvider {
   readonly keyid: string;
   readonly algorithm: AdcpSignAlg;
   readonly fingerprint: string;
-  readonly adcpUse?: AdcpUse;
+  readonly adcpUse?: string;
   private readonly privateKey: AdcpJsonWebKey;
 
   constructor(options: InMemorySigningProviderOptions) {
@@ -78,10 +68,10 @@ export class InMemorySigningProvider implements SigningProvider {
     this.keyid = options.keyid;
     this.algorithm = options.algorithm;
     this.privateKey = options.privateKey;
-    // Prefer explicit `adcpUse` option; fall back to the JWK's `adcp_use`
-    // metadata so keys minted via `pemToAdcpJwk` get the binding for free.
+    // Prefer explicit `adcpUse` option; fall back to raw JWK metadata so
+    // retired/unknown purposes still fail closed at the async signer gate.
     const jwkUse = options.privateKey.adcp_use;
-    this.adcpUse = options.adcpUse ?? (isAdcpUse(jwkUse) ? jwkUse : undefined);
+    this.adcpUse = options.adcpUse ?? (typeof jwkUse === 'string' ? jwkUse : undefined);
     // Mirrors the historical `privateKeyFingerprint` derivation — same input,
     // same 64-bit cache disambiguator, so behavior carries over for callers
     // who switch from the inline `request_signing` shape to a provider while
@@ -148,8 +138,8 @@ export interface MintEphemeralEd25519KeyOptions {
   /**
    * AdCP purpose binding tagged on both JWKs. Accepts every member of
    * {@link AdcpUse} — see that type for the canonical list (currently
-   * `'webhook-signing'`, `'request-signing'`, `'response-signing'`,
-   * `'governance-signing'`). Defaults to `'webhook-signing'`.
+   * `'webhook-signing'`, `'request-signing'`, and `'governance-signing'`).
+   * Defaults to `'webhook-signing'`.
    *
    * For production request-signing keys use `pemToAdcpJwk()` or a KMS-backed
    * `SigningProvider` instead.
@@ -184,9 +174,10 @@ export interface MintEphemeralEd25519KeyOptions {
  * ```
  */
 export async function mintEphemeralEd25519Key(opts?: MintEphemeralEd25519KeyOptions): Promise<EphemeralEd25519Key> {
-  const { generateKeyPair, exportJWK } = await import('jose');
   const resolvedKid = opts?.kid ?? randomUUID();
   const adcpUse: AdcpUse = opts?.adcp_use ?? 'webhook-signing';
+  assertAdcpUse(adcpUse, 'mintEphemeralEd25519Key');
+  const { generateKeyPair, exportJWK } = await import('jose');
   const { publicKey: pubKeyObj, privateKey: privKeyObj } = await generateKeyPair('EdDSA', {
     crv: 'Ed25519',
     extractable: true,

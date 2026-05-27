@@ -1,12 +1,10 @@
 /**
- * Adapter helpers that construct the `{ method, url }` shape that
- * `ResponseLike.request` (and any other caller binding RFC 9421 derived
- * components back to an originating request) requires.
+ * Adapter helpers that construct the `{ method, url }` shape used when
+ * binding RFC 9421 derived components to an inbound request.
  *
- * Why this exists: `ResponseLike.request.url` MUST be an absolute URL —
- * `canonicalAuthority` / `canonicalTargetUri` parse via `new URL(...)` and
- * throw on a relative path. Express handlers ship `req.url` / `req.originalUrl`
- * as path-only, so adopters reconstruct via
+ * Why this exists: RFC 9421 `@authority` / `@target-uri` canonicalization
+ * requires an absolute URL. Express handlers ship `req.url` /
+ * `req.originalUrl` as path-only, so adopters reconstruct via
  * `${req.protocol}://${req.get('host')}${req.originalUrl}`. But `req.protocol`
  * lies behind a TLS-terminating proxy unless `trust proxy` is set, and
  * `req.get('host')` is attacker-controllable absent a Host allowlist. A
@@ -14,10 +12,9 @@
  * `attacker.example.com` while the operator believes they're signing for
  * `seller.example.com`.
  *
- * The library can warn (JSDoc on `ResponseLike.request`) but can't enforce.
  * These helpers make the safe path the default path — pass them an inbound
- * request handle from your platform and they emit a hardened
- * `{ method, url }` shape.
+ * request handle from your platform and they emit a hardened `{ method, url }`
+ * shape for request or webhook verification.
  */
 
 /**
@@ -49,7 +46,7 @@ export interface RequestContextFromExpressOptions {
 
   /**
    * When `true` (default), the helper throws if the reconstructed URL
-   * scheme is not `https`. AdCP response / webhook signatures bound to
+   * scheme is not `https`. AdCP request / webhook signatures bound to
    * `http://` will fail strict-HTTPS verifier profiles, so this catches
    * the misconfig at construction time. Disable only for local dev /
    * loopback mock servers.

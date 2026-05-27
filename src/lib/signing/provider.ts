@@ -1,4 +1,3 @@
-import type { AdcpUse } from './jwks-helpers';
 import type { AdcpSignAlg } from './types';
 
 /**
@@ -59,19 +58,21 @@ export interface SigningProvider {
   /**
    * Purpose binding for the underlying key, parallel to the sync-path
    * `SignerKey.privateKey.adcp_use` gate. When set, the async helpers
-   * (`signRequestAsync`, `signWebhookAsync`, `signResponseAsync`) refuse
-   * keys whose `adcpUse` doesn't match the helper, with the same error
-   * codes the verifier raises at step 8.
+   * (`signRequestAsync`, `signWebhookAsync`) refuse keys whose `adcpUse`
+   * doesn't match the helper, with the same error codes the verifier raises
+   * at step 8.
    *
    * **Optional and backward-compatible.** Existing providers that omit
    * `adcpUse` skip the gate (no breakage, but no defense-in-depth either).
-   * Adapter authors who care about catching IAM misconfig at the signer
-   * rather than the verifier should set this — KMS is exactly where one
-   * IAM mistake silently grants a single key cross-purpose access, and
-   * `request-signing` / `webhook-signing` / `response-signing` keys MUST
-   * stay distinct per AdCP step-8 purpose-binding.
+   * When present, it is intentionally typed as a raw string so retired or
+   * unknown purpose values still fail closed instead of being erased before
+   * the signer-side gate runs. Adapter authors who care about catching IAM
+   * misconfig at the signer rather than the verifier should set this — KMS is
+   * exactly where one IAM mistake silently grants a single key cross-purpose
+   * access, and `request-signing` / `webhook-signing` keys MUST stay distinct
+   * per AdCP step-8 purpose-binding.
    */
-  readonly adcpUse?: AdcpUse;
+  readonly adcpUse?: string;
 
   /**
    * Stable opaque identifier disambiguating this signer from others

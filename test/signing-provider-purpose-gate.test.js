@@ -6,10 +6,8 @@ const path = require('node:path');
 const {
   signRequestAsync,
   signWebhookAsync,
-  signResponseAsync,
   RequestSignatureError,
   WebhookSignatureError,
-  ResponseSignatureError,
 } = require('../dist/lib/signing/index.js');
 
 const { InMemorySigningProvider } = require('../dist/lib/signing/testing.js');
@@ -37,13 +35,6 @@ const SAMPLE_REQUEST = {
   url: 'https://seller.example.com/adcp/create_media_buy',
   headers: { 'Content-Type': 'application/json' },
   body: '{"plan_id":"p_1"}',
-};
-
-const SAMPLE_RESPONSE = {
-  status: 200,
-  headers: { 'Content-Type': 'application/json' },
-  body: '{"ok":true}',
-  request: { method: 'POST', url: 'https://seller.example.com/adcp/get_products' },
 };
 
 const SIGN_OPTIONS = { now: () => 1776520800, nonce: 'KXYnfEfJ0PBRZXQyVXfVQA', windowSeconds: 300 };
@@ -77,7 +68,7 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
       );
     });
 
-    test('rejects a provider with adcpUse="response-signing"', async () => {
+    test('rejects a legacy provider key with adcpUse="response-signing"', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
@@ -85,7 +76,27 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
       });
       await assert.rejects(
         () => signRequestAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
-        err => err.code === 'request_signature_key_purpose_invalid'
+        err =>
+          err instanceof RequestSignatureError &&
+          err.code === 'request_signature_key_purpose_invalid' &&
+          err.failedStep === 8 &&
+          /response-signing/.test(err.message)
+      );
+    });
+
+    test('rejects a provider key with unknown adcpUse', async () => {
+      const provider = new InMemorySigningProvider({
+        keyid: KID,
+        algorithm: 'ed25519',
+        privateKey: privateJwk(KID, { adcp_use: 'totally-unknown' }),
+      });
+      await assert.rejects(
+        () => signRequestAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
+        err =>
+          err instanceof RequestSignatureError &&
+          err.code === 'request_signature_key_purpose_invalid' &&
+          err.failedStep === 8 &&
+          /totally-unknown/.test(err.message)
       );
     });
 
@@ -133,28 +144,36 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
           /request-signing/.test(err.message)
       );
     });
-  });
 
-  describe('signResponseAsync', () => {
-    test('accepts a provider with adcpUse="response-signing"', async () => {
+    test('rejects a legacy provider key with adcpUse="response-signing"', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
         privateKey: privateJwk(KID, { adcp_use: 'response-signing' }),
       });
-      const signed = await signResponseAsync(SAMPLE_RESPONSE, provider, SIGN_OPTIONS);
-      assert.ok(signed.headers.Signature);
+      await assert.rejects(
+        () => signWebhookAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
+        err =>
+          err instanceof WebhookSignatureError &&
+          err.code === 'webhook_signature_key_purpose_invalid' &&
+          err.failedStep === 8 &&
+          /response-signing/.test(err.message)
+      );
     });
 
-    test('rejects a provider with adcpUse="request-signing"', async () => {
+    test('rejects a provider key with unknown adcpUse', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
-        privateKey: privateJwk(KID, { adcp_use: 'request-signing' }),
+        privateKey: privateJwk(KID, { adcp_use: 'totally-unknown' }),
       });
       await assert.rejects(
-        () => signResponseAsync(SAMPLE_RESPONSE, provider, SIGN_OPTIONS),
-        err => err instanceof ResponseSignatureError && err.code === 'response_signature_key_purpose_invalid'
+        () => signWebhookAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
+        err =>
+          err instanceof WebhookSignatureError &&
+          err.code === 'webhook_signature_key_purpose_invalid' &&
+          err.failedStep === 8 &&
+          /totally-unknown/.test(err.message)
       );
     });
   });
@@ -171,5 +190,39 @@ describe('SigningProvider.adcpUse — explicit option overrides JWK metadata', (
     });
     const signed = await signRequestAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS);
     assert.ok(signed.headers.Signature);
+  });
+
+  test('explicit retired adcpUse fails closed even when JWK metadata is valid', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: KID,
+      algorithm: 'ed25519',
+      privateKey: privateJwk(KID, { adcp_use: 'request-signing' }),
+      adcpUse: 'response-signing',
+    });
+    await assert.rejects(
+      () => signRequestAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_key_purpose_invalid' &&
+        err.failedStep === 8 &&
+        /response-signing/.test(err.message)
+    );
+  });
+
+  test('explicit unknown adcpUse fails closed even when JWK metadata is valid', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: KID,
+      algorithm: 'ed25519',
+      privateKey: privateJwk(KID, { adcp_use: 'request-signing' }),
+      adcpUse: 'totally-unknown',
+    });
+    await assert.rejects(
+      () => signRequestAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_key_purpose_invalid' &&
+        err.failedStep === 8 &&
+        /totally-unknown/.test(err.message)
+    );
   });
 });
