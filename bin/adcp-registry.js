@@ -247,10 +247,10 @@ AUTHORIZATION:
 
 OPTIONS:
   --auth TOKEN        API key for authenticated access (required for save)
-  --registry-url URL  Custom registry URL (default: https://adcontextprotocol.org)
+  --registry-url URL  Custom registry URL (default: https://agenticadvertising.org)
   --json              Output raw JSON
   --search TERM       Search filter for list commands
-  --type TYPE         Agent type filter (creative, signals, sales, governance, si)
+  --type TYPE         Agent type filter (sales, creative, signals, measurement, governance, si)
   --health            Include agent health data
   --capabilities      Include agent capabilities data
   --properties        Include agent property data
