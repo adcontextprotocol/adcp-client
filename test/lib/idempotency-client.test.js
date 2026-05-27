@@ -16,11 +16,12 @@ const protocols = require('../../dist/lib/protocols/index.js');
 const { isMutatingTask } = require('../../dist/lib/utils/idempotency.js');
 const { IdempotencyConflictError, IdempotencyExpiredError } = require('../../dist/lib/index.js');
 
-function buildResponse({ replayed } = {}) {
+function buildResponse({ replayed, adcpVersion } = {}) {
   return {
     structuredContent: {
       status: 'completed',
       ...(replayed !== undefined && { replayed }),
+      ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
       payload: { media_buy_id: 'mb_42', packages: [] },
       media_buy_id: 'mb_42',
       packages: [],
@@ -118,6 +119,143 @@ describe('TaskExecutor surfaces replayed on result metadata', () => {
       const executor = new TaskExecutor();
       const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
       assert.equal(result.metadata.replayed, undefined);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('TaskExecutor surfaces response adcp_version on result metadata', () => {
+  it('adcp_version on envelope flows to result.metadata.adcpVersion', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({ response: buildResponse({ adcpVersion: '3.1-beta.5' }), capture });
+    try {
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      assert.equal(result.metadata.adcpVersion, '3.1-beta.5');
+    } finally {
+      restore();
+    }
+  });
+
+  it('tasks/get envelope adcp_version flows through submitted waitForCompletion metadata', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({
+      response: toolName => {
+        if (toolName === 'tasks/get') {
+          return {
+            structuredContent: {
+              status: 'completed',
+              task_id: 'task-polled-version',
+              task_type: 'create_media_buy',
+              created_at: Date.now(),
+              updated_at: Date.now(),
+              adcp_version: '3.1-beta.5',
+              replayed: true,
+              context_id: 'ctx-polled-version',
+              result: {
+                media_buy_id: 'mb_polled_version',
+                media_buy_status: 'pending_creatives',
+                packages: [],
+              },
+            },
+          };
+        }
+        return {
+          structuredContent: {
+            status: 'submitted',
+            task_id: 'task-polled-version',
+          },
+        };
+      },
+      capture,
+    });
+    try {
+      const executor = new TaskExecutor();
+      const submitted = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      const result = await submitted.submitted.waitForCompletion(10);
+      assert.equal(result.metadata.adcpVersion, '3.1-beta.5');
+      assert.equal(result.metadata.replayed, true);
+      assert.equal(result.metadata.contextId, 'ctx-polled-version');
+      assert.equal(result.metadata.serverTaskId, 'task-polled-version');
+    } finally {
+      restore();
+    }
+  });
+
+  it('legacy tasks/get task wrapper adcp_version flows through submitted waitForCompletion metadata', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({
+      response: toolName => {
+        if (toolName === 'tasks/get') {
+          return {
+            task: {
+              status: 'completed',
+              taskId: 'task-polled-legacy-version',
+              taskType: 'create_media_buy',
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              adcp_version: '3.1-beta.5',
+              result: {
+                media_buy_id: 'mb_polled_legacy_version',
+                media_buy_status: 'pending_creatives',
+                packages: [],
+              },
+            },
+          };
+        }
+        return {
+          structuredContent: {
+            status: 'submitted',
+            task_id: 'task-polled-legacy-version',
+          },
+        };
+      },
+      capture,
+    });
+    try {
+      const executor = new TaskExecutor();
+      const submitted = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      const result = await submitted.submitted.waitForCompletion(10);
+      assert.equal(result.metadata.adcpVersion, '3.1-beta.5');
+    } finally {
+      restore();
+    }
+  });
+
+  it('input handler deferral preserves response adcp_version metadata', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({
+      response: {
+        structuredContent: {
+          status: 'input-required',
+          question: 'Approve this buy?',
+          field: 'approval',
+          adcp_version: '3.1-beta.5',
+        },
+      },
+      capture,
+    });
+    try {
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(agent, 'create_media_buy', baseParams, async () => ({
+        defer: true,
+        token: 'deferred-token-1',
+      }));
+      assert.equal(result.status, 'deferred');
+      assert.equal(result.metadata.adcpVersion, '3.1-beta.5');
+    } finally {
+      restore();
+    }
+  });
+
+  it('adcp_version omitted is surfaced as undefined', async () => {
+    const capture = [];
+    const restore = stubProtocolClient({ response: buildResponse(), capture });
+    try {
+      const executor = new TaskExecutor();
+      const result = await executor.executeTask(agent, 'create_media_buy', baseParams);
+      assert.equal(result.metadata.adcpVersion, undefined);
     } finally {
       restore();
     }

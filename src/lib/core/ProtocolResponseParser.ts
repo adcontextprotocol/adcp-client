@@ -51,6 +51,7 @@ const TASK_ENVELOPE_FIELDS: ReadonlySet<string> = new Set([
   'context',
   'ext',
 ]);
+const NESTED_TASK_ENVELOPE_FIELDS: ReadonlySet<string> = new Set([...TASK_ENVELOPE_FIELDS, 'taskId', 'adcp_error']);
 
 /**
  * ADCP task-lifecycle statuses that never overlap with AdCP domain status
@@ -156,6 +157,78 @@ function extractAdcpTaskIdFromA2aTaskResult(result: any): string | undefined {
 function firstSafeSessionId(...candidates: unknown[]): string | undefined {
   for (const c of candidates) {
     if (isSafeSessionId(c)) return c;
+  }
+  return undefined;
+}
+
+function getAdcpVersionFromPayload(payload: unknown): string | undefined {
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const record = payload as Record<string, unknown>;
+  if (typeof record.adcp_version === 'string') return record.adcp_version;
+
+  const nested = record.response;
+  if (nested != null && typeof nested === 'object' && !Array.isArray(nested)) {
+    const envelope = nested as Record<string, unknown>;
+    const status = typeof envelope.status === 'string' ? envelope.status : undefined;
+    const isAdcpStatus = status !== undefined && (Object.values(ADCP_STATUS) as string[]).includes(status);
+    const hasOnlyEnvelopeFields = Object.keys(envelope).every(key => NESTED_TASK_ENVELOPE_FIELDS.has(key));
+    const looksLikeEnvelope =
+      typeof envelope.task_id === 'string' ||
+      typeof envelope.taskId === 'string' ||
+      Array.isArray(envelope.errors) ||
+      (envelope.adcp_error != null && typeof envelope.adcp_error === 'object') ||
+      (isAdcpStatus && hasOnlyEnvelopeFields);
+
+    if (looksLikeEnvelope && typeof envelope.adcp_version === 'string') {
+      return envelope.adcp_version;
+    }
+  }
+
+  return undefined;
+}
+
+function getLatestDataPartFromParts(parts: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(parts)) return undefined;
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const part = parts[i];
+    if (part == null || typeof part !== 'object' || Array.isArray(part)) continue;
+    const record = part as Record<string, unknown>;
+    if (record.kind !== 'data') continue;
+    const data = record.data;
+    if (data == null || typeof data !== 'object' || Array.isArray(data)) continue;
+    return data as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function getA2AResultAdcpVersion(result: unknown): string | undefined {
+  if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
+
+  const taskData = getLatestA2ADataPartFromTask(result)?.data;
+  const taskVersion = getAdcpVersionFromPayload(taskData);
+  if (taskVersion) return taskVersion;
+
+  const resultRecord = result as Record<string, unknown>;
+  const messageData = getLatestDataPartFromParts(resultRecord.parts);
+  const messageVersion = getAdcpVersionFromPayload(messageData);
+  if (messageVersion) return messageVersion;
+
+  return getAdcpVersionFromPayload(result);
+}
+
+function getMcpTextContentAdcpVersion(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  for (const item of content) {
+    if (item == null || typeof item !== 'object' || Array.isArray(item)) continue;
+    const text = (item as { type?: unknown; text?: unknown }).text;
+    if ((item as { type?: unknown }).type !== 'text' || typeof text !== 'string') continue;
+    try {
+      const parsed = JSON.parse(text);
+      const version = getAdcpVersionFromPayload(parsed);
+      if (version) return version;
+    } catch {
+      // Non-JSON text chunks are advisory copy, not AdCP envelopes.
+    }
   }
   return undefined;
 }
@@ -291,6 +364,43 @@ export class ProtocolResponseParser {
     // Top-level envelope (A2A direct, REST)
     if (typeof response.replayed === 'boolean') {
       return response.replayed;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extract the seller-served AdCP release echo from the response envelope.
+   *
+   * This is the response-side `adcp_version` value, not necessarily the
+   * caller's configured pin. Multi-version sellers can downshift within the
+   * same major; callers that care should compare this value to their request's
+   * release-precision wire version (for example, `wireVersion.normalize(pin)`),
+   * not to a raw full-semver configuration value.
+   */
+  getAdcpVersion(response: any): string | undefined {
+    if (response == null) return undefined;
+
+    // A2A wrapped Task/Message responses carry AdCP payloads in DataParts.
+    const a2aVersion = getA2AResultAdcpVersion(response.result);
+    if (a2aVersion) return a2aVersion;
+
+    // MCP structuredContent.
+    if (typeof response.structuredContent?.adcp_version === 'string') {
+      return response.structuredContent.adcp_version;
+    }
+
+    // MCP text content fallback.
+    const textContentVersion = getMcpTextContentAdcpVersion(response.content);
+    if (textContentVersion) return textContentVersion;
+
+    // Legacy tasks/get wrapper.
+    const taskVersion = getAdcpVersionFromPayload(response.task);
+    if (taskVersion) return taskVersion;
+
+    // Flat AdCP envelope.
+    if (typeof response.adcp_version === 'string') {
+      return response.adcp_version;
     }
 
     return undefined;

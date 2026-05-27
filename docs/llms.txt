@@ -1385,7 +1385,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | Type | Purpose |
 |------|---------|
 | `AgentConfig` | Agent connection config (uri, protocol, auth) |
-| `TaskResult<T>` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |
+| `TaskResult<T>` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted; metadata includes seller-served `adcpVersion`) |
 | `InputHandler` | Callback for agent clarification requests |
 | `ConversationContext` | Passed to InputHandler with messages, question, helpers |
 | `Product` | Advertising inventory item with formats, pricing, targeting |

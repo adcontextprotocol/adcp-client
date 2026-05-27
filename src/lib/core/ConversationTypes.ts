@@ -404,6 +404,13 @@ export interface TaskResultMetadata {
    * acting, or retries will re-fire side effects.
    */
   replayed?: boolean;
+  /**
+   * Seller-served, release-precision AdCP version echoed on the response
+   * envelope. Present when the seller emits `adcp_version` (3.1+). Compare
+   * with the request's wire-normalized version, not a raw full-semver
+   * configuration pin, when detecting same-major downshift.
+   */
+  adcpVersion?: string;
 }
 
 /** Fields shared across all TaskResult variants. */
