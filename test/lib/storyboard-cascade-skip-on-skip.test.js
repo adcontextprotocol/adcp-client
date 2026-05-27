@@ -347,6 +347,80 @@ const MATRIX_ROWS = [
     },
   },
   {
+    axes: { skip_reason: 'missing_tool', peer_shape: 'peer_passes', phase_topology: 'same_phase' },
+    title: 'missing_tool + passing peer with no declaration: same-phase consumer still cascades',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWith([
+        step('peer', '__test_setup'),
+        step('trigger', '__test_setup_missing'),
+        step('consumer', '__test_assert'),
+      ]),
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [peerStep, triggerStep, consumerStep] = result.phases[0].steps;
+      assert.strictEqual(peerStep.passed, true, 'non-declared peer passed before trigger');
+      assert.notStrictEqual(peerStep.skipped, true, 'peer was not cascade-skipped');
+      assert.strictEqual(triggerStep.skipped, true);
+      assert.strictEqual(triggerStep.skip_reason, 'missing_tool');
+      assert.strictEqual(consumerStep.skipped, true, 'passing peer does not rescue without declaration');
+      assert.strictEqual(consumerStep.skip_reason, 'prerequisite_failed');
+      assert.match(consumerStep.skip.detail ?? '', /prior stateful step "trigger" skipped \(missing_tool\)/);
+      assert.match(consumerStep.skip.detail ?? '', /state never materialized/);
+    },
+  },
+  {
+    axes: { skip_reason: 'missing_tool', peer_shape: 'peer_passes', phase_topology: 'downstream_phase' },
+    title: 'missing_tool + passing peer with no declaration: downstream consumer still cascades',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        {
+          id: 'setup_phase',
+          title: 'setup',
+          steps: [step('peer', '__test_setup'), step('trigger', '__test_setup_missing')],
+        },
+        { id: 'consume', title: 'consume', steps: [step('consumer', '__test_assert')] },
+      ]),
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [peerStep, triggerStep] = result.phases[0].steps;
+      const consumerStep = result.phases[1].steps[0];
+      assert.strictEqual(peerStep.passed, true, 'peer passed before missing-tool trigger');
+      assert.strictEqual(triggerStep.skipped, true);
+      assert.strictEqual(triggerStep.skip_reason, 'missing_tool');
+      assert.strictEqual(consumerStep.skipped, true, 'cross-phase cascade fires');
+      assert.strictEqual(consumerStep.skip_reason, 'prerequisite_failed');
+      assert.match(consumerStep.skip.detail ?? '', /prior stateful step "trigger" skipped \(missing_tool\)/);
+    },
+  },
+  {
+    axes: { skip_reason: 'missing_tool', peer_shape: 'peer_fails', phase_topology: 'same_phase' },
+    title: 'missing_tool after earlier peer failure: same-phase consumer keeps real-failure diagnostic',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWith([
+        step('peer', '__test_fail'),
+        step('trigger', '__test_setup_missing'),
+        step('consumer', '__test_assert'),
+      ]),
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [peerStep, triggerStep, consumerStep] = result.phases[0].steps;
+      assert.strictEqual(peerStep.passed, false, 'peer failed for real');
+      assert.notStrictEqual(peerStep.skipped, true, 'peer ran before missing-tool trigger');
+      assert.strictEqual(triggerStep.skipped, true);
+      assert.strictEqual(triggerStep.skip_reason, 'missing_tool');
+      assert.strictEqual(consumerStep.skipped, true);
+      assert.strictEqual(consumerStep.skip_reason, 'prerequisite_failed');
+      assert.match(consumerStep.skip.detail ?? '', /prior stateful step failed/);
+      assert.doesNotMatch(consumerStep.skip.detail ?? '', /missing_tool/, 'real failure wins the diagnostic');
+    },
+  },
+  {
     axes: { skip_reason: 'missing_tool', peer_shape: 'sole_stateful', phase_topology: 'same_phase' },
     title: 'missing_tool with NO declared substitute → cascade fires immediately (existing behavior)',
     issue: 'adcp-client#1144',
@@ -693,6 +767,152 @@ const MATRIX_ROWS = [
         audienceStep.skip.detail ?? '',
         /not_applicable/,
         'detail must reference the real failure, not the earlier not_applicable trigger'
+      );
+    },
+  },
+  {
+    axes: {
+      skip_reason: 'not_applicable',
+      peer_shape: 'peer_substitute_declared',
+      phase_topology: 'same_phase',
+    },
+    title: 'not_applicable + declared substitute that passes: same-phase consumer runs',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWith([
+        step('sync', 'sync_accounts'),
+        step('list', '__test_setup', { provides_state_for: 'sync' }),
+        step('consumer', '__test_assert'),
+      ]),
+      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const [syncStep, listStep, consumerStep] = result.phases[0].steps;
+      assert.strictEqual(syncStep.skipped, true);
+      assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+      assert.doesNotMatch(syncStep.skip.detail ?? '', /peer_substituted/);
+      assert.strictEqual(listStep.passed, true, 'declared substitute passed');
+      assert.ok(!consumerStep.skipped, 'same-phase consumer runs after stateful peer pass');
+      assert.strictEqual(consumerStep.passed, true);
+    },
+  },
+  {
+    axes: {
+      skip_reason: 'not_applicable',
+      peer_shape: 'peer_substitute_declared',
+      phase_topology: 'downstream_phase',
+    },
+    title: 'not_applicable + declared substitute that passes: downstream consumer runs',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        {
+          id: 'account_setup',
+          title: 'account setup',
+          steps: [step('sync', 'sync_accounts'), step('list', '__test_setup', { provides_state_for: 'sync' })],
+        },
+        { id: 'consume', title: 'consume', steps: [step('consumer', '__test_assert')] },
+      ]),
+      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const [syncStep, listStep] = result.phases[0].steps;
+      const consumerStep = result.phases[1].steps[0];
+      assert.strictEqual(syncStep.skipped, true);
+      assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+      assert.strictEqual(listStep.passed, true, 'declared substitute passed');
+      assert.ok(!consumerStep.skipped, 'downstream runs because a stateful peer established state');
+      assert.strictEqual(consumerStep.passed, true);
+    },
+  },
+  {
+    axes: {
+      skip_reason: 'not_applicable',
+      peer_shape: 'peer_substitute_missing',
+      phase_topology: 'downstream_phase',
+    },
+    title: 'not_applicable + mutual substitute declarations both skip: downstream consumer cascades',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        {
+          id: 'account_setup',
+          title: 'account setup',
+          steps: [
+            step('sync_a', 'sync_accounts', { provides_state_for: 'sync_b' }),
+            step('sync_b', 'sync_accounts', { provides_state_for: 'sync_a' }),
+          ],
+        },
+        { id: 'consume', title: 'consume', steps: [step('consumer', '__test_assert')] },
+      ]),
+      advertised: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const [syncA, syncB] = result.phases[0].steps;
+      const consumerStep = result.phases[1].steps[0];
+      assert.strictEqual(syncA.skip_reason, 'not_applicable');
+      assert.strictEqual(syncB.skip_reason, 'not_applicable');
+      assert.strictEqual(consumerStep.skipped, true, 'phase-end not_applicable promotion cascades downstream');
+      assert.strictEqual(consumerStep.skip_reason, 'prerequisite_failed');
+      assert.match(consumerStep.skip.detail ?? '', /prior stateful step "sync_a" skipped \(not_applicable\)/);
+      assert.doesNotMatch(
+        consumerStep.skip.detail ?? '',
+        /declared substitute/,
+        'not_applicable uses any-peer phase-end logic, not hard-missing substitution-chain detail'
+      );
+    },
+  },
+  {
+    axes: { skip_reason: 'not_applicable', peer_shape: 'peer_passes', phase_topology: 'same_phase' },
+    title: 'not_applicable + passing peer with no declaration: same-phase consumer runs',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWith([
+        step('sync', 'sync_accounts'),
+        step('peer', '__test_setup'),
+        step('consumer', '__test_assert'),
+      ]),
+      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const [syncStep, peerStep, consumerStep] = result.phases[0].steps;
+      assert.strictEqual(syncStep.skipped, true);
+      assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+      assert.strictEqual(peerStep.passed, true, 'stateful peer passed');
+      assert.ok(!consumerStep.skipped, 'same-phase consumer runs after stateful peer pass');
+      assert.strictEqual(consumerStep.passed, true);
+    },
+  },
+  {
+    axes: { skip_reason: 'not_applicable', peer_shape: 'peer_fails', phase_topology: 'same_phase' },
+    title: 'not_applicable + peer failure: same-phase consumer keeps real-failure diagnostic',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWith([
+        step('sync', 'sync_accounts'),
+        step('peer', '__test_fail'),
+        step('consumer', '__test_assert'),
+      ]),
+      advertised: ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const [syncStep, peerStep, consumerStep] = result.phases[0].steps;
+      assert.strictEqual(syncStep.skipped, true);
+      assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+      assert.strictEqual(peerStep.passed, false, 'peer failed for real');
+      assert.notStrictEqual(peerStep.skipped, true, 'peer ran despite deferred not_applicable trigger');
+      assert.strictEqual(consumerStep.skipped, true);
+      assert.strictEqual(consumerStep.skip_reason, 'prerequisite_failed');
+      assert.match(consumerStep.skip.detail ?? '', /prior stateful step failed/);
+      assert.doesNotMatch(
+        consumerStep.skip.detail ?? '',
+        /not_applicable/,
+        'real failure wins over earlier deferred not_applicable'
       );
     },
   },
@@ -1089,19 +1309,11 @@ const TRACKED_GAPS = new Map([
   ['missing_test_controller|peer_fails|same_phase', 'tracked_in_storyboard-controller-seeding.test.js'],
   ['missing_test_controller|peer_fails|downstream_phase', 'tracked_in_storyboard-controller-seeding.test.js'],
 
-  // missing_tool: peer_passes adjacent to a missing_tool target without
-  // a peer_substitutes_for declaration — the runner currently has no
-  // "implicit substitute" rule. Behavior is "cascade fires" but no
-  // dedicated row exists. Tracked for explicit assertion in a follow-up.
-  ['missing_tool|peer_passes|same_phase', 'tracked_in_issue_1589'],
-  ['missing_tool|peer_passes|downstream_phase', 'tracked_in_issue_1589'],
-  ['missing_tool|peer_fails|same_phase', 'tracked_in_issue_1589'],
-
-  // missing_tool peer_substitute_missing × same_phase: in the prose-driven
-  // suite, the mutual-declaration "both miss" case asserts cross-phase
-  // cascade; the same-phase variant (substitute target and consumer in
-  // the same phase) is functionally redundant given intra-phase cascade
-  // is unconditional. Tracked for explicit row.
+  // missing_tool peer_substitute_missing × same_phase is reachable today,
+  // but the observed behavior ("same-phase consumer runs before phase-end
+  // promotion") pins runner loop timing rather than a settled cascade
+  // contract. Keep tracked until same-phase deferred-substitution semantics
+  // are explicitly decided.
   ['missing_tool|peer_substitute_missing|same_phase', 'tracked_in_issue_1589'],
 
   // missing_test_controller × peer_substitute_*: declared substitutes for
@@ -1121,18 +1333,13 @@ const TRACKED_GAPS = new Map([
     'tracked_in_storyboard-controller-seeding.test.js',
   ],
 
-  // not_applicable: peer_substitute_* paths are not exercised here
-  // because peer_substitutes_for is keyed on hard-missing skip reasons.
-  // not_applicable already has its own deferred-resolution path; the
-  // peer_substitute_declared shape is functionally redundant with
-  // peer_passes for not_applicable. Tracked for explicit row.
-  ['not_applicable|peer_substitute_declared|same_phase', 'tracked_in_issue_1589'],
-  ['not_applicable|peer_substitute_declared|downstream_phase', 'tracked_in_issue_1589'],
-  ['not_applicable|peer_substitute_missing|same_phase', 'tracked_in_issue_1589'],
-  ['not_applicable|peer_substitute_missing|downstream_phase', 'tracked_in_issue_1589'],
+  // not_applicable same-phase deferred-promotion cases need a contract
+  // decision. A same-phase stateful consumer is itself a peer, so
+  // `sole_stateful × same_phase` cannot currently prove the sole-stateful
+  // exemption; `peer_substitute_missing × same_phase` likewise only proves
+  // phase-end timing.
   ['not_applicable|sole_stateful|same_phase', 'tracked_in_issue_1589'],
-  ['not_applicable|peer_passes|same_phase', 'tracked_in_issue_1589'],
-  ['not_applicable|peer_fails|same_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_substitute_missing|same_phase', 'tracked_in_issue_1589'],
 ]);
 
 function cellKey(reason, peer, topology) {
