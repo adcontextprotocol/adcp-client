@@ -22,6 +22,7 @@
  * buffer never holds plaintext secrets even briefly.
  */
 interface RecordedCallBase {
+  /** Forward-compatibility for additive spec fields on recorded call items. */
   [key: string]: unknown;
   method: string;
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
@@ -177,10 +178,11 @@ export interface UpstreamRecorderOptions {
   /**
    * Optional observability hook. Invoked when the recorder swallows an
    * error that would otherwise be invisible (purpose classifier throw,
-   * invalid purpose tag, URL parse failure, payload-build throw on a hostile
-   * getter, record outside scope when `strict: false`). Adopters wire this to their
-   * logger so silent failures surface in dev sessions. Throwing inside
-   * `onError` is itself swallowed — the hook MUST NOT crash the recorder.
+   * invalid purpose tag, URL parse failure, malformed JSON diagnostic path,
+   * payload-build throw on a hostile getter, record outside scope when
+   * `strict: false`). Adopters wire this to their logger so silent failures
+   * surface in dev sessions. Throwing inside `onError` is itself swallowed —
+   * the hook MUST NOT crash the recorder.
    */
   onError?: (event: UpstreamRecorderErrorEvent) => void;
 }
@@ -194,6 +196,7 @@ export type UpstreamRecorderErrorEvent =
   | { kind: 'classifier_invalid_purpose'; purpose: string }
   | { kind: 'url_parse_failed'; url: string }
   | { kind: 'payload_build_failed'; err: unknown }
+  | { kind: 'json_payload_parse_failed'; content_type: string; err: unknown }
   | { kind: 'unscoped_record'; method: string; url: string };
 
 /**

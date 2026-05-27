@@ -328,7 +328,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     });
 
     const total = matched.length;
-    const items = matched.slice(0, limit).map(e => projectRecordedCall(e.call, params));
+    const items = matched.slice(0, limit).map(e => projectRecordedCall(e.call, params, emitError));
     const since_timestamp =
       params.sinceTimestamp ?? matched[0]?.call.timestamp ?? new Date(nowMs - ttlMs).toISOString();
     return {
@@ -368,12 +368,16 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   };
 }
 
-function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQueryParams): RecordedCall {
+function projectRecordedCall(
+  call: RawRecordedCall,
+  params: UpstreamRecorderQueryParams,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): RecordedCall {
   if (params.attestationMode !== 'digest') return call;
   const payloadBytes = canonicalPayloadBytes(call.payload, call.content_type);
   const payloadDigest = sha256Hex(payloadBytes);
   const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
-  const identifierScanPayload = parseJsonStringPayloadForScan(call.payload, call.content_type);
+  const identifierScanPayload = parseJsonStringPayloadForScan(call.payload, call.content_type, emitError);
   const matchedIdentifierDigests =
     identifierDigests.length > 0 && identifierScanPayload !== undefined
       ? collectMatchedStringLeafDigests(identifierScanPayload, new Set(identifierDigests))
@@ -437,12 +441,17 @@ function collectMatchedStringLeafDigests(root: unknown, wantedDigests: Set<strin
   return matched;
 }
 
-function parseJsonStringPayloadForScan(payload: unknown, contentType: string): unknown | undefined {
+function parseJsonStringPayloadForScan(
+  payload: unknown,
+  contentType: string,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): unknown | undefined {
   if (!isJsonContentType(contentType)) return undefined;
   if (typeof payload !== 'string') return payload;
   try {
     return JSON.parse(payload);
-  } catch {
+  } catch (err) {
+    emitError?.({ kind: 'json_payload_parse_failed', content_type: contentType, err });
     return payload;
   }
 }
@@ -495,8 +504,9 @@ function sha256Hex(value: string): string {
  * applies the same body snapshot normalization, payload normalization, and
  * canonical secret-key redaction used by the recorder before hashing; pass a
  * custom redaction pattern and `maxPayloadBytes` when your recorder uses
- * matching options, or `false` only when the payload has already been
- * normalized/redacted exactly as the recorder would store it.
+ * matching options. Prefer `{ prenormalized: true }` only when the payload
+ * has already been normalized/redacted exactly as the recorder would store it;
+ * legacy `false` remains accepted as the same prenormalized sentinel.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -512,10 +522,17 @@ function sha256Hex(value: string): string {
 export function computePayloadDigestSha256(
   payload: unknown,
   contentType = 'application/json',
-  options: RegExp | false | { redactPattern?: RegExp | false; maxPayloadBytes?: number } = SECRET_KEY_PATTERN
+  options:
+    | RegExp
+    | false
+    | { redactPattern?: RegExp | false; maxPayloadBytes?: number; prenormalized?: boolean } = SECRET_KEY_PATTERN
 ): string {
   const redactPattern =
-    options instanceof RegExp || options === false ? options : (options?.redactPattern ?? SECRET_KEY_PATTERN);
+    options instanceof RegExp || options === false
+      ? options
+      : options?.prenormalized
+        ? false
+        : (options?.redactPattern ?? SECRET_KEY_PATTERN);
   const maxPayloadBytes =
     typeof options === 'object' && options !== null && !(options instanceof RegExp)
       ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
@@ -585,18 +602,21 @@ function normalizeRecordedPayload(
 
   if (typeof payload === 'string') {
     if (isJsonContentType(contentType)) {
+      let parsed: unknown;
       try {
-        const redacted = redactSecrets(JSON.parse(payload), redactPattern);
-        assertJsonDepth(redacted);
-        const json = safeStringify(redacted);
-        if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
-          return `[truncated ${byteLengthOf(json)} bytes]`;
-        }
-        return redacted;
+        parsed = JSON.parse(payload);
       } catch {
         // Malformed JSON strings remain raw strings so diagnostics keep the
         // original body shape instead of pretending the payload was absent.
+        return cap(payload, maxPayloadBytes);
       }
+      const redacted = redactSecrets(parsed, redactPattern);
+      assertJsonDepth(redacted);
+      const json = safeStringify(redacted);
+      if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
+        return `[truncated ${byteLengthOf(json)} bytes]`;
+      }
+      return redacted;
     }
     // Form-urlencoded redaction: parse, redact, re-stringify so
     // `access_token=...` bodies don't slip through unredacted.

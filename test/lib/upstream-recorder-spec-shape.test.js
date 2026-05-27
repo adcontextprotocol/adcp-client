@@ -331,6 +331,10 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
       computePayloadDigestSha256(raw, 'application/json', /^(authorization|vendor_secret)$/i),
       sha256Hex(canonicalize(customRedacted))
     );
+    assert.equal(
+      computePayloadDigestSha256(defaultRedacted, 'application/json', { prenormalized: true }),
+      computePayloadDigestSha256(defaultRedacted, 'application/json', false)
+    );
   });
 
   test('computePayloadDigestSha256 matches recorder digest projection for normalized payload shapes', async () => {
@@ -459,6 +463,49 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].kind, 'payload_build_failed');
     assert.match(String(events[0].err), /JSON payload exceeds max canonicalization depth/);
+  });
+
+  test('JSON string payloads fail closed when parsed content exceeds the redaction depth cap', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({ enabled: true, onError: event => events.push(event) });
+    let payload = { authorization: 'fake_test_fixture_not_a_real_token_aaaa' };
+    for (let i = 0; i < 260; i++) payload = { wrapper: payload };
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: JSON.stringify(payload),
+      });
+    });
+    const result = recorder.query({ principal: 'p' });
+    assert.equal(result.total, 0);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'payload_build_failed');
+    assert.match(String(events[0].err), /JSON payload exceeds max canonicalization depth/);
+  });
+
+  test('malformed JSON strings emit onError when digest identifier scanning cannot parse them', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({ enabled: true, onError: event => events.push(event) });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: '{"authorization":"fake_test_fixture_not_a_real_token_aaaa"',
+      });
+    });
+
+    const result = recorder.query({
+      principal: 'p',
+      attestationMode: 'digest',
+      identifierValueDigests: [sha256Hex('missing')],
+    });
+    assert.equal(result.total, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'json_payload_parse_failed');
+    assert.equal(events[0].content_type, 'application/json');
   });
 
   test('digest-mode identifier proof scan avoids false negatives in large payloads', async () => {

@@ -2717,11 +2717,10 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const minCount = validation.min_count ?? 1;
 
   // payload_must_contain results bucket two ways: paths that no matched
-  // call satisfied (failure), and paths whose only matched calls were
-  // non-JSON for an `equals` / `contains_any` assertion (`not_applicable`).
-  // Per spec, the assertion grades `not_applicable` only when *every*
-  // path-based check downgraded that way; mixed payload+content_type
-  // results still fail the validation if any required path is missing.
+  // call satisfied despite inspectable raw JSON evidence (failure), and
+  // paths with no portable payload evidence to inspect (`not_applicable`).
+  // Any actionable raw JSON miss keeps the validation failed; otherwise any
+  // not_applicable path downgrades the validation from pass to not_applicable.
   const missingPayloadPaths: string[] = [];
   const notApplicablePaths: string[] = [];
   if (validation.payload_must_contain && validation.payload_must_contain.length > 0) {

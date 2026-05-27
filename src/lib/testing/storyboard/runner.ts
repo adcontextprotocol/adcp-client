@@ -5230,6 +5230,7 @@ function collectUpstreamIdentifierDigests(
       ? (requestPayload as Record<string, unknown>)
       : sampleRequest;
   if (!sample) return { digests, limit: IDENTIFIER_DIGEST_LIMIT, clipped };
+  const clippedVectors = new Set<string>();
   for (const validation of validations) {
     for (const path of validation.identifier_paths ?? []) {
       const vectors = resolvePathAll(sample, normalizeStoryboardJsonPath(path));
@@ -5237,7 +5238,10 @@ function collectUpstreamIdentifierDigests(
         if (typeof vector !== 'string') continue;
         if (digests.has(vector)) continue;
         if (digests.size >= IDENTIFIER_DIGEST_LIMIT) {
-          clipped++;
+          if (!clippedVectors.has(vector)) {
+            clippedVectors.add(vector);
+            clipped++;
+          }
           continue;
         }
         digests.set(vector, sha256Hex(vector));
