@@ -93,7 +93,8 @@ function runCli(args, env = {}, { timeout = 30_000 } = {}) {
   // Use process.execPath so tests that zero out $PATH (e.g. the no-tunnel-binary
   // test) can still locate the node interpreter. The timeout guards against a
   // regression where auto-tunnel captures the URL but then hangs indefinitely
-  // in the run path — without this the test would block CI.
+  // in the run path. Keep it above normal CLI startup latency under the full
+  // suite's parallel load so the guard catches hangs, not slow process launch.
   return spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf8',
     env: { ...process.env, ...env },

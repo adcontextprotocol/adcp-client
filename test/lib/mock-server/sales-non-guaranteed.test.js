@@ -182,6 +182,47 @@ describe('mock-server sales-non-guaranteed', () => {
     assert.equal(err.code, 'idempotency_conflict');
   });
 
+  it('line item creation replays exact idempotency_key requests and conflicts on body changes', async () => {
+    const orderRes = await fetch(`${handle.url}/v1/orders`, {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify({
+        name: 'line item replay parent',
+        advertiser_id: 'adv_test',
+        budget: 2000,
+        currency: 'USD',
+        line_items: [],
+      }),
+    });
+    const order = await orderRes.json();
+    const body = {
+      product_id: 'display_medrec_remnant',
+      budget: 1000,
+      idempotency_key: 'lineitem-idem-key-0001',
+    };
+    const first = await fetch(`${handle.url}/v1/orders/${order.order_id}/lineitems`, {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify(body),
+    });
+    const second = await fetch(`${handle.url}/v1/orders/${order.order_id}/lineitems`, {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify(body),
+    });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.deepEqual(await second.json(), await first.json());
+
+    const conflict = await fetch(`${handle.url}/v1/orders/${order.order_id}/lineitems`, {
+      method: 'POST',
+      headers: authHeaders(true),
+      body: JSON.stringify({ ...body, budget: 1500 }),
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json()).code, 'idempotency_conflict');
+  });
+
   it('GET /v1/orders/{id}/delivery synthesizes budget × elapsed × pacing', async () => {
     // Create an order with flight in progress (started yesterday, ends in 30d) so elapsed is small but non-zero.
     const start = new Date(Date.now() - 86_400_000).toISOString();

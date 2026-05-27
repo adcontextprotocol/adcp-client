@@ -146,6 +146,47 @@ describe('mock-server sales-guaranteed', () => {
     assert.equal(lineItem.status, 'pending_creatives');
   });
 
+  it('scopes line-item idempotency_key replays to the parent order', async () => {
+    const auth = authHeaders(true);
+    const createOrder = async name => {
+      const res = await fetch(`${handle.url}/v1/orders`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          name,
+          advertiser_id: 'adv_test',
+          currency: 'USD',
+          budget: 2000,
+        }),
+      });
+      assert.equal(res.status, 201);
+      return res.json();
+    };
+
+    const firstOrder = await createOrder('line item scope first');
+    const secondOrder = await createOrder('line item scope second');
+    const body = {
+      product_id: 'sports_preroll_q2_guaranteed',
+      budget: 500,
+      idempotency_key: 'lineitem-cross-order-scope',
+    };
+
+    const first = await fetch(`${handle.url}/v1/orders/${firstOrder.order_id}/lineitems`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body),
+    });
+    const second = await fetch(`${handle.url}/v1/orders/${secondOrder.order_id}/lineitems`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body),
+    });
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.notEqual((await first.json()).order_id, (await second.json()).order_id);
+  });
+
   it('returns 409 idempotency_conflict on body-mismatched order replay', async () => {
     const auth = authHeaders(true);
     const first = await fetch(`${handle.url}/v1/orders`, {
@@ -679,6 +720,35 @@ describe('mock-server sales-guaranteed', () => {
         body: JSON.stringify({ product_ids: ['nope_does_not_exist'] }),
       });
       assert.equal(res.status, 400);
+    });
+
+    it('POST /v1/proposals replays exact idempotency_key requests and conflicts on body changes', async () => {
+      const body = {
+        brief: 'Idempotent proposal',
+        product_ids: ['sports_preroll_q2_guaranteed'],
+        idempotency_key: 'proposal-idem-key-0001',
+      };
+      const first = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(body),
+      });
+      const second = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(body),
+      });
+      assert.equal(first.status, 201);
+      assert.equal(second.status, 201);
+      assert.deepEqual(await second.json(), await first.json());
+
+      const conflict = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ ...body, brief: 'Changed proposal' }),
+      });
+      assert.equal(conflict.status, 409);
+      assert.equal((await conflict.json()).code, 'idempotency_conflict');
     });
 
     it('GET /v1/proposals/{id} echoes the record', async () => {
