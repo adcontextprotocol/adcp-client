@@ -259,13 +259,15 @@ For domain state that carries internal structure (packages, revision, history) r
 
 Sellers whose read path proxies to upstream platforms (`snapClient.getCreatives(...)`, `metaClient.getMediaBuy(...)`) don't read seeded fixtures from their own data layer — controller-seeded state is a dead write. Wire `TestControllerBridge` to feed those fixtures back into the read path on sandbox requests, without stubbing 13 upstream clients per adapter.
 
+Worked fork target: `examples/proxy-seller-snap/` shows this pattern with a Snap-shaped upstream contract, resolved-account session keying, and product / creative / governance selectors.
+
 ```typescript
 import { createAdcpServer, bridgeFromSessionStore } from '@adcp/sdk/server';
 
 const server = createAdcpServer({
   // ... usual config + per-adapter handlers ...
   testController: bridgeFromSessionStore({
-    loadSession: input => sessionStore.load(sessionKey(input)),
+    loadSession: (_input, ctx) => sessionStore.loadForAccount(requireResolvedAccount(ctx.account)),
 
     // Each selector is opt-in by presence — wire the ones whose storyboards
     // your specialism gates on. Returned entries are validated (warn-and-drop
