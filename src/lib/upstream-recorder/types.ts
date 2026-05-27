@@ -21,7 +21,7 @@
  * Redaction is applied at recording time, not query time, so the in-memory
  * buffer never holds plaintext secrets even briefly.
  */
-export interface RecordedCall {
+interface RecordedCallBase {
   method: string;
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
   endpoint: string;
@@ -35,8 +35,8 @@ export interface RecordedCall {
    * for other types).
    */
   content_type: string;
-  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
-  payload: unknown;
+  /** Byte length of the emitted payload representation after redaction. */
+  payload_length: number;
   timestamp: string;
   status_code?: number;
   /**
@@ -47,6 +47,26 @@ export interface RecordedCall {
    */
   purpose?: string;
 }
+
+export interface RawRecordedCall extends RecordedCallBase {
+  attestation_mode: 'raw';
+  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
+  payload: unknown;
+  payload_digest_sha256?: never;
+  identifier_match_proofs?: never;
+}
+
+export interface DigestRecordedCall extends RecordedCallBase {
+  attestation_mode: 'digest';
+  payload?: never;
+  payload_digest_sha256: string;
+  identifier_match_proofs?: Array<{
+    identifier_value_sha256: string;
+    found: boolean;
+  }>;
+}
+
+export type RecordedCall = RawRecordedCall | DigestRecordedCall;
 
 /**
  * Optional classifier callback. Invoked at recording time on each call so
@@ -193,6 +213,17 @@ export interface UpstreamRecorderQueryParams {
    * overflow.
    */
   limit?: number;
+  /**
+   * Requested attestation mode for returned calls. `raw` (default) returns
+   * the redacted payload; `digest` returns `payload_digest_sha256` plus
+   * optional identifier echo proofs.
+   */
+  attestationMode?: 'raw' | 'digest';
+  /**
+   * SHA-256 digests of identifier string values the caller wants verified
+   * in digest mode. Ignored for raw-mode projection.
+   */
+  identifierValueDigests?: string[];
 }
 
 /**

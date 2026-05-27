@@ -16,6 +16,7 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const { runStoryboardStep, runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 
@@ -94,9 +95,11 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
         endpoint: 'POST https://api.example.test/v1/audience/upload',
         url: 'https://api.example.test/v1/audience/upload',
         content_type: 'application/json',
+        attestation_mode: 'raw',
         payload: {
           users: [{ hashed_email: 'vec-real-1' }, { hashed_email: 'vec-real-2' }],
         },
+        payload_length: 68,
         timestamp: '2026-05-02T14:30:01.000Z',
       },
     ];
@@ -136,12 +139,139 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     assert.equal(controllerCalls[0].params.scenario, 'query_upstream_traffic');
     assert.ok(controllerCalls[0].params.params.since_timestamp, 'since_timestamp set on controller call');
     assert.equal(controllerCalls[0].params.params.limit, 100);
+    assert.equal(controllerCalls[0].params.params.attestation_mode, 'raw');
+    assert.deepEqual(controllerCalls[0].params.params.identifier_value_digests.sort(), [
+      sha256Hex('vec-real-1'),
+      sha256Hex('vec-real-2'),
+    ]);
     // Validation graded passed.
     const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
     assert.ok(upstreamValidation, 'upstream_traffic validation present');
     assert.equal(upstreamValidation.passed, true);
     assert.equal(upstreamValidation.actual.matched_count, 1);
     assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
+  });
+
+  test('requests digest-mode identifier proofs for identifier-only checks', async () => {
+    let receivedDigests;
+    let receivedMode;
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      params => {
+        receivedMode = params.params?.attestation_mode;
+        receivedDigests = params.params?.identifier_value_digests ?? [];
+        return {
+          success: true,
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  recorded_calls: [
+                    {
+                      method: 'POST',
+                      endpoint: 'POST https://api.example.test/v1/audience/upload',
+                      url: 'https://api.example.test/v1/audience/upload',
+                      content_type: 'application/json',
+                      attestation_mode: 'digest',
+                      payload_digest_sha256: sha256Hex('canonical-body'),
+                      payload_length: 68,
+                      identifier_match_proofs: receivedDigests.map(digest => ({
+                        identifier_value_sha256: digest,
+                        found: true,
+                      })),
+                      timestamp: '2026-05-02T14:30:01.000Z',
+                    },
+                  ],
+                  total_count: 1,
+                  since_timestamp: params.params?.since_timestamp,
+                }),
+              },
+            ],
+          },
+        };
+      }
+    );
+    const digestOnlyStoryboard = JSON.parse(JSON.stringify(storyboard));
+    digestOnlyStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'hashed emails MUST be proven in digest mode',
+        min_count: 1,
+        identifier_paths: ['audiences[*].add[*].hashed_email'],
+      },
+    ];
+
+    const result = await runStoryboardStep('https://stub.example/mcp', digestOnlyStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    assert.equal(receivedMode, 'digest');
+    assert.deepEqual(receivedDigests.sort(), [sha256Hex('vec-real-1'), sha256Hex('vec-real-2')]);
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
+  });
+
+  test('grades raw-required payload assertions not_applicable when controller returns digest only', async () => {
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      params => ({
+        success: true,
+        data: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                recorded_calls: [
+                  {
+                    method: 'POST',
+                    endpoint: 'POST https://api.example.test/v1/audience/upload',
+                    url: 'https://api.example.test/v1/audience/upload',
+                    content_type: 'application/json',
+                    attestation_mode: 'digest',
+                    payload_digest_sha256: sha256Hex('canonical-body'),
+                    payload_length: 68,
+                    timestamp: '2026-05-02T14:30:01.000Z',
+                  },
+                ],
+                total_count: 1,
+                since_timestamp: params.params?.since_timestamp,
+              }),
+            },
+          ],
+        },
+      })
+    );
+    const rawRequiredStoryboard = JSON.parse(JSON.stringify(storyboard));
+    rawRequiredStoryboard.phases[0].steps[0].validations[0].attestation_mode_required = 'raw';
+
+    const result = await runStoryboardStep('https://stub.example/mcp', rawRequiredStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.equal(upstreamValidation.not_applicable, true);
+    assert.match(upstreamValidation.note, /attestation_mode_required: raw/);
   });
 
   test('grades not_applicable when controller does not advertise query_upstream_traffic', async () => {
@@ -216,6 +346,10 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     );
   });
 });
+
+function sha256Hex(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
 
 // ────────────────────────────────────────────────────────────
 // capture_path_not_resolvable / unresolved_substitution cascade

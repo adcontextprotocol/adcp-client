@@ -4,73 +4,53 @@
  * Pins that what the recorder produces (and what
  * `toQueryUpstreamTrafficResponse` projects) matches the wire shape the
  * spec defines for `comply_test_controller`'s `query_upstream_traffic`
- * scenario response (`UpstreamTrafficSuccess` in
- * `comply-test-controller-response.json`, spec PR
- * adcontextprotocol/adcp#3816 — merged to spec `main`, not yet in any
- * released 3.0.x cache as of this writing).
- *
- * Once a 3.0.5+ AdCP release lands the schema in
- * `schemas/cache/<version>/compliance/comply-test-controller-response.json`,
- * this test SHOULD switch to compiling against that cached subschema
- * instead of the inline fixture below — that way `npm run sync-schemas`
- * surfaces wire-shape drift the moment the spec evolves. Until then the
- * inline schema mirrors the merged spec PR's diff verbatim and exists
- * to catch field-name regressions on the SDK side.
+ * scenario response (`UpstreamTrafficSuccess` in the cached
+ * `comply-test-controller-response.json`). The test compiles the cached
+ * subschema directly so `npm run sync-schemas` surfaces wire-shape drift.
  */
 
+const path = require('node:path');
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const Ajv = require('ajv').default;
 const addFormats = require('ajv-formats').default;
 
 const { createUpstreamRecorder, toQueryUpstreamTrafficResponse } = require('../../dist/lib/upstream-recorder');
+const { ADCP_VERSION } = require('../../dist/lib/version');
 
 // ────────────────────────────────────────────────────────────
-// Spec fixture — UpstreamTrafficSuccess.recorded_calls[].items
+// Cached schema — UpstreamTrafficSuccess.recorded_calls[].items
 // ────────────────────────────────────────────────────────────
 
-/**
- * Inline copy of the `UpstreamTrafficSuccess.recorded_calls[].items`
- * subschema from spec PR adcp#3816. Switch to the cached-schema
- * extraction below once 3.0.5+ ships.
- *
- * Source: https://github.com/adcontextprotocol/adcp/blob/main/static/schemas/source/compliance/comply-test-controller-response.json
- */
-const RECORDED_CALL_SCHEMA = {
-  type: 'object',
-  properties: {
-    method: {
-      type: 'string',
-      enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'],
-    },
-    endpoint: { type: 'string' },
-    url: { type: 'string', format: 'uri' },
-    host: { type: 'string' },
-    path: { type: 'string' },
-    content_type: { type: 'string' },
-    payload: {},
-    timestamp: { type: 'string', format: 'date-time' },
-    status_code: { type: 'integer', minimum: 100, maximum: 599 },
-  },
-  required: ['method', 'endpoint', 'url', 'content_type', 'payload', 'timestamp'],
-  additionalProperties: true,
-};
-
-const UPSTREAM_TRAFFIC_SUCCESS_SCHEMA = {
-  type: 'object',
-  properties: {
-    success: { type: 'boolean', const: true },
-    recorded_calls: { type: 'array', items: RECORDED_CALL_SCHEMA },
-    total_count: { type: 'integer', minimum: 0 },
-    truncated: { type: 'boolean' },
-    since_timestamp: { type: 'string', format: 'date-time' },
-  },
-  required: ['success', 'recorded_calls', 'total_count'],
-  additionalProperties: true,
-};
+const COMPLY_RESPONSE_SCHEMA = require(path.resolve(
+  __dirname,
+  '../../schemas/cache',
+  ADCP_VERSION,
+  'compliance/comply-test-controller-response.json'
+));
+const CONTEXT_SCHEMA = require(path.resolve(
+  __dirname,
+  '../../schemas/cache',
+  ADCP_VERSION,
+  'core/context.json'
+));
+const EXT_SCHEMA = require(path.resolve(
+  __dirname,
+  '../../schemas/cache',
+  ADCP_VERSION,
+  'core/ext.json'
+));
+const UPSTREAM_TRAFFIC_SUCCESS_SCHEMA = COMPLY_RESPONSE_SCHEMA.oneOf.find(
+  branch => branch.title === 'UpstreamTrafficSuccess'
+);
+assert.ok(UPSTREAM_TRAFFIC_SUCCESS_SCHEMA, 'cached comply_test_controller response schema must include UpstreamTrafficSuccess');
+const RECORDED_CALL_SCHEMA = UPSTREAM_TRAFFIC_SUCCESS_SCHEMA.properties.recorded_calls.items;
 
 const ajv = new Ajv({ strict: false, allErrors: true });
 addFormats(ajv);
+ajv.addSchema(CONTEXT_SCHEMA);
+ajv.addSchema(EXT_SCHEMA);
 const validateRecordedCall = ajv.compile(RECORDED_CALL_SCHEMA);
 const validateUpstreamTrafficSuccess = ajv.compile(UPSTREAM_TRAFFIC_SUCCESS_SCHEMA);
 
@@ -111,9 +91,8 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         method: 'GET',
         url: 'https://x.example/health',
         content_type: 'application/json',
-        // no payload — recorded as undefined; spec says payload is required
-        // but `{}` validates as `payload: {}` since `payload: {}` matches
-        // the `payload: {}` schema (open). Use an explicit payload to pin.
+        // no payload supplied by the adapter; the recorder emits a raw-mode
+        // empty object so the 3.1 schema's required `payload` field is present.
         payload: {},
       });
     });
@@ -165,6 +144,34 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(wireShape.success, true);
   });
 
+  test('digest-mode query validates and returns identifier match proofs', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: { users: [{ hashed_email: 'vec-1' }, { hashed_email: 'vec-2' }] },
+        status_code: 200,
+      });
+    });
+    const result = recorder.query({
+      principal: 'p',
+      attestationMode: 'digest',
+      identifierValueDigests: [sha256Hex('vec-1'), sha256Hex('missing')],
+    });
+    const wireShape = toQueryUpstreamTrafficResponse(result);
+    assert.ok(validateUpstreamTrafficSuccess(wireShape), explain(validateUpstreamTrafficSuccess.errors));
+    const [call] = wireShape.recorded_calls;
+    assert.equal(call.attestation_mode, 'digest');
+    assert.equal(call.payload, undefined);
+    assert.match(call.payload_digest_sha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(call.identifier_match_proofs, [
+      { identifier_value_sha256: sha256Hex('vec-1'), found: true },
+      { identifier_value_sha256: sha256Hex('missing'), found: false },
+    ]);
+  });
+
   test('empty result still validates as UpstreamTrafficSuccess', async () => {
     const recorder = createUpstreamRecorder({ enabled: true });
     const result = recorder.query({ principal: 'p' });
@@ -174,3 +181,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(wireShape.total_count, 0);
   });
 });
+
+function sha256Hex(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}

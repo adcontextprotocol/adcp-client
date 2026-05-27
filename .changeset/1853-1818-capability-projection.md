@@ -33,7 +33,7 @@ Both are optional. Unlike the older three blocks, **the 3.1 additions do NOT for
 
 New exported helper `rollupOptimizationMetricsFromProducts(products)` computes the seller-level union from a product catalog. Returns a sorted, deduplicated array. Adopters call it at startup or on catalog mutation to keep the seller-level declaration mechanically derived from product-level facts — closes the drift surface called out in #1818.
 
-The `conversion_tracking.supported_targets` portion of #1818 is intentionally deferred — `value_field` support isn't tracked per-product today, so a full rollup isn't mechanical. Adopters declare that field manually until the spec gives us a per-product signal.
+The `conversion_tracking.supported_targets` portion of #1818 is handled by the broader 3.1 unblock changeset: explicit seller declarations are preserved, while omitted values stay omitted because the 3.1 schema only guarantees target-less event goals by default.
 
 **Verification**
 

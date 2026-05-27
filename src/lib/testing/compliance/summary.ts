@@ -269,6 +269,13 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
           recordCause(`requirement_unmet: ${step.requirement}`, 'requirement_unmet', scenarioId);
           continue;
         }
+        if (step.skip_reason === 'requirement_unmet' && step.warnings?.[0]) {
+          const prefix = step.warnings[0].match(/^(missing_required_tool_family: needs [^;(]+)/);
+          if (prefix) {
+            recordCause(prefix[1]!.trim(), 'requirement_unmet', scenarioId);
+            continue;
+          }
+        }
 
         recordCause(step.skip_reason, step.skip_reason, scenarioId);
       }

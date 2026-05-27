@@ -6,6 +6,7 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
+import { createHash } from 'node:crypto';
 import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
@@ -30,7 +31,7 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
-import { resolvePath, toJsonPointer } from './path';
+import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
@@ -1251,6 +1252,72 @@ function buildRequirementUnmetResult(
   };
 }
 
+function buildRequiredAnyOfToolsMissingResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  detail: string
+): StoryboardResult {
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: 'missing_required_tool_family',
+    phase_id: 'requirement_unmet',
+    title: 'Storyboard skipped: required tool family missing',
+    task: '',
+    passed: true,
+    skipped: true,
+    skip_reason: 'requirement_unmet',
+    skip: { reason: 'requirement_unmet', detail },
+    duration_ms: 0,
+    validations: [],
+    context: {},
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'requirement_unmet',
+        phase_title: 'Requirement unmet: required_any_of_tools',
+        passed: true,
+        steps: [syntheticStep],
+        duration_ms: 0,
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+    notices: [],
+  };
+}
+
+function normalizeAgentToolNames(tools: unknown): string[] | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  const names: string[] = [];
+  for (const tool of tools) {
+    if (typeof tool === 'string') {
+      names.push(tool);
+    } else if (tool && typeof tool === 'object') {
+      const name = (tool as { name?: unknown }).name;
+      if (typeof name === 'string') names.push(name);
+    }
+  }
+  return names.length > 0 ? names : undefined;
+}
+
 /**
  * Resolve a storyboard's `requires:` tags against the runtime environment.
  * Returns the first unmet requirement (with a human-readable detail) or
@@ -1696,7 +1763,7 @@ async function executeStoryboardPass(
     // passes the gate when any tenant in the map serves either one.
     const unionedTools = new Set<string>();
     for (const p of routingContext.profiles.values()) {
-      for (const t of p.tools ?? []) unionedTools.add(t);
+      for (const t of normalizeAgentToolNames(p.tools) ?? []) unionedTools.add(t);
     }
     if (!options.agentTools) {
       options = { ...options, agentTools: [...unionedTools], _profile: profile };
@@ -1741,13 +1808,33 @@ async function executeStoryboardPass(
       // Populate agentTools and _profile from discovered profile if not already set.
       // _profile is threaded into executeStep so capability-based skip gates
       // (e.g. account-mode branching) can read raw_capabilities at step time.
-      if (!options.agentTools && profile?.tools) {
-        options = { ...options, agentTools: profile.tools, _profile: profile };
+      const profileTools = normalizeAgentToolNames(profile?.tools);
+      if (!options.agentTools && profileTools) {
+        options = { ...options, agentTools: profileTools, _profile: profile };
       } else if (profile && !options._profile) {
         options = { ...options, _profile: profile };
       }
     } else {
       profile = options._profile;
+      const profileTools = normalizeAgentToolNames(profile?.tools);
+      if (!options.agentTools && profileTools) {
+        options = { ...options, agentTools: profileTools, _profile: profile };
+      } else if (
+        !options.agentTools &&
+        typeof (clients[0] as unknown as { getAgentInfo?: unknown })?.getAgentInfo === 'function'
+      ) {
+        const discovered = await getOrDiscoverProfile(clients[0]!, options);
+        if (discovered.step.passed === false) {
+          return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+        }
+        profile = discovered.profile;
+        const discoveredTools = normalizeAgentToolNames(profile?.tools);
+        if (discoveredTools) {
+          options = { ...options, agentTools: discoveredTools, _profile: profile };
+        } else if (profile && !options._profile) {
+          options = { ...options, _profile: profile };
+        }
+      }
     }
   }
 
@@ -1788,6 +1875,21 @@ async function executeStoryboardPass(
     }
   }
 
+  if (storyboard.required_any_of_tools?.length && options.agentTools) {
+    const agentTools = new Set(options.agentTools);
+    const missing = storyboard.required_any_of_tools.find(family => !family.tools.some(tool => agentTools.has(tool)));
+    if (missing) {
+      const detail =
+        `missing_required_tool_family: needs ${missing.tools.join(' or ')}` +
+        (missing.rationale ? ` (${missing.rationale})` : '');
+      if (!callerOwnsClients) await closeConnections(options.protocol);
+      return {
+        ...buildRequiredAnyOfToolsMissingResult(agentUrls, storyboard, detail),
+        notices: preflightNotices,
+      };
+    }
+  }
+
   // Evaluate requires_capability predicate before any phase setup.
   // When the agent explicitly declared it doesn't support what this storyboard
   // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
@@ -1813,12 +1915,11 @@ async function executeStoryboardPass(
   // advertises none of them, skip the whole storyboard instead of producing
   // misleading per-step failures.
   //
-  // Gate condition: `options.agentTools` is falsy when the caller set
-  // `options._client` without also supplying `agentTools`. In that case the
-  // gate is a no-op — the caller accepted responsibility for tool compatibility
-  // by reusing an external client. The comply() path always populates
-  // `agentTools` before calling runStoryboard(), so the gate is always active
-  // in the standard runner flow.
+  // Gate condition: `options.agentTools` is populated from discovery or
+  // `_profile.tools` before this point, including reused-client callers when
+  // discovery is available. If a direct `_client` caller supplies neither
+  // `agentTools` nor a discoverable profile, this gate remains a no-op and
+  // step-level `requires_tool` checks carry the compatibility signal.
   if (storyboard.required_tools?.length && options.agentTools) {
     const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
     if (!hasAnyRequired) {
@@ -3912,7 +4013,9 @@ async function executeStep(
       client,
       options,
       runState,
-      requestStartIso
+      requestStartIso,
+      requestRecord.payload,
+      step.sample_request
     );
 
     const vctx: ValidationContext = {
@@ -4996,7 +5099,9 @@ async function prefetchUpstreamTraffic(
   client: unknown,
   options: StoryboardRunOptions,
   runState: ExecutionState,
-  requestStartIso: string
+  requestStartIso: string,
+  requestPayload: unknown,
+  sampleRequest: Record<string, unknown> | undefined
 ): Promise<UpstreamTrafficValidationContext | undefined> {
   const upstreamChecks = resolvedValidations.filter(v => v.check === 'upstream_traffic');
   if (upstreamChecks.length === 0) return undefined;
@@ -5035,6 +5140,13 @@ async function prefetchUpstreamTraffic(
   }
 
   const queries = new Map<string, UpstreamTrafficQueryResult>();
+  const identifierDigestByValue = collectUpstreamIdentifierDigests(upstreamChecks, requestPayload, sampleRequest);
+  const identifier_value_digests = [...identifierDigestByValue.values()];
+  const requiresRawAttestation = upstreamChecks.some(
+    check => check.attestation_mode_required === 'raw' || (check.payload_must_contain?.length ?? 0) > 0
+  );
+  const requestedAttestationMode: 'raw' | 'digest' =
+    !requiresRawAttestation && identifier_value_digests.length > 0 ? 'digest' : 'raw';
   for (const sinceTs of sinceTimestamps) {
     // Per spec PR adcp#3816: runners SHOULD subtract a clock-skew tolerance
     // (50ms minimum, 250ms recommended) before sending the bound to the
@@ -5042,7 +5154,12 @@ async function prefetchUpstreamTraffic(
     // runner's clock measurement isn't silently excluded. We use 250ms (the
     // spec's recommended value).
     const adjustedSince = new Date(new Date(sinceTs).getTime() - 250).toISOString();
-    const params = { since_timestamp: adjustedSince, limit: 100 };
+    const params = {
+      since_timestamp: adjustedSince,
+      limit: 100,
+      attestation_mode: requestedAttestationMode,
+      ...(identifier_value_digests.length > 0 ? { identifier_value_digests } : {}),
+    };
     const requestRecord: RunnerRequestRecord = {
       transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
       operation: 'comply_test_controller',
@@ -5077,9 +5194,46 @@ async function prefetchUpstreamTraffic(
     advertised: true,
     queries,
     thisStepSince: requestStartIso,
+    ...(identifierDigestByValue.size > 0 ? { identifierDigestByValue } : {}),
     ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
     ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
+}
+
+function collectUpstreamIdentifierDigests(
+  validations: StoryboardValidation[],
+  requestPayload: unknown,
+  sampleRequest: Record<string, unknown> | undefined
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const sample =
+    requestPayload && typeof requestPayload === 'object' && !Array.isArray(requestPayload)
+      ? (requestPayload as Record<string, unknown>)
+      : sampleRequest;
+  if (!sample) return out;
+  for (const validation of validations) {
+    for (const path of validation.identifier_paths ?? []) {
+      const vectors = resolvePathAll(sample, normalizeStoryboardJsonPath(path));
+      for (const vector of vectors) {
+        if (typeof vector !== 'string') continue;
+        if (!out.has(vector)) out.set(vector, sha256Hex(vector));
+        if (out.size >= 64) return out;
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeStoryboardJsonPath(path: string): string {
+  let p = path;
+  if (p.startsWith('$.')) p = p.slice(2);
+  else if (p.startsWith('$')) p = p.slice(1);
+  if (p.startsWith('.')) p = p.slice(1);
+  return p;
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 /**

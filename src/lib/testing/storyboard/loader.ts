@@ -60,6 +60,7 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequires(storyboard);
+  validateRequiredAnyOfTools(storyboard);
   validatePhaseDependsOn(storyboard);
   for (const phase of storyboard.phases) {
     validateBranchSet(storyboard.id, phase);
@@ -70,6 +71,38 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateOmitFlagCoherence(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
+    }
+  }
+}
+
+function validateRequiredAnyOfTools(storyboard: Storyboard): void {
+  if (storyboard.required_any_of_tools === undefined) return;
+  if (!Array.isArray(storyboard.required_any_of_tools)) {
+    throw new Error(`[${storyboard.id}] required_any_of_tools: must be an array of tool-family objects`);
+  }
+  if (storyboard.required_any_of_tools.length === 0) {
+    throw new Error(`[${storyboard.id}] required_any_of_tools: [] is not allowed — omit the field to use no gate`);
+  }
+  for (let i = 0; i < storyboard.required_any_of_tools.length; i++) {
+    const family = storyboard.required_any_of_tools[i] as unknown;
+    if (family === null || typeof family !== 'object' || Array.isArray(family)) {
+      throw new Error(`[${storyboard.id}] required_any_of_tools[${i}]: must be an object`);
+    }
+    const { tools, rationale } = family as { tools?: unknown; rationale?: unknown };
+    if (!Array.isArray(tools) || tools.length < 2) {
+      throw new Error(
+        `[${storyboard.id}] required_any_of_tools[${i}].tools: must list at least two tool names`
+      );
+    }
+    for (const tool of tools) {
+      if (typeof tool !== 'string' || tool.length === 0) {
+        throw new Error(
+          `[${storyboard.id}] required_any_of_tools[${i}].tools: entries must be non-empty strings`
+        );
+      }
+    }
+    if (rationale !== undefined && typeof rationale !== 'string') {
+      throw new Error(`[${storyboard.id}] required_any_of_tools[${i}].rationale: must be a string`);
     }
   }
 }

@@ -155,7 +155,8 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
   // note string changes, every non-JSON test below must update — a deliberate
   // forcing function so a future refactor can't silently weaken the contract by
   // emitting a different note for one mode.
-  const NON_JSON_NA_NOTE = 'payload_must_contain paths only matched non-JSON content_types — graded not_applicable';
+  const NON_JSON_NA_NOTE =
+    'payload_must_contain paths only matched non-raw or non-JSON content_types — graded not_applicable';
 
   function makeCall(overrides = {}) {
     return {
@@ -163,9 +164,11 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       endpoint: 'POST https://api.example.test/v1/audience/upload',
       url: 'https://api.example.test/v1/audience/upload',
       content_type: 'application/json',
+      attestation_mode: 'raw',
       payload: {
         users: [{ hashed_email: 'a000000000000000000000000000000000000000000000000000000000000001' }],
       },
+      payload_length: 91,
       timestamp: '2026-05-02T14:30:01.000Z',
       ...overrides,
     };
@@ -191,6 +194,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         ]),
         thisStepSince: 'since',
         ...(opts.unresolvedSinceRefs && { unresolvedSinceRefs: opts.unresolvedSinceRefs }),
+        ...(opts.identifierDigestByValue && { identifierDigestByValue: opts.identifierDigestByValue }),
       },
       ...(opts.storyboardStep && { storyboardStep: opts.storyboardStep }),
       ...(opts.request && { request: opts.request }),
@@ -222,6 +226,35 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     const ctx = ctxWithTraffic({ success: true, recorded_calls: [makeCall()], total_count: 1 });
     const [result] = runValidations([{ check: 'upstream_traffic', description: 'min 1 call', min_count: 1 }], ctx);
     assert.equal(result.passed, true);
+    assert.equal(result.actual.matched_count, 1);
+  });
+
+  test('raw-required digest downgrade does not mask negative count assertions', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      recorded_calls: [
+        makeCall({
+          attestation_mode: 'digest',
+          payload: undefined,
+          payload_digest_sha256: 'a'.repeat(64),
+          payload_length: 12,
+        }),
+      ],
+      total_count: 1,
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'expects no upstream call',
+          min_count: 0,
+          attestation_mode_required: 'raw',
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
     assert.equal(result.actual.matched_count, 1);
   });
 

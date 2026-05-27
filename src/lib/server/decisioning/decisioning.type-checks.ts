@@ -146,6 +146,15 @@ const _check_template_alias: _ok_template_alias = true;
 type _ok_audience_sync = RequiredPlatformsFor<'audience-sync'> extends { audiences: AudiencePlatform } ? true : false;
 const _check_audience_sync: _ok_audience_sync = true;
 
+// Positive: claiming sponsored-intelligence requires the SI platform interface.
+type _ok_sponsored_intelligence =
+  RequiredPlatformsFor<'sponsored-intelligence'> extends {
+    sponsoredIntelligence: SponsoredIntelligencePlatform;
+  }
+    ? true
+    : false;
+const _check_sponsored_intelligence: _ok_sponsored_intelligence = true;
+
 // Negative: misspelled specialism MUST fail compile. Without the
 // `S extends AdCPSpecialism` constraint, a typo like `'sales-non-guarenteed'`
 // would silently fall through to a permissive constraint and only fail

@@ -99,6 +99,7 @@ import type {
   SyncGovernanceRequest,
 } from '../../../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
+import { rollupOptimizationMetricsFromProducts } from '../../../utils/capability-rollups';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
@@ -981,7 +982,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const at = platform.capabilities.audience_targeting;
   const ct = platform.capabilities.conversion_tracking;
   const cs = platform.capabilities.content_standards;
-  const som = platform.capabilities.supported_optimization_metrics;
+  const explicitSom = platform.capabilities.supported_optimization_metrics;
+  const derivedSom =
+    explicitSom == null && platform.capabilities.productCatalog != null
+      ? rollupOptimizationMetricsFromProducts(platform.capabilities.productCatalog)
+      : undefined;
+  const somCandidate = explicitSom ?? derivedSom;
+  const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
   const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;
   const supportsProposals =
@@ -1013,6 +1020,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       },
     }),
   };
+
+  if (process.env.NODE_ENV !== 'production') {
+    if (explicitSom != null) {
+      fwLogger.info(
+        `[adcp/decisioning] using explicit media_buy.supported_optimization_metrics override (${explicitSom.length} metric${explicitSom.length === 1 ? '' : 's'}).`
+      );
+    } else if (derivedSom != null) {
+      fwLogger.info(
+        `[adcp/decisioning] derived media_buy.supported_optimization_metrics from productCatalog (${derivedSom.length} metric${derivedSom.length === 1 ? '' : 's'}).`
+      );
+    }
+  }
 
   // Brand-protocol capability projection. Adopters who declare
   // `capabilities.brand` get the block projected via `overrides.brand`.
@@ -4236,7 +4255,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 /**
- * Adapt `SponsoredIntelligencePlatform` (v6 protocol-keyed shape) onto the v5
+ * Adapt `SponsoredIntelligencePlatform` (v6 platform-specialism shape) onto the v5
  * `SponsoredIntelligenceHandlers` handler-bag the dispatcher consumes.
  *
  * Auto-store on `initiateSession`: stash a session record keyed by

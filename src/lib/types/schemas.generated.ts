@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-26T09:10:35.983Z
+// Generated at: 2026-05-27T02:12:50.072Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -9321,7 +9321,12 @@ export const ComplyTestControllerRequestSchema = z.object({
         format_id: z.string().optional(),
         tool: z.string().optional(),
         upstream_name: z.string().optional(),
-        result: AdCPAsyncResponseDataSchema.optional()
+        result: AdCPAsyncResponseDataSchema.optional(),
+        since_timestamp: z.iso.datetime().optional(),
+        endpoint_pattern: z.string().optional(),
+        limit: z.number().min(1).max(1000).optional(),
+        attestation_mode: z.union([z.literal("raw"), z.literal("digest")]).optional(),
+        identifier_value_digests: z.array(z.string()).optional()
     }).passthrough().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional(),
