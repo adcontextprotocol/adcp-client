@@ -637,7 +637,9 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     // on non-finite numbers — so the entry fails at digest-projection time.
     const recorder = createUpstreamRecorder({
       enabled: true,
-      onError: e => { if (e.kind === 'digest_canonicalization_failed') digestErrors.push(e); },
+      onError: e => {
+        if (e.kind === 'digest_canonicalization_failed') digestErrors.push(e);
+      },
     });
     await recorder.runWithPrincipal('p', async () => {
       recorder.record({
