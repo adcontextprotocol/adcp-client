@@ -36,6 +36,7 @@ import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
+import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -5215,8 +5216,6 @@ async function prefetchUpstreamTraffic(
     ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
 }
-
-const IDENTIFIER_DIGEST_LIMIT = 64;
 
 function collectUpstreamIdentifierDigests(
   validations: StoryboardValidation[],

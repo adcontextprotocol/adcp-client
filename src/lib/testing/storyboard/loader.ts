@@ -99,15 +99,37 @@ function validateUpstreamIdentifierPaths(
           `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: must be a non-empty string`
         );
       }
-      const normalized = path.startsWith('$.') ? path.slice(2) : path.startsWith('$') ? path.slice(1) : path;
-      const firstSegment = normalized.replace(/^\./, '').split(/[.[\]]/, 1)[0];
-      if (firstSegment === 'request' || firstSegment === 'response' || firstSegment === 'context') {
+      const pathErrorPrefix = `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]`;
+      let normalizedPath: string;
+      let firstSegment: string;
+      try {
+        const validated = validateIdentifierPathSyntax(path);
+        normalizedPath = validated.normalized;
+        firstSegment = validated.firstSegment;
+      } catch {
         throw new Error(
-          `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
+          `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request using dotted paths with [*] array selectors`
         );
       }
+      if (firstSegment === 'request' || firstSegment === 'response' || firstSegment === 'context') {
+        throw new Error(
+          `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
+        );
+      }
+      validation.identifier_paths[pathIndex] = normalizedPath;
     }
   }
+}
+
+function validateIdentifierPathSyntax(path: string): { normalized: string; firstSegment: string } {
+  const trimmed = path.trim();
+  const normalized = trimmed.startsWith('$.') ? trimmed.slice(2) : trimmed;
+  const segment = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
+  const pathPattern = new RegExp(`^${segment}(?:\\.${segment})*$`);
+  if (!pathPattern.test(normalized)) {
+    throw new Error('unsupported identifier path syntax');
+  }
+  return { normalized, firstSegment: normalized.split(/[.[\]]/, 1)[0] ?? '' };
 }
 
 function validateRequiredAnyOfTools(storyboard: Storyboard): void {

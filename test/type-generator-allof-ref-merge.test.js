@@ -274,6 +274,54 @@ writeFileSync(__OUT_PATH__, JSON.stringify({
   assert.deepStrictEqual(result.cursor, { type: 'string' });
 });
 
+test('enforceStrictSchema ignores conflicting conditional refinements of root params properties', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  type: 'object',
+  properties: {
+    params: {
+      type: 'object',
+      properties: {
+        cursor: { type: 'string' },
+      },
+    },
+  },
+  allOf: [
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              cursor: { type: 'number' },
+            },
+          },
+        },
+      },
+    },
+    {
+      then: {
+        properties: {
+          params: {
+            properties: {
+              cursor: { type: 'boolean' },
+            },
+          },
+        },
+      },
+    },
+  ],
+};
+const out = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({
+  cursor: out.properties.params.properties.cursor,
+}));
+`);
+  assert.deepStrictEqual(result.cursor, { type: 'string' });
+});
+
 test('enforceStrictSchema throws on conflicting conditional params promotions', () => {
   const result = runHarness(`
 import { writeFileSync } from 'fs';

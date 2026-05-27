@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
 import { canonicalize } from '../utils/jcs';
+import { IDENTIFIER_DIGEST_LIMIT } from './constants';
 import {
   UpstreamRecorderScopeError,
   type QueryUpstreamTrafficResponse,
@@ -137,54 +138,8 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
    * is misleading downstream.
    */
   function applyRedactionToPayload(payload: unknown, contentType: string): { value: unknown; bytes: number } {
-    if (payload === undefined) {
-      // Raw-mode `RecordedCall.payload` is required by the 3.1 controller
-      // response schema. GET/HEAD-style calls with no body therefore emit an
-      // empty object instead of omitting the field.
-      const value = {};
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (payload === null) return { value: payload, bytes: payloadWireLength(payload) };
-
-    // Binary-shaped bodies — replace with a marker. Adopters that need
-    // the raw bytes recorded for diagnostics can stringify before
-    // calling `record()`.
-    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
-      const value = `[binary ${payload.length} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (typeof Blob !== 'undefined' && payload instanceof Blob) {
-      const value = `[binary ${payload.size} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (payload instanceof ArrayBuffer) {
-      const value = `[binary ${payload.byteLength} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (ArrayBuffer.isView(payload)) {
-      const value = `[binary ${payload.byteLength} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-
-    if (typeof payload === 'string') {
-      // Form-urlencoded redaction: parse, redact, re-stringify so
-      // `access_token=...` bodies don't slip through unredacted.
-      if (isFormUrlEncoded(contentType)) {
-        const redacted = redactFormUrlEncoded(payload, redactPattern);
-        const value = cap(redacted, maxPayloadBytes);
-        return { value, bytes: payloadWireLength(value) };
-      }
-      const value = cap(payload, maxPayloadBytes);
-      return { value, bytes: payloadWireLength(value) };
-    }
-
-    const redacted = redactSecrets(payload, redactPattern);
-    const json = safeStringify(redacted);
-    if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
-      const value = `[truncated ${byteLengthOf(json)} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    return { value: redacted, bytes: payloadWireLength(redacted) };
+    const value = normalizeRecordedPayload(payload, contentType, redactPattern, maxPayloadBytes);
+    return { value, bytes: payloadWireLength(value) };
   }
 
   function classifyPurpose(
@@ -442,7 +397,7 @@ function normalizeIdentifierDigests(input: string[] | undefined): string[] {
   for (const value of input) {
     if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) continue;
     if (!out.includes(value)) out.push(value);
-    if (out.length >= 64) break;
+    if (out.length >= IDENTIFIER_DIGEST_LIMIT) break;
   }
   return out;
 }
@@ -498,21 +453,23 @@ function canonicalPayloadBytes(payload: unknown, contentType: string): string {
 }
 
 function canonicalJsonStringify(value: unknown): string {
-  assertJsonDepth(value, 0);
+  assertJsonDepth(value);
   return canonicalize(value);
 }
 
-function assertJsonDepth(value: unknown, depth: number): void {
-  if (depth > MAX_JSON_DEPTH) {
-    throw new RangeError(`JSON payload exceeds max canonicalization depth ${MAX_JSON_DEPTH}`);
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) assertJsonDepth(item, depth + 1);
-    return;
-  }
-  if (value !== null && typeof value === 'object') {
-    for (const item of Object.values(value as Record<string, unknown>)) {
-      assertJsonDepth(item, depth + 1);
+function assertJsonDepth(root: unknown): void {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop()!;
+    if (depth > MAX_JSON_DEPTH) {
+      throw new RangeError(`JSON payload exceeds max canonicalization depth ${MAX_JSON_DEPTH}`);
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) stack.push({ value: item, depth: depth + 1 });
+    } else if (value !== null && typeof value === 'object') {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        stack.push({ value: item, depth: depth + 1 });
+      }
     }
   }
 }
@@ -522,9 +479,12 @@ function sha256Hex(value: string): string {
 }
 
 /**
- * Compute the `RecordedCall.payload_digest_sha256` value for an already
- * redacted payload. This helper does not redact for you; it mirrors the
- * recorder projection after record-time redaction has completed.
+ * Compute the `RecordedCall.payload_digest_sha256` value. By default this
+ * applies the same body snapshot normalization, payload normalization, and
+ * canonical secret-key redaction used by the wrapped fetch recorder before
+ * hashing; pass a custom redaction pattern and `maxPayloadBytes` when your
+ * recorder uses matching options, or `false` only when the payload has
+ * already been normalized/redacted exactly as the recorder would store it.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -537,8 +497,95 @@ function sha256Hex(value: string): string {
  * The returned digest is lowercase hex, matching the 3.1
  * `query_upstream_traffic` wire contract.
  */
-export function computePayloadDigestSha256(payload: unknown, contentType = 'application/json'): string {
-  return sha256Hex(canonicalPayloadBytes(payload, contentType));
+export function computePayloadDigestSha256(
+  payload: unknown,
+  contentType = 'application/json',
+  options: RegExp | false | { redactPattern?: RegExp | false; maxPayloadBytes?: number } = SECRET_KEY_PATTERN
+): string {
+  const redactPattern =
+    options instanceof RegExp || options === false ? options : (options?.redactPattern ?? SECRET_KEY_PATTERN);
+  const maxPayloadBytes =
+    typeof options === 'object' && options !== null && !(options instanceof RegExp)
+      ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
+      : DEFAULT_MAX_PAYLOAD_BYTES;
+  const payloadForDigest =
+    redactPattern === false
+      ? payload
+      : normalizeRecordedPayload(
+          normalizeFetchPayloadInput(payload, contentType),
+          contentType,
+          redactPattern,
+          maxPayloadBytes
+        );
+  return sha256Hex(canonicalPayloadBytes(payloadForDigest, contentType));
+}
+
+function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
+  if (payload === undefined) return undefined;
+  if (typeof payload === 'string') {
+    if (!isJsonContentType(contentType)) return payload;
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return payload;
+    }
+  }
+  if (payload instanceof URLSearchParams) return payload.toString();
+  if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+    const out: Record<string, unknown> = {};
+    payload.forEach((v, k) => {
+      out[k] = typeof v === 'string' ? v : '[file]';
+    });
+    return out;
+  }
+  return payload;
+}
+
+function normalizeRecordedPayload(
+  payload: unknown,
+  contentType: string,
+  redactPattern: RegExp,
+  maxPayloadBytes: number
+): unknown {
+  if (payload === undefined) {
+    // Raw-mode `RecordedCall.payload` is required by the 3.1 controller
+    // response schema. GET/HEAD-style calls with no body therefore emit an
+    // empty object instead of omitting the field.
+    return {};
+  }
+  if (payload === null) return payload;
+
+  // Binary-shaped bodies — replace with a marker. Adopters that need
+  // the raw bytes recorded for diagnostics can stringify before
+  // calling `record()`.
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
+    return `[binary ${payload.length} bytes]`;
+  }
+  if (typeof Blob !== 'undefined' && payload instanceof Blob) {
+    return `[binary ${payload.size} bytes]`;
+  }
+  if (payload instanceof ArrayBuffer) {
+    return `[binary ${payload.byteLength} bytes]`;
+  }
+  if (ArrayBuffer.isView(payload)) {
+    return `[binary ${payload.byteLength} bytes]`;
+  }
+
+  if (typeof payload === 'string') {
+    // Form-urlencoded redaction: parse, redact, re-stringify so
+    // `access_token=...` bodies don't slip through unredacted.
+    if (isFormUrlEncoded(contentType)) {
+      return cap(redactFormUrlEncoded(payload, redactPattern), maxPayloadBytes);
+    }
+    return cap(payload, maxPayloadBytes);
+  }
+
+  const redacted = redactSecrets(payload, redactPattern);
+  const json = safeStringify(redacted);
+  if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
+    return `[truncated ${byteLengthOf(json)} bytes]`;
+  }
+  return redacted;
 }
 
 /**
@@ -635,7 +682,12 @@ async function readBody(
     raw = init.body;
   } else if (input instanceof Request) {
     try {
-      raw = await input.clone().text();
+      const clone = input.clone();
+      if (contentTypeBase(contentType) === 'multipart/form-data') {
+        raw = await clone.formData();
+      } else {
+        raw = await clone.text();
+      }
     } catch {
       raw = undefined;
     }
@@ -670,15 +722,17 @@ async function readBody(
 }
 
 function isJsonContentType(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  const base = contentTypeBase(contentType);
   return base === 'application/json' || /\+json$/.test(base);
 }
 
 function isFormUrlEncoded(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
-  return base === 'application/x-www-form-urlencoded';
+  return contentTypeBase(contentType) === 'application/x-www-form-urlencoded';
+}
+
+function contentTypeBase(contentType: string | undefined): string {
+  if (!contentType) return '';
+  return contentType.split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
 function redactFormUrlEncoded(body: string, pattern: RegExp): string {

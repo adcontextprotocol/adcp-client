@@ -315,6 +315,10 @@ complyTest: {
       ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
       ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
       ...(params.limit !== undefined && { limit: params.limit }),
+      ...(params.attestation_mode !== undefined && { attestationMode: params.attestation_mode }),
+      ...(params.identifier_value_digests !== undefined && {
+        identifierValueDigests: params.identifier_value_digests,
+      }),
     });
     return toQueryUpstreamTrafficResponse(result);
   },

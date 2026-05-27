@@ -151,8 +151,8 @@ describe('Storyboard.requires gate (#1626)', () => {
 });
 
 describe('Storyboard upstream_traffic authoring checks', () => {
-  test('rejects identifier_paths that point outside the request payload', () => {
-    const yaml = `
+  function storyboardWithIdentifierPath(path) {
+    return `
 id: upstream_identifier_path_scope
 version: 1.0.0
 title: upstream identifier path scope
@@ -172,39 +172,68 @@ phases:
         task: get_products
         validations:
           - check: upstream_traffic
-            description: unsupported path scope
+            description: identifier path scope
             identifier_paths:
-              - response.audiences[*].hashed_email
+              - ${path}
 `;
-    assert.throws(() => parseStoryboard(yaml), /identifier_paths\[0\].*unsupported.*request payload/);
+  }
+
+  test('rejects identifier_paths that point outside the request payload', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('response.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
   });
 
   test('rejects identifier_paths with request prefix', () => {
-    const yaml = `
-id: upstream_identifier_path_request_prefix
-version: 1.0.0
-title: upstream identifier path request prefix
-category: test
-summary: scope check
-agent:
-  interaction_model: sync
-  capabilities: []
-caller:
-  role: buyer_agent
-phases:
-  - id: p1
-    title: Phase 1
-    steps:
-      - id: sync
-        title: Sync
-        task: get_products
-        validations:
-          - check: upstream_traffic
-            description: unsupported request-prefixed path
-            identifier_paths:
-              - request.audiences[*].hashed_email
-`;
-    assert.throws(() => parseStoryboard(yaml), /identifier_paths\[0\].*unsupported.*request payload/);
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('request.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('rejects bracket and recursive identifier_paths for all reserved roots', () => {
+    for (const root of ['request', 'response', 'context']) {
+      assert.throws(
+        () => parseStoryboard(storyboardWithIdentifierPath(`$["${root}"].audiences[*].hashed_email`)),
+        /identifier_paths\[0\].*unsupported.*request payload/
+      );
+      assert.throws(
+        () => parseStoryboard(storyboardWithIdentifierPath(`$..${root}.audiences[*].hashed_email`)),
+        /identifier_paths\[0\].*unsupported.*request payload/
+      );
+    }
+  });
+
+  test('rejects unsupported JSONPath identifier_paths that would resolve zero vectors', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('$["audiences"][*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('audiences..hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('rejects keyed numeric-array identifier_paths the runtime does not resolve', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('audiences[*].add[0].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('accepts documented dotted identifier_paths with wildcard array selectors', () => {
+    assert.doesNotThrow(() => parseStoryboard(storyboardWithIdentifierPath('audiences[*].add[*].hashed_email')));
+  });
+
+  test('accepts existing leading-dollar dotted identifier_paths', () => {
+    assert.doesNotThrow(() => parseStoryboard(storyboardWithIdentifierPath('$.audiences[*].add[*].hashed_email')));
+  });
+
+  test('normalizes accepted identifier_paths before runtime resolution', () => {
+    const storyboard = parseStoryboard(storyboardWithIdentifierPath(' $.audiences[*].add[*].hashed_email '));
+    assert.equal(storyboard.phases[0].steps[0].validations[0].identifier_paths[0], 'audiences[*].add[*].hashed_email');
   });
 });
 

@@ -209,6 +209,143 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     );
   });
 
+  test('computePayloadDigestSha256 rejects deep object payloads that cannot be canonicalized', () => {
+    let payload = 'leaf';
+    for (let i = 0; i < 260; i++) payload = [payload];
+    assert.throws(() => computePayloadDigestSha256(payload), /JSON payload exceeds max canonicalization depth/);
+  });
+
+  test('computePayloadDigestSha256 applies default and custom redaction before hashing', () => {
+    const raw = {
+      authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa',
+      nested: { vendor_secret: 'fake_test_fixture_not_a_real_secret_bbbb' },
+      users: [{ hashed_email: 'vec-1' }],
+    };
+    const defaultRedacted = {
+      authorization: '[redacted]',
+      nested: { vendor_secret: 'fake_test_fixture_not_a_real_secret_bbbb' },
+      users: [{ hashed_email: 'vec-1' }],
+    };
+    const customRedacted = {
+      authorization: '[redacted]',
+      nested: { vendor_secret: '[redacted]' },
+      users: [{ hashed_email: 'vec-1' }],
+    };
+    assert.equal(computePayloadDigestSha256(raw), sha256Hex(canonicalize(defaultRedacted)));
+    assert.equal(
+      computePayloadDigestSha256(raw, 'application/json', /^(authorization|vendor_secret)$/i),
+      sha256Hex(canonicalize(customRedacted))
+    );
+  });
+
+  test('computePayloadDigestSha256 matches recorder digest projection for normalized payload shapes', async () => {
+    async function assertDigestParity({ payload, contentType, recorderOptions = {}, helperOptions }) {
+      const recorder = createUpstreamRecorder({ enabled: true, ...recorderOptions });
+      await recorder.runWithPrincipal('p', async () => {
+        recorder.record({
+          method: 'POST',
+          url: 'https://x.example/upload',
+          content_type: contentType,
+          payload,
+        });
+      });
+      const [call] = recorder.query({ principal: 'p', attestationMode: 'digest' }).items;
+      assert.equal(call.payload_digest_sha256, computePayloadDigestSha256(payload, contentType, helperOptions));
+    }
+
+    async function assertWrappedFetchDigestParity({ body, contentType, helperOptions }) {
+      const recorder = createUpstreamRecorder({ enabled: true });
+      const wrappedFetch = recorder.wrapFetch(async () => new Response('ok', { status: 200 }));
+      await recorder.runWithPrincipal('p', async () => {
+        await wrappedFetch('https://x.example/upload', {
+          method: 'POST',
+          headers: { 'content-type': contentType },
+          body,
+        });
+      });
+      const [call] = recorder.query({ principal: 'p', attestationMode: 'digest' }).items;
+      assert.equal(call.payload_digest_sha256, computePayloadDigestSha256(body, contentType, helperOptions));
+    }
+
+    async function assertRequestDigestParity(request, bodyForHelper) {
+      const contentType = request.headers.get('content-type') ?? '';
+      const recorder = createUpstreamRecorder({ enabled: true });
+      const wrappedFetch = recorder.wrapFetch(async () => new Response('ok', { status: 200 }));
+      await recorder.runWithPrincipal('p', async () => {
+        await wrappedFetch(request);
+      });
+      const [call] = recorder.query({ principal: 'p', attestationMode: 'digest' }).items;
+      assert.equal(call.payload_digest_sha256, computePayloadDigestSha256(bodyForHelper, contentType));
+    }
+
+    await assertDigestParity({
+      payload: JSON.stringify({ b: 2, a: 1 }),
+      contentType: 'application/json',
+    });
+    await assertWrappedFetchDigestParity({
+      body: JSON.stringify({
+        authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa',
+        audience: 'segment-1',
+      }),
+      contentType: 'application/json',
+    });
+    await assertDigestParity({
+      payload: 'access_token=fake_test_fixture_not_a_real_token_aaaa&audience=segment-1',
+      contentType: 'application/x-www-form-urlencoded',
+    });
+    await assertWrappedFetchDigestParity({
+      body: new URLSearchParams([
+        ['access_token', 'fake_test_fixture_not_a_real_token_aaaa'],
+        ['audience', 'segment-1'],
+      ]),
+      contentType: 'application/x-www-form-urlencoded',
+    });
+    const form = new FormData();
+    form.set('access_token', 'fake_test_fixture_not_a_real_token_aaaa');
+    form.set('audience', 'segment-1');
+    await assertRequestDigestParity(new Request('https://x.example/upload', { method: 'POST', body: form }), form);
+    await assertDigestParity({
+      payload: Buffer.from([1, 2, 3, 4]),
+      contentType: 'application/octet-stream',
+    });
+    await assertDigestParity({
+      payload: { long_field: 'x'.repeat(100) },
+      contentType: 'application/json',
+      recorderOptions: { maxPayloadBytes: 20 },
+      helperOptions: { maxPayloadBytes: 20 },
+    });
+    await assertDigestParity({
+      payload: { long_field: 'x'.repeat(100) },
+      contentType: 'application/json',
+      recorderOptions: { maxPayloadBytes: -1 },
+      helperOptions: { maxPayloadBytes: -1 },
+    });
+    await assertDigestParity({
+      payload: { long_field: 'x'.repeat(100) },
+      contentType: 'application/json',
+      recorderOptions: { maxPayloadBytes: Number.POSITIVE_INFINITY },
+      helperOptions: { maxPayloadBytes: Number.POSITIVE_INFINITY },
+    });
+  });
+
+  test('digest-mode query rejects payloads that cannot be canonicalized', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    let payload = 'leaf';
+    for (let i = 0; i < 260; i++) payload = [payload];
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload,
+      });
+    });
+    assert.throws(
+      () => recorder.query({ principal: 'p', attestationMode: 'digest' }),
+      /JSON payload exceeds max canonicalization depth/
+    );
+  });
+
   test('digest-mode identifier proof scan avoids false negatives in large payloads', async () => {
     const recorder = createUpstreamRecorder({ enabled: true, maxPayloadBytes: 0 });
     const values = Array.from({ length: 4100 }, (_, i) => `vec-${i}`);

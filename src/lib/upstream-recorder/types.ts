@@ -26,7 +26,9 @@ interface RecordedCallBase {
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
   endpoint: string;
   url: string;
+  /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
   host?: string;
+  /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
   path?: string;
   /**
    * Media type of the recorded `payload`, mirroring the adapter's outbound

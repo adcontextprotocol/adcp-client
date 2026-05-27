@@ -1,0 +1,1 @@
+export const IDENTIFIER_DIGEST_LIMIT = 64;

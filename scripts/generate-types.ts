@@ -573,6 +573,8 @@ export function enforceStrictSchema(schema: any): any {
 }
 
 function canonicalCodegenJson(value: unknown): string {
+  // Build-time JSON Schema snippets only need deterministic key order; avoid
+  // routing the generator through runtime JCS semantics it does not depend on.
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
