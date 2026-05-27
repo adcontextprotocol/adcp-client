@@ -46,13 +46,14 @@ jobs:
           npm run sync-schemas
           npm run generate-types
           npm run generate-wellknown-schemas
+          npm run generate-registry-types
 
-          if git diff --exit-code src/lib/types/ src/lib/agents/ package.json; then
+          if git diff --exit-code src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml package.json; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
             echo "✅ No schema changes detected"
           else
             echo "changes_detected=true" >> $GITHUB_OUTPUT
-            echo "📋 Schema changes detected"
+            echo "📋 Schema or registry OpenAPI changes detected"
 
             ADCP_VERSION=$(node -e "
               const fs = require('fs');
@@ -82,6 +83,7 @@ jobs:
             chore: sync with AdCP schemas v${{ steps.sync.outputs.adcp_version }}
 
             - Updated schemas from AdCP specification v${{ steps.sync.outputs.adcp_version }}
+            - Updated registry OpenAPI types from the bundled upstream schema
             - Regenerated TypeScript types and fluent API
             - Auto-bumped library version to maintain compatibility
 
@@ -91,10 +93,11 @@ jobs:
           body: |
             ## 🔄 Automated Schema Synchronization
 
-            This PR updates the library to sync with AdCP specification v${{ steps.sync.outputs.adcp_version }}.
+            This PR updates the library to sync with AdCP specification v${{ steps.sync.outputs.adcp_version }} and the bundled upstream registry OpenAPI.
 
             ### Changes
             - ✅ Downloaded latest schemas from `adcontextprotocol.org`
+            - ✅ Extracted the latest registry OpenAPI from the upstream schema bundle
             - ✅ Regenerated TypeScript types from official schemas
             - ✅ Updated fluent API with any new tools
             - ✅ Synchronized library version with AdCP version
@@ -106,8 +109,9 @@ jobs:
 
             ### Review Notes
             - This is an automated update from the official AdCP specification
-            - No manual code changes were made
             - Types are generated directly from official JSON schemas
+            - Registry OpenAPI syncs may require manual SDK compatibility shims in `src/lib/registry/`
+            - Verify registry adopter/type tests before merging
             - Version alignment ensures compatibility tracking
 
             🤖 Generated with [Claude Code](https://claude.ai/code)

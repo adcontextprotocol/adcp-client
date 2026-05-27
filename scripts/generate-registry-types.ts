@@ -12,10 +12,12 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-const REGISTRY_SPEC_URL = 'https://adcontextprotocol.org/openapi/registry.yaml';
+const REGISTRY_SPEC_URL = 'https://agenticadvertising.org/openapi/registry.yaml';
 const SCHEMA_DIR = path.join(__dirname, '../schemas/registry');
 const CACHED_SPEC = path.join(SCHEMA_DIR, 'registry.yaml');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/registry/types.generated.ts');
+const SPEC_TIMEOUT_MS = 10_000;
+const SPEC_MAX_BYTES = 1024 * 1024;
 
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) =>
@@ -34,12 +36,72 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
 
 async function syncSpec(): Promise<void> {
   console.log(`Downloading registry spec from ${REGISTRY_SPEC_URL}...`);
-  const res = await fetch(REGISTRY_SPEC_URL);
-  if (!res.ok) throw new Error(`Failed to fetch spec: ${res.status} ${res.statusText}`);
-  const yaml = await res.text();
-  mkdirSync(SCHEMA_DIR, { recursive: true });
-  writeFileSync(CACHED_SPEC, yaml);
-  console.log(`Cached at ${CACHED_SPEC} (${yaml.length} bytes)`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SPEC_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(REGISTRY_SPEC_URL, {
+      redirect: 'error',
+      signal: controller.signal,
+      headers: { Accept: 'application/yaml,text/yaml,text/plain' },
+    });
+    if (!res.ok) throw new Error(`Failed to fetch spec: ${res.status} ${res.statusText}`);
+    const yaml = await readResponseTextWithLimit(res, SPEC_MAX_BYTES);
+    mkdirSync(SCHEMA_DIR, { recursive: true });
+    writeFileSync(CACHED_SPEC, yaml);
+    console.log(`Cached at ${CACHED_SPEC} (${yaml.length} bytes)`);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Failed to fetch spec: timed out after ${SPEC_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readResponseTextWithLimit(res: Response, maxBytes: number): Promise<string> {
+  const contentLength = res.headers.get('content-length');
+  if (contentLength) {
+    const declaredBytes = Number(contentLength);
+    if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+      throw new Error(`Failed to fetch spec: response exceeded ${maxBytes} bytes`);
+    }
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const text = await res.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new Error(`Failed to fetch spec: response exceeded ${maxBytes} bytes`);
+    }
+    return text;
+  }
+
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new Error(`Failed to fetch spec: response exceeded ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const buf = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buf.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(buf);
 }
 
 async function generate(): Promise<void> {
