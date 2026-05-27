@@ -134,6 +134,90 @@ export function resolvePathAll(obj: unknown, path: string): unknown[] {
   return results;
 }
 
+const PORTABLE_IDENTIFIER_SEGMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?$/;
+const RESERVED_IDENTIFIER_ROOTS = new Set(['request', 'response', 'context']);
+
+export interface PortableIdentifierPathIssue {
+  path: string;
+  reason: string;
+}
+
+/**
+ * Validate the portable `upstream_traffic.identifier_paths` grammar.
+ *
+ * These paths are intentionally narrower than the general storyboard path
+ * helpers: request-payload-relative dotted keys, with at most one `[*]`
+ * wildcard suffix per segment. They are exchanged across independent
+ * storyboard runners, so permissive JSONPath conveniences would create
+ * non-portable grading.
+ */
+export function validatePortableIdentifierPath(path: string): string | null {
+  if (typeof path !== 'string' || path.length === 0) return 'must be a non-empty string';
+  if (path.length > MAX_PATH_LENGTH) return `must be ${MAX_PATH_LENGTH} characters or fewer`;
+  if (path.startsWith('$')) return 'must be request-payload-relative; explicit roots like "$.foo" are not allowed';
+  if (path.startsWith('.') || path.endsWith('.') || path.includes('..')) {
+    return 'must not contain empty segments or recursive descent';
+  }
+
+  const segments = path.split('.');
+  const first = segments[0]!;
+  const firstKey = first.endsWith('[*]') ? first.slice(0, -3) : first;
+  if (RESERVED_IDENTIFIER_ROOTS.has(firstKey)) {
+    return `must not use reserved root "${firstKey}"`;
+  }
+
+  for (const segment of segments) {
+    if (segment.includes('["') || segment.includes("['")) return 'must not use bracket-quoted keys';
+    if (/\[\d+\]/.test(segment)) return 'must not use numeric array indexes';
+    if (!PORTABLE_IDENTIFIER_SEGMENT_RE.test(segment)) {
+      return `segment "${segment}" must be an identifier key optionally followed by [*]`;
+    }
+    const key = segment.endsWith('[*]') ? segment.slice(0, -3) : segment;
+    if (FORBIDDEN_KEYS.has(key)) return `must not use forbidden key "${key}"`;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a path that has already been restricted to the portable
+ * `identifier_paths` grammar. Invalid paths return no values; callers that
+ * need author-facing diagnostics should call `validatePortableIdentifierPath`
+ * first and surface the reason.
+ */
+export function resolvePortableIdentifierPathAll(obj: unknown, path: string): unknown[] {
+  if (obj === undefined || validatePortableIdentifierPath(path) !== null) return [];
+  const segments = path.split('.').map(segment => ({
+    key: segment.endsWith('[*]') ? segment.slice(0, -3) : segment,
+    wildcard: segment.endsWith('[*]'),
+  }));
+
+  let frontier: unknown[] = [obj];
+  for (const segment of segments) {
+    const next: unknown[] = [];
+    for (const current of frontier) {
+      if (next.length >= RESOLVE_PATH_ALL_MAX) break;
+      if (current === undefined || current === null || typeof current !== 'object') continue;
+      if (FORBIDDEN_KEYS.has(segment.key)) continue;
+      if (!Object.prototype.hasOwnProperty.call(current, segment.key)) continue;
+      const value = (current as Record<string, unknown>)[segment.key];
+      if (segment.wildcard) {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (next.length >= RESOLVE_PATH_ALL_MAX) break;
+            next.push(item);
+          }
+        }
+      } else {
+        next.push(value);
+      }
+    }
+    frontier = next.slice(0, RESOLVE_PATH_ALL_MAX).filter(value => value !== undefined);
+  }
+
+  return frontier;
+}
+
 function walk(current: unknown, segments: Array<string | number | typeof WILDCARD>, i: number, out: unknown[]): void {
   if (out.length >= RESOLVE_PATH_ALL_MAX) return;
   if (i === segments.length) {

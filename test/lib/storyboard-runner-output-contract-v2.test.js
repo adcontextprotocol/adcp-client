@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations');
 const { applyContextOutputs, applyContextOutputsWithProvenance } = require('../../dist/lib/testing/storyboard/context');
+const { RESOLVE_PATH_ALL_MAX, resolvePortableIdentifierPathAll } = require('../../dist/lib/testing/storyboard/path');
 const { isJsonContentType } = require('../../dist/lib/testing/test-controller');
 
 // ────────────────────────────────────────────────────────────
@@ -619,6 +620,92 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       ctx
     );
     assert.equal(result.passed, true);
+  });
+
+  test('identifier_paths rejects non-portable path grammar as storyboard authoring errors', () => {
+    const invalidPaths = [
+      '$.audiences[*].add[*].hashed_email',
+      'request.audiences',
+      'response.audiences',
+      'context.audiences',
+      'audiences[0].add[*].hashed_email',
+      'audiences[*].add[0].hashed_email',
+      'audiences["add"].hashed_email',
+      'audiences..hashed_email',
+      '.audiences',
+      'audiences.',
+    ];
+
+    for (const path of invalidPaths) {
+      const ctx = ctxWithTraffic(
+        {
+          success: true,
+          total_count: 1,
+          recorded_calls: [makeCall({ payload: { users: [{ hashed_email: 'vec_1' }] } })],
+        },
+        {
+          storyboardStep: {
+            sample_request: { audiences: [{ add: [{ hashed_email: 'vec_1' }] }] },
+          },
+        }
+      );
+      const [result] = runValidations(
+        [
+          {
+            check: 'upstream_traffic',
+            description: `invalid identifier path ${path}`,
+            identifier_paths: [path],
+          },
+        ],
+        ctx
+      );
+      assert.equal(result.passed, false, path);
+      assert.match(result.error, /storyboard authoring error/);
+      assert.equal(result.actual.matched_count, 0);
+      assert.deepEqual(result.actual.missing_identifier_values, []);
+      assert.equal(result.actual.invalid_identifier_paths[0].path, path);
+      assert.equal(typeof result.actual.invalid_identifier_paths[0].reason, 'string');
+      assert.ok(result.actual.invalid_identifier_paths[0].reason.length > 0);
+    }
+  });
+
+  test('identifier_paths authoring errors are surfaced before adopter opt-out', () => {
+    const ctx = ctxWithTraffic(
+      { success: true, recorded_calls: [], total_count: 0 },
+      {
+        advertised: false,
+        storyboardStep: {
+          sample_request: { audiences: [{ add: [{ hashed_email: 'vec_1' }] }] },
+        },
+      }
+    );
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'invalid even when controller absent',
+          identifier_paths: ['audiences[0].add[*].hashed_email'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
+    assert.match(result.error, /storyboard authoring error/);
+  });
+
+  test('identifier_paths portable resolver caps wildcard fan-out', () => {
+    const sample = {
+      audiences: [
+        {
+          add: Array.from({ length: RESOLVE_PATH_ALL_MAX + 5000 }, (_, i) => ({ hashed_email: `vec_${i}` })),
+        },
+      ],
+    };
+    const vectors = resolvePortableIdentifierPathAll(sample, 'audiences[*].add[*].hashed_email');
+    assert.equal(vectors.length, RESOLVE_PATH_ALL_MAX);
+    assert.equal(vectors[0], 'vec_0');
+    assert.equal(vectors[vectors.length - 1], `vec_${RESOLVE_PATH_ALL_MAX - 1}`);
   });
 
   test('identifier_paths fails when ANY resolved value is missing (anti-fabrication)', () => {

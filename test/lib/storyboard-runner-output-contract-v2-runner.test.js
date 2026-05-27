@@ -222,6 +222,47 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
   });
 
+  test('invalid identifier_paths fail as authoring errors without querying controller', async () => {
+    const invalidStoryboard = JSON.parse(JSON.stringify(storyboard));
+    invalidStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'invalid path should short-circuit before controller query',
+        min_count: 1,
+        identifier_paths: ['$.audiences[*].add[*].hashed_email'],
+      },
+    ];
+    const { client, calls } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      () => {
+        throw new Error('controller should not be queried for invalid identifier_paths');
+      }
+    );
+
+    const result = await runStoryboardStep('https://stub.example/mcp', invalidStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    assert.equal(calls.filter(c => c.name === 'comply_test_controller').length, 0);
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.ok(upstreamValidation);
+    assert.equal(upstreamValidation.passed, false);
+    assert.match(upstreamValidation.error, /storyboard authoring error/);
+    assert.equal(upstreamValidation.actual.matched_count, 0);
+    assert.equal(
+      upstreamValidation.actual.invalid_identifier_paths[0].path,
+      '$.audiences[*].add[*].hashed_email'
+    );
+  });
+
   test('grades raw-required payload assertions not_applicable when controller returns digest only', async () => {
     const { client } = buildStubClient(
       {

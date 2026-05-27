@@ -1044,9 +1044,13 @@ export interface StoryboardValidation {
    * least one matching `recorded_call`'s payload at any depth. Each path
    * MAY resolve to a single value or an array; ALL resolved values MUST be
    * present in the recorded payload — single-placeholder fabrication is
-   * the threat model. Path syntax: same dotted-with-`[*]` form as
-   * `payload_must_contain.path`. Per spec PR adcontextprotocol/adcp#3816,
-   * replaces the earlier `buyer_identifier_echo: boolean` shorthand.
+   * the threat model. Path syntax is the portable 3.1 grammar:
+   * request-payload-relative dotted identifier keys, with each segment
+   * optionally followed by `[*]`. Explicit roots (`$.foo`), reserved roots
+   * (`request.*`, `response.*`, `context.*`), bracket-quoted keys, numeric
+   * indexes, recursive descent, and empty segments are storyboard authoring
+   * errors. Per spec PR adcontextprotocol/adcp#3816, replaces the earlier
+   * `buyer_identifier_echo: boolean` shorthand.
    */
   identifier_paths?: string[];
   /**

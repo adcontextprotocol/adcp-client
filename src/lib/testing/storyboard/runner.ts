@@ -31,7 +31,13 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
-import { resolvePath, resolvePathAll, toJsonPointer } from './path';
+import {
+  resolvePath,
+  resolvePathAll,
+  resolvePortableIdentifierPathAll,
+  toJsonPointer,
+  validatePortableIdentifierPath,
+} from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
@@ -5105,6 +5111,9 @@ async function prefetchUpstreamTraffic(
 ): Promise<UpstreamTrafficValidationContext | undefined> {
   const upstreamChecks = resolvedValidations.filter(v => v.check === 'upstream_traffic');
   if (upstreamChecks.length === 0) return undefined;
+  if (upstreamChecks.some(check => (check.identifier_paths ?? []).some(path => validatePortableIdentifierPath(path)))) {
+    return undefined;
+  }
 
   const advertised =
     options._controllerCapabilities?.detected === true &&
@@ -5213,7 +5222,7 @@ function collectUpstreamIdentifierDigests(
   if (!sample) return out;
   for (const validation of validations) {
     for (const path of validation.identifier_paths ?? []) {
-      const vectors = resolvePathAll(sample, normalizeStoryboardJsonPath(path));
+      const vectors = resolvePortableIdentifierPathAll(sample, path);
       for (const vector of vectors) {
         if (typeof vector !== 'string') continue;
         if (!out.has(vector)) out.set(vector, sha256Hex(vector));
@@ -5222,14 +5231,6 @@ function collectUpstreamIdentifierDigests(
     }
   }
   return out;
-}
-
-function normalizeStoryboardJsonPath(path: string): string {
-  let p = path;
-  if (p.startsWith('$.')) p = p.slice(2);
-  else if (p.startsWith('$')) p = p.slice(1);
-  if (p.startsWith('.')) p = p.slice(1);
-  return p;
 }
 
 function sha256Hex(value: string): string {
