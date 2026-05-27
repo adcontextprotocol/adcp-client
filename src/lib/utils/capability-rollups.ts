@@ -26,11 +26,13 @@
 
 import type { Product } from '../types/tools.generated';
 
+export type OptimizationMetric = NonNullable<NonNullable<Product['metric_optimization']>['supported_metrics']>[number];
+
 /** Minimum shape needed to derive the rollup — accepts any object that
  *  carries the spec's `metric_optimization.supported_metrics` array. */
-interface ProductLike {
+export interface ProductMetricOptimizationLike {
   metric_optimization?: {
-    supported_metrics?: ReadonlyArray<string>;
+    supported_metrics?: ReadonlyArray<OptimizationMetric>;
   };
 }
 
@@ -49,7 +51,7 @@ interface ProductLike {
  *
  * @example
  * ```ts
- * const products: Product[] = [
+ * const products: ProductMetricOptimizationLike[] = [
  *   { metric_optimization: { supported_metrics: ['clicks', 'views'] } },
  *   { metric_optimization: { supported_metrics: ['views', 'completed_views'] } },
  * ];
@@ -57,15 +59,15 @@ interface ProductLike {
  * // → ['clicks', 'completed_views', 'views']
  * ```
  */
-export function rollupOptimizationMetricsFromProducts<T extends ProductLike = Product>(
+export function rollupOptimizationMetricsFromProducts<T extends ProductMetricOptimizationLike = Product>(
   products: ReadonlyArray<T>
-): string[] {
-  const seen = new Set<string>();
+): OptimizationMetric[] {
+  const seen = new Set<OptimizationMetric>();
   for (const p of products) {
     const metrics = p.metric_optimization?.supported_metrics;
     if (!Array.isArray(metrics)) continue;
     for (const m of metrics) {
-      if (typeof m === 'string' && m.length > 0) seen.add(m);
+      if (typeof m === 'string' && m.length > 0) seen.add(m as OptimizationMetric);
     }
   }
   return Array.from(seen).sort();

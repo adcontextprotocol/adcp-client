@@ -379,6 +379,8 @@ export interface TestControllerStore {
     since_timestamp?: string;
     endpoint_pattern?: string;
     limit?: number;
+    attestation_mode?: 'raw' | 'digest';
+    identifier_value_digests?: string[];
   }): Promise<UpstreamTrafficSuccessResponse>;
 
   /**
@@ -395,12 +397,16 @@ export interface TestControllerStore {
  * types as of 3.1.0-beta.2; the local shape is preserved for adopters
  * mid-migration and for the SDK's typed `recorded_calls` widening.
  *
- * `recorded_calls` is typed as an opaque array — the spec's per-item
- * shape (method / endpoint / url / content_type / payload / timestamp
- * required, host / path / status_code optional) is the runtime contract
- * but isn't expressed in TypeScript here so adopters can return their
- * own typed `RecordedCall[]` (e.g. from `@adcp/sdk/upstream-recorder`)
- * without `exactOptionalPropertyTypes` collisions on optional fields.
+ * `recorded_calls` is typed as an opaque array. The spec's per-item shape is
+ * a discriminated raw/digest attestation: raw items carry
+ * `attestation_mode: "raw"`, `payload`, `payload_length`, and metadata;
+ * digest items carry `attestation_mode: "digest"`,
+ * `payload_digest_sha256`, `payload_length`, and optional
+ * `identifier_match_proofs[]` for requested `identifier_value_digests`.
+ * The runtime contract is intentionally not re-expressed here so adopters
+ * can return their own typed `RecordedCall[]` (e.g. from
+ * `@adcp/sdk/upstream-recorder`) without `exactOptionalPropertyTypes`
+ * collisions on optional fields.
  * The wire-shape Ajv test in
  * `test/lib/upstream-recorder-spec-shape.test.js` enforces the runtime
  * contract; adopters validating their own shape against the spec schema
@@ -536,14 +542,6 @@ export function enforceMapCap<V>(
 // ────────────────────────────────────────────────────────────
 
 /**
- * Extension scenarios accepted by the dispatcher but not yet members of
- * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
- * that introduced them. Auto-advertised when the matching store method
- * is present. Promoted to first-class constants once a release ships the
- * schema. (Empty at 3.1.0-beta.2 — `query_upstream_traffic` was promoted.)
- */
-
-/**
  * Force-transition extension scenarios for resource families whose status
  * enum exists in the spec but isn't yet a member of
  * `ListScenariosSuccess['scenarios']`. Issue #1819 — unblocks the
@@ -568,23 +566,14 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceUpstreamUnavailable', CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE],
 ];
 
-/**
- * Canonical scenarios from the generated `ListScenariosSuccess` enum. Used
- * for the typed `compliance_testing.scenarios` capability block, which the
- * generated Zod validator constrains to the enum's literal union — an
- * extension scenario like `query_upstream_traffic` (not yet in the schema
- * cache) gets rejected by `get_adcp_capabilities` response validation when
- * its enum hasn't picked up the spec PR yet.
- */
 function scenariosFromStore(store: TestControllerStore): ControllerScenario[] {
   return SCENARIO_MAP.filter(([method]) => typeof store[method] === 'function').map(([, scenario]) => scenario);
 }
 
 /**
- * All scenarios — canonical + extensions accepted by the dispatcher but
- * not yet in `CONTROLLER_SCENARIOS`. Used for `list_scenarios` which is
- * open-for-extension (the `comply_test_controller`'s discovery scenario
- * accepts unknown strings per the spec).
+ * All scenarios — first-class controller scenarios plus temporary extension
+ * scenarios accepted by the dispatcher. Used for `list_scenarios`, which is
+ * open for extension per the comply controller contract.
  */
 function allScenariosFromStore(store: TestControllerStore): string[] {
   const out: string[] = scenariosFromStore(store);
@@ -869,11 +858,6 @@ async function handleTestControllerRequestImpl(
   // sessionless probes.
   if (scenario === 'list_scenarios') {
     const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : allScenariosFromStore(storeOrFactory);
-    // Cast: the generated union doesn't yet include extension scenarios
-    // (e.g. `query_upstream_traffic` from spec PR adcp#3816, schema not
-    // released yet). The wire shape says `scenarios` is open-for-extension
-    // — runners and sellers MUST accept unknown strings — so the runtime
-    // shape is correct. Drop the cast once the schema cache picks them up.
     return wrapStoreSuccess({ success: true, scenarios });
   }
 
@@ -1096,11 +1080,8 @@ async function handleTestControllerRequestImpl(
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache, scope);
       }
 
-      // Extension scenarios — accepted by the dispatcher but not yet
-      // members of CONTROLLER_SCENARIOS. Promoted to first-class constants
-      // once a release ships the schema. Today: `query_upstream_traffic`
-      // (spec PR adcp#3816), `force_audience_status` /
-      // `force_catalog_item_status` (issue #1819 / spec adcp#2860).
+      // Extension scenarios accepted by the dispatcher until the spec
+      // promotes them to first-class controller scenarios.
       case FORCE_AUDIENCE_STATUS_SCENARIO: {
         if (!store.forceAudienceStatus) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
@@ -1157,11 +1138,7 @@ async function handleTestControllerRequestImpl(
         if (!store.queryUpstreamTraffic) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
-        const queryParams = (params ?? {}) as {
-          since_timestamp?: string;
-          endpoint_pattern?: string;
-          limit?: number;
-        };
+        const queryParams = (params ?? {}) as Parameters<NonNullable<TestControllerStore['queryUpstreamTraffic']>>[0];
         return wrapStoreSuccess(await store.queryUpstreamTraffic(queryParams));
       }
 

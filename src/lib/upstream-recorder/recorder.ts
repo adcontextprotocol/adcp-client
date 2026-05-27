@@ -4,12 +4,14 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createHash } from 'node:crypto';
 import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
 import {
   UpstreamRecorderScopeError,
   type QueryUpstreamTrafficResponse,
   type RecordInput,
+  type RawRecordedCall,
   type RecordedCall,
   type UpstreamRecorder,
   type UpstreamRecorderDebugInfo,
@@ -33,7 +35,7 @@ const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
  * the principal never appears in the controller-response payload).
  */
 interface InternalEntry {
-  call: RecordedCall;
+  call: RawRecordedCall;
   principal: string;
   /** ms-since-epoch cached for TTL eviction; computed at insert time. */
   recordedAtMs: number;
@@ -133,22 +135,30 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
    * is misleading downstream.
    */
   function applyRedactionToPayload(payload: unknown, contentType: string): { value: unknown; bytes: number } {
-    if (payload === undefined || payload === null) return { value: payload, bytes: 0 };
+    if (payload === undefined) {
+      const value = {};
+      return { value, bytes: payloadWireLength(value) };
+    }
+    if (payload === null) return { value: payload, bytes: payloadWireLength(payload) };
 
     // Binary-shaped bodies — replace with a marker. Adopters that need
     // the raw bytes recorded for diagnostics can stringify before
     // calling `record()`.
     if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
-      return { value: `[binary ${payload.length} bytes]`, bytes: payload.length };
+      const value = `[binary ${payload.length} bytes]`;
+      return { value, bytes: payloadWireLength(value) };
     }
     if (typeof Blob !== 'undefined' && payload instanceof Blob) {
-      return { value: `[binary ${payload.size} bytes]`, bytes: payload.size };
+      const value = `[binary ${payload.size} bytes]`;
+      return { value, bytes: payloadWireLength(value) };
     }
     if (payload instanceof ArrayBuffer) {
-      return { value: `[binary ${payload.byteLength} bytes]`, bytes: payload.byteLength };
+      const value = `[binary ${payload.byteLength} bytes]`;
+      return { value, bytes: payloadWireLength(value) };
     }
     if (ArrayBuffer.isView(payload)) {
-      return { value: `[binary ${payload.byteLength} bytes]`, bytes: payload.byteLength };
+      const value = `[binary ${payload.byteLength} bytes]`;
+      return { value, bytes: payloadWireLength(value) };
     }
 
     if (typeof payload === 'string') {
@@ -156,17 +166,20 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       // `access_token=...` bodies don't slip through unredacted.
       if (isFormUrlEncoded(contentType)) {
         const redacted = redactFormUrlEncoded(payload, redactPattern);
-        return { value: cap(redacted, maxPayloadBytes), bytes: byteLengthOf(redacted) };
+        const value = cap(redacted, maxPayloadBytes);
+        return { value, bytes: payloadWireLength(value) };
       }
-      return { value: cap(payload, maxPayloadBytes), bytes: byteLengthOf(payload) };
+      const value = cap(payload, maxPayloadBytes);
+      return { value, bytes: payloadWireLength(value) };
     }
 
     const redacted = redactSecrets(payload, redactPattern);
     const json = safeStringify(redacted);
     if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
-      return { value: `[truncated ${byteLengthOf(json)} bytes]`, bytes: byteLengthOf(json) };
+      const value = `[truncated ${byteLengthOf(json)} bytes]`;
+      return { value, bytes: payloadWireLength(value) };
     }
-    return { value: redacted, bytes: json ? byteLengthOf(json) : 0 };
+    return { value: redacted, bytes: payloadWireLength(redacted) };
   }
 
   function classifyPurpose(
@@ -185,7 +198,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     }
   }
 
-  function buildRecordedCall(input: RecordInput, nowMs: number): RecordedCall | null {
+  function buildRecordedCall(input: RecordInput, nowMs: number): RawRecordedCall | null {
     try {
       const url = input.url;
       let host = '';
@@ -199,7 +212,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       }
       const redactedHeaders = applyRedactionToHeaders(input.headers);
       const purposeTag = classifyPurpose(input.method, url, host, pathPart, redactedHeaders);
-      const { value: payload } = applyRedactionToPayload(input.payload, input.content_type);
+      const { value: payload, bytes: payloadLength } = applyRedactionToPayload(input.payload, input.content_type);
       return {
         method: input.method,
         endpoint: `${input.method} ${url}`,
@@ -207,7 +220,9 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
         host,
         path: pathPart,
         content_type: input.content_type,
+        attestation_mode: 'raw',
         payload,
+        payload_length: payloadLength,
         timestamp: new Date(nowMs).toISOString(),
         ...(input.status_code !== undefined && { status_code: input.status_code }),
         ...(purposeTag !== undefined && { purpose: purposeTag }),
@@ -341,7 +356,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     });
 
     const total = matched.length;
-    const items = matched.slice(0, limit).map(e => e.call);
+    const items = matched.slice(0, limit).map(e => projectRecordedCall(e.call, params));
     const since_timestamp =
       params.sinceTimestamp ?? matched[0]?.call.timestamp ?? new Date(nowMs - ttlMs).toISOString();
     return {
@@ -379,6 +394,97 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     debug,
     enabled: true,
   };
+}
+
+function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQueryParams): RecordedCall {
+  if (params.attestationMode !== 'digest') return call;
+  const payloadDigest = sha256Hex(canonicalPayloadBytes(call.payload, call.content_type));
+  const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
+  const identifier_match_proofs =
+    identifierDigests.length > 0 && isJsonContentType(call.content_type)
+      ? identifierDigests.map(digest => ({
+          identifier_value_sha256: digest,
+          found: jsonStringLeafDigests(call.payload).has(digest),
+        }))
+      : undefined;
+
+  return {
+    method: call.method,
+    endpoint: call.endpoint,
+    url: call.url,
+    host: call.host,
+    path: call.path,
+    content_type: call.content_type,
+    attestation_mode: 'digest',
+    payload_digest_sha256: payloadDigest,
+    payload_length: call.payload_length,
+    timestamp: call.timestamp,
+    ...(call.status_code !== undefined && { status_code: call.status_code }),
+    ...(call.purpose !== undefined && { purpose: call.purpose }),
+    ...(identifier_match_proofs !== undefined && { identifier_match_proofs }),
+  };
+}
+
+function normalizeIdentifierDigests(input: string[] | undefined): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const value of input) {
+    if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) continue;
+    if (!out.includes(value)) out.push(value);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+
+function jsonStringLeafDigests(root: unknown): Set<string> {
+  const out = new Set<string>();
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop()!;
+    if (depth > 256) continue;
+    if (typeof value === 'string') {
+      out.add(sha256Hex(value));
+    } else if (Array.isArray(value)) {
+      for (const item of value) stack.push({ value: item, depth: depth + 1 });
+    } else if (value !== null && typeof value === 'object') {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        stack.push({ value: item, depth: depth + 1 });
+      }
+    }
+  }
+  return out;
+}
+
+function canonicalPayloadBytes(payload: unknown, contentType: string): string {
+  if (typeof payload === 'string') return payload;
+  if (isJsonContentType(contentType)) {
+    return canonicalJsonStringify(payload) ?? safeStringify(payload) ?? '';
+  }
+  return safeStringify(payload) ?? '';
+}
+
+function canonicalJsonStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(canonicalizeJson(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+function sha256Hex(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 /**
@@ -546,6 +652,12 @@ function byteLengthOf(s: string): number {
   if (typeof Buffer !== 'undefined') return Buffer.byteLength(s, 'utf8');
   // Fallback — rough UTF-16 count.
   return s.length;
+}
+
+function payloadWireLength(value: unknown): number {
+  if (typeof value === 'string') return byteLengthOf(value);
+  const json = safeStringify(value);
+  return json ? byteLengthOf(json) : 0;
 }
 
 function cap(s: string, maxBytes: number): string {

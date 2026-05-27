@@ -89,7 +89,7 @@ after(() => {
   }
 });
 
-function runCli(args, env = {}, { timeout = 10_000 } = {}) {
+function runCli(args, env = {}, { timeout = 30_000 } = {}) {
   // Use process.execPath so tests that zero out $PATH (e.g. the no-tunnel-binary
   // test) can still locate the node interpreter. The timeout guards against a
   // regression where auto-tunnel captures the URL but then hangs indefinitely

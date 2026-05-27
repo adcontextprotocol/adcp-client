@@ -17,7 +17,18 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
   'ecdsa-p256-sha256': 'ES256',
 };
 
-export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing' | 'governance-signing';
+export type AdcpUse = 'request-signing' | 'webhook-signing' | 'governance-signing';
+
+const ADCP_USE_VALUES = new Set<AdcpUse>(['request-signing', 'webhook-signing', 'governance-signing']);
+
+export function assertAdcpUse(value: unknown, helperName: string): asserts value is AdcpUse {
+  if (typeof value !== 'string' || !ADCP_USE_VALUES.has(value as AdcpUse)) {
+    throw new TypeError(
+      `${helperName}: unsupported adcp_use '${String(value)}'. ` +
+        `Supported: ${Array.from(ADCP_USE_VALUES).join(', ')}.`
+    );
+  }
+}
 
 export interface PemToAdcpJwkOptions {
   /** `kid` to embed in the JWK — must match the value published in `Signature-Input`. */
@@ -28,9 +39,6 @@ export interface PemToAdcpJwkOptions {
    * Purpose binding, enforced by AdCP verifiers at step 8.
    * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`.
    * - `'webhook-signing'` — for JWKs used to sign outbound webhook callbacks.
-   * - `'response-signing'` — for JWKs used to sign outbound responses
-   *   (RFC 9421 §2.2.9 response signing). Verifier surface is a follow-up;
-   *   the value is reserved here so signer-side JWKs can declare it now.
    * - `'governance-signing'` — for JWKs used to sign governance context
    *   (JWS-signed, not RFC 9421). Declared on JWKs published in a tenant's
    *   aggregated JWKS so JSON-typed consumers (e.g., third-party verifiers
@@ -75,6 +83,8 @@ export interface PemToAdcpJwkOptions {
  * ```
  */
 export function pemToAdcpJwk(pem: string, options: PemToAdcpJwkOptions): AdcpJsonWebKey {
+  assertAdcpUse(options.adcp_use, 'pemToAdcpJwk');
+
   // Anchored to the BEGIN line so a public-key PEM that mentions "PRIVATE
   // KEY" in surrounding metadata or comments doesn't false-positive. RFC
   // 7468 mandates exact uppercase between dashes; matching all standard

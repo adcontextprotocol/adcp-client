@@ -786,6 +786,26 @@ describe('mintEphemeralEd25519Key', () => {
     assert.strictEqual(privateKey.adcp_use, 'request-signing');
   });
 
+  test('adcp_use: governance-signing is reflected in both JWKs', async () => {
+    const { publicKey, privateKey } = await mintEphemeralEd25519Key({ adcp_use: 'governance-signing' });
+    assert.strictEqual(publicKey.adcp_use, 'governance-signing');
+    assert.strictEqual(privateKey.adcp_use, 'governance-signing');
+  });
+
+  test('retired response-signing adcp_use is rejected at runtime', async () => {
+    await assert.rejects(
+      () => mintEphemeralEd25519Key({ adcp_use: 'response-signing' }),
+      err => err instanceof TypeError && /unsupported adcp_use.*response-signing/i.test(err.message)
+    );
+  });
+
+  test('unknown adcp_use is rejected at runtime', async () => {
+    await assert.rejects(
+      () => mintEphemeralEd25519Key({ adcp_use: 'totally-unknown' }),
+      err => err instanceof TypeError && /unsupported adcp_use.*totally-unknown/i.test(err.message)
+    );
+  });
+
   test('privateKey is usable directly by InMemorySigningProvider without throwing', async () => {
     const { kid, algorithm, privateKey } = await mintEphemeralEd25519Key();
     assert.doesNotThrow(() => new InMemorySigningProvider({ keyid: kid, algorithm, privateKey }));

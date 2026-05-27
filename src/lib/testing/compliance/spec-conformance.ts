@@ -19,8 +19,9 @@
  *   agent (any specialism in `sales-*` / `audience-sync` / `governance-*`)
  *   MUST advertise at least one of `list_accounts` or `sync_accounts`.
  *   Spec normative as of AdCP 3.0.9; the requirement existed before the
- *   explicit MUST landed. Will migrate to a per-storyboard
- *   `required_any_of_tools` tag once adcp#4325 lands (see #1642).
+ *   explicit MUST landed. The runner honors AdCP 3.1
+ *   `required_any_of_tools` tags when present, but this fallback remains
+ *   until upstream storyboards carry the tag consistently.
  */
 
 import type { AgentProfile } from '../types';
@@ -84,10 +85,9 @@ function isAccountBearingSpecialism(specialism: string): boolean {
  * separately surfaces an observation about the missing capability call;
  * we don't double-report.
  *
- * TODO(adcp-client#1642): once adcp#4325's `required_any_of_tools` schema
- * lands in AdCP 3.1, migrate this gate to consume the per-storyboard tag
- * for richer attribution. Delete this synthesis path when migration is
- * complete and upstream storyboards in `compliance/cache/` carry the tag.
+ * TODO(adcp-client#1642): delete this synthesis path when upstream
+ * storyboards in `compliance/cache/` carry `required_any_of_tools`
+ * consistently for every account-bearing scenario.
  */
 export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: string): StoryboardResult | null {
   const accountBearing = (profile.specialisms ?? []).filter(isAccountBearingSpecialism);

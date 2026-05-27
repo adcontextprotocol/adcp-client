@@ -20,7 +20,7 @@ The agent owns the brand voice, transcript state, and product knowledge. The hos
 | --- | --- | --- |
 | `sponsored-intelligence` | [`hello_si_adapter_brand.ts`](../../examples/hello_si_adapter_brand.ts) | `si_baseline` |
 
-SI is a **protocol** in AdCP 3.0, not a specialism. Declare it via the `sponsoredIntelligence` field on the v6 `DecisioningPlatform`; the framework auto-derives `'sponsored_intelligence'` into `supported_protocols` from the four registered SI tools. There's no `specialisms: ['sponsored-intelligence']` claim today (tracked at adcontextprotocol/adcp#3961 for 3.1).
+SI is a **protocol and specialism** in AdCP 3.1. Declare it with `specialisms: ['sponsored-intelligence']` and implement the `sponsoredIntelligence` field on the v6 `DecisioningPlatform`; the framework auto-derives the wire-side `supported_protocols: ['sponsored_intelligence']` entry from the four registered SI tools. Older 3.0-era agents that omit the specialism still dispatch through `platform.sponsoredIntelligence`, but new agents should claim the specialism for compile-time and runtime validation.
 
 The storyboard at `compliance/cache/latest/protocols/sponsored-intelligence/index.yaml` has three phases (capability_discovery, offering_discovery, session_lifecycle) covering all four tools. The reference adapter passes 3/3.
 
@@ -53,7 +53,7 @@ One SI-specific note on idempotency:
 
 ## Specialism deltas at a glance
 
-**`sponsored-intelligence` protocol** —
+**`sponsored-intelligence` specialism** —
 
 - **Single brand per deployment is typical** — one Agentforce instance per advertiser, one OpenAI Assistant per brand. Multi-brand variants route via per-API-key tenant binding inside `accounts.resolve`, not by carrying `account` on the wire (SI tool schemas don't have it).
 - **Session state**: the framework auto-hydrates a small `req.session` record (intent, offering scoping, identity consent, negotiated capabilities) onto `si_send_message` / `si_terminate_session`. Production brand engines almost always own full transcript state in their own backend (Postgres, Redis, vector store) — full transcripts, RAG embeddings, tool-call logs are too rich for `ctx_metadata` and easily exceed the 16KB blob cap. Treat `req.session` as a convenience, not authoritative state.

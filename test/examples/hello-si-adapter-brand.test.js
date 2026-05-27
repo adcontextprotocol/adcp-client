@@ -10,10 +10,10 @@
  *   3. After the run, every expected upstream route shows ≥1 hit at
  *      /_debug/traffic — the façade-resistance gate.
  *
- * Note: SI is a *protocol* in AdCP 3.0, not a specialism (tracked at
- * adcontextprotocol/adcp#3961 for 3.1). The compliance storyboard lives at
- * `protocols/sponsored-intelligence/` rather than `specialisms/`. The
- * runHelloAdapterGates helper drives the storyboard by id regardless.
+ * Note: SI is both a protocol-bundle surface and an AdCP 3.1 specialism.
+ * The compliance storyboard still lives at
+ * `protocols/sponsored-intelligence/`; the runHelloAdapterGates helper
+ * drives the storyboard by id regardless.
  */
 
 const path = require('node:path');
