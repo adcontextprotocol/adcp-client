@@ -88,6 +88,12 @@ export interface TestOptions {
    * for strict pre-3.1 agents.
    */
   versionEnvelope?: VersionEnvelopeMode;
+  /**
+   * External schema bundle root used for request/response validation during
+   * storyboard and compliance runs. The root is registered against
+   * `adcpVersion` (or the storyboard/compliance version when omitted).
+   */
+  schemaRoot?: string;
   /** Custom User-Agent string sent with all outbound requests */
   userAgent?: string;
   // Brand reference for product discovery (preferred over brand_manifest)

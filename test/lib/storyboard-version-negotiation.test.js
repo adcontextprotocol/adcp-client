@@ -4,6 +4,28 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+function writeComplianceIndex(complianceDir, version = '3.0.12') {
+  fs.mkdirSync(complianceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(complianceDir, 'index.json'),
+    JSON.stringify({ adcp_version: version, universal: [], protocols: [], specialisms: [] })
+  );
+}
+
+function writeGetProductsRequestSchema(schemaRoot, idVersion, sentinel = 'external') {
+  fs.mkdirSync(path.join(schemaRoot, 'bundled', 'media-buy'), { recursive: true });
+  fs.writeFileSync(
+    path.join(schemaRoot, 'bundled', 'media-buy', 'get-products-request.json'),
+    JSON.stringify({
+      $id: `/schemas/${idVersion}/bundled/media-buy/get-products-request.json`,
+      type: 'object',
+      properties: { sentinel: { const: sentinel } },
+      required: ['sentinel'],
+      additionalProperties: false,
+    })
+  );
+}
+
 describe('storyboard runner AdCP version negotiation', () => {
   test('derives legacy-major-only version envelope for 3.0 storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
@@ -267,33 +289,16 @@ describe('storyboard runner AdCP version negotiation', () => {
 
   test('external compliance dir registers its sibling schema bundle', () => {
     const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
-    const {
-      getValidator,
-      unregisterExternalSchemaRoot,
-      _resetValidationLoader,
-    } = require('../../dist/lib/validation/schema-loader.js');
+    const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
+    const { unregisterExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
     const { resolveAdcpVersion } = require('../../dist/lib/utils/adcp-version-config.js');
 
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-compliance-'));
     const complianceDir = path.join(tempRoot, 'package', 'compliance', 'cache', '3.0.12');
     const schemaRoot = path.join(tempRoot, 'package', 'dist', 'lib', 'schemas-data', '3.0');
     try {
-      fs.mkdirSync(complianceDir, { recursive: true });
-      fs.mkdirSync(path.join(schemaRoot, 'bundled', 'media-buy'), { recursive: true });
-      fs.writeFileSync(
-        path.join(complianceDir, 'index.json'),
-        JSON.stringify({ adcp_version: '3.0.12', universal: [], protocols: [], specialisms: [] })
-      );
-      fs.writeFileSync(
-        path.join(schemaRoot, 'bundled', 'media-buy', 'get-products-request.json'),
-        JSON.stringify({
-          $id: '/schemas/3.0/bundled/media-buy/get-products-request.json',
-          type: 'object',
-          properties: { sentinel: { const: 'external' } },
-          required: ['sentinel'],
-          additionalProperties: false,
-        })
-      );
+      writeComplianceIndex(complianceDir);
+      writeGetProductsRequestSchema(schemaRoot, '3.0');
 
       loadComplianceIndex({ complianceDir });
 
@@ -302,6 +307,63 @@ describe('storyboard runner AdCP version negotiation', () => {
       assert.ok(validator, 'external 3.0 request validator should compile');
       assert.strictEqual(validator({ sentinel: 'external' }), true);
       assert.strictEqual(validator({ sentinel: 'installed-sdk-default' }), false);
+    } finally {
+      unregisterExternalSchemaRoot('3.0.12');
+      _resetValidationLoader('3.0.12');
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit schemaRoot registers a non-sibling external schema bundle', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+    const { unregisterExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
+    const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-explicit-schema-root-'));
+    const complianceDir = path.join(tempRoot, 'compliance-cache', '3.0.12');
+    const schemaRoot = path.join(tempRoot, 'schema-bundles', '3.0');
+    try {
+      writeComplianceIndex(complianceDir);
+      writeGetProductsRequestSchema(schemaRoot, '3.0', 'explicit');
+
+      loadComplianceIndex({ complianceDir, schemaRoot });
+
+      const validator = getValidator('get_products', 'request', '3.0.12');
+      assert.ok(validator, 'explicit schema root validator should compile');
+      assert.strictEqual(validator({ sentinel: 'explicit' }), true);
+      assert.strictEqual(validator({ sentinel: 'external' }), false);
+    } finally {
+      unregisterExternalSchemaRoot('3.0.12');
+      _resetValidationLoader('3.0.12');
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('explicit schemaRoot fails fast when missing or version-mismatched', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+    const { unregisterExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
+    const { _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-bad-schema-root-'));
+    const complianceDir = path.join(tempRoot, 'compliance-cache', '3.0.12');
+    const wrongSchemaRoot = path.join(tempRoot, 'schema-bundles', '3.1');
+    try {
+      writeComplianceIndex(complianceDir);
+
+      assert.throws(
+        () => loadComplianceIndex({ complianceDir, schemaRoot: path.join(tempRoot, 'missing') }),
+        /External AdCP schema root for version "3\.0\.12" not found or empty/
+      );
+      assert.throws(
+        () => loadComplianceIndex({ complianceDir, schemaRoot: complianceDir }),
+        /External AdCP schema root for version "3\.0\.12" not found or empty/
+      );
+
+      writeGetProductsRequestSchema(wrongSchemaRoot, '3.1.0-beta.5');
+      assert.throws(
+        () => loadComplianceIndex({ complianceDir, schemaRoot: wrongSchemaRoot }),
+        /does not match the requested version.*3\.1\.0-beta\.5/
+      );
     } finally {
       unregisterExternalSchemaRoot('3.0.12');
       _resetValidationLoader('3.0.12');

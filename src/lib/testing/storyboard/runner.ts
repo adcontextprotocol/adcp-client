@@ -38,7 +38,11 @@ import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSucc
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import { resolveBundleKey, schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import {
+  registerExternalSchemaRoot,
+  resolveBundleKey,
+  schemaAllowsTopLevelField,
+} from '../../validation/schema-loader';
 import { parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
@@ -163,6 +167,17 @@ export function applyAdcpVersionRunOptions(
     return options;
   }
   return { ...options, adcpVersion, versionEnvelope };
+}
+
+function registerRunSchemaRoot(options: StoryboardRunOptions): void {
+  if (!options.schemaRoot) return;
+  const adcpVersion = options.adcpVersion ?? options._serverAdcpVersion;
+  if (!adcpVersion) {
+    throw new Error(
+      'schemaRoot requires an AdCP version. Pass adcpVersion, or run a storyboard/compliance bundle with adcp_version set.'
+    );
+  }
+  registerExternalSchemaRoot(adcpVersion, options.schemaRoot);
 }
 
 function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
@@ -931,6 +946,7 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   options = applyStoryboardVersionOptions(storyboard, options);
+  registerRunSchemaRoot(options);
   validateTestKit(options.test_kit);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
@@ -3076,6 +3092,7 @@ export async function runStoryboardStep(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
   options = applyStoryboardVersionOptions(storyboard, options);
+  registerRunSchemaRoot(options);
   validateTestKit(options.test_kit);
   const clientResolution = getOrCreateClientResolution(agentUrl, options);
   const client = clientResolution.client;

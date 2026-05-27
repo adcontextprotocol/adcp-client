@@ -320,8 +320,52 @@ const externalSchemaRoots: Map<string, string> = new Map();
 function hasSchemaRootShape(root: string): boolean {
   if (!existsSync(root)) return false;
   const bundledRoot = path.join(root, 'bundled');
-  if (existsSync(bundledRoot) && walkJsonFiles(bundledRoot).length > 0) return true;
-  return walkJsonFiles(root).length > 0;
+  const files = existsSync(bundledRoot) ? walkJsonFiles(bundledRoot) : walkJsonFiles(root);
+  return files.some(file => {
+    try {
+      const schema = loadJson(file);
+      return typeof schema.$id === 'string' || typeof schema.$schema === 'string';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function schemaIdVersionHint(schemaId: string): string | undefined {
+  return schemaId.match(/\/schemas\/([^/]+)\//)?.[1];
+}
+
+function collectSchemaRootVersionKeys(root: string): Set<string> {
+  const keys = new Set<string>();
+  for (const file of walkJsonFiles(root)) {
+    let schema: LoadedSchema;
+    try {
+      schema = loadJson(file);
+    } catch {
+      continue;
+    }
+    if (typeof schema.$id !== 'string') continue;
+    const hint = schemaIdVersionHint(schema.$id);
+    if (!hint) continue;
+    try {
+      keys.add(resolveBundleKey(hint));
+    } catch {
+      // Ignore non-AdCP schema ids; root shape validation already guarantees
+      // the directory contains JSON schemas, and the loader will surface any
+      // actual compile failure later with the file context.
+    }
+  }
+  return keys;
+}
+
+function assertSchemaRootMatchesVersion(version: string, root: string): void {
+  const expectedKey = resolveBundleKey(version);
+  const keys = collectSchemaRootVersionKeys(root);
+  if (keys.size === 0 || keys.has(expectedKey)) return;
+  throw new Error(
+    `External AdCP schema root for version "${version}" at ${root} does not match the requested version. ` +
+      `Expected schema ids for bundle "${expectedKey}", found ${Array.from(keys).sort().join(', ')}.`
+  );
 }
 
 /**
@@ -337,6 +381,7 @@ export function registerExternalSchemaRoot(version: string, root: string): void 
   if (!hasSchemaRootShape(root)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
+  assertSchemaRootMatchesVersion(version, root);
   const previous = externalSchemaRoots.get(key);
   externalSchemaRoots.set(key, root);
   if (previous !== root) states.delete(key);

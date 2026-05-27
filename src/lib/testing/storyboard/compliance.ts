@@ -149,6 +149,12 @@ export interface ResolveOptions {
   version?: string;
   /** Override the compliance cache root (tests use this to point at fixtures). */
   complianceDir?: string;
+  /**
+   * Explicit schema bundle root to use with the selected compliance cache.
+   * The path must point at the schema-data directory for the cache version,
+   * for example `.../dist/lib/schemas-data/3.0`.
+   */
+  schemaRoot?: string;
 }
 
 export interface ResolvedBundle {
@@ -212,13 +218,17 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
     throw new Error(complianceMissingMessage('Compliance cache', dir));
   }
   const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
-  registerExternalComplianceSchemaRoot(options.complianceDir, index.adcp_version);
+  registerExternalComplianceSchemaRoot(options, index.adcp_version);
   return index;
 }
 
-function registerExternalComplianceSchemaRoot(complianceDir: string | undefined, adcpVersion: string): void {
-  if (!complianceDir) return;
-  const root = findExternalSchemaRoot(complianceDir, adcpVersion);
+function registerExternalComplianceSchemaRoot(options: ResolveOptions, adcpVersion: string): void {
+  if (options.schemaRoot) {
+    registerExternalSchemaRoot(adcpVersion, options.schemaRoot);
+    return;
+  }
+  if (!options.complianceDir) return;
+  const root = findExternalSchemaRoot(options.complianceDir, adcpVersion);
   if (root) registerExternalSchemaRoot(adcpVersion, root);
 }
 

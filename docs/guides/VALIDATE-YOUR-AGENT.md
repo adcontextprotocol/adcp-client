@@ -92,6 +92,21 @@ npx @adcp/sdk@adcp-3.1 storyboard run http://localhost:3001/mcp --json > report.
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
 - `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
 
+**Hosted compliance bundles.** Programmatic runners that mount compliance
+assets outside the installed SDK can pair the storyboard cache and schema cache
+explicitly:
+
+```ts
+import { comply } from '@adcp/sdk/testing';
+
+await comply(agentUrl, {
+  version: '3.0.12',
+  complianceDir: '/app/dist/compliance/3.0.12',
+  schemaRoot: '/app/dist/schemas/3.0.12',
+  adcpVersion: '3.0.12',
+});
+```
+
 **OAuth-protected agents.** Storyboard runs reuse tokens saved under an alias. Two supported flows:
 
 ```bash
