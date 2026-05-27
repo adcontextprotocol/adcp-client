@@ -41,6 +41,8 @@ export {
   InvalidRequestError,
   InvalidStateError,
   BackwardsTimeRangeError,
+  AuthMissingError,
+  AuthInvalidError,
   AuthRequiredError,
   PermissionDeniedError,
   RateLimitedError,

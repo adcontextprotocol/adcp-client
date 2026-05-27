@@ -29,7 +29,7 @@ If your code dispatches in response to an MCP request, you want
 ## Five methods
 
 ```ts
-import { defineOperationalPlatform, type OperationalContext, AdcpError } from '@adcp/sdk/server';
+import { AuthMissingError, defineOperationalPlatform, type OperationalContext, AdcpError } from '@adcp/sdk/server';
 
 interface SnapOpCtx extends OperationalContext {
   advertiserId: string;
@@ -53,7 +53,7 @@ export const snapOperational = defineOperationalPlatform<SnapOpCtx>({
     // from it because the same method is invoked by the storefront
     // fan-out path with a buyer-controlled args bag.
     if (!sessionToken && requireAuth) {
-      throw new AdcpError('AUTH_REQUIRED', { message: 'No Snap token available' });
+      throw new AuthMissingError({ message: 'No Snap token available' });
     }
     return {
       accessToken: sessionToken,

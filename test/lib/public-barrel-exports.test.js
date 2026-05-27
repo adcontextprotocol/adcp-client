@@ -26,6 +26,11 @@ import type {
   ListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
+import {
+  AuthInvalidError,
+  AuthMissingError,
+  AuthRequiredError,
+} from '@adcp/sdk/server';
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
   RequireCacheScopeWhenProducts,
@@ -52,6 +57,8 @@ const serverSyncError: ServerSyncCreativesPayload = syncError;
 const acceptsListPayload = (_payload: ListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
+const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+
 const scoped = ensureGetProductsCacheScope({ products: [], cache_scope: 'legacy' as string });
 const scope: 'public' | 'account' = scoped.cache_scope;
 
@@ -73,6 +80,7 @@ const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache
 void typedNative;
 void builtKind;
 void serverSyncError;
+void authErrors;
 void scope;
 void required;
 void generatedScope;

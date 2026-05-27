@@ -214,29 +214,6 @@ export class BackwardsTimeRangeError extends AdcpError {
 // ---------------------------------------------------------------------------
 
 /**
- * 3.0.x-era authentication error that conflates missing credentials with
- * rejected credentials. AdCP 3.1 splits this into {@link AuthMissingError}
- * (correctable; no `Authorization` header presented) and
- * {@link AuthInvalidError} (terminal; credentials presented but rejected).
- *
- * Sellers MUST migrate to the split codes; the SDK still accepts and
- * routes `AUTH_REQUIRED` for backward compatibility with pre-3.1 callers.
- *
- * @deprecated Prefer `AuthMissingError` (missing credentials) or
- *   `AuthInvalidError` (rejected credentials). Retained for sellers still
- *   emitting the unsplit code during the 3.x deprecation window.
- */
-export class AuthRequiredError extends AdcpError {
-  constructor(opts: CommonOpts = {}) {
-    super('AUTH_REQUIRED', {
-      message: opts.message ?? 'Authentication required.',
-      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
-      ...(opts.details !== undefined && { details: opts.details }),
-    });
-  }
-}
-
-/**
  * No credentials were presented. Sellers MUST return this when no
  * `Authorization` header was included on the request. Recovery:
  * correctable (provide credentials via the auth header and retry).
@@ -254,11 +231,36 @@ export class AuthMissingError extends AdcpError {
 }
 
 /**
+ * 3.0.x-era authentication error that conflates missing credentials with
+ * rejected credentials. AdCP 3.1 splits this into {@link AuthMissingError}
+ * (correctable; no `Authorization` header presented) and
+ * {@link AuthInvalidError} (terminal; credentials presented but rejected).
+ *
+ * This deprecated convenience remains wire-compatible and still emits
+ * `AUTH_REQUIRED`. New seller code should throw {@link AuthMissingError}
+ * or {@link AuthInvalidError} explicitly; buyer code should continue to
+ * handle wire `AUTH_REQUIRED` for older sellers and SDK compatibility paths.
+ *
+ * @deprecated Prefer `AuthMissingError` (missing credentials) or
+ *   `AuthInvalidError` (rejected credentials). Retained as a source-compatible
+ *   alias for older adopter code during the 3.x deprecation window.
+ */
+export class AuthRequiredError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AUTH_REQUIRED', {
+      message: opts.message ?? 'Authentication required.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
  * Credentials were presented but rejected — revoked, malformed signature,
  * or a key no longer in the seller's keystore. Recovery: terminal — do NOT
  * auto-retry. Auto-retry creates an SSO retry-storm indistinguishable from
- * brute-force probing. Agents with a valid OAuth 2.1 refresh grant MAY
- * silently refresh and retry once.
+ * brute-force probing. The decisioning runtime treats this as terminal even
+ * when an account store has a refresh hook.
  *
  * **Credential-leak guard.** `opts.message` and `opts.details` cross to
  * the buyer verbatim on the wire envelope. Do NOT place rejected
