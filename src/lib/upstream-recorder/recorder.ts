@@ -833,15 +833,75 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
 }
 
 function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
-  return body.replace(/("(?:\\.|[^"\\])*")(\s*:\s*)("(?:\\.|[^"\\])*"|[^,\s}\]]+)/g, (match, keyLiteral, sep) => {
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    if (body[i] !== '"') {
+      out += body[i++];
+      continue;
+    }
+
+    const keyToken = readJsonStringToken(body, i);
+    if (!keyToken) {
+      out += body.slice(i);
+      break;
+    }
+
+    let colon = keyToken.end;
+    while (colon < body.length && isJsonWhitespace(body[colon])) colon++;
+    if (body[colon] !== ':') {
+      out += body.slice(i, keyToken.end);
+      i = keyToken.end;
+      continue;
+    }
+
     let key: unknown;
     try {
-      key = JSON.parse(keyLiteral);
+      key = JSON.parse(keyToken.literal);
     } catch {
-      return match;
+      out += body.slice(i, keyToken.end);
+      i = keyToken.end;
+      continue;
     }
-    return typeof key === 'string' && pattern.test(key) ? `${keyLiteral}${sep}"[redacted]"` : match;
-  });
+
+    const valueStart = colon + 1;
+    let value = valueStart;
+    while (value < body.length && isJsonWhitespace(body[value])) value++;
+    out += body.slice(i, value);
+    if (typeof key !== 'string' || !pattern.test(key)) {
+      i = value;
+      continue;
+    }
+
+    out += '"[redacted]"';
+    i = skipJsonLikeValue(body, value);
+  }
+  return out;
+}
+
+function readJsonStringToken(input: string, start: number): { literal: string; end: number } | null {
+  for (let i = start + 1; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"') return { literal: input.slice(start, i + 1), end: i + 1 };
+    if (ch === '\\') i++;
+  }
+  return null;
+}
+
+function skipJsonLikeValue(input: string, start: number): number {
+  if (input[start] === '"') {
+    const token = readJsonStringToken(input, start);
+    return token?.end ?? input.length;
+  }
+  let i = start;
+  while (i < input.length && input[i] !== ',' && input[i] !== '}' && input[i] !== ']' && !isJsonWhitespace(input[i])) {
+    i++;
+  }
+  return i;
+}
+
+function isJsonWhitespace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t';
 }
 
 function safeStringify(value: unknown): string | undefined {
