@@ -10,9 +10,9 @@
  * plan_ids, media_buy_ids) that the seller must already hold before the
  * buyer-side flow runs. This module fires the `seed_*` scenarios derived
  * from the storyboard's top-level `fixtures:` block before the first real
- * phase, so the seller's catalog is populated ahead of any `create_media_buy`
- * / `sync_creatives` / etc. call that would otherwise fail with
- * `PRODUCT_NOT_FOUND`.
+ * phase, so the seller's buyer-agent ledger and catalog are populated ahead
+ * of any `sync_accounts` / `create_media_buy` / `sync_creatives` / etc. call
+ * that would otherwise fail or route through the wrong commercial-state gate.
  *
  * Failures here surface as a dedicated synthetic phase (`__controller_seeding__`)
  * so an implementor reading the report can distinguish "setup broke" from
@@ -39,11 +39,12 @@ export const CONTROLLER_SEEDING_PHASE_ID = '__controller_seeding__';
  * constant from `src/lib/server/test-controller.ts` is authoritative, but
  * importing it here would cross the testing ⇄ server module boundary. */
 type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
+type BuyerAgentSeedScenario = 'seed_buyer_agent';
 
 interface SeedCall {
   step_id: string;
   title: string;
-  scenario: SeedScenario;
+  scenario: SeedScenario | BuyerAgentSeedScenario;
   params: Record<string, unknown>;
   /** Authoring error (e.g. missing required id). When set, the call fails at
    * build time — no controller request is issued. */
@@ -68,6 +69,27 @@ interface SeedCall {
 export function buildSeedCalls(fixtures: StoryboardFixtures | undefined): SeedCall[] {
   if (!fixtures) return [];
   const calls: SeedCall[] = [];
+
+  (fixtures.buyer_agents ?? []).forEach((entry, i) => {
+    const { agent_url, ...params } = entry;
+    const label = agent_url ?? `#${i}`;
+    if (typeof agent_url !== 'string' || agent_url.length === 0) {
+      calls.push({
+        step_id: `seed_buyer_agent.${label}`,
+        title: `Seed buyer agent ${label}`,
+        scenario: 'seed_buyer_agent',
+        params,
+        authoring_error: `fixtures.buyer_agents[${i}] requires a non-empty string 'agent_url'`,
+      });
+      return;
+    }
+    calls.push({
+      step_id: `seed_buyer_agent.${agent_url}`,
+      title: `Seed buyer agent ${agent_url}`,
+      scenario: 'seed_buyer_agent',
+      params: { agent_url, ...params },
+    });
+  });
 
   (fixtures.products ?? []).forEach((entry, i) => {
     const { product_id, ...fixture } = entry;
@@ -292,7 +314,7 @@ export async function runControllerSeeding(
 }
 
 function formatControllerError(
-  scenario: SeedScenario,
+  scenario: SeedScenario | BuyerAgentSeedScenario,
   raw: { success: boolean; error?: string },
   data: { success?: boolean; error?: string; error_detail?: string } | undefined
 ): string {

@@ -71,6 +71,7 @@ import type {
   CreativeStatus,
   MediaBuyStatus,
 } from '../types/core.generated';
+import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../server/decisioning/buyer-agent';
 import type { McpToolResponse } from '../server/responses';
 
 // ────────────────────────────────────────────────────────────
@@ -116,6 +117,18 @@ export interface SeedMediaBuyParams {
 export interface SeedCreativeFormatParams {
   format_id: string;
   fixture: Record<string, unknown>;
+}
+
+export interface SeedBuyerAgentParams {
+  agent_url: string;
+  display_name?: string;
+  status?: BuyerAgentStatus;
+  billing_capabilities?: BuyerAgentBillingMode[];
+  default_account_terms?: BuyerAgent['default_account_terms'];
+  allowed_brands?: string[];
+  aliases?: string[];
+  sandbox_only?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ForceCreativeStatusParams {
@@ -296,6 +309,7 @@ export interface ComplyControllerConfig {
     plan?: SeedAdapter<SeedPlanParams>;
     media_buy?: SeedAdapter<SeedMediaBuyParams>;
     creative_format?: SeedAdapter<SeedCreativeFormatParams>;
+    buyer_agent?: SeedAdapter<SeedBuyerAgentParams>;
   };
 
   /** Force adapters (state transitions and directives). */
@@ -459,6 +473,13 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (seed?.creative_format) {
     store.seedCreativeFormat = async (formatId, fixture) => {
       await seed.creative_format!({ format_id: formatId, fixture: fixture ?? {} }, ctx);
+    };
+  }
+  if (seed?.buyer_agent) {
+    store.seedBuyerAgent = async (agentUrl, fixture) => {
+      const { agent_url: _ignored, ...safeFixture } = fixture ?? {};
+      void _ignored;
+      await seed.buyer_agent!({ ...safeFixture, agent_url: agentUrl }, ctx);
     };
   }
 

@@ -25,6 +25,7 @@ const { spawn, spawnSync } = require('node:child_process');
 // Public sub-export (per #1287/#1294) — adopters use this exact import path
 // in their own integration tests.
 const { bootMockServer } = require('@adcp/sdk/mock-server');
+const { createMCPClient } = require('../../dist/lib/protocols');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const EXAMPLE_FILE = path.join(REPO_ROOT, 'examples', 'hello_signals_adapter_marketplace.ts');
@@ -191,6 +192,125 @@ describe('examples/hello_signals_adapter_marketplace', () => {
     assert.equal(res.status, 401, 'unknown api-key MUST be rejected at the auth layer');
   });
 
+  it('lets controller seeding change the resolved buyer-agent commercial state', async () => {
+    const seed = await callMcpTool('comply_test_controller', {
+      scenario: 'seed_buyer_agent',
+      account: {
+        brand: { domain: 'novamotors.example' },
+        operator: 'pinnacle-agency.example',
+        sandbox: true,
+      },
+      params: {
+        agent_url: 'https://addie.example.com',
+        status: 'suspended',
+        billing_capabilities: ['operator'],
+        sandbox_only: true,
+      },
+    });
+    assert.equal(seed?.structuredContent?.success, true, JSON.stringify(seed));
+
+    const blocked = await callMcpTool('get_signals', {
+      account: {
+        brand: { domain: 'novamotors.example' },
+        operator: 'pinnacle-agency.example',
+        sandbox: true,
+      },
+      signal_spec: 'In-market EV buyers',
+    });
+    assert.equal(blocked?.isError, true, JSON.stringify(blocked));
+    assert.equal(blocked?.structuredContent?.adcp_error?.code, 'AGENT_SUSPENDED', JSON.stringify(blocked));
+
+    const isolated = await callMcpTool('get_signals', {
+      account: {
+        brand: { domain: 'acmeoutdoor.example' },
+        operator: 'pinnacle-agency.example',
+        sandbox: true,
+      },
+      signal_spec: 'In-market EV buyers',
+    });
+    assert.notEqual(isolated?.isError, true, JSON.stringify(isolated));
+  });
+
+  it('threads seeded buyer-agent status into the framework registry gate', async () => {
+    const sessionId = 'hello-signals-framework-status-gate';
+    const scopedAccount = {
+      brand: { domain: 'novamotors.example' },
+      operator: 'pinnacle-agency.example',
+      sandbox: true,
+    };
+    const seed = await callMcpTool('comply_test_controller', {
+      scenario: 'seed_buyer_agent',
+      context: { session_id: sessionId, account: scopedAccount },
+      params: {
+        agent_url: 'https://addie.example.com',
+        status: 'suspended',
+        billing_capabilities: ['operator'],
+        sandbox_only: true,
+      },
+    });
+    assert.equal(seed?.structuredContent?.success, true, JSON.stringify(seed));
+
+    const blocked = await callMcpTool('get_adcp_capabilities', {
+      context: { session_id: sessionId, account: scopedAccount },
+    });
+    assert.equal(blocked?.isError, true, JSON.stringify(blocked));
+    assert.equal(blocked?.structuredContent?.adcp_error?.code, 'AGENT_SUSPENDED', JSON.stringify(blocked));
+  });
+
+  it('keeps mixed session plus account buyer-agent seeds isolated', async () => {
+    const sessionId = 'hello-signals-mixed-scope';
+    const suspendedAccount = {
+      brand: { domain: 'novamotors.example' },
+      operator: 'pinnacle-agency.example',
+      sandbox: true,
+    };
+    const activeAccount = {
+      brand: { domain: 'acmeoutdoor.example' },
+      operator: 'pinnacle-agency.example',
+      sandbox: true,
+    };
+
+    const suspendedSeed = await callMcpTool('comply_test_controller', {
+      scenario: 'seed_buyer_agent',
+      account: suspendedAccount,
+      context: { session_id: sessionId },
+      params: {
+        agent_url: 'https://addie.example.com',
+        status: 'suspended',
+        billing_capabilities: ['operator'],
+        sandbox_only: true,
+      },
+    });
+    const activeSeed = await callMcpTool('comply_test_controller', {
+      scenario: 'seed_buyer_agent',
+      account: activeAccount,
+      context: { session_id: sessionId },
+      params: {
+        agent_url: 'https://addie.example.com',
+        status: 'active',
+        billing_capabilities: ['operator'],
+        sandbox_only: true,
+      },
+    });
+    assert.equal(suspendedSeed?.structuredContent?.success, true, JSON.stringify(suspendedSeed));
+    assert.equal(activeSeed?.structuredContent?.success, true, JSON.stringify(activeSeed));
+
+    const suspended = await callMcpTool('get_signals', {
+      account: suspendedAccount,
+      context: { session_id: sessionId },
+      signal_spec: 'In-market EV buyers',
+    });
+    assert.equal(suspended?.isError, true, JSON.stringify(suspended));
+    assert.equal(suspended?.structuredContent?.adcp_error?.code, 'AGENT_SUSPENDED', JSON.stringify(suspended));
+
+    const active = await callMcpTool('get_signals', {
+      account: activeAccount,
+      context: { session_id: sessionId },
+      signal_spec: 'In-market EV buyers',
+    });
+    assert.notEqual(active?.isError, true, JSON.stringify(active));
+  });
+
   // Note: the sandbox_only ↔ accounts.sandbox load-bearing pair is
   // covered behaviorally by Gate 2 (storyboard) — if either side of the
   // pair regresses, every storyboard step 403s and Gate 2 fails. The
@@ -201,6 +321,10 @@ describe('examples/hello_signals_adapter_marketplace', () => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+async function callMcpTool(name, args) {
+  return createMCPClient(`http://127.0.0.1:${AGENT_PORT}/mcp`, ADCP_AUTH_TOKEN).callTool(name, args);
+}
 
 function runGrader(agentUrl, storyboardId) {
   return new Promise((resolveFn, reject) => {

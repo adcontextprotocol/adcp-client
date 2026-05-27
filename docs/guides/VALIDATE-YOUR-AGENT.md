@@ -230,11 +230,26 @@ The `deterministic_testing` universal storyboard — plus rejection-branch and d
 **Use `createComplyController`** — adapter-based scaffold that handles dispatch, param validation, typed error envelopes, and re-seed idempotency for you:
 
 ```typescript
-import { createComplyController } from '@adcp/sdk/testing';
+import { createComplyController, TestControllerError } from '@adcp/sdk/testing';
 
 const controller = createComplyController({
   sandboxGate: input => input.auth?.sandbox === true,   // fail closed
   seed: {
+    buyer_agent: (params, ctx) => {
+      const seededAccount = ctx.input.account ?? ctx.input.context?.account;
+      const scope = [
+        ctx.input.context?.session_id ? `session:${ctx.input.context.session_id}` : undefined,
+        seededAccount ? `account:${JSON.stringify(seededAccount)}` : undefined,
+      ].filter(Boolean).join('|');
+      if (!scope) throw new TestControllerError('INVALID_PARAMS', 'seed_buyer_agent requires session_id or account scope');
+      buyerAgentOverlay.upsert(scope, params.agent_url, {
+        agent_url: params.agent_url,
+        display_name: params.display_name ?? 'Compliance test buyer agent',
+        status: params.status ?? 'active',
+        billing_capabilities: new Set(params.billing_capabilities ?? ['operator']),
+        sandbox_only: params.sandbox_only ?? true,
+      });
+    },
     product:  (params) => productRepo.upsert(params.product_id, params.fixture),
     creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
     media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
@@ -252,6 +267,40 @@ controller.register(server);
 ```
 
 Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` when the state machine disallows a transition; the helper emits the typed envelope. `controller.register(server)` auto-emits `capabilities.compliance_testing.scenarios` per AdCP 3.0 — don't declare `compliance_testing` in `supported_protocols`.
+
+When a storyboard declares `fixtures.buyer_agents[]`, the runner sends `seed_buyer_agent` before product, pricing, creative, plan, or media-buy seeds. Use it to populate a session- or account-scoped `BuyerAgentRegistry` overlay so `accounts.resolve` / `sync_accounts` gates see the intended per-agent commercial state without inventing a test bearer prefix. Do not store these overlays process-wide by `agent_url` alone; the same compliance runner can seed different buyer-agent states for different sessions or accounts. The shipped AdCP 3.1 billing-gate storyboard still uses a static test-kit precondition until the upstream storyboard switches to this seed; supporting the seed now makes your agent ready for that switch.
+
+```yaml
+prerequisites:
+  controller_seeding: true
+
+fixtures:
+  buyer_agents:
+    - agent_url: "https://addie.example.com"
+      display_name: "Addie compliance runner"
+      status: active
+      billing_capabilities: ["operator"]
+      sandbox_only: true
+```
+
+The raw controller call has the same lifted shape: `agent_url` is a direct param and the commercial fields sit beside it, not under `fixture`.
+
+```json
+{
+  "scenario": "seed_buyer_agent",
+  "context": {
+    "session_id": "storyboard-run-123"
+  },
+  "params": {
+    "agent_url": "https://addie.example.com",
+    "status": "active",
+    "billing_capabilities": ["operator"],
+    "sandbox_only": true
+  }
+}
+```
+
+If your overlay is account-scoped instead of session-scoped, put the account reference on either top-level `account` or `context.account`; the SDK includes both in seed idempotency scoping.
 
 For domain state that carries internal structure (packages, revision, history) read by production tools, use `registerTestController(server, store)` — flat store surface, session-scoped factory. See `examples/seller-test-controller.ts`. Pick by state shape, not by helper tier — both sit on the same primitives and both auto-emit the capability block.
 

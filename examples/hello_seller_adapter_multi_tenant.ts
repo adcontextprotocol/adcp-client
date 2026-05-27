@@ -486,12 +486,12 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         operator,
         ...(r?.brand?.domain && { brand: { domain: r.brand.domain } }),
         ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
-        // SWAP: read sandbox flag from your backing store. Defaults to false
-        // — production adopters route reads/writes to a sandbox backend on
-        // this flag, so an unset wire field MUST NOT silently land in
-        // sandbox. Buyers who want sandbox set `account.sandbox = true`
-        // explicitly.
-        sandbox: r?.sandbox ?? false,
+        // SWAP: read sandbox flag from your backing store. Account-routed
+        // calls default false unless the buyer explicitly sets
+        // `account.sandbox = true`. No-account demo calls synthesize an
+        // auth-derived account for local sandbox buyer credentials, so keep
+        // that branch sandboxed.
+        sandbox: r ? (r.sandbox ?? false) : true,
       };
     },
     upsertRow: (tenant, ref, _ctx) => {
