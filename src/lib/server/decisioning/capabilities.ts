@@ -112,6 +112,14 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Omit when the platform doesn't track conversions.
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.conversion_tracking`.
+   *
+   * When this block is present and `supported_targets` is omitted, the
+   * framework projects `supported_targets: ['cost_per']`. `cost_per` is the
+   * conservative event-goal target every conversion-tracking seller can
+   * compute; declare `per_ad_spend` / `maximize_value` only when your event
+   * ingestion pipeline captures value fields. Explicit arrays are honored
+   * unchanged. To preserve the raw AdCP omission semantics for this field,
+   * set `supported_targets: undefined` explicitly on the block.
    */
   conversion_tracking?: NonNullable<_MediaBuyCapabilities['conversion_tracking']>;
 

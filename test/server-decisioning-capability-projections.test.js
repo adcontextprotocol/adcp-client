@@ -91,6 +91,54 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(ct.supported_action_sources, ['website', 'app']);
   });
 
+  it('conversion_tracking defaults supported_targets to cost_per when omitted', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        conversion_tracking: {
+          multi_source_event_dedup: true,
+          supported_action_sources: ['website'],
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const ct = result.structuredContent?.media_buy?.conversion_tracking;
+    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.deepStrictEqual(ct.supported_targets, ['cost_per']);
+  });
+
+  it('conversion_tracking preserves explicit supported_targets overrides', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        conversion_tracking: {
+          multi_source_event_dedup: true,
+          supported_targets: ['cost_per', 'per_ad_spend'],
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const ct = result.structuredContent?.media_buy?.conversion_tracking;
+    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.deepStrictEqual(ct.supported_targets, ['cost_per', 'per_ad_spend']);
+  });
+
+  it('conversion_tracking preserves explicit supported_targets: undefined as omission opt-out', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        conversion_tracking: {
+          multi_source_event_dedup: true,
+          supported_targets: undefined,
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const ct = result.structuredContent?.media_buy?.conversion_tracking;
+    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.strictEqual(ct.supported_targets, undefined);
+  });
+
   it('content_standards projects onto get_adcp_capabilities.media_buy', async () => {
     const server = createAdcpServerFromPlatform(
       basePlatform({

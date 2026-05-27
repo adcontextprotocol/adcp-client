@@ -979,7 +979,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // (adcp#4670) are AdCP 3.1 additions. They have no corresponding
   // `features.*` boolean — buyers gate on presence of the block itself.
   const at = platform.capabilities.audience_targeting;
-  const ct = platform.capabilities.conversion_tracking;
+  const rawConversionTracking = platform.capabilities.conversion_tracking;
+  const conversionTrackingDeclaresTargets =
+    rawConversionTracking != null && Object.prototype.hasOwnProperty.call(rawConversionTracking, 'supported_targets');
+  const ct =
+    rawConversionTracking != null && !conversionTrackingDeclaresTargets
+      ? { ...rawConversionTracking, supported_targets: ['cost_per'] as Array<'cost_per'> }
+      : rawConversionTracking;
   const cs = platform.capabilities.content_standards;
   const som = platform.capabilities.supported_optimization_metrics;
   const fc = platform.capabilities.frequency_capping;
