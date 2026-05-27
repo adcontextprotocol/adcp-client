@@ -369,11 +369,16 @@ function postProcessForPassthrough(content: string): string {
 }
 
 /**
- * Replace `z.record(...).and(CONTENT)` with just CONTENT.
+ * Replace `z.record(...).and(CONTENT)` with an object-shaped equivalent.
  *
  * TypeScript types like `{ [k: string]: unknown } & { typed_fields }` produce
  * z.record().and(z.object()) in Zod. Since z.object().passthrough() already
  * preserves unknown keys, the z.record() wrapper is redundant.
+ *
+ * Typed string records like `Record<string, boolean> & { typed_fields }` are not
+ * redundant. Rewrite those to `z.object(...).catchall(z.boolean())` so JavaScript
+ * callers keep ZodObject helpers without losing the additional-property value
+ * constraint.
  *
  * Uses balanced-parenthesis scanning to handle nested schemas correctly.
  */
@@ -405,15 +410,19 @@ function unwrapRecordIntersections(content: string): string {
         else if (content[i] === ')') depth--;
         i++;
       }
-      const recordBody = content.substring(recordBodyStart, i - 1);
-
-      // Only unwrap z.record(z.string(), z.unknown()) — the additionalProperties pattern.
-      // Keep other z.record() types (e.g. z.record(z.string(), z.number())) as-is.
-      const isRedundantRecord = recordBody.trim() === 'z.string(), z.unknown()';
+      const recordEnd = i;
+      const recordBody = content.substring(recordBodyStart, recordEnd - 1);
+      const recordArgs = splitTopLevelCommaList(recordBody);
+      const keySchema = recordArgs[0] ? normalizeSchemaExpression(recordArgs[0]) : undefined;
+      const valueSchema = recordArgs[1]?.trim();
+      const normalizedValueSchema = valueSchema ? normalizeSchemaExpression(valueSchema) : undefined;
+      const isStringKeyRecord = recordArgs.length === 2 && keySchema === 'z.string()';
+      const isRedundantRecord = isStringKeyRecord && normalizedValueSchema === 'z.unknown()';
+      const isTypedStringRecord = isStringKeyRecord && normalizedValueSchema !== 'z.unknown()';
 
       // Check if followed by .and(
-      if (isRedundantRecord && content.startsWith('.and(', i)) {
-        i += '.and('.length;
+      if ((isRedundantRecord || isTypedStringRecord) && content.startsWith('.and(', recordEnd)) {
+        i = recordEnd + '.and('.length;
 
         // Scan balanced parens to extract .and() content
         depth = 1;
@@ -449,11 +458,18 @@ function unwrapRecordIntersections(content: string): string {
           i++;
         }
 
-        // Replace z.record(...).and(CONTENT) with just CONTENT
-        result += andContent;
+        if (isRedundantRecord) {
+          // Replace z.record(z.string(), z.unknown()).and(CONTENT) with just CONTENT.
+          result += andContent;
+        } else if (andContent.trimStart().startsWith('z.object(')) {
+          // Preserve typed additional-property validation in object-shaped form.
+          result += `${andContent}.catchall(${valueSchema})`;
+        } else {
+          result += content.substring(recordStart, i);
+        }
       } else {
         // z.record(...) not followed by .and( — keep as-is
-        result += content.substring(recordStart, i);
+        result += content.substring(recordStart, recordEnd);
       }
     } else {
       result += content[i];
@@ -563,30 +579,68 @@ function collectRedundantRecordSchemaNames(content: string): Set<string> {
   return names;
 }
 
-function isRedundantRecordMember(member: string, recordSchemaNames: Set<string>): boolean {
+function isRedundantRecordMember(
+  member: string,
+  recordSchemaNames: Set<string>,
+  unionSchemaNames: Set<string> = new Set()
+): boolean {
   const trimmed = member.trim();
-  return trimmed === 'z.record(z.string(), z.unknown())' || recordSchemaNames.has(trimmed);
+  if (
+    trimmed === 'z.record(z.string(), z.unknown())' ||
+    recordSchemaNames.has(trimmed) ||
+    unionSchemaNames.has(trimmed)
+  ) {
+    return true;
+  }
+
+  const unionMembers = unionArmsForExpression(trimmed);
+  return (
+    unionMembers !== undefined &&
+    unionMembers.length > 0 &&
+    unionMembers.every(nestedMember => isRedundantRecordMember(nestedMember, recordSchemaNames, unionSchemaNames))
+  );
 }
 
 function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNames: Set<string>): Set<string> {
   const names = new Set<string>();
-  const unionDeclPattern = /(?:export\s+)?const\s+(\w+)\s*=\s*z\.union\(\[/g;
-  let match: RegExpExecArray | null;
+  const unionMembersByName = new Map<string, string[]>();
 
-  while ((match = unionDeclPattern.exec(content)) !== null) {
-    const name = match[1]!;
-    const unionBodyStart = unionDeclPattern.lastIndex;
-    const unionBody = readBalancedBody(content, unionBodyStart, '[', ']');
-    if (!unionBody || content[unionBody.end] !== ')') continue;
+  for (const { name, expression } of findSchemaExportExpressions(content)) {
+    const members = unionArmsForExpression(expression);
+    if (members) unionMembersByName.set(name, members);
+  }
 
-    const afterUnion = content.slice(unionBody.end + 1).trimStart();
-    if (!afterUnion.startsWith(';')) continue;
+  function isRedundantMember(member: string, visiting: Set<string>): boolean {
+    const trimmed = member.trim();
+    if (isRedundantRecordMember(trimmed, recordSchemaNames, names)) return true;
 
-    const members = splitTopLevelCommaList(unionBody.body);
-    // TODO: one-level only — arms that are themselves z.union(...) are not collected
-    if (members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames))) {
-      names.add(name);
+    const namedMembers = unionMembersByName.get(trimmed);
+    if (namedMembers) {
+      return isRedundantUnion(trimmed, namedMembers, visiting);
     }
+
+    const inlineMembers = unionArmsForExpression(trimmed);
+    return (
+      inlineMembers !== undefined &&
+      inlineMembers.length > 0 &&
+      inlineMembers.every(nestedMember => isRedundantMember(nestedMember, visiting))
+    );
+  }
+
+  function isRedundantUnion(name: string, members: string[], visiting: Set<string>): boolean {
+    if (names.has(name)) return true;
+    if (visiting.has(name)) return false;
+
+    visiting.add(name);
+    const result = members.length > 0 && members.every(member => isRedundantMember(member, visiting));
+    visiting.delete(name);
+
+    if (result) names.add(name);
+    return result;
+  }
+
+  for (const [name, members] of unionMembersByName) {
+    isRedundantUnion(name, members, new Set());
   }
 
   return names;
@@ -605,6 +659,7 @@ function collectRedundantRecordUnionSchemaNames(content: string, recordSchemaNam
 function unwrapRecordUnionIntersections(content: string): string {
   const MARKER = 'z.union([';
   const recordSchemaNames = collectRedundantRecordSchemaNames(content);
+  const unionSchemaNames = collectRedundantRecordUnionSchemaNames(content, recordSchemaNames);
   let result = '';
   let i = 0;
 
@@ -623,7 +678,8 @@ function unwrapRecordUnionIntersections(content: string): string {
       const unionEnd = unionBody.end + 1;
       const members = splitTopLevelCommaList(unionBody.body);
       const isRedundantUnion =
-        members.length > 0 && members.every(member => isRedundantRecordMember(member, recordSchemaNames));
+        members.length > 0 &&
+        members.every(member => isRedundantRecordMember(member, recordSchemaNames, unionSchemaNames));
 
       if (isRedundantUnion && content.startsWith('.and(', unionEnd)) {
         const andBodyStart = unionEnd + '.and('.length;
@@ -992,34 +1048,104 @@ function canSafelyMerge(left: ObjectShape, right: ObjectShape): boolean {
   return true;
 }
 
-function extractSchemaExports(content: string): Map<string, string> {
-  const schemas = new Map<string, string>();
-  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
-  let match: RegExpExecArray | null;
+type SchemaExportExpression = {
+  name: string;
+  expression: string;
+  expressionStart: number;
+  expressionEnd: number;
+};
 
-  while ((match = exportRegex.exec(content))) {
-    const name = match[1];
-    const expressionStart = exportRegex.lastIndex;
+function skipWhitespace(content: string, start: number): number {
+  let i = start;
+  while (i < content.length && /\s/.test(content[i])) i++;
+  return i;
+}
+
+function findSchemaAssignmentStart(content: string, start: number): number | undefined {
+  let i = skipWhitespace(content, start);
+
+  if (content[i] === ':') {
+    i++;
     let depth = 0;
-    let i = expressionStart;
+    let angleDepth = 0;
 
     while (i < content.length) {
       const ch = content[i];
       const literalEnd = skipQuotedOrRegexLiteral(content, i);
       if (literalEnd !== undefined) {
-        i = literalEnd - 1;
-      } else if (ch === '(' || ch === '{' || ch === '[') {
-        depth++;
-      } else if (ch === ')' || ch === '}' || ch === ']') {
-        depth--;
-      } else if (ch === ';' && depth === 0) {
-        schemas.set(name, content.slice(expressionStart, i));
-        break;
+        i = literalEnd;
+        continue;
       }
+
+      if (ch === '(' || ch === '{' || ch === '[') depth++;
+      else if (ch === ')' || ch === '}' || ch === ']') depth--;
+      else if (ch === '<') angleDepth++;
+      else if (ch === '>' && angleDepth > 0) angleDepth--;
+      else if (ch === '=' && content[i + 1] === '>') i++;
+      else if (ch === '=' && depth === 0 && angleDepth === 0) return skipWhitespace(content, i + 1);
+
       i++;
     }
 
-    exportRegex.lastIndex = i;
+    return undefined;
+  }
+
+  if (content[i] !== '=') return undefined;
+  return skipWhitespace(content, i + 1);
+}
+
+function findExpressionEnd(content: string, expressionStart: number): number | undefined {
+  let depth = 0;
+  let i = expressionStart;
+
+  while (i < content.length) {
+    const ch = content[i];
+    const literalEnd = skipQuotedOrRegexLiteral(content, i);
+    if (literalEnd !== undefined) {
+      i = literalEnd - 1;
+    } else if (ch === '(' || ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === ')' || ch === '}' || ch === ']') {
+      depth--;
+    } else if (ch === ';' && depth === 0) {
+      return i;
+    }
+    i++;
+  }
+
+  return undefined;
+}
+
+function findSchemaExportExpressions(content: string): SchemaExportExpression[] {
+  const exports: SchemaExportExpression[] = [];
+  const exportRegex = /export\s+const\s+(\w+Schema)\b/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = exportRegex.exec(content))) {
+    const name = match[1]!;
+    const expressionStart = findSchemaAssignmentStart(content, exportRegex.lastIndex);
+    if (expressionStart === undefined) continue;
+
+    const expressionEnd = findExpressionEnd(content, expressionStart);
+    if (expressionEnd === undefined) continue;
+
+    exports.push({
+      name,
+      expression: content.slice(expressionStart, expressionEnd),
+      expressionStart,
+      expressionEnd,
+    });
+
+    exportRegex.lastIndex = expressionEnd + 1;
+  }
+
+  return exports;
+}
+
+function extractSchemaExports(content: string): Map<string, string> {
+  const schemas = new Map<string, string>();
+  for (const { name, expression } of findSchemaExportExpressions(content)) {
+    schemas.set(name, expression);
   }
 
   return schemas;
@@ -1110,6 +1236,13 @@ function isOpaqueRecordMarkerExpression(
   const trimmed = normalizeSchemaExpression(expression);
   if (trimmed === 'z.record(z.string(), z.unknown())') return true;
 
+  const arms = unionArmsForExpression(trimmed);
+  if (arms) {
+    return (
+      arms.length > 0 && arms.every(arm => isOpaqueRecordMarkerExpression(arm, schemaExpressions, cache, visiting))
+    );
+  }
+
   const named = trimmed.match(/^(\w+Schema)$/)?.[1];
   if (!named) return false;
   if (cache.has(named)) return cache.get(named) ?? false;
@@ -1191,23 +1324,17 @@ function postProcessMarkerUnionObjectIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
   const markerCache = new Map<string, boolean>();
-  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
   let result = '';
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = exportRegex.exec(content))) {
-    const name = match[1];
-    const expressionStart = exportRegex.lastIndex;
+  for (const { name, expressionStart, expressionEnd } of findSchemaExportExpressions(content)) {
     const expression = schemaExpressions.get(name);
     if (!expression) continue;
 
-    const expressionEnd = expressionStart + expression.length;
     const rewritten = rewriteLeadingMarkerUnionObjectAnd(expression, schemaExpressions, shapeCache, markerCache);
 
     result += content.slice(lastIndex, expressionStart) + rewritten;
     lastIndex = expressionEnd;
-    exportRegex.lastIndex = expressionEnd;
   }
 
   result += content.slice(lastIndex);
@@ -1217,23 +1344,17 @@ function postProcessMarkerUnionObjectIntersections(content: string): string {
 function postProcessObjectIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
-  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
   let result = '';
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = exportRegex.exec(content))) {
-    const name = match[1];
-    const expressionStart = exportRegex.lastIndex;
+  for (const { name, expressionStart, expressionEnd } of findSchemaExportExpressions(content)) {
     const expression = schemaExpressions.get(name);
     if (!expression) continue;
 
-    const expressionEnd = expressionStart + expression.length;
     const rewritten = rewriteTopLevelObjectAnds(expression, schemaExpressions, shapeCache);
 
     result += content.slice(lastIndex, expressionStart) + rewritten;
     lastIndex = expressionEnd;
-    exportRegex.lastIndex = expressionEnd;
   }
 
   result += content.slice(lastIndex);
@@ -1249,25 +1370,19 @@ function postProcessObjectIntersections(content: string): string {
 function postProcessObjectUnionIntersections(content: string): string {
   const schemaExpressions = extractSchemaExports(content);
   const shapeCache = new Map<string, ObjectShape | undefined>();
-  const exportRegex = /export const (\w+Schema)(?::[^=]+)? = /g;
   let result = '';
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
 
-  while ((match = exportRegex.exec(content))) {
-    const name = match[1];
-    const expressionStart = exportRegex.lastIndex;
+  for (const { name, expressionStart, expressionEnd } of findSchemaExportExpressions(content)) {
     const expression = schemaExpressions.get(name);
     if (!expression) continue;
 
-    const expressionEnd = expressionStart + expression.length;
     const rewritten = name.endsWith('RequestSchema')
       ? rewriteObjectUnionIntersection(expression, schemaExpressions, shapeCache)
       : expression;
 
     result += content.slice(lastIndex, expressionStart) + rewritten;
     lastIndex = expressionEnd;
-    exportRegex.lastIndex = expressionEnd;
   }
 
   result += content.slice(lastIndex);
@@ -1448,12 +1563,13 @@ async function generateZodSchemas() {
 
     // tools.generated.ts imports a handful of *AssetRequirements types from
     // core.generated.ts (injected by scripts/generate-types.ts so the standalone
-    // file typechecks). Since we concatenate both sources for ts-to-zod, those
-    // imports are redundant — worse, ts-to-zod treats imported names as external
-    // and emits `z.any()` stubs even when the actual interfaces are present in
-    // the combined source. Strip cross-file imports before merging.
+    // file typechecks) and may re-export core-owned compatibility aliases. Since
+    // we concatenate both sources for ts-to-zod, those cross-file statements are
+    // redundant — worse, ts-to-zod treats imported names as external and emits
+    // `z.any()` stubs even when the actual interfaces are present in the combined
+    // source. Strip cross-file imports/re-exports before merging.
     const toolsWithoutCrossImports = toolsContent.replace(
-      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"]; ?\n+/gm,
+      /^(?:import type|export type) \{[^}]*\} from ['"]\.\/core\.generated['"]; ?\n+/gm,
       ''
     );
     // Defensive: if the injector in scripts/generate-types.ts ever changes shape
@@ -1608,6 +1724,7 @@ if (require.main === module) {
 
 export const __test__ = {
   postProcessForNullish,
+  postProcessRecordIntersections,
   postProcessMarkerUnionObjectIntersections,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,

@@ -6,7 +6,7 @@ import type {
   PreviewCreativeSingleResponse,
   PreviewCreativeBatchResponse,
   PreviewCreativeVariantResponse,
-} from '../types/core.generated';
+} from '../types/tools.generated';
 
 type Tagged<T, Tag extends string> = Omit<T, 'response_type'> & { response_type: Tag };
 

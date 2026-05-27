@@ -46,6 +46,10 @@ function postProcessForNullish(input) {
   return runPostProcess('postProcessForNullish', input, '.zod-nullish-');
 }
 
+function postProcessRecordIntersections(input) {
+  return runPostProcess('postProcessRecordIntersections', input, '.zod-record-intersections-');
+}
+
 function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
@@ -95,6 +99,61 @@ export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
 
   assert.match(output, /export const CanonicalFormatImageSchema = z\.object\(/);
   assert.doesNotMatch(output, /CanonicalFormatImageSchema = SizeModeMutexSchema\.and/);
+});
+
+test('postProcessMarkerUnionObjectIntersections collapses nested opaque marker unions', () => {
+  const output = postProcessMarkerUnionObjectIntersections(`
+export const FixedSchema = z.record(z.string(), z.unknown());
+export const ResponsiveSchema = z.record(z.string(), z.unknown());
+export const FluidSchema = z.record(z.string(), z.unknown());
+export const StaticSizeSchema = z.union([FixedSchema, ResponsiveSchema]);
+export const SizeModeMutexSchema = z.union([
+  StaticSizeSchema,
+  z.union([FluidSchema, z.record(z.string(), z.unknown())])
+]);
+
+export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
+  width: z.number().optional(),
+  height: z.number().optional()
+}).passthrough());
+`);
+
+  assert.match(output, /export const CanonicalFormatImageSchema = z\.object\(/);
+  assert.doesNotMatch(output, /CanonicalFormatImageSchema = SizeModeMutexSchema\.and/);
+});
+
+test('postProcessRecordIntersections collapses nested named record-only unions', () => {
+  const output = postProcessRecordIntersections(`
+export const FixedSchema = z.record(z.string(), z.unknown());
+export const ResponsiveSchema = z.record(z.string(), z.unknown());
+export const FluidSchema = z.record(z.string(), z.unknown());
+export const StaticSizeSchema = z.union([FixedSchema, ResponsiveSchema]);
+export const SizeModeMutexSchema = z.union([
+  StaticSizeSchema,
+  z.union([FluidSchema, z.record(z.string(), z.unknown())])
+]);
+
+export const CanonicalFormatImageSchema = SizeModeMutexSchema.and(z.object({
+  width: z.number().optional(),
+  height: z.number().optional()
+}));
+`);
+
+  assert.match(output, /export const CanonicalFormatImageSchema = z\.object\(/);
+  assert.doesNotMatch(output, /CanonicalFormatImageSchema = SizeModeMutexSchema\.and/);
+});
+
+test('postProcessRecordIntersections preserves typed record constraints as object catchalls', () => {
+  const output = postProcessRecordIntersections(`
+export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.object({
+  inline_creative_management: z.boolean().optional(),
+  audience_targeting: z.boolean().optional()
+}));
+`);
+
+  assert.match(output, /export const MediaBuyFeaturesSchema = z\.object\(/);
+  assert.match(output, /\.catchall\(z\.boolean\(\)\)/);
+  assert.doesNotMatch(output, /MediaBuyFeaturesSchema = z\.record\(z\.string\(\), z\.boolean\(\)\)\.and/);
 });
 
 test('postProcessMarkerUnionObjectIntersections keeps unions once markers gain fields', () => {
@@ -179,6 +238,25 @@ export const ContainerSchema = z.object({
   assert.match(output, /export const SafeSchema = BaseSchema\.merge\(z\.object\(/);
   assert.match(output, /item: BaseSchema\.merge\(z\.object\(/);
   assert.doesNotMatch(output, /SafeSchema = BaseSchema\.and/);
+});
+
+test('postProcessObjectIntersections handles typed exports with equals signs in annotations', () => {
+  const output = postProcessObjectIntersections(`
+export const BaseSchema: z.ZodType<FactoryOptions<DefaultValue = unknown>> = z.object({
+  id: z.string().optional()
+}).passthrough();
+
+export const SafeSchema: z.ZodType<FactoryOptions<DefaultValue = unknown>> = BaseSchema.and(z.object({
+  id: z.string(),
+  name: z.string()
+}).passthrough());
+`);
+
+  assert.match(
+    output,
+    /export const SafeSchema: z\.ZodType<FactoryOptions<DefaultValue = unknown>> = BaseSchema\.merge\(z\.object\(/
+  );
+  assert.doesNotMatch(output, /SafeSchema: z\.ZodType<FactoryOptions<DefaultValue = unknown>> = BaseSchema\.and/);
 });
 
 test('postProcessObjectIntersections keeps conflicting overlaps as intersections', () => {
