@@ -2057,23 +2057,26 @@ export function bridgeFromTestControllerStore<TAccount = unknown>(
  *
  * Passed as an options object (rather than positional args) so future
  * additions (logger, sandbox override, cache hooks) land non-breakingly.
- * `loadSession` here receives the raw `get_products` request — distinct
- * from any session-loader a seller writes elsewhere that takes `{ context }`.
+ * `loadSession` receives the raw read-side request plus the bridge context
+ * (including the resolved account when `resolveAccount` was configured).
  */
-export interface BridgeFromSessionStoreOptions<TSession> {
+export interface BridgeFromSessionStoreOptions<TSession, TAccount = unknown> {
   /**
-   * Resolve the session for the current request. Receives the raw
-   * `get_products` request post-schema-validation; pull whatever key
-   * you use (`session_id`, `brand.domain`, `account_id`) out of
-   * `input.context` / `input.account` / `input.brand` and return the
-   * session object. May be async.
+   * Resolve the session for the current request. Receives the raw request
+   * post-schema-validation plus the bridge context; proxy-shaped sellers
+   * should key on the resolved `ctx.account` first, then fall back to
+   * request fields (`session_id`, `brand.domain`, `account_id`) only for
+   * test-only bootstrap paths. May be async.
    *
-   * Errors propagate unchanged to the dispatcher — a `loadSession`
-   * rejection fails the bridge call rather than silently producing an
-   * empty seed list (seed loss under DB failure would be worse than a
-   * loud error, and the storyboard runner surfaces the failure).
+   * Errors propagate unchanged to direct bridge callers. The framework
+   * dispatcher catches bridge callback failures, logs a warning, and
+   * returns the handler response unchanged so a broken sandbox fixture
+   * cannot take down the read tool under test.
    */
-  loadSession: (input: Record<string, unknown>) => Promise<TSession> | TSession;
+  loadSession: (
+    input: Record<string, unknown>,
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<TSession> | TSession;
 
   /**
    * Extract the seeded products from a resolved session. Return a Map,
@@ -2289,7 +2292,7 @@ export interface BridgeFromSessionStoreOptions<TSession> {
  * ```
  */
 export function bridgeFromSessionStore<TSession, TAccount = unknown>(
-  opts: BridgeFromSessionStoreOptions<TSession>
+  opts: BridgeFromSessionStoreOptions<TSession, TAccount>
 ): TestControllerBridge<TAccount> {
   const {
     loadSession,
@@ -2320,7 +2323,7 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
   // interface, same shape as `getSeededProducts`).
   const bridge: TestControllerBridge<TAccount> = {
     getSeededProducts: async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededProducts(session);
       if (!entries) return [];
       const out: Product[] = [];
@@ -2337,105 +2340,105 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
 
   if (selectSeededCreatives) {
     bridge.getSeededCreatives = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededCreatives(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededMediaBuys) {
     bridge.getSeededMediaBuys = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededMediaBuys(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededMediaBuyDelivery) {
     bridge.getSeededMediaBuyDelivery = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededMediaBuyDelivery(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededAccounts) {
     bridge.getSeededAccounts = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededAccounts(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededAccountFinancials) {
     bridge.getSeededAccountFinancials = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededAccountFinancials(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededCreativeFormats) {
     bridge.getSeededCreativeFormats = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededCreativeFormats(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededPropertyLists) {
     bridge.getSeededPropertyLists = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededPropertyLists(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededContentStandards) {
     bridge.getSeededContentStandards = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededContentStandards(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededCollectionLists) {
     bridge.getSeededCollectionLists = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededCollectionLists(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededSignals) {
     bridge.getSeededSignals = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededSignals(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededCreativeDelivery) {
     bridge.getSeededCreativeDelivery = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededCreativeDelivery(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededCreativeFeatures) {
     bridge.getSeededCreativeFeatures = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededCreativeFeatures(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededBrandIdentity) {
     bridge.getSeededBrandIdentity = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededBrandIdentity(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededRights) {
     bridge.getSeededRights = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededRights(session);
       return entries ? Array.from(entries) : [];
     };
   }
   if (selectSeededSiOffering) {
     bridge.getSeededSiOffering = async ctx => {
-      const session = await loadSession(ctx.input);
+      const session = await loadSession(ctx.input, ctx);
       const entries = await selectSeededSiOffering(session);
       return entries ? Array.from(entries) : [];
     };
