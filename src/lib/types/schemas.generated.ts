@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-27T01:21:02.997Z
+// Generated at: 2026-05-27T01:52:35.774Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -2138,17 +2138,7 @@ export const GetBrandIdentitySuccessSchema = z.object({
         background: z.union([z.string(), z.array(z.string())]).optional(),
         text: z.union([z.string(), z.array(z.string())]).optional()
     }).passthrough().optional(),
-    fonts: z.record(z.string(), z.union([z.string(), z.object({
-                family: z.string(),
-                files: z.array(z.object({
-                    url: z.string().regex(/^https:\/\//),
-                    weight: z.number().min(100).max(900).optional(),
-                    weight_range: z.array(z.number()).optional(),
-                    style: z.union([z.literal("normal"), z.literal("italic"), z.literal("oblique")]).optional()
-                }).passthrough()).optional(),
-                opentype_features: z.array(z.string()).optional(),
-                fallbacks: z.array(z.string()).optional()
-            }).passthrough()])).and(z.object({
+    fonts: z.object({
         primary: z.union([z.string(), z.object({
                 family: z.string(),
                 files: z.array(z.object({
@@ -2171,7 +2161,17 @@ export const GetBrandIdentitySuccessSchema = z.object({
                 opentype_features: z.array(z.string()).optional(),
                 fallbacks: z.array(z.string()).optional()
             }).passthrough()]).optional()
-    }).passthrough()).optional(),
+    }).passthrough().catchall(z.union([z.string(), z.object({
+                family: z.string(),
+                files: z.array(z.object({
+                    url: z.string().regex(/^https:\/\//),
+                    weight: z.number().min(100).max(900).optional(),
+                    weight_range: z.array(z.number()).optional(),
+                    style: z.union([z.literal("normal"), z.literal("italic"), z.literal("oblique")]).optional()
+                }).passthrough()).optional(),
+                opentype_features: z.array(z.string()).optional(),
+                fallbacks: z.array(z.string()).optional()
+            }).passthrough()])).optional(),
     visual_guidelines: z.object({}).passthrough().optional(),
     tone: z.object({
         voice: z.string().optional(),
@@ -3438,12 +3438,12 @@ export const GetMediaBuysRequestSchema = z.object({
 
 export const CreativeApprovalStatusSchema = z.union([z.literal("pending_review"), z.literal("approved"), z.literal("rejected")]);
 
-export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.object({
+export const MediaBuyFeaturesSchema = z.object({
     inline_creative_management: z.boolean().optional(),
     property_list_filtering: z.boolean().optional(),
     catalog_management: z.boolean().optional(),
     committed_metrics_supported: z.boolean().optional()
-}).passthrough());
+}).passthrough().catchall(z.boolean());
 
 export const ListCreativeFormatsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -5509,7 +5509,7 @@ export const FlatRatePricingOptionSchema = z.object({
 export const ForecastPointSchema = z.object({
     label: z.string().max(128).optional(),
     budget: z.number().min(0).optional(),
-    metrics: z.record(z.string(), ForecastRangeSchema).and(z.object({
+    metrics: z.object({
         audience_size: ForecastRangeSchema.optional(),
         reach: ForecastRangeSchema.optional(),
         frequency: ForecastRangeSchema.optional(),
@@ -5526,7 +5526,7 @@ export const ForecastPointSchema = z.object({
         measured_impressions: ForecastRangeSchema.optional(),
         downloads: ForecastRangeSchema.optional(),
         plays: ForecastRangeSchema.optional()
-    }).passthrough())
+    }).passthrough().catchall(ForecastRangeSchema)
 }).passthrough();
 
 export const InstallmentDeadlinesSchema = z.object({
@@ -7540,9 +7540,9 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     signals: z.object({
         data_provider_domains: z.array(z.string()).optional(),
         discovery_modes: z.array(z.union([z.literal("brief"), z.literal("wholesale")])).optional(),
-        features: z.record(z.string(), z.boolean()).and(z.object({
+        features: z.object({
             catalog_signals: z.boolean().optional()
-        }).passthrough()).optional()
+        }).passthrough().catchall(z.boolean()).optional()
     }).passthrough().optional(),
     governance: z.object({
         aggregation_window_days: z.number().min(1).max(365).optional(),
