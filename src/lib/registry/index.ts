@@ -883,6 +883,7 @@ export class RegistryClient {
       const text = await this.readBody(res, this.bodyLimitForUrl(url));
       return { res, text };
     });
+    requestPromise.catch(() => {});
     try {
       return await Promise.race([requestPromise, timeoutPromise]);
     } catch (err) {
@@ -909,7 +910,9 @@ export class RegistryClient {
     const path = new URL(url).pathname;
     if (
       path === '/api/brands/registry' ||
+      path === '/api/brands/resolve/bulk' ||
       path === '/api/properties/registry' ||
+      path === '/api/properties/resolve/bulk' ||
       path === '/api/registry/agents' ||
       path === '/api/registry/publishers' ||
       path === '/api/registry/feed' ||
@@ -918,6 +921,7 @@ export class RegistryClient {
       path === '/api/registry/authorizations/snapshot' ||
       path === '/api/search' ||
       path === '/api/policies/registry' ||
+      path === '/api/policies/resolve/bulk' ||
       path === '/api/public/discover-agent' ||
       path === '/api/public/agent-formats' ||
       path === '/api/public/agent-products' ||

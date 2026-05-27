@@ -786,6 +786,35 @@ describe('RegistryClient', () => {
       assert.strictEqual(result.status, 'passing');
     });
 
+    test('allows large bulk resolution responses by default', async () => {
+      const payload = 'x'.repeat(300 * 1024);
+      restore = mockFetch(async url => {
+        if (url.includes('/api/brands/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: { 'nike.com': { ...BRAND, payload } } }), { status: 200 });
+        }
+        if (url.includes('/api/properties/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: { 'nytimes.com': { ...PROPERTY, payload } } }), {
+            status: 200,
+          });
+        }
+        if (url.includes('/api/policies/resolve/bulk')) {
+          return new Response(JSON.stringify({ results: [{ policy_id: 'policy_1', payload }] }), { status: 200 });
+        }
+        throw new Error(`unexpected URL: ${url}`);
+      });
+
+      const client = new RegistryClient();
+
+      const brands = await client.lookupBrands(['nike.com']);
+      assert.strictEqual(brands['nike.com'].payload, payload);
+
+      const properties = await client.lookupProperties(['nytimes.com']);
+      assert.strictEqual(properties['nytimes.com'].payload, payload);
+
+      const policies = await client.resolvePoliciesBulk({ policy_ids: ['policy_1'] });
+      assert.strictEqual(policies.results[0].payload, payload);
+    });
+
     test('escapes control characters in error response previews', async () => {
       restore = mockFetch(async () => {
         return new Response('bad\n\u001b[31m', { status: 500 });
