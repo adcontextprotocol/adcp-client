@@ -16,7 +16,12 @@ const { createHash } = require('node:crypto');
 const Ajv = require('ajv').default;
 const addFormats = require('ajv-formats').default;
 
-const { createUpstreamRecorder, toQueryUpstreamTrafficResponse } = require('../../dist/lib/upstream-recorder');
+const {
+  computePayloadDigestSha256,
+  createUpstreamRecorder,
+  toQueryUpstreamTrafficResponse,
+} = require('../../dist/lib/upstream-recorder');
+const { canonicalize } = require('../../dist/lib/utils/jcs');
 const { ADCP_VERSION } = require('../../dist/lib/version');
 
 // ────────────────────────────────────────────────────────────
@@ -156,10 +161,42 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(call.attestation_mode, 'digest');
     assert.equal(call.payload, undefined);
     assert.match(call.payload_digest_sha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      call.payload_length,
+      Buffer.byteLength(canonicalize({ users: [{ hashed_email: 'vec-1' }, { hashed_email: 'vec-2' }] }))
+    );
     assert.deepEqual(call.identifier_match_proofs, [
       { identifier_value_sha256: sha256Hex('vec-1'), found: true },
       { identifier_value_sha256: sha256Hex('missing'), found: false },
     ]);
+  });
+
+  test('computePayloadDigestSha256 pins the JCS lowercase-hex digest vector', () => {
+    const payload = { b: 1.25, é: ['z'], a: { c: true } };
+    const reordered = { a: { c: true }, é: ['z'], b: 1.25 };
+    const expected = '1456bd286cd759390538b520050a4df59e11fa794dc2cab8333402620f99ce29';
+    assert.equal(computePayloadDigestSha256(payload), expected);
+    assert.equal(computePayloadDigestSha256(reordered), expected);
+  });
+
+  test('digest-mode identifier proof scan is bounded', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    const values = Array.from({ length: 4100 }, (_, i) => `vec-${i}`);
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: { users: values.map(hashed_email => ({ hashed_email })) },
+      });
+    });
+    const result = recorder.query({
+      principal: 'p',
+      attestationMode: 'digest',
+      identifierValueDigests: [sha256Hex('vec-0')],
+    });
+    const [call] = toQueryUpstreamTrafficResponse(result).recorded_calls;
+    assert.deepEqual(call.identifier_match_proofs, [{ identifier_value_sha256: sha256Hex('vec-0'), found: false }]);
   });
 
   test('empty result still validates as UpstreamTrafficSuccess', async () => {

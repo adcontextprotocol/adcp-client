@@ -194,6 +194,12 @@ export interface UpstreamTrafficValidationContext {
    * digest-mode `identifier_match_proofs` back to storyboard vectors.
    */
   identifierDigestByValue?: Map<string, string>;
+  /**
+   * Set when the runner clipped identifier digest requests to its bounded
+   * buffer. Overflow vectors cannot be proven in digest mode and are reported
+   * as not_applicable rather than missing.
+   */
+  identifierDigestLimitExceeded?: { limit: number; clipped: number };
 }
 
 export interface UpstreamTrafficQueryResult {
@@ -2770,12 +2776,16 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     (validation.payload_must_contain?.length ?? 0) > 0 &&
     notApplicablePaths.length === (validation.payload_must_contain?.length ?? 0) &&
     missingPayloadPaths.length === 0;
+  const hasMeaningfulPayloadPass =
+    (validation.payload_must_contain?.length ?? 0) > 0 && payloadOk && !allPathsNotApplicable;
   const allIdentifiersNotApplicable =
     (validation.identifier_paths?.length ?? 0) > 0 &&
     missingIdentifierValues.length === 0 &&
     notApplicableIdentifierValues.length > 0;
   const not_applicable =
-    passed && countOk && (rawRequiredDigestDowngrade || allPathsNotApplicable || allIdentifiersNotApplicable);
+    passed &&
+    countOk &&
+    (rawRequiredDigestDowngrade || allPathsNotApplicable || (allIdentifiersNotApplicable && !hasMeaningfulPayloadPass));
 
   const actual = {
     matched_count: matchedCount,
@@ -2784,6 +2794,9 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     missing_identifier_values: missingIdentifierValues,
     not_applicable_payload_paths: notApplicablePaths,
     not_applicable_identifier_values: notApplicableIdentifierValues,
+    ...(upstream.identifierDigestLimitExceeded && {
+      identifier_digest_limit_exceeded: upstream.identifierDigestLimitExceeded,
+    }),
   };
 
   // RFC 6901 pointer: when one specific call's payload failed
@@ -2804,7 +2817,9 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
         note: rawRequiredDigestDowngrade
           ? `attestation_mode_required: raw but controller returned digest attestations — graded not_applicable`
           : allIdentifiersNotApplicable
-            ? `identifier_paths only matched digest attestations without portable proofs — graded not_applicable`
+            ? upstream.identifierDigestLimitExceeded
+              ? `identifier_paths exceeded the runner digest buffer; recorder buffer capped at ${upstream.identifierDigestLimitExceeded.limit} unique digests with ${upstream.identifierDigestLimitExceeded.clipped} overflow value(s) clipped — graded not_applicable`
+              : `identifier_paths only matched digest attestations without portable proofs — graded not_applicable`
             : `payload_must_contain paths only matched non-raw or non-JSON content_types — graded not_applicable`,
       }),
       description: validation.description,
@@ -3006,6 +3021,7 @@ function anyMatchedCallEchoesValue(
   for (const call of calls) {
     if (call.attestation_mode === 'digest') {
       if (!isJsonContentType(call.content_type)) continue;
+      if (!valueDigest) continue;
       sawApplicableCall = true;
       if (
         valueDigest &&

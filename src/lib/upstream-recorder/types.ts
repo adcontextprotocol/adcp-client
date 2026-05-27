@@ -26,8 +26,8 @@ interface RecordedCallBase {
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
   endpoint: string;
   url: string;
-  host: string;
-  path: string;
+  host?: string;
+  path?: string;
   /**
    * Media type of the recorded `payload`, mirroring the adapter's outbound
    * `Content-Type` header. Required by the contract — runners use this to
@@ -35,7 +35,12 @@ interface RecordedCallBase {
    * for other types).
    */
   content_type: string;
-  /** Byte length of the emitted payload representation after redaction. */
+  /**
+   * Byte length of the emitted payload representation after redaction. Raw
+   * calls measure the raw emitted payload representation; digest calls
+   * measure the same canonical byte stream covered by
+   * `payload_digest_sha256`.
+   */
   payload_length: number;
   timestamp: string;
   status_code?: number;
@@ -59,9 +64,23 @@ export interface RawRecordedCall extends RecordedCallBase {
 export interface DigestRecordedCall extends RecordedCallBase {
   attestation_mode: 'digest';
   payload?: never;
+  /**
+   * Lowercase hex SHA-256 of the post-redaction payload bytes. JSON and
+   * `*+json` payloads use RFC 8785 JCS canonicalization before hashing;
+   * non-JSON payloads use the post-redaction emitted body bytes. String-only
+   * identifier proofs are deliberately low entropy when adopters use short
+   * or guessable synthetic values; do not run digest-mode attestations over
+   * production identifiers.
+   */
   payload_digest_sha256: string;
   identifier_match_proofs?: Array<{
+    /** Lowercase hex SHA-256 of a runner-supplied string identifier value. */
     identifier_value_sha256: string;
+    /**
+     * True when the digest matched a string leaf in the redacted JSON
+     * payload. Non-string identifier vectors cannot be proven in digest
+     * mode and should grade not_applicable rather than missing.
+     */
     found: boolean;
   }>;
 }

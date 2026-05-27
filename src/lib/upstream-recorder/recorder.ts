@@ -7,6 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
+import { canonicalize } from '../utils/jcs';
 import {
   UpstreamRecorderScopeError,
   type QueryUpstreamTrafficResponse,
@@ -27,6 +28,8 @@ const DEFAULT_QUERY_LIMIT = 100;
 const DEFAULT_MAX_PAYLOAD_BYTES = 65_536; // mirrors spec's `recorded_calls[].payload.maxLength`
 const MAX_BUFFER_SIZE = 100_000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const MAX_JSON_DEPTH = 256;
+const MAX_IDENTIFIER_DIGEST_LEAVES = 4096;
 
 /**
  * Wrapped per-call entry stored in the buffer. Carries the public
@@ -136,6 +139,9 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
    */
   function applyRedactionToPayload(payload: unknown, contentType: string): { value: unknown; bytes: number } {
     if (payload === undefined) {
+      // Raw-mode `RecordedCall.payload` is required by the 3.1 controller
+      // response schema. GET/HEAD-style calls with no body therefore emit an
+      // empty object instead of omitting the field.
       const value = {};
       return { value, bytes: payloadWireLength(value) };
     }
@@ -398,13 +404,18 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
 
 function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQueryParams): RecordedCall {
   if (params.attestationMode !== 'digest') return call;
-  const payloadDigest = sha256Hex(canonicalPayloadBytes(call.payload, call.content_type));
+  const payloadBytes = canonicalPayloadBytes(call.payload, call.content_type);
+  const payloadDigest = sha256Hex(payloadBytes);
   const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
-  const identifier_match_proofs =
+  const payloadStringLeafDigests =
     identifierDigests.length > 0 && isJsonContentType(call.content_type)
+      ? jsonStringLeafDigests(call.payload)
+      : undefined;
+  const identifier_match_proofs =
+    identifierDigests.length > 0 && payloadStringLeafDigests
       ? identifierDigests.map(digest => ({
           identifier_value_sha256: digest,
-          found: jsonStringLeafDigests(call.payload).has(digest),
+          found: payloadStringLeafDigests.has(digest),
         }))
       : undefined;
 
@@ -417,7 +428,7 @@ function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQuer
     content_type: call.content_type,
     attestation_mode: 'digest',
     payload_digest_sha256: payloadDigest,
-    payload_length: call.payload_length,
+    payload_length: byteLengthOf(payloadBytes),
     timestamp: call.timestamp,
     ...(call.status_code !== undefined && { status_code: call.status_code }),
     ...(call.purpose !== undefined && { purpose: call.purpose }),
@@ -439,10 +450,13 @@ function normalizeIdentifierDigests(input: string[] | undefined): string[] {
 function jsonStringLeafDigests(root: unknown): Set<string> {
   const out = new Set<string>();
   const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  let visitedStringLeaves = 0;
   while (stack.length > 0) {
     const { value, depth } = stack.pop()!;
-    if (depth > 256) continue;
+    if (depth > MAX_JSON_DEPTH) continue;
     if (typeof value === 'string') {
+      visitedStringLeaves++;
+      if (visitedStringLeaves > MAX_IDENTIFIER_DIGEST_LEAVES) break;
       out.add(sha256Hex(value));
     } else if (Array.isArray(value)) {
       for (const item of value) stack.push({ value: item, depth: depth + 1 });
@@ -465,26 +479,41 @@ function canonicalPayloadBytes(payload: unknown, contentType: string): string {
 
 function canonicalJsonStringify(value: unknown): string | undefined {
   try {
-    return JSON.stringify(canonicalizeJson(value));
+    assertJsonDepth(value, 0);
+    return canonicalize(value);
   } catch {
     return undefined;
   }
 }
 
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
-    }
-    return out;
+function assertJsonDepth(value: unknown, depth: number): void {
+  if (depth > MAX_JSON_DEPTH) {
+    throw new RangeError(`JSON payload exceeds max canonicalization depth ${MAX_JSON_DEPTH}`);
   }
-  return value;
+  if (Array.isArray(value)) {
+    for (const item of value) assertJsonDepth(item, depth + 1);
+    return;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      assertJsonDepth(item, depth + 1);
+    }
+  }
 }
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+/**
+ * Compute the `RecordedCall.payload_digest_sha256` value for a redacted
+ * payload. JSON-shaped payloads are serialized with RFC 8785 JCS before
+ * hashing; non-JSON payloads are hashed over their post-redaction emitted
+ * byte representation. The returned digest is lowercase hex, matching the
+ * 3.1 `query_upstream_traffic` wire contract.
+ */
+export function computePayloadDigestSha256(payload: unknown, contentType = 'application/json'): string {
+  return sha256Hex(canonicalPayloadBytes(payload, contentType));
 }
 
 /**

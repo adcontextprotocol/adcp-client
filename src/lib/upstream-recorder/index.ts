@@ -52,7 +52,7 @@
  * `@adcp/sdk`'s storyboard runner (PR adcp-client#1289).
  */
 
-export { createUpstreamRecorder, toQueryUpstreamTrafficResponse } from './recorder';
+export { computePayloadDigestSha256, createUpstreamRecorder, toQueryUpstreamTrafficResponse } from './recorder';
 export { UpstreamRecorderScopeError } from './types';
 export type {
   PurposeClassifier,

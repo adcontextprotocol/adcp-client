@@ -150,6 +150,36 @@ describe('Storyboard.requires gate (#1626)', () => {
   });
 });
 
+describe('Storyboard upstream_traffic authoring checks', () => {
+  test('rejects identifier_paths that point outside the request payload', () => {
+    const yaml = `
+id: upstream_identifier_path_scope
+version: 1.0.0
+title: upstream identifier path scope
+category: test
+summary: scope check
+agent:
+  interaction_model: sync
+  capabilities: []
+caller:
+  role: buyer_agent
+phases:
+  - id: p1
+    title: Phase 1
+    steps:
+      - id: sync
+        title: Sync
+        task: get_products
+        validations:
+          - check: upstream_traffic
+            description: unsupported path scope
+            identifier_paths:
+              - response.audiences[*].hashed_email
+`;
+    assert.throws(() => parseStoryboard(yaml), /identifier_paths\[0\].*unsupported.*request payload/);
+  });
+});
+
 describe('Storyboard.requires loader validation (#1626)', () => {
   test('rejects empty requires: []', () => {
     const yaml = `

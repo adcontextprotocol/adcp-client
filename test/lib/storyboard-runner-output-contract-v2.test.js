@@ -589,6 +589,81 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     assert.equal(result.passed, true);
   });
 
+  test('identifier_paths non-string vectors grade not_applicable in digest mode', () => {
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [
+          makeCall({
+            attestation_mode: 'digest',
+            payload: undefined,
+            payload_digest_sha256: 'a'.repeat(64),
+            payload_length: 12,
+            identifier_match_proofs: [],
+          }),
+        ],
+      },
+      {
+        storyboardStep: {
+          sample_request: { audiences: [{ add: [{ ids: [12345] }] }] },
+        },
+      }
+    );
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'numeric identifiers cannot be proven with string digests',
+          identifier_paths: ['audiences[*].add[*].ids[*]'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.deepEqual(result.actual.not_applicable_identifier_values, [12345]);
+    assert.deepEqual(result.actual.missing_identifier_values, []);
+  });
+
+  test('identifier_paths overflow beyond digest cap grades not_applicable with a runner notice', () => {
+    const vector = 'vec-over-cap';
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [
+          makeCall({
+            attestation_mode: 'digest',
+            payload: undefined,
+            payload_digest_sha256: 'a'.repeat(64),
+            payload_length: 12,
+            identifier_match_proofs: [],
+          }),
+        ],
+      },
+      {
+        identifierDigestByValue: new Map(),
+        storyboardStep: { sample_request: { audience: { hashed_email: vector } } },
+      }
+    );
+    ctx.upstreamTraffic.identifierDigestLimitExceeded = { limit: 64, clipped: 1 };
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'overflow digest vector is inconclusive',
+          identifier_paths: ['audience.hashed_email'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.match(result.note, /recorder buffer capped at 64 unique digests/);
+    assert.deepEqual(result.actual.identifier_digest_limit_exceeded, { limit: 64, clipped: 1 });
+  });
+
   test('identifier_paths uses the resolved request payload before raw storyboard placeholders', () => {
     const vector = 'sig_agent_segment_123';
     const ctx = ctxWithTraffic(

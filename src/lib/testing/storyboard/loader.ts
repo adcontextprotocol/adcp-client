@@ -70,7 +70,42 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
+      validateUpstreamIdentifierPaths(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
+    }
+  }
+}
+
+function validateUpstreamIdentifierPaths(
+  storyboardId: string,
+  phase: { id?: string },
+  step: { id?: string; validations?: any[] }
+): void {
+  const validations = step.validations ?? [];
+  for (let validationIndex = 0; validationIndex < validations.length; validationIndex++) {
+    const validation = validations[validationIndex];
+    if (validation?.check !== 'upstream_traffic' || validation.identifier_paths === undefined) continue;
+    if (!Array.isArray(validation.identifier_paths)) {
+      throw new Error(
+        `[${storyboardId}] ${phase.id ?? '?'}.${
+          step.id ?? '?'
+        }.validations[${validationIndex}].identifier_paths: must be an array of request-payload paths`
+      );
+    }
+    for (let pathIndex = 0; pathIndex < validation.identifier_paths.length; pathIndex++) {
+      const path = validation.identifier_paths[pathIndex];
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error(
+          `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: must be a non-empty string`
+        );
+      }
+      const normalized = path.startsWith('$.') ? path.slice(2) : path.startsWith('$') ? path.slice(1) : path;
+      const firstSegment = normalized.replace(/^\./, '').split(/[.[\]]/, 1)[0];
+      if (firstSegment === 'response' || firstSegment === 'context') {
+        throw new Error(
+          `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
+        );
+      }
     }
   }
 }

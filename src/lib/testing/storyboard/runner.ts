@@ -1152,6 +1152,10 @@ function buildCapabilityUnsupportedResult(
     ],
     context: {},
     total_duration_ms: 0,
+    // This synthetic phase is an applicability gate, not a real passed
+    // scenario. `overall_passed: true` preserves non-failing CI semantics,
+    // while passed_count stays 0 so rollups do not report unexecuted
+    // storyboards as successful coverage.
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
@@ -1236,6 +1240,9 @@ function buildRequirementUnmetResult(
     ],
     context: {},
     total_duration_ms: 0,
+    // `required_any_of_tools` unmet is an applicability skip. Keep
+    // `overall_passed: true` for CI/non-failing semantics, but do not
+    // increment passed_count because no scenario behavior was exercised.
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
@@ -5140,7 +5147,8 @@ async function prefetchUpstreamTraffic(
   }
 
   const queries = new Map<string, UpstreamTrafficQueryResult>();
-  const identifierDigestByValue = collectUpstreamIdentifierDigests(upstreamChecks, requestPayload, sampleRequest);
+  const identifierDigestCollection = collectUpstreamIdentifierDigests(upstreamChecks, requestPayload, sampleRequest);
+  const identifierDigestByValue = identifierDigestCollection.digests;
   const identifier_value_digests = [...identifierDigestByValue.values()];
   const requiresRawAttestation = upstreamChecks.some(
     check => check.attestation_mode_required === 'raw' || (check.payload_must_contain?.length ?? 0) > 0
@@ -5195,33 +5203,48 @@ async function prefetchUpstreamTraffic(
     queries,
     thisStepSince: requestStartIso,
     ...(identifierDigestByValue.size > 0 ? { identifierDigestByValue } : {}),
+    ...(identifierDigestCollection.clipped > 0
+      ? {
+          identifierDigestLimitExceeded: {
+            limit: identifierDigestCollection.limit,
+            clipped: identifierDigestCollection.clipped,
+          },
+        }
+      : {}),
     ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
     ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
 }
 
+const IDENTIFIER_DIGEST_LIMIT = 64;
+
 function collectUpstreamIdentifierDigests(
   validations: StoryboardValidation[],
   requestPayload: unknown,
   sampleRequest: Record<string, unknown> | undefined
-): Map<string, string> {
-  const out = new Map<string, string>();
+): { digests: Map<string, string>; limit: number; clipped: number } {
+  const digests = new Map<string, string>();
+  let clipped = 0;
   const sample =
     requestPayload && typeof requestPayload === 'object' && !Array.isArray(requestPayload)
       ? (requestPayload as Record<string, unknown>)
       : sampleRequest;
-  if (!sample) return out;
+  if (!sample) return { digests, limit: IDENTIFIER_DIGEST_LIMIT, clipped };
   for (const validation of validations) {
     for (const path of validation.identifier_paths ?? []) {
       const vectors = resolvePathAll(sample, normalizeStoryboardJsonPath(path));
       for (const vector of vectors) {
         if (typeof vector !== 'string') continue;
-        if (!out.has(vector)) out.set(vector, sha256Hex(vector));
-        if (out.size >= 64) return out;
+        if (digests.has(vector)) continue;
+        if (digests.size >= IDENTIFIER_DIGEST_LIMIT) {
+          clipped++;
+          continue;
+        }
+        digests.set(vector, sha256Hex(vector));
       }
     }
   }
-  return out;
+  return { digests, limit: IDENTIFIER_DIGEST_LIMIT, clipped };
 }
 
 function normalizeStoryboardJsonPath(path: string): string {

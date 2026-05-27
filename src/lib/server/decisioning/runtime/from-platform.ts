@@ -988,6 +988,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       ? rollupOptimizationMetricsFromProducts(platform.capabilities.productCatalog)
       : undefined;
   const somCandidate = explicitSom ?? derivedSom;
+  // Empty arrays are an explicit "no seller-level rollup to advertise" signal,
+  // not a malformed capability. Omit the wire field so buyers do not see an
+  // empty support list as a positive 3.1 metric-optimization declaration.
   const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
   const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;

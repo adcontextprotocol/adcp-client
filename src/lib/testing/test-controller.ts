@@ -8,6 +8,7 @@
 import type { TestClient } from './client';
 import { getLogger, resolveAccount } from './client';
 import type { AgentProfile, TaskResult, TestOptions } from './types';
+import type { RecordedCall } from '../upstream-recorder/types';
 import type {
   ComplyTestControllerResponse,
   ListScenariosSuccess,
@@ -34,6 +35,8 @@ export type ControllerScenario =
    * runner-output-contract.yaml v2.0.0, comply-test-controller-request.json.
    */
   | 'query_upstream_traffic';
+
+export type { DigestRecordedCall, RawRecordedCall, RecordedCall } from '../upstream-recorder/types';
 
 /** What capabilities the seller's test controller exposes */
 export interface ControllerCapabilities {
@@ -208,56 +211,6 @@ export async function simulate(
   }
 
   return result.data as SimulationSuccess | ControllerError;
-}
-
-interface RecordedCallBase {
-  method: string;
-  endpoint: string;
-  url: string;
-  host?: string;
-  path?: string;
-  /**
-   * Media type of the recorded `payload`, mirroring the agent's outbound
-   * `Content-Type` header. Required by the spec so the runner picks the
-   * right matcher deterministically: `payload_must_contain` JSONPath is
-   * valid only when this is `application/json` or `*+json`. Non-JSON
-   * payloads fall back to substring matching for `match: present` and
-   * grade `not_applicable` for `match: equals` / `match: contains_any`.
-   */
-  content_type: string;
-  /**
-   * Byte length of the post-redaction emitted payload representation. Required
-   * for both raw and digest branches by the 3.1 schema.
-   */
-  payload_length: number;
-  timestamp: string;
-  status_code?: number;
-}
-
-/**
- * Single recorded outbound HTTP call returned by `query_upstream_traffic`.
- * Mirrors `comply-test-controller-response.json > UpstreamTrafficSuccess`.
- */
-export type RecordedCall = RawRecordedCall | DigestRecordedCall;
-
-export interface RawRecordedCall extends RecordedCallBase {
-  attestation_mode: 'raw';
-  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
-  payload: unknown;
-  payload_digest_sha256?: never;
-  identifier_match_proofs?: never;
-  [key: string]: unknown;
-}
-
-export interface DigestRecordedCall extends RecordedCallBase {
-  attestation_mode: 'digest';
-  payload?: never;
-  payload_digest_sha256: string;
-  identifier_match_proofs?: Array<{
-    identifier_value_sha256: string;
-    found: boolean;
-  }>;
-  [key: string]: unknown;
 }
 
 /**
