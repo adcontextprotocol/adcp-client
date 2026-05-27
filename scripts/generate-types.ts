@@ -600,15 +600,21 @@ function canonicalCodegenJson(value: unknown): string {
 export function promoteConditionalParamProperties(strictSchema: any): void {
   const params = strictSchema.properties?.params;
   if (!params || typeof params !== 'object' || !params.properties || !Array.isArray(strictSchema.allOf)) return;
+  const rootParamKeys = new Set(Object.keys(params.properties));
+  const promoted = new Map<string, unknown>();
   for (const [memberIndex, member] of strictSchema.allOf.entries()) {
     const conditionalParams = member?.then?.properties?.params;
     if (!conditionalParams || typeof conditionalParams !== 'object' || !conditionalParams.properties) continue;
     for (const [key, value] of Object.entries(conditionalParams.properties)) {
-      if (params.properties[key] === undefined) {
-        params.properties[key] = value;
+      if (rootParamKeys.has(key)) {
         continue;
       }
-      if (canonicalCodegenJson(params.properties[key]) !== canonicalCodegenJson(value)) {
+      if (!promoted.has(key)) {
+        params.properties[key] = value;
+        promoted.set(key, value);
+        continue;
+      }
+      if (canonicalCodegenJson(promoted.get(key)) !== canonicalCodegenJson(value)) {
         throw new Error(
           `Conflicting conditional params property "${key}" while promoting allOf[${memberIndex}].then.properties.params.properties.${key}`
         );

@@ -171,16 +171,46 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     ]);
   });
 
+  test('digest-mode identifier proofs parse manual JSON string payloads', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true });
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: JSON.stringify({ users: [{ hashed_email: 'vec-1' }] }),
+        status_code: 200,
+      });
+    });
+    const result = recorder.query({
+      principal: 'p',
+      attestationMode: 'digest',
+      identifierValueDigests: [sha256Hex('vec-1')],
+    });
+    const [call] = toQueryUpstreamTrafficResponse(result).recorded_calls;
+    assert.deepEqual(call.identifier_match_proofs, [{ identifier_value_sha256: sha256Hex('vec-1'), found: true }]);
+  });
+
   test('computePayloadDigestSha256 pins the JCS lowercase-hex digest vector', () => {
     const payload = { b: 1.25, é: ['z'], a: { c: true } };
     const reordered = { a: { c: true }, é: ['z'], b: 1.25 };
+    const jsonString = '{ "é": ["z"], "a": { "c": true }, "b": 1.25 }';
     const expected = '1456bd286cd759390538b520050a4df59e11fa794dc2cab8333402620f99ce29';
     assert.equal(computePayloadDigestSha256(payload), expected);
     assert.equal(computePayloadDigestSha256(reordered), expected);
+    assert.equal(computePayloadDigestSha256(jsonString, 'application/json'), expected);
   });
 
-  test('digest-mode identifier proof scan is bounded', async () => {
-    const recorder = createUpstreamRecorder({ enabled: true });
+  test('computePayloadDigestSha256 rejects parsed JSON strings that cannot be canonicalized', () => {
+    const tooDeepJson = `${'['.repeat(260)}"leaf"${']'.repeat(260)}`;
+    assert.throws(
+      () => computePayloadDigestSha256(tooDeepJson, 'application/json'),
+      /JSON payload exceeds max canonicalization depth/
+    );
+  });
+
+  test('digest-mode identifier proof scan avoids false negatives in large payloads', async () => {
+    const recorder = createUpstreamRecorder({ enabled: true, maxPayloadBytes: 0 });
     const values = Array.from({ length: 4100 }, (_, i) => `vec-${i}`);
     await recorder.runWithPrincipal('p', async () => {
       recorder.record({
@@ -193,10 +223,14 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     const result = recorder.query({
       principal: 'p',
       attestationMode: 'digest',
-      identifierValueDigests: [sha256Hex('vec-0')],
+      identifierValueDigests: [sha256Hex('vec-0'), sha256Hex('vec-4099'), sha256Hex('missing')],
     });
     const [call] = toQueryUpstreamTrafficResponse(result).recorded_calls;
-    assert.deepEqual(call.identifier_match_proofs, [{ identifier_value_sha256: sha256Hex('vec-0'), found: false }]);
+    assert.deepEqual(call.identifier_match_proofs, [
+      { identifier_value_sha256: sha256Hex('vec-0'), found: true },
+      { identifier_value_sha256: sha256Hex('vec-4099'), found: true },
+      { identifier_value_sha256: sha256Hex('missing'), found: false },
+    ]);
   });
 
   test('empty result still validates as UpstreamTrafficSuccess', async () => {

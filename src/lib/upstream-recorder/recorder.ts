@@ -29,7 +29,6 @@ const DEFAULT_MAX_PAYLOAD_BYTES = 65_536; // mirrors spec's `recorded_calls[].pa
 const MAX_BUFFER_SIZE = 100_000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const MAX_JSON_DEPTH = 256;
-const MAX_IDENTIFIER_DIGEST_LEAVES = 4096;
 
 /**
  * Wrapped per-call entry stored in the buffer. Carries the public
@@ -407,15 +406,16 @@ function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQuer
   const payloadBytes = canonicalPayloadBytes(call.payload, call.content_type);
   const payloadDigest = sha256Hex(payloadBytes);
   const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
-  const payloadStringLeafDigests =
-    identifierDigests.length > 0 && isJsonContentType(call.content_type)
-      ? jsonStringLeafDigests(call.payload)
+  const identifierScanPayload = parseJsonStringPayloadForScan(call.payload, call.content_type);
+  const matchedIdentifierDigests =
+    identifierDigests.length > 0 && identifierScanPayload !== undefined
+      ? collectMatchedStringLeafDigests(identifierScanPayload, new Set(identifierDigests))
       : undefined;
   const identifier_match_proofs =
-    identifierDigests.length > 0 && payloadStringLeafDigests
+    identifierDigests.length > 0 && matchedIdentifierDigests
       ? identifierDigests.map(digest => ({
           identifier_value_sha256: digest,
-          found: payloadStringLeafDigests.has(digest),
+          found: matchedIdentifierDigests.has(digest),
         }))
       : undefined;
 
@@ -447,17 +447,18 @@ function normalizeIdentifierDigests(input: string[] | undefined): string[] {
   return out;
 }
 
-function jsonStringLeafDigests(root: unknown): Set<string> {
-  const out = new Set<string>();
+function collectMatchedStringLeafDigests(root: unknown, wantedDigests: Set<string>): Set<string> {
+  const matched = new Set<string>();
   const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
-  let visitedStringLeaves = 0;
   while (stack.length > 0) {
     const { value, depth } = stack.pop()!;
     if (depth > MAX_JSON_DEPTH) continue;
     if (typeof value === 'string') {
-      visitedStringLeaves++;
-      if (visitedStringLeaves > MAX_IDENTIFIER_DIGEST_LEAVES) break;
-      out.add(sha256Hex(value));
+      const digest = sha256Hex(value);
+      if (wantedDigests.has(digest)) {
+        matched.add(digest);
+        if (matched.size === wantedDigests.size) break;
+      }
     } else if (Array.isArray(value)) {
       for (const item of value) stack.push({ value: item, depth: depth + 1 });
     } else if (value !== null && typeof value === 'object') {
@@ -466,24 +467,39 @@ function jsonStringLeafDigests(root: unknown): Set<string> {
       }
     }
   }
-  return out;
+  return matched;
+}
+
+function parseJsonStringPayloadForScan(payload: unknown, contentType: string): unknown | undefined {
+  if (!isJsonContentType(contentType)) return undefined;
+  if (typeof payload !== 'string') return payload;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return payload;
+  }
 }
 
 function canonicalPayloadBytes(payload: unknown, contentType: string): string {
-  if (typeof payload === 'string') return payload;
   if (isJsonContentType(contentType)) {
-    return canonicalJsonStringify(payload) ?? safeStringify(payload) ?? '';
+    if (typeof payload === 'string') {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return payload;
+      }
+      return canonicalJsonStringify(parsed);
+    }
+    return canonicalJsonStringify(payload);
   }
+  if (typeof payload === 'string') return payload;
   return safeStringify(payload) ?? '';
 }
 
-function canonicalJsonStringify(value: unknown): string | undefined {
-  try {
-    assertJsonDepth(value, 0);
-    return canonicalize(value);
-  } catch {
-    return undefined;
-  }
+function canonicalJsonStringify(value: unknown): string {
+  assertJsonDepth(value, 0);
+  return canonicalize(value);
 }
 
 function assertJsonDepth(value: unknown, depth: number): void {
@@ -510,12 +526,13 @@ function sha256Hex(value: string): string {
  * redacted payload. This helper does not redact for you; it mirrors the
  * recorder projection after record-time redaction has completed.
  *
- * JSON objects/arrays are serialized with RFC 8785 JCS before hashing when
- * JCS can represent the value. Plain string payloads are treated as emitted
- * body bytes and hashed verbatim, which is also the non-JSON behavior. If a
- * JSON-shaped value cannot be JCS-canonicalized (for example unsupported
- * values or excessive depth), the recorder falls back to `JSON.stringify`
- * before hashing so recording remains non-fatal.
+ * JSON content is serialized with RFC 8785 JCS before hashing. When
+ * `contentType` is JSON-shaped and `payload` is a string, the helper parses
+ * it first so semantically equivalent JSON strings and objects hash to the
+ * same value. If a JSON-shaped string cannot be parsed, it is treated as the
+ * emitted body bytes and hashed verbatim. Unsupported JSON values and payloads
+ * deeper than the recorder's depth cap throw rather than producing a
+ * non-canonical digest.
  *
  * The returned digest is lowercase hex, matching the 3.1
  * `query_upstream_traffic` wire contract.

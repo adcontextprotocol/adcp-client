@@ -66,13 +66,13 @@ export interface DigestRecordedCall extends RecordedCallBase {
   payload?: never;
   /**
    * Lowercase hex SHA-256 of the post-redaction payload bytes. JSON object
-   * and array payloads use RFC 8785 JCS canonicalization when possible before
-   * hashing; string payloads and non-JSON payloads use the post-redaction
-   * emitted body bytes. If canonicalization cannot represent the value, the
-   * reference recorder falls back to JSON.stringify so recording remains
-   * non-fatal. String-only identifier proofs are deliberately low entropy
-   * when adopters use short or guessable synthetic values; do not run
-   * digest-mode attestations over production identifiers.
+   * and array payloads use RFC 8785 JCS canonicalization before hashing.
+   * JSON strings are parsed and canonicalized when they contain valid JSON;
+   * malformed JSON strings and non-JSON payloads use the post-redaction
+   * emitted body bytes. Unsupported JSON values cannot produce a canonical
+   * digest. String-only identifier proofs are deliberately low entropy when
+   * adopters use short or guessable synthetic values; do not run digest-mode
+   * attestations over production identifiers.
    */
   payload_digest_sha256: string;
   identifier_match_proofs?: Array<{
@@ -237,7 +237,9 @@ export interface UpstreamRecorderQueryParams {
   /**
    * Requested attestation mode for returned calls. `raw` (default) returns
    * the redacted payload; `digest` returns `payload_digest_sha256` plus
-   * optional identifier echo proofs.
+   * optional identifier echo proofs. Digest projection canonicalizes JSON
+   * payloads before hashing and throws if a matched JSON payload cannot be
+   * canonicalized.
    */
   attestationMode?: 'raw' | 'digest';
   /**
@@ -343,7 +345,9 @@ export interface UpstreamRecorder {
    * Return recorded calls scoped to the requesting principal, filtered by
    * `sinceTimestamp` and `endpointPattern`, and truncated to `limit`.
    * Adopters typically pass the result verbatim into their
-   * `comply_test_controller`'s `query_upstream_traffic` response.
+   * `comply_test_controller`'s `query_upstream_traffic` response. In
+   * digest mode, throws when a matched JSON payload cannot be canonicalized
+   * for `payload_digest_sha256`.
    */
   query(params: UpstreamRecorderQueryParams): UpstreamRecorderQueryResult;
   /**

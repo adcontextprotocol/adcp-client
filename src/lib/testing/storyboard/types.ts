@@ -1042,9 +1042,10 @@ export interface StoryboardValidation {
    * identifiers the adapter MUST forward upstream. When the runner has the
    * actual request payload after context substitution, that payload is the
    * source of truth; otherwise it falls back to the storyboard's
-   * `sample_request`. Paths that target `response.*` or `context.*` are
-   * rejected at load time because digest-mode collection only sees request
-   * payload/sample-request values before `query_upstream_traffic` runs.
+   * `sample_request`. Paths that target `request.*`, `response.*`, or
+   * `context.*` are rejected at load time because paths resolve relative to
+   * the request payload/sample-request root before `query_upstream_traffic`
+   * runs.
    *
    * The runner extracts the values at these paths and asserts each resolved
    * value appears in at least one matching `recorded_call`'s payload at any

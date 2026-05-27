@@ -178,6 +178,34 @@ phases:
 `;
     assert.throws(() => parseStoryboard(yaml), /identifier_paths\[0\].*unsupported.*request payload/);
   });
+
+  test('rejects identifier_paths with request prefix', () => {
+    const yaml = `
+id: upstream_identifier_path_request_prefix
+version: 1.0.0
+title: upstream identifier path request prefix
+category: test
+summary: scope check
+agent:
+  interaction_model: sync
+  capabilities: []
+caller:
+  role: buyer_agent
+phases:
+  - id: p1
+    title: Phase 1
+    steps:
+      - id: sync
+        title: Sync
+        task: get_products
+        validations:
+          - check: upstream_traffic
+            description: unsupported request-prefixed path
+            identifier_paths:
+              - request.audiences[*].hashed_email
+`;
+    assert.throws(() => parseStoryboard(yaml), /identifier_paths\[0\].*unsupported.*request payload/);
+  });
 });
 
 describe('Storyboard.requires loader validation (#1626)', () => {

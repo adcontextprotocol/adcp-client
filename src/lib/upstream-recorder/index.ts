@@ -48,6 +48,12 @@
  * }
  * ```
  *
+ * Digest-mode queries canonicalize JSON payloads before hashing. If a
+ * recorded JSON payload cannot be canonicalized (for example because it
+ * exceeds the recorder's depth cap), `query()` throws rather than emitting a
+ * non-canonical digest; controller handlers should surface that as a failed
+ * `query_upstream_traffic` response.
+ *
  * Production builds with `enabled: false` get a no-op recorder — every
  * method is a pass-through / empty-result, zero per-call overhead.
  *

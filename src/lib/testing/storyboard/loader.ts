@@ -101,7 +101,7 @@ function validateUpstreamIdentifierPaths(
       }
       const normalized = path.startsWith('$.') ? path.slice(2) : path.startsWith('$') ? path.slice(1) : path;
       const firstSegment = normalized.replace(/^\./, '').split(/[.[\]]/, 1)[0];
-      if (firstSegment === 'response' || firstSegment === 'context') {
+      if (firstSegment === 'request' || firstSegment === 'response' || firstSegment === 'context') {
         throw new Error(
           `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
         );

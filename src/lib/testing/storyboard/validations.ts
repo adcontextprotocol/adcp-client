@@ -2768,16 +2768,16 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const echoOk = missingIdentifierValues.length === 0;
   const passed = countOk && (rawRequiredDigestDowngrade || (payloadOk && echoOk));
 
-  // Per spec: a payload_must_contain assertion whose ONLY checks were
-  // path-based against non-JSON content_types grades not_applicable. When
-  // EVERY declared path landed in that bucket (and count + echo also
-  // passed), the whole validation grades not_applicable rather than passed.
-  const allPathsNotApplicable =
+  // Per spec: a payload_must_contain assertion whose only available evidence
+  // is not portable to inspect grades not_applicable. When any required path
+  // lands in that bucket (and count + echo passed with no actionable payload
+  // misses), the whole validation grades not_applicable rather than passed.
+  const anyPayloadNotApplicable =
     (validation.payload_must_contain?.length ?? 0) > 0 &&
-    notApplicablePaths.length === (validation.payload_must_contain?.length ?? 0) &&
+    notApplicablePaths.length > 0 &&
     missingPayloadPaths.length === 0;
   const hasMeaningfulPayloadPass =
-    (validation.payload_must_contain?.length ?? 0) > 0 && payloadOk && !allPathsNotApplicable;
+    (validation.payload_must_contain?.length ?? 0) > 0 && payloadOk && !anyPayloadNotApplicable;
   const allIdentifiersNotApplicable =
     (validation.identifier_paths?.length ?? 0) > 0 &&
     missingIdentifierValues.length === 0 &&
@@ -2785,7 +2785,9 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const not_applicable =
     passed &&
     countOk &&
-    (rawRequiredDigestDowngrade || allPathsNotApplicable || (allIdentifiersNotApplicable && !hasMeaningfulPayloadPass));
+    (rawRequiredDigestDowngrade ||
+      anyPayloadNotApplicable ||
+      (allIdentifiersNotApplicable && !hasMeaningfulPayloadPass));
 
   const actual = {
     matched_count: matchedCount,
@@ -2804,7 +2806,10 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   // failure is a count mismatch or no specific call is implicated.
   let jsonPointer: string | null = null;
   if (!payloadOk && matched.length > 0) {
-    const idx = all.indexOf(matched[0]!);
+    const actionableMiss = matched.find(
+      call => call.attestation_mode === 'raw' && isJsonContentType(call.content_type)
+    );
+    const idx = all.indexOf(actionableMiss ?? matched[0]!);
     if (idx >= 0) jsonPointer = `/recorded_calls/${idx}/payload`;
   }
 
@@ -2820,7 +2825,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
             ? upstream.identifierDigestLimitExceeded
               ? `identifier_paths exceeded the runner digest buffer; recorder buffer capped at ${upstream.identifierDigestLimitExceeded.limit} unique digests with ${upstream.identifierDigestLimitExceeded.clipped} overflow value(s) clipped — graded not_applicable`
               : `identifier_paths only matched digest attestations without portable proofs — graded not_applicable`
-            : `payload_must_contain paths only matched non-raw or non-JSON content_types — graded not_applicable`,
+            : `payload_must_contain paths could not be fully inspected in raw JSON attestations — graded not_applicable`,
       }),
       description: validation.description,
       json_pointer: null,
@@ -2898,8 +2903,8 @@ function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefi
 /**
  * Returns whether at least one matched call's payload satisfies the
  * `payload_must_contain` predicate, plus a flag indicating the assertion
- * graded `not_applicable` (every matched call was non-JSON; path-based
- * matching has no portable semantics on non-JSON wire formats).
+ * graded `not_applicable` (no matched call had a JSON payload to inspect,
+ * or at least one matched call used digest-only attestation).
  *
  * Per spec PRs adcp#3816 (initial JSONPath restriction) and adcp#3987
  * (closes the substring-fallback ambiguity #3845):
@@ -2927,12 +2932,18 @@ function anyMatchedCallSatisfies(
   spec: UpstreamTrafficPayloadMatch
 ): { satisfied: boolean; not_applicable: boolean } {
   let sawApplicableCall = false;
+  let sawDigestCall = false;
   for (const call of calls) {
-    if (call.attestation_mode !== 'raw') continue;
+    if (call.attestation_mode !== 'raw') {
+      sawDigestCall = true;
+      continue;
+    }
     const isJson = isJsonContentType(call.content_type);
     // All match modes require a structured-JSON payload — non-JSON calls
     // don't contribute regardless of mode (adcp#3987).
-    if (!isJson) continue;
+    if (!isJson) {
+      continue;
+    }
     sawApplicableCall = true;
     const candidates = resolveJsonPathLite(call.payload, spec.path);
     if (candidates.length === 0) continue;
@@ -2945,7 +2956,7 @@ function anyMatchedCallSatisfies(
       if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
     }
   }
-  return { satisfied: false, not_applicable: !sawApplicableCall };
+  return { satisfied: false, not_applicable: !sawApplicableCall || sawDigestCall };
 }
 
 /**
