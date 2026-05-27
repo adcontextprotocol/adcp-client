@@ -39,6 +39,16 @@ const VALID_PURPOSES = new Set([
   'other',
 ]);
 
+export class PayloadDigestError extends Error {
+  cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'PayloadDigestError';
+    this.cause = cause;
+  }
+}
+
 /**
  * Wrapped per-call entry stored in the buffer. Carries the public
  * `RecordedCall` plus the principal it was recorded under (kept off the
@@ -525,10 +535,17 @@ function sha256Hex(value: string): string {
  * Compute the `RecordedCall.payload_digest_sha256` value. By default this
  * applies the same body snapshot normalization, payload normalization, and
  * canonical secret-key redaction used by the recorder before hashing; pass a
- * custom redaction pattern and `maxPayloadBytes` when your recorder uses
- * matching options. Prefer `{ prenormalized: true }` only when the payload
- * has already been normalized/redacted exactly as the recorder would store it;
- * legacy `false` remains accepted as the same prenormalized sentinel.
+ * custom redaction pattern and `maxPayloadBytes` when your recorder uses matching
+ * options:
+ *
+ * - `createUpstreamRecorder({ redactPattern })` → `computePayloadDigestSha256(..., { redactPattern })`
+ * - `createUpstreamRecorder({ maxPayloadBytes })` → `computePayloadDigestSha256(..., { maxPayloadBytes })`
+ *
+ * Prefer `{ prenormalized: true }` only when the payload has already been
+ * normalized/redacted exactly as the recorder would store it; legacy `false`
+ * remains accepted as the same prenormalized sentinel. The prenormalized path
+ * skips redaction, so the helper rejects secret-shaped keys whose scalar values
+ * are not already `"[redacted]"`.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -571,16 +588,21 @@ export function computePayloadDigestSha256(
     typeof options === 'object' && options !== null && !(options instanceof RegExp)
       ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
       : DEFAULT_MAX_PAYLOAD_BYTES;
-  const payloadForDigest =
-    redactPattern === false
-      ? payload
-      : normalizeRecordedPayload(
-          normalizeFetchPayloadInput(payload, contentType),
-          contentType,
-          redactPattern,
-          maxPayloadBytes
-        );
-  return sha256Hex(canonicalPayloadBytes(payloadForDigest, contentType));
+  try {
+    const payloadForDigest =
+      redactPattern === false
+        ? assertPrenormalizedPayloadSafe(payload, contentType, SECRET_KEY_PATTERN)
+        : normalizeRecordedPayload(
+            normalizeFetchPayloadInput(payload, contentType),
+            contentType,
+            redactPattern,
+            maxPayloadBytes
+          );
+    return sha256Hex(canonicalPayloadBytes(payloadForDigest, contentType));
+  } catch (err) {
+    if (err instanceof PayloadDigestError) throw err;
+    throw new PayloadDigestError(err instanceof Error ? err.message : 'Payload digest canonicalization failed', err);
+  }
 }
 
 export type PayloadDigestOptions = {
@@ -588,6 +610,55 @@ export type PayloadDigestOptions = {
   maxPayloadBytes?: number;
   prenormalized?: boolean;
 };
+
+function assertPrenormalizedPayloadSafe(payload: unknown, contentType: string, pattern: RegExp): unknown {
+  let scanTarget = payload;
+  if (typeof payload === 'string' && isJsonContentType(contentType)) {
+    try {
+      scanTarget = JSON.parse(payload);
+    } catch {
+      scanTarget = payload;
+    }
+  } else if (typeof payload === 'string' && isFormUrlEncoded(contentType)) {
+    scanTarget = Object.fromEntries(new URLSearchParams(payload));
+  }
+  const unsafePath = findUnredactedSecretPath(scanTarget, pattern);
+  if (unsafePath) {
+    throw new PayloadDigestError(
+      `Prenormalized payload contains unredacted secret-shaped key "${unsafePath}"; hash the recorder-normalized payload or omit prenormalized.`
+    );
+  }
+  return payload;
+}
+
+function findUnredactedSecretPath(
+  value: unknown,
+  pattern: RegExp,
+  path = '',
+  seen: WeakSet<object> = new WeakSet()
+): string | null {
+  if (!value || typeof value !== 'object') return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const child = findUnredactedSecretPath(value[i], pattern, `${path}[${i}]`, seen);
+      if (child) return child;
+    }
+    return null;
+  }
+  for (const [key, childValue] of Object.entries(value as Record<string, unknown>)) {
+    const childPath = path ? `${path}.${key}` : key;
+    if (pattern.test(key) && isUnredactedSecretScalar(childValue)) return childPath;
+    const child = findUnredactedSecretPath(childValue, pattern, childPath, seen);
+    if (child) return child;
+  }
+  return null;
+}
+
+function isUnredactedSecretScalar(value: unknown): boolean {
+  return (typeof value === 'string' || typeof value === 'number') && value !== '[redacted]';
+}
 
 function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
   if (payload === undefined) return undefined;

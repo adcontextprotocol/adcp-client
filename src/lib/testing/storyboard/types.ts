@@ -1055,7 +1055,9 @@ export interface StoryboardValidation {
    * dotted grammar with optional `[*]` wildcard selectors on segments, for
    * example `audiences[*].add[*].hashed_email`; bracket-quoted keys,
    * recursive descent (`$..foo`), and numeric indexes are rejected so
-   * controllers do not silently resolve zero vectors. Per spec PR
+   * controllers do not silently resolve zero vectors. The runner caps
+   * portable digest proofs at 64 unique identifier values; overflow is graded
+   * `not_applicable` because the bound is runner-side, not a spec value. Per spec PR
    * adcontextprotocol/adcp#3816, replaces the earlier
    * `buyer_identifier_echo: boolean` shorthand.
    */

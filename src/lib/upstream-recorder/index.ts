@@ -50,9 +50,9 @@
  *
  * Digest-mode queries canonicalize JSON payloads before hashing. If a
  * recorded JSON payload cannot be canonicalized (for example because it
- * exceeds the recorder's depth cap), `query()` throws rather than emitting a
- * non-canonical digest; controller handlers should surface that as a failed
- * `query_upstream_traffic` response.
+ * exceeds the recorder's depth cap), `query()` omits that entry and emits
+ * `digest_canonicalization_failed` through `onError` rather than returning a
+ * non-canonical digest.
  *
  * Production builds with `enabled: false` get a no-op recorder — every
  * method is a pass-through / empty-result, zero per-call overhead.
@@ -61,7 +61,12 @@
  * `@adcp/sdk`'s storyboard runner (PR adcp-client#1289).
  */
 
-export { computePayloadDigestSha256, createUpstreamRecorder, toQueryUpstreamTrafficResponse } from './recorder';
+export {
+  PayloadDigestError,
+  computePayloadDigestSha256,
+  createUpstreamRecorder,
+  toQueryUpstreamTrafficResponse,
+} from './recorder';
 export type { PayloadDigestOptions } from './recorder';
 export { UpstreamRecorderScopeError } from './types';
 export type {

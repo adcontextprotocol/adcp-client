@@ -255,8 +255,9 @@ export interface UpstreamRecorderQueryParams {
    * Requested attestation mode for returned calls. `raw` (default) returns
    * the redacted payload; `digest` returns `payload_digest_sha256` plus
    * optional identifier echo proofs. Digest projection canonicalizes JSON
-   * payloads before hashing and throws if a matched JSON payload cannot be
-   * canonicalized.
+   * payloads before hashing; when a matched JSON payload cannot be
+   * canonicalized, `query()` omits that entry and emits
+   * `digest_canonicalization_failed` through `onError`.
    */
   attestationMode?: 'raw' | 'digest';
   /**
@@ -363,8 +364,8 @@ export interface UpstreamRecorder {
    * `sinceTimestamp` and `endpointPattern`, and truncated to `limit`.
    * Adopters typically pass the result verbatim into their
    * `comply_test_controller`'s `query_upstream_traffic` response. In
-   * digest mode, throws when a matched JSON payload cannot be canonicalized
-   * for `payload_digest_sha256`.
+   * digest mode, entries that cannot be canonicalized for
+   * `payload_digest_sha256` are omitted and surfaced through `onError`.
    */
   query(params: UpstreamRecorderQueryParams): UpstreamRecorderQueryResult;
   /**

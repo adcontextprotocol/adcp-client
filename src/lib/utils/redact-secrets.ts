@@ -47,17 +47,31 @@ const REDACT_MAX_DEPTH = 256;
  *
  * Non-mutating — the input is never touched.
  */
-export function redactSecrets(value: unknown, pattern: RegExp = SECRET_KEY_PATTERN, depth = 0): unknown {
+export function redactSecrets(
+  value: unknown,
+  pattern: RegExp = SECRET_KEY_PATTERN,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet()
+): unknown {
   if (depth > REDACT_MAX_DEPTH) return value;
-  if (Array.isArray(value)) return value.map(v => redactSecrets(v, pattern, depth + 1));
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const out = value.map(v => redactSecrets(v, pattern, depth + 1, seen));
+    seen.delete(value);
+    return out;
+  }
   if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       out[k] =
         pattern.test(k) && (typeof v === 'string' || typeof v === 'number')
           ? '[redacted]'
-          : redactSecrets(v, pattern, depth + 1);
+          : redactSecrets(v, pattern, depth + 1, seen);
     }
+    seen.delete(value);
     return out;
   }
   return value;

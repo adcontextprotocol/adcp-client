@@ -269,6 +269,16 @@ phases:
       /identifier_paths\[0\].*unsupported.*request payload/
     );
   });
+
+  test('runStoryboardStep invokes storyboard shape validation before discovery', async () => {
+    await assert.rejects(
+      () =>
+        runStoryboardStep('https://stub.example/mcp', buildStoryboard({ requires: [] }), 'step1', {
+          _profile: profileWithController,
+        }),
+      /requires: \[\] is not allowed/
+    );
+  });
 });
 
 describe('Storyboard.requires loader validation (#1626)', () => {

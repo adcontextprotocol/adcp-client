@@ -19,6 +19,7 @@ const addFormats = require('ajv-formats').default;
 const {
   computePayloadDigestSha256,
   createUpstreamRecorder,
+  PayloadDigestError,
   toQueryUpstreamTrafficResponse,
 } = require('../../dist/lib/upstream-recorder');
 const { canonicalize } = require('../../dist/lib/utils/jcs');
@@ -298,16 +299,62 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
 
   test('computePayloadDigestSha256 rejects parsed JSON strings that cannot be canonicalized', () => {
     const tooDeepJson = `${'['.repeat(260)}"leaf"${']'.repeat(260)}`;
-    assert.throws(
-      () => computePayloadDigestSha256(tooDeepJson, 'application/json'),
-      /JSON payload exceeds max canonicalization depth/
-    );
+    assert.throws(() => computePayloadDigestSha256(tooDeepJson, 'application/json'), {
+      name: 'PayloadDigestError',
+      message: /JSON payload exceeds max canonicalization depth/,
+    });
   });
 
   test('computePayloadDigestSha256 rejects deep object payloads that cannot be canonicalized', () => {
     let payload = 'leaf';
     for (let i = 0; i < 260; i++) payload = [payload];
-    assert.throws(() => computePayloadDigestSha256(payload), /JSON payload exceeds max canonicalization depth/);
+    assert.throws(() => computePayloadDigestSha256(payload), {
+      name: 'PayloadDigestError',
+      message: /JSON payload exceeds max canonicalization depth/,
+    });
+  });
+
+  test('computePayloadDigestSha256 rejects prenormalized payloads with unredacted secret keys', () => {
+    assert.throws(
+      () =>
+        computePayloadDigestSha256(
+          { nested: { authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa' } },
+          'application/json',
+          { prenormalized: true }
+        ),
+      {
+        name: 'PayloadDigestError',
+        message: /nested\.authorization/,
+      }
+    );
+
+    assert.throws(
+      () => computePayloadDigestSha256('access_token=fake_test_fixture', 'application/x-www-form-urlencoded', false),
+      {
+        name: 'PayloadDigestError',
+        message: /access_token/,
+      }
+    );
+  });
+
+  test('computePayloadDigestSha256 redacts cyclic object payloads and rejects unsafe prenormalized cycles', () => {
+    const payload = { ok: true };
+    payload.self = payload;
+    const digest = computePayloadDigestSha256(payload, 'application/json');
+    assert.equal(digest, sha256Hex(canonicalize({ ok: true, self: '[Circular]' })));
+
+    const unsafe = { authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa' };
+    unsafe.self = unsafe;
+    assert.throws(() => computePayloadDigestSha256(unsafe, 'application/json', { prenormalized: true }), {
+      name: 'PayloadDigestError',
+      message: /authorization/,
+    });
+  });
+
+  test('PayloadDigestError is exported for adopter query handlers', () => {
+    const err = new PayloadDigestError('bad payload');
+    assert.equal(err.name, 'PayloadDigestError');
+    assert.ok(err instanceof Error);
   });
 
   test('computePayloadDigestSha256 applies default and custom redaction before hashing', () => {
