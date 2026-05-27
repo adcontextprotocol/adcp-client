@@ -1,12 +1,8 @@
-// Framework-side sandbox-authority gate for `comply_test_controller`.
-// Phase 2 of #1435 — auto-wires the gate inside `createAdcpServerFromPlatform`
-// so the controller refuses live-mode accounts regardless of what the caller
-// claims on the wire. See docs/proposals/lifecycle-state-and-sandbox-authority.md.
-//
-// 5 admit/deny combinations × 3 modes = 15 assertions covering:
-//   - resolver returns mode 'live' / 'sandbox' / 'mock'
-//   - context.sandbox === true when no account resolves
-//   - process.env.ADCP_SANDBOX === '1' fallback (and its fail-closed guard)
+// Framework-side visibility and sandbox-authority gate for
+// `comply_test_controller` in `createAdcpServerFromPlatform`.
+// Covers Path B discovery hiding, direct-call method-not-found, target-account
+// PERMISSION_DENIED, BuyerAgentRegistry context, legacy `sandbox: true`, and
+// the ADCP_SANDBOX env bridge/fail-closed guard.
 
 process.env.NODE_ENV = 'test';
 
@@ -14,8 +10,10 @@ const { describe, it, beforeEach, after } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { __resetObservedAccountModes } = require('../dist/lib/server/decisioning/runtime/observed-modes');
+const { getSdkServer } = require('../dist/lib/server/adcp-server');
+const { BuyerAgentRegistry } = require('../dist/lib/server/decisioning/buyer-agent');
 
-function makePlatform(resolveAccount) {
+function makePlatform(resolveAccount, overrides = {}) {
   return {
     capabilities: {
       specialisms: ['sales-non-guaranteed'],
@@ -29,6 +27,7 @@ function makePlatform(resolveAccount) {
     accounts: {
       resolve: resolveAccount,
     },
+    ...(overrides.agentRegistry !== undefined && { agentRegistry: overrides.agentRegistry }),
     sales: {
       getProducts: async () => ({ products: [] }),
       createMediaBuy: async () => ({
@@ -48,8 +47,8 @@ function makePlatform(resolveAccount) {
   };
 }
 
-function buildServer(resolveAccount) {
-  return createAdcpServerFromPlatform(makePlatform(resolveAccount), {
+function buildServer(resolveAccount, overrides = {}) {
+  return createAdcpServerFromPlatform(makePlatform(resolveAccount, overrides), {
     name: 'gate-host',
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
@@ -68,28 +67,81 @@ function buildServer(resolveAccount) {
   });
 }
 
-async function callForceCreative(server, args = {}) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: {
-      name: 'comply_test_controller',
-      arguments: {
-        scenario: 'force_creative_status',
-        params: { creative_id: 'cr_1', status: 'approved' },
-        ...args,
+async function callForceCreative(server, args = {}, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'comply_test_controller',
+        arguments: {
+          scenario: 'force_creative_status',
+          params: { creative_id: 'cr_1', status: 'approved' },
+          ...args,
+        },
       },
     },
-  });
+    extras
+  );
 }
 
-async function callListScenarios(server) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: {
-      name: 'comply_test_controller',
-      arguments: { scenario: 'list_scenarios' },
+async function callListScenarios(server, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'comply_test_controller',
+        arguments: { scenario: 'list_scenarios' },
+      },
     },
-  });
+    extras
+  );
+}
+
+async function callCapabilities(server, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_adcp_capabilities',
+        arguments: {},
+      },
+    },
+    extras
+  );
+}
+
+async function listTools(server, extras) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/list',
+    },
+    extras
+  );
+}
+
+function assertPermissionDenied(result) {
+  assert.strictEqual(result.isError, true);
+  assert.strictEqual(result.structuredContent?.adcp_error?.code, 'PERMISSION_DENIED');
+}
+
+async function callMcpToolsCallHandler(server, args = {}, extra = {}) {
+  const sdk = getSdkServer(server);
+  const handler = sdk?.server?._requestHandlers?.get('tools/call');
+  if (!handler) throw new Error('tools/call request handler not found');
+  return handler(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'comply_test_controller',
+        arguments: {
+          scenario: 'force_creative_status',
+          params: { creative_id: 'cr_1', status: 'approved' },
+          ...args,
+        },
+      },
+    },
+    { signal: new AbortController().signal, ...extra }
+  );
 }
 
 describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path)', () => {
@@ -98,7 +150,7 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
     __resetObservedAccountModes();
   });
 
-  it("denies when resolver returns mode: 'live'", async () => {
+  it("hides the comply controller when the principal resolves to mode: 'live'", async () => {
     const server = buildServer(async ref => ({
       id: ref?.account_id ?? 'live_acc',
       mode: 'live',
@@ -106,10 +158,21 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
       authInfo: { kind: 'api_key' },
     }));
 
-    const result = await callForceCreative(server, { account: { account_id: 'live_acc' } });
+    const caps = await callCapabilities(server);
+    assert.strictEqual(caps.structuredContent.compliance_testing, undefined);
 
-    assert.strictEqual(result.isError, true, 'live-mode account must be denied');
-    assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
+    const listed = await listTools(server);
+    assert.ok(!listed.tools.some(tool => tool.name === 'comply_test_controller'));
+
+    await assert.rejects(
+      () => callForceCreative(server, { account: { account_id: 'live_acc' } }),
+      err => err?.code === -32601
+    );
+
+    await assert.rejects(
+      () => callMcpToolsCallHandler(server, { account: { account_id: 'live_acc' } }),
+      err => err?.code === -32601
+    );
   });
 
   it("admits when resolver returns mode: 'sandbox'", async () => {
@@ -119,6 +182,12 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
       ctx_metadata: {},
       authInfo: { kind: 'api_key' },
     }));
+
+    const caps = await callCapabilities(server);
+    assert.ok(caps.structuredContent.compliance_testing);
+
+    const listed = await listTools(server);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
 
     const result = await callForceCreative(server, { account: { account_id: 'sb_acc' } });
 
@@ -134,6 +203,9 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
       authInfo: { kind: 'api_key' },
     }));
 
+    const listed = await listTools(server);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
+
     const result = await callForceCreative(server, { account: { account_id: 'mock_acc' } });
 
     assert.notStrictEqual(result.isError, true, 'mock-mode account must be admitted');
@@ -148,28 +220,189 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
       authInfo: { kind: 'api_key' },
     }));
 
+    const caps = await callCapabilities(server);
+    assert.ok(caps.structuredContent.compliance_testing);
+
+    const listed = await listTools(server);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
+
     const result = await callForceCreative(server, { account: { account_id: 'legacy_sb' } });
 
     assert.notStrictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.success, true);
   });
 
-  it('ignores caller-supplied account.sandbox claim when resolver says live', async () => {
+  it('returns PERMISSION_DENIED when a sandbox principal targets a live account', async () => {
+    const server = buildServer(async ref => {
+      if (ref?.account_id === 'live_acc') {
+        return {
+          id: 'live_acc',
+          mode: 'live',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        };
+      }
+      return {
+        id: ref?.account_id ?? 'principal_sb',
+        mode: 'sandbox',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      };
+    });
+
+    const result = await callForceCreative(server, {
+      account: { account_id: 'live_acc' },
+      context: { correlation_id: 'corr_1' },
+      ext: { probe: true },
+    });
+
+    assertPermissionDenied(result);
+    assert.deepStrictEqual(result.structuredContent.context, { correlation_id: 'corr_1' });
+    assert.deepStrictEqual(result.structuredContent.ext, { probe: true });
+    const textPayload = JSON.parse(result.content[0].text);
+    assert.deepStrictEqual(textPayload.context, result.structuredContent.context);
+    assert.deepStrictEqual(textPayload.ext, result.structuredContent.ext);
+  });
+
+  it('ignores caller-supplied account.sandbox claim when a sandbox principal targets a live account', async () => {
     // Trust boundary: resolver is authoritative, NOT the wire. Buyer cannot
     // self-promote by stuffing sandbox: true into the account ref.
-    const server = buildServer(async ref => ({
-      id: ref?.account_id ?? 'spoof',
-      mode: 'live',
-      ctx_metadata: {},
-      authInfo: { kind: 'api_key' },
-    }));
+    const server = buildServer(async ref => {
+      if (ref?.account_id === 'spoof') {
+        return {
+          id: 'spoof',
+          mode: 'live',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        };
+      }
+      return {
+        id: ref?.account_id ?? 'principal_sb',
+        mode: 'sandbox',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      };
+    });
 
     const result = await callForceCreative(server, {
       account: { account_id: 'spoof', sandbox: true },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
+    assertPermissionDenied(result);
+  });
+
+  it('passes actual discovery context to accounts.resolve when checking visibility', async () => {
+    const calls = [];
+    const server = buildServer(async (ref, ctx) => {
+      calls.push({ ref, toolName: ctx?.toolName });
+      return {
+        id: ref?.account_id ?? 'principal_sb',
+        mode: 'sandbox',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      };
+    });
+
+    await callCapabilities(server);
+    await listTools(server);
+    await callListScenarios(server);
+
+    assert.deepStrictEqual(
+      calls.map(c => c.toolName),
+      ['get_adcp_capabilities', undefined, 'comply_test_controller']
+    );
+    assert.deepStrictEqual(
+      calls.map(c => c.ref),
+      [undefined, undefined, undefined]
+    );
+  });
+
+  it('threads resolved BuyerAgent into comply visibility and target account resolution', async () => {
+    const registryAgent = {
+      agent_url: 'https://buyer.example/agent',
+      display_name: 'Buyer',
+      status: 'active',
+      billing_capabilities: new Set(['operator']),
+      sandbox_only: true,
+    };
+    const seen = [];
+    const server = buildServer(
+      async (ref, ctx) => {
+        seen.push({ ref, agent: ctx?.agent, inputScenario: ctx?.input?.scenario });
+        return {
+          id: ref?.account_id ?? 'principal_sb',
+          mode: ctx?.agent === registryAgent ? 'sandbox' : 'live',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        };
+      },
+      {
+        agentRegistry: {
+          async resolve() {
+            return registryAgent;
+          },
+        },
+      }
+    );
+
+    const result = await callForceCreative(server, { account: { account_id: 'target_sb' } });
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.success, true);
+    assert.ok(seen.length >= 2, 'visibility and target resolution should both run');
+    assert.ok(seen.every(call => call.agent === registryAgent));
+    assert.ok(seen.some(call => call.ref === undefined));
+    assert.ok(seen.some(call => call.ref?.account_id === 'target_sb'));
+    assert.ok(seen.some(call => call.inputScenario === 'force_creative_status'));
+  });
+
+  it('threads serve-style authInfo.extra.credential into bearerOnly registry for visibility', async () => {
+    const registryAgent = {
+      agent_url: 'https://buyer.example/agent',
+      display_name: 'Buyer',
+      status: 'active',
+      billing_capabilities: new Set(['operator']),
+    };
+    const seenCredentials = [];
+    const server = buildServer(
+      async (ref, ctx) => ({
+        id: ref?.account_id ?? 'principal_from_agent',
+        mode: ctx?.agent === registryAgent ? 'sandbox' : 'live',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      }),
+      {
+        agentRegistry: BuyerAgentRegistry.bearerOnly({
+          async resolveByCredential(credential, extra, input) {
+            seenCredentials.push({ credential, extra, input });
+            return credential?.kind === 'api_key' && credential.key_id === 'sandbox-key' ? registryAgent : null;
+          },
+        }),
+      }
+    );
+    const extra = {
+      authInfo: {
+        clientId: 'buyer_1',
+        extra: {
+          credential: { kind: 'api_key', key_id: 'sandbox-key' },
+          tenant: 'tenant_1',
+        },
+      },
+    };
+
+    const caps = await callCapabilities(server, extra);
+    assert.ok(caps.structuredContent.compliance_testing);
+
+    const listed = await listTools(server, extra);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
+
+    const result = await callMcpToolsCallHandler(server, { account: { account_id: 'target_sb' } }, extra);
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.success, true);
+    assert.ok(seenCredentials.length >= 3, 'capabilities, tools/list, and controller dispatch resolve agent');
+    assert.ok(seenCredentials.every(call => call.credential?.key_id === 'sandbox-key'));
+    assert.ok(seenCredentials.every(call => call.extra?.tenant === 'tenant_1'));
+    assert.ok(seenCredentials.some(call => call.input?.scenario === 'force_creative_status'));
   });
 });
 
@@ -182,8 +415,30 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (accountRef.sa
     __resetObservedAccountModes();
   });
 
-  it('admits when no account resolves and accountRef.sandbox === true', async () => {
+  it('hides the controller when no principal resolves and no sandbox deployment flag is set', async () => {
     const server = buildServer(async () => null);
+
+    const caps = await callCapabilities(server);
+    assert.strictEqual(caps.structuredContent.compliance_testing, undefined);
+
+    const listed = await listTools(server);
+    assert.ok(!listed.tools.some(tool => tool.name === 'comply_test_controller'));
+
+    await assert.rejects(
+      () => callForceCreative(server, { account: { sandbox: true } }),
+      err => err?.code === -32601
+    );
+  });
+
+  it('exposes discovery and admits accountRef.sandbox === true in an explicitly sandboxed deployment', async () => {
+    process.env.ADCP_SANDBOX = '1';
+    const server = buildServer(async () => null);
+
+    const caps = await callCapabilities(server);
+    assert.ok(caps.structuredContent.compliance_testing);
+
+    const listed = await listTools(server);
+    assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
 
     const result = await callForceCreative(server, { account: { sandbox: true } });
 
@@ -191,32 +446,60 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (accountRef.sa
     assert.strictEqual(result.structuredContent.success, true);
   });
 
-  it('denies when no account resolves and accountRef.sandbox is absent', async () => {
+  it('admits via deployment-scoped ADCP_SANDBOX=1 when no account resolves and accountRef.sandbox is absent', async () => {
+    process.env.ADCP_SANDBOX = '1';
     const server = buildServer(async () => null);
 
     const result = await callForceCreative(server);
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.success, true);
+  });
+
+  it('returns PERMISSION_DENIED when a sandbox principal targets an unresolved non-sandbox account', async () => {
+    const server = buildServer(async ref => {
+      if (ref == null) {
+        return {
+          id: 'principal_sb',
+          mode: 'sandbox',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        };
+      }
+      return null;
+    });
+
+    const result = await callForceCreative(server, { account: { account_id: 'missing_live' } });
+
+    assertPermissionDenied(result);
   });
 
   it('does NOT admit on accountRef.sandbox when the resolver names a live account', async () => {
     // The wire flag is a fallback for the *unresolved* path. Once the
     // resolver names the account, the resolver wins and the buyer's wire
     // claim is ignored.
-    const server = buildServer(async ref => ({
-      id: ref?.account_id ?? 'live_acc',
-      mode: 'live',
-      ctx_metadata: {},
-      authInfo: { kind: 'api_key' },
-    }));
+    const server = buildServer(async ref => {
+      if (ref?.account_id === 'live_acc') {
+        return {
+          id: 'live_acc',
+          mode: 'live',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        };
+      }
+      return {
+        id: ref?.account_id ?? 'principal_sb',
+        mode: 'sandbox',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+      };
+    });
 
     const result = await callForceCreative(server, {
       account: { account_id: 'live_acc', sandbox: true },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
+    assertPermissionDenied(result);
   });
 });
 
@@ -248,8 +531,8 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (env fallback)
   it('FAILS CLOSED on a live-mode resolve when ADCP_SANDBOX=1 (catches the misconfig immediately)', async () => {
     // The env-fallback was never meant to coexist with a resolver that names
     // live accounts. As soon as such a pairing is observed, the gate throws
-    // loudly so operators notice in their logs — a FORBIDDEN response would
-    // be too quiet for what is fundamentally a deployment-level misconfig.
+    // loudly so operators notice in their logs — a PERMISSION_DENIED
+    // response would be too quiet for what is fundamentally a deployment-level misconfig.
     process.env.ADCP_SANDBOX = '1';
     const server = buildServer(async ref => ({
       id: ref?.account_id ?? 'live_1',
@@ -316,10 +599,15 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (env fallback)
     );
   });
 
-  it('list_scenarios is exempt from the gate (probe always answers)', async () => {
-    // No env, no context.sandbox, resolver returns null. force_creative_status
-    // would deny — list_scenarios admits as a discovery probe.
-    const server = buildServer(async () => null);
+  it('list_scenarios is exempt from the target-account gate once the sandbox principal can see the controller', async () => {
+    // A sandbox principal can use list_scenarios without a target account.
+    // A live principal cannot see the controller at all.
+    const server = buildServer(async ref => ({
+      id: ref?.account_id ?? 'principal_sb',
+      mode: 'sandbox',
+      ctx_metadata: {},
+      authInfo: { kind: 'api_key' },
+    }));
 
     const probe = await callListScenarios(server);
 

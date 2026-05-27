@@ -1,19 +1,20 @@
 /**
- * Format-schema fetcher for AdCP 3.1's
- * `ProductFormatDeclaration.format_schema` references — the URI+digest
- * pointer to an out-of-tree JSON Schema document describing a custom
- * format's `params` and `slots` shape.
+ * Canonical reference resolver for AdCP 3.1 `format_schema` and
+ * `platform_extensions` URI+digest references.
  *
- * Use after `projectV1ProductToV2` or directly on V2 declarations whose
- * `format_kind: "custom"` carries a `format_schema` reference:
+ * Use the high-level resolver after `projectV1ProductToV2` or directly
+ * on V2 declarations. It returns structured statuses instead of
+ * throwing, keeps a caller-scoped immutable cache, resolves and compiles
+ * custom format schemas, and uses the same hardened transport for
+ * platform-extension definitions.
  *
  * ```ts
- * import { fetchFormatSchema } from '@adcp/sdk/v2/format-schema';
+ * import { createCanonicalReferenceResolver } from '@adcp/sdk/v2/format-schema';
  *
- * const { format_schema } = decl;
- * if (format_schema) {
- *   const { schema, fromCache } = await fetchFormatSchema(format_schema);
- *   // Use `schema` to validate the placement manifest at runtime.
+ * const resolver = createCanonicalReferenceResolver();
+ * const result = await resolver.resolveFormatSchema(decl.format_schema);
+ * if (result.ok) {
+ *   // Use `result.document` to validate the placement manifest.
  * }
  * ```
  *
@@ -46,3 +47,22 @@ export {
   type ResolveSchemaRefsOptions,
   type ResolveSchemaRefsResult,
 } from './sandbox-refs';
+
+export {
+  createCanonicalRefResolver,
+  createCanonicalReferenceResolver,
+  createMemoryCanonicalReferenceCache,
+  resolveFormatSchema,
+  resolvePlatformExtension,
+  type CanonicalReferenceCache,
+  type CanonicalRef,
+  type CanonicalReferenceFailureResult,
+  type CanonicalReferenceKind,
+  type CanonicalReferenceResolvedResult,
+  type CanonicalReferenceResolutionCode,
+  type CanonicalReferenceResolutionResult,
+  type CanonicalReferenceResolutionStatus,
+  type CanonicalReferenceResolver,
+  type CanonicalReferenceResolverOptions,
+  type ResolveCanonicalReferenceOptions,
+} from './resolver';

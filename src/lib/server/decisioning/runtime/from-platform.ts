@@ -50,6 +50,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { AdcpServer } from '../../adcp-server';
 import {
   createAdcpServer,
@@ -150,12 +151,12 @@ import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatus
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
-import { getSdkServer } from '../../adcp-server';
+import { getSdkServer, wrapRegisteredToolHandler, wrapSdkRequestHandler } from '../../adcp-server';
 import { isSandboxOrMockAccount } from '../../account-mode';
-import { toMcpResponse } from '../../test-controller';
 import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
 import { normalizeErrors } from '../../normalize-errors';
+import { redactCredentialPatterns } from '../../redact';
 
 /**
  * Apply `normalizeErrors` to a sync_creatives row's optional `errors`
@@ -448,9 +449,10 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 
   /**
    * `comply_test_controller` adapter set. When supplied, the framework
-   * registers the wire tool automatically by composing `createComplyController`
-   * (`@adcp/sdk/testing`) with the adopter's adapters and calling
-   * `controller.register(server)` after platform handlers wire up.
+   * composes `createComplyController` (`@adcp/sdk/testing`) with the adopter's
+   * adapters and registers the wire tool after platform handlers wire up. MCP
+   * registration is framework-owned so principal visibility, `tools/list`
+   * filtering, and direct-call method-not-found behavior can be enforced.
    *
    * Adopter declares the scenarios they support — `seed: { product, … }`,
    * `force: { creative_status, … }`, `simulate: { delivery, … }`. The
@@ -459,13 +461,16 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * `get_adcp_capabilities` so conformance harnesses see what's
    * supported.
    *
-   * **Sandbox gating.** `complyTest.sandboxGate(input)` is the per-request
-   * gate; tools/list visibility is controlled by whether you supply
-   * `complyTest` at all. Production agents typically gate registration
-   * itself on `process.env.ADCP_SANDBOX === '1'` or wrap construction in
-   * an environment check; the helper logs a loud warning if registered
-   * without a gate AND without an env-flag escape (matches the standalone
-   * `createComplyController` warning behavior).
+   * **Deployment + sandbox gating.** Supplying `complyTest` wires the
+   * controller for sandbox/conformance deployments. The framework then hides
+   * the capability block, filters `tools/list`, and returns MCP method-not-
+   * found for direct controller calls unless the auth-derived principal
+   * resolves to `mode: 'sandbox' | 'mock'` (or legacy resolved
+   * `sandbox: true`, or the legacy deployment bridge `ADCP_SANDBOX=1` is set).
+   * Within a visible sandbox/mock deployment, target-account dispatch still
+   * refuses live or unresolved non-sandbox accounts with `PERMISSION_DENIED`;
+   * a buyer-supplied `account.sandbox: true` is only an unresolved-target
+   * fallback and never overrides a resolved live account.
    *
    * **Capability-vs-adapter consistency.** Both directions are enforced:
    *
@@ -1420,6 +1425,110 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   };
 
   const server = createAdcpServer(config);
+  const mcp = getSdkServer(server);
+  type McpExtra = { authInfo?: ResolvedAuthInfo } | undefined;
+
+  const resolveComplyBuyerAgent = async (
+    extra: McpExtra,
+    input?: Readonly<Record<string, unknown>>
+  ): Promise<BuyerAgent | undefined> => {
+    if (platform.agentRegistry === undefined) return undefined;
+    try {
+      const inboundCredential = extra?.authInfo?.extra?.credential;
+      const credential =
+        extra?.authInfo?.credential ?? (inboundCredential as ResolvedAuthInfo['credential'] | undefined);
+      const resolved = await platform.agentRegistry.resolve({
+        ...(credential !== undefined && { credential }),
+        ...(extra?.authInfo?.extra !== undefined && { extra: extra.authInfo.extra }),
+        ...(input !== undefined && { input }),
+      });
+      if (resolved == null) return undefined;
+      if (!Object.isFrozen(resolved)) {
+        if (resolved.billing_capabilities instanceof Set) {
+          Object.freeze(resolved.billing_capabilities);
+        }
+        Object.freeze(resolved);
+      }
+      return resolved;
+    } catch (err) {
+      fwLogger.warn?.('Buyer-agent registry resolution failed during comply controller visibility check', {
+        error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
+      });
+      return undefined;
+    }
+  };
+
+  const resolveComplyControllerVisible = async (
+    extra: McpExtra,
+    toolName?: string,
+    input?: Readonly<Record<string, unknown>>
+  ): Promise<boolean> => {
+    const agent = await resolveComplyBuyerAgent(extra, input);
+    let principalAccount: Account | null = null;
+    try {
+      principalAccount = await platform.accounts.resolve(
+        undefined,
+        toResolveCtx(
+          {
+            ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+            ...(agent !== undefined && { agent }),
+          },
+          toolName,
+          input
+        )
+      );
+    } catch {
+      principalAccount = null;
+    }
+
+    recordResolvedAccountMode(principalAccount);
+
+    if (isSandboxOrMockAccount(principalAccount)) return true;
+
+    if (process.env.ADCP_SANDBOX === '1') {
+      if (hasObservedLiveMode()) {
+        throw new Error(
+          'comply_test_controller: ADCP_SANDBOX=1 is set but this process has resolved at least one ' +
+            'live-mode account from platform.accounts.resolve. Remove ADCP_SANDBOX from your prod ' +
+            'environment; gate the controller via mode: "sandbox" on resolved sandbox accounts instead. ' +
+            'See docs/proposals/lifecycle-state-and-sandbox-authority.md.'
+        );
+      }
+      return true;
+    }
+
+    return false;
+  };
+
+  if (mcp != null && hasComplianceTestingProjection) {
+    const wrappedCapabilities = wrapRegisteredToolHandler(mcp, 'get_adcp_capabilities', async (orig, args, extra) => {
+      const response = await orig(args, extra);
+      if (
+        await resolveComplyControllerVisible(
+          extra as McpExtra,
+          'get_adcp_capabilities',
+          args as Readonly<Record<string, unknown>>
+        )
+      ) {
+        return response;
+      }
+      if (response == null || typeof response !== 'object') return response;
+
+      const structured = (response as { structuredContent?: unknown }).structuredContent;
+      if (structured == null || typeof structured !== 'object') return response;
+      if (!Object.hasOwn(structured, 'compliance_testing')) return response;
+
+      const nextStructured = { ...(structured as Record<string, unknown>) };
+      delete nextStructured['compliance_testing'];
+      return { ...(response as Record<string, unknown>), structuredContent: nextStructured };
+    });
+    if (!wrappedCapabilities) {
+      throw new Error(
+        'createAdcpServerFromPlatform: failed to wrap get_adcp_capabilities for comply_test_controller visibility. ' +
+          'The MCP SDK registered-tool internals may have changed.'
+      );
+    }
+  }
 
   // Wire `comply_test_controller` if the adopter supplied adapters.
   // `createComplyController` builds the tool definition + handler + raw
@@ -1522,25 +1631,23 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // `account.sandbox === true` on the wire. The resolver is the only
     // thing that names the account's mode; the gate refuses dispatch when
     // mode is `live` (or the resolver fails to produce an account, modulo
-    // the env / context fallbacks below).
+    // the narrow fallbacks below).
     //
     // Fallback paths (deprecated):
-    //   - `context.sandbox === true` admits when no account resolved. Useful
-    //     during the migration window for adopters whose wire shape carries
-    //     sandbox routing in `context` but whose resolver isn't yet returning
-    //     `mode: 'sandbox'`.
-    //   - `process.env.ADCP_SANDBOX === '1'` admits unconditionally — the
-    //     historical pattern. KEPT for back-compat so existing test platforms
-    //     don't break on upgrade. Fails closed if the same process has ever
-    //     resolved an explicit `mode: 'live'` account from the resolver: that
-    //     pairing is a misconfiguration (env var should be unset on prod) and
-    //     leaving it open re-exposes the live principal we just gated against.
+    //   - `account.sandbox === true` admits only for unresolved target-account
+    //     refs after a sandbox/mock principal has already passed the discovery
+    //     visibility gate. A buyer wire claim never overrides a resolved live
+    //     account and is never used for principal visibility.
+    //   - `process.env.ADCP_SANDBOX === '1'` admits the principal visibility
+    //     check and target dispatch for legacy conformance deployments. It
+    //     fails closed if the same process has ever resolved an explicit
+    //     `mode: 'live'` account from the resolver: that pairing is a
+    //     misconfiguration (env var should be unset on prod) and leaving it
+    //     open re-exposes the live principal we just gated against.
     //
-    // `list_scenarios` is exempt — it's the discovery probe used by buyer
-    // tooling to distinguish "controller wired but locked" from "controller
-    // missing entirely". Read-only and reveals nothing beyond which scenarios
-    // the adopter advertised in capabilities.
-    const mcp = getSdkServer(server);
+    // `list_scenarios` is exempt from the target-account gate once the
+    // principal can see the controller. Read-only and reveals nothing beyond
+    // which scenarios the adopter advertised in capabilities.
     if (mcp == null) {
       // Non-MCP server — fall back to the controller's own registration so
       // adopters wiring a custom transport keep the v5 behavior. The gate is
@@ -1585,6 +1692,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           inputSchema: gatedInputSchema,
         },
         (async (input: Record<string, unknown>, extra: { authInfo?: ResolvedAuthInfo } | undefined) => {
+          if (!(await resolveComplyControllerVisible(extra, 'comply_test_controller', input))) {
+            throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
+          }
+
           // Probe exempt — capability discovery, no state mutation.
           if (input.scenario === 'list_scenarios') {
             return controller.handle(input);
@@ -1598,10 +1709,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
           let resolvedAccount: Account | null = null;
           try {
-            resolvedAccount = await platform.accounts.resolve(accountRef, {
-              ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-              toolName: 'comply_test_controller',
-            });
+            const agent = await resolveComplyBuyerAgent(extra, input);
+            resolvedAccount = await platform.accounts.resolve(
+              accountRef,
+              toResolveCtx(
+                {
+                  ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+                  ...(agent !== undefined && { agent }),
+                },
+                'comply_test_controller',
+                input
+              )
+            );
           } catch {
             // Resolver failures fall through to the wire-ref / env fallbacks.
             // Treat as "no account resolved" — fail-closed by default unless a
@@ -1641,10 +1760,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
 
           if (!allowed) {
-            // Echo the request's context (and ext, if present) onto the
-            // refusal so callers can correlate. The comply_controller_mode_gate
-            // storyboard (adcp#4028) asserts `context.correlation_id` is
-            // returned unchanged on the FORBIDDEN response.
+            // Refuse with the standard AdCP permission code once the
+            // sandbox/mock principal can see the controller but the target
+            // account is live or unresolved. Live principals never reach
+            // this branch: they get MCP method-not-found above.
             //
             // `context` and `ext` are open-object on the request schema, so a
             // hostile caller could stuff arbitrarily large payloads. Self-
@@ -1664,21 +1783,71 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             };
             const requestContext = safeEcho((input as { context?: unknown }).context);
             const requestExt = safeEcho((input as { ext?: unknown }).ext);
-            return toMcpResponse({
-              status: 'failed',
-              success: false,
-              error: 'FORBIDDEN',
-              error_detail:
-                'comply_test_controller requires a sandbox or mock account; ' +
-                'resolved account is in live mode (or no account resolved).',
-              ...(requestContext !== undefined && { context: requestContext }),
-              ...(requestExt !== undefined && { ext: requestExt }),
+            const response = adcpError('PERMISSION_DENIED', {
+              message:
+                'comply_test_controller requires a sandbox or mock target account; ' +
+                'resolved target account is live or unresolved.',
+              recovery: 'terminal',
+              details: {
+                scope: 'sandbox-gate',
+                tool: 'comply_test_controller',
+                reason: 'sandbox-or-mock-required',
+              },
             });
+            if (requestContext !== undefined || requestExt !== undefined) {
+              const structured = response.structuredContent as Record<string, unknown>;
+              if (requestContext !== undefined) structured['context'] = requestContext;
+              if (requestExt !== undefined) structured['ext'] = requestExt;
+              response.content = [{ type: 'text', text: JSON.stringify(structured) }];
+            }
+            return response;
           }
 
           return controller.handle(input);
         }) as Parameters<typeof mcp.registerTool>[2]
       );
+
+      const wrappedToolsCall = wrapSdkRequestHandler(mcp, 'tools/call', async (orig, req, extra) => {
+        const params = (req.params ?? {}) as { name?: unknown; arguments?: unknown };
+        if (params.name === 'comply_test_controller') {
+          const input =
+            params.arguments != null && typeof params.arguments === 'object'
+              ? (params.arguments as Readonly<Record<string, unknown>>)
+              : undefined;
+          if (!(await resolveComplyControllerVisible(extra as McpExtra, 'comply_test_controller', input))) {
+            throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
+          }
+        }
+        return orig(req, extra);
+      });
+      if (!wrappedToolsCall) {
+        throw new Error(
+          'createAdcpServerFromPlatform: failed to wrap MCP tools/call for comply_test_controller visibility. ' +
+            'The MCP SDK request-handler internals may have changed.'
+        );
+      }
+
+      const wrappedToolsList = wrapSdkRequestHandler(mcp, 'tools/list', async (orig, req, extra) => {
+        const response = await orig(req, extra);
+        const input =
+          req.params != null && typeof req.params === 'object'
+            ? (req.params as Readonly<Record<string, unknown>>)
+            : undefined;
+        if (await resolveComplyControllerVisible(extra as McpExtra, undefined, input)) return response;
+        if (response == null || typeof response !== 'object') return response;
+        const tools = (response as { tools?: unknown }).tools;
+        if (!Array.isArray(tools)) return response;
+        return {
+          ...(response as Record<string, unknown>),
+          tools: tools.filter(tool => (tool as { name?: unknown } | null)?.name !== 'comply_test_controller'),
+        };
+      });
+      if (!wrappedToolsList) {
+        throw new Error(
+          'createAdcpServerFromPlatform: failed to wrap MCP tools/list for comply_test_controller visibility. ' +
+            'The MCP SDK request-handler internals may have changed.'
+        );
+      }
     }
   }
 
@@ -2198,13 +2367,13 @@ type SubmittedEnvelope = {
  * is defined and the platform method throws `AdcpError` with a
  * recovery-correctable auth code (`AUTH_REQUIRED` from 3.0.x sellers, or
  * `AUTH_MISSING` from 3.1+ sellers), `projectSync` refreshes the account's
- * token via the hook, mutates `account.authInfo.token`, and retries the
+ * token via the hook, mutates or creates `account.authInfo`, and retries the
  * platform method ONCE. `AUTH_INVALID` is terminal — credentials were
  * presented and rejected — so we deliberately do NOT refresh on it (auto-
  * retry against an SSO endpoint on a revoked token is the retry-storm
  * pattern adcp#3730 split the code to prevent). If the refresh hook itself
- * throws, projects to `AUTH_REQUIRED` with `recovery: 'correctable'` so
- * the buyer re-links via their UI flow.
+ * throws, projects to legacy-compatible `AUTH_REQUIRED` with
+ * `recovery: 'correctable'` so existing buyers re-link via their UI flow.
  *
  * Parameterized over `TCtxMeta` (#1168) so adopters' refresh hooks see
  * typed `account.ctx_metadata` rather than `unknown`. Default `unknown`
@@ -2216,6 +2385,19 @@ interface RefreshConfig<TCtxMeta = unknown> {
   fn?: (account: Account<TCtxMeta>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
 }
 
+function cloneAccountForRequest<TCtxMeta>(account: Account<TCtxMeta>): Account<TCtxMeta> {
+  try {
+    return structuredClone(account);
+  } catch (cause) {
+    const publicError = new AdcpError('CONFIGURATION_ERROR', {
+      message: 'Resolved account is not safely cloneable for request-local auth refresh.',
+      recovery: 'terminal',
+    });
+    (publicError as Error & { cause?: unknown }).cause = cause;
+    throw publicError;
+  }
+}
+
 /** Auth codes that signal "credentials missing, refresh and retry once." */
 const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'AUTH_MISSING']);
 
@@ -2224,16 +2406,16 @@ const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'A
  * auth codes (`AUTH_REQUIRED` on 3.0.x sellers, `AUTH_MISSING` on 3.1+).
  * Without a refresh fn (or no `refresh` at all) this passes the call
  * through. With one, catches the refreshable code, calls `refresh.fn`,
- * mutates `account.authInfo.token` (and `expiresAt` if returned), and
- * retries the inner call exactly once.
+ * mutates or creates `account.authInfo` (including `expiresAt` when
+ * returned), and retries the inner call exactly once.
  *
  * `AUTH_INVALID` is intentionally NOT refreshed — it's terminal by
  * spec (credentials presented and rejected); refreshing creates the
  * SSO retry-storm pattern adcp#3730 split the code to prevent.
  *
  * Failure modes:
- *   - Refresh hook throws → re-throw `AUTH_REQUIRED` with `recovery: 'correctable'`
- *     so the buyer re-links via their UI.
+ *   - Refresh hook throws → re-throw legacy-compatible `AUTH_REQUIRED` with
+ *     `recovery: 'correctable'` so the buyer re-links via their UI.
  *   - Retried call throws a refreshable auth code again → bubble out
  *     (don't refresh a second time).
  */
@@ -2251,29 +2433,30 @@ async function runWithTokenRefresh<TCtxMeta, T>(
     let refreshed: { token: string; expiresAt?: number };
     try {
       refreshed = await refresh.fn(refresh.account, 'auth_required');
-    } catch {
+    } catch (cause) {
       // Refresh-fn exception text is intentionally NOT echoed on the wire
       // — upstream identity-provider error messages routinely embed
       // refresh-token prefixes, internal hostnames, OAuth provider error
       // codes, and stack-trace fragments. Adopters log details server-
       // side; the buyer gets a fixed message + correctable recovery
       // signaling they need to re-authorize.
-      throw new AdcpError('AUTH_REQUIRED', {
+      const publicError = new AdcpError('AUTH_REQUIRED', {
         message: 'Token refresh failed; re-authentication required',
         recovery: 'correctable',
       });
+      (publicError as Error & { cause?: unknown }).cause = cause;
+      throw publicError;
     }
-    // `authInfo` became optional in #1286. Token refresh only fires after an
-    // AUTH_REQUIRED throw — meaning an upstream call attempted to use a
-    // token, which means `authInfo` was populated before the throw.
-    // Defensive guard: if for some reason it isn't, the refreshed token
-    // still flows on the next request rather than crashing here.
-    if (refresh.account.authInfo) {
-      refresh.account.authInfo.token = refreshed.token;
-      if (refreshed.expiresAt !== undefined) {
-        refresh.account.authInfo.expiresAt = refreshed.expiresAt;
-      }
+    // `authInfo` became optional in #1286. A 3.1-native AUTH_MISSING can mean
+    // the upstream request had no usable credential at all, so attach the
+    // freshly minted OAuth-style token even when the resolver omitted
+    // account.authInfo.
+    const authInfo = refresh.account.authInfo ?? { kind: 'oauth' as const };
+    authInfo.token = refreshed.token;
+    if (refreshed.expiresAt !== undefined) {
+      authInfo.expiresAt = refreshed.expiresAt;
     }
+    refresh.account.authInfo = authInfo;
     return fn();
   }
 }
@@ -2283,9 +2466,9 @@ async function runWithTokenRefresh<TCtxMeta, T>(
  * throws → wire `adcp_error` envelope; other thrown errors bubble to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
  *
- * When `refresh` is provided and the call throws `AUTH_REQUIRED`, the
+ * When `refresh` is provided and the call throws a refreshable auth code, the
  * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
- * `account.authInfo.token`, and retries the platform method once.
+ * `account.authInfo`, and retries the platform method once.
  */
 async function projectSync<TResult, TWire, TCtxMeta = unknown>(
   fn: () => Promise<TResult>,
@@ -2836,12 +3019,12 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
  */
 function toResolveCtx(
   ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent },
-  toolName: string,
+  toolName: string | undefined,
   input?: Readonly<Record<string, unknown>>
 ): ResolveContext {
   return {
     ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-    toolName,
+    ...(toolName !== undefined && { toolName }),
     ...(ctx.agent != null && { agent: ctx.agent }),
     ...(input != null && { input }),
   };
@@ -4738,11 +4921,15 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           recovery: 'terminal',
         });
       }
-      const toolCtx = { ...resolveCtx, account: resolved };
+      // Request-local clone: refreshToken mutates account.authInfo before the
+      // retry. Never write refreshed credentials onto a resolver-owned object;
+      // adopters sometimes cache Account rows between requests.
+      const account = cloneAccountForRequest(resolved);
+      const toolCtx = { ...resolveCtx, account };
       return projectSync(
         () => accounts.getAccountFinancials!(params, toolCtx),
         r => r,
-        accounts.refreshToken ? { account: resolved, fn: accounts.refreshToken.bind(accounts) } : undefined
+        accounts.refreshToken ? { account, fn: accounts.refreshToken.bind(accounts) } : undefined
       );
     };
   }

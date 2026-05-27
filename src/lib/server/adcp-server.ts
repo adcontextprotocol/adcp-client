@@ -448,6 +448,25 @@ function getRegisteredTool(server: McpServer, name: string): RegisteredTool | un
 }
 
 /**
+ * Wrap a registered MCP tool handler without changing the tool definition
+ * advertised by the SDK server.
+ *
+ * @internal
+ * @remarks Pokes an SDK private field — see the "Private-field access" note above.
+ */
+export function wrapRegisteredToolHandler(
+  server: McpServer,
+  name: string,
+  wrapper: (orig: RegisteredTool['handler'], args: unknown, extra: unknown) => unknown | Promise<unknown>
+): boolean {
+  const tool = getRegisteredTool(server, name);
+  if (!tool) return false;
+  const orig = tool.handler;
+  tool.handler = (args, extra) => wrapper(orig, args, extra);
+  return true;
+}
+
+/**
  * Enumerate the tool names registered on the underlying SDK server.
  * Used by transport adapters that need to derive discovery metadata
  * (agent cards, capability listings) from the registered surface
@@ -465,6 +484,29 @@ function getRequestHandler(
   method: string
 ): ((request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>) | undefined {
   return (server as unknown as McpServerPrivates).server?._requestHandlers?.get(method);
+}
+
+/**
+ * Wrap an SDK request handler such as `tools/list` while preserving the
+ * original handler's request/extra contract.
+ *
+ * @internal
+ * @remarks Pokes an SDK private field — see the "Private-field access" note above.
+ */
+export function wrapSdkRequestHandler(
+  server: McpServer,
+  method: string,
+  wrapper: (
+    orig: McpRequestHandler,
+    req: { method: string; params?: unknown },
+    extra: unknown
+  ) => unknown | Promise<unknown>
+): boolean {
+  const handlers = (server as unknown as McpServerPrivates).server?._requestHandlers;
+  const orig = handlers?.get(method);
+  if (!handlers || !orig) return false;
+  handlers.set(method, (req, extra) => wrapper(orig, req, extra));
+  return true;
 }
 
 /**

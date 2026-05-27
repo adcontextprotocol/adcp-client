@@ -3,8 +3,13 @@
 ## Status
 
 PARTIALLY IMPLEMENTED — Python ships Phase 1+2 (PRs #483, #487 in
-`adcp-client-python`); JS ships Phase 1 (PR #1453); JS Phase 2 not yet
-implemented. See § Implementation status. Anchors in
+`adcp-client-python`); JS ships the Phase 1 sandbox-authority gate and
+the AdCP 3.1 comply-controller visibility rule: live principals do not
+see `compliance_testing` or `comply_test_controller`, while sandbox/mock
+principals can discover the controller and still get a dispatch-time
+`PERMISSION_DENIED` when their request targets a live or unresolved
+non-sandbox account. Mock-mode
+upstream URL routing remains open. See § Implementation status. Anchors in
 `docs/architecture/adcp-stack.md` (the layered architecture); this doc
 is the SDK-side artifact.
 
@@ -253,6 +258,18 @@ resolver is the seller's authoritative call site for "who is this
 caller, and what tenancy do they have access to?" — answered against
 the seller's tenant store, keyed by the authenticated principal.
 
+AdCP 3.1 adds a visibility rule on top of the dispatch gate:
+production callers must not be able to enumerate the comply controller.
+The JS framework applies that rule by resolving the auth-derived
+principal with `platform.accounts.resolve(undefined, ctx)` for
+`get_adcp_capabilities`, `tools/list`, and direct
+`comply_test_controller` calls. If that principal is not sandbox/mock,
+the capability block is omitted, the tool is filtered from `tools/list`,
+and direct calls fail as MCP method-not-found. Once a sandbox/mock
+principal can see the controller, the per-request target account is
+resolved separately; a target live or unresolved non-sandbox account
+returns `PERMISSION_DENIED`.
+
 Adopters' resolvers MUST NOT spread untrusted input into the resolved
 account. Specifically, an adopter resolver implementation like:
 
@@ -322,12 +339,22 @@ Smallest, most-load-bearing change. Ships first.
   (resolved decision; see § Resolved decisions). `Account.sandbox:
   boolean` either stays as a derived accessor for back-compat or gets
   deprecated outright in a future major.
-- SDK enforces: `comply_test_controller` returns `PERMISSION_DENIED`
-  unless `ctx.account.mode === 'sandbox'` or `ctx.account.mode ===
-  'mock'`. The `ADCP_SANDBOX=1` env-gate becomes vestigial.
-- Add `context.sandbox` fallback for unresolved-account paths
-  (`get_adcp_capabilities`, probe calls, conformance pre-account
-  bootstrap), preserving today's `isSandboxRequest` semantics.
+- SDK enforces the deployment-scoped Path B visibility rule:
+  live/unresolved principals do not see `compliance_testing` in
+  `get_adcp_capabilities`, do not see `comply_test_controller` in
+  `tools/list`, and direct controller calls return MCP method-not-found.
+- Sandbox/mock principals see the controller normally. Once visible,
+  target-account dispatch still requires the target account to resolve
+  to `mode: 'sandbox' | 'mock'`; live or unresolved non-sandbox targets
+  return `PERMISSION_DENIED`.
+- Legacy resolved `{ sandbox: true }` accounts are treated as visible during
+  the migration window, matching the SDK's existing account-mode helper.
+- Legacy fallback is intentionally narrow: `ADCP_SANDBOX=1` exposes the
+  controller for older conformance deployments until explicit
+  `Account.mode` is wired. It fails closed if the process has resolved a
+  live account. The `account.sandbox` wire flag is consulted only for an
+  unresolved target-account ref, never for principal visibility and
+  never over a resolved live account.
 - Migration note: adopters running the conformance harness with
   `ADCP_SANDBOX=1` and otherwise un-flagged accounts must mark
   conformance accounts in their `AccountStore.resolve` implementation.

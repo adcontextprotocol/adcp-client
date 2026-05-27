@@ -3,6 +3,8 @@ const assert = require('node:assert');
 const express = require('express');
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
+const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
+const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { adcpError } = require('../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
@@ -117,6 +119,67 @@ function mountAdapter(a2a) {
   return app;
 }
 
+function createComplianceDecisioningServer({ principalMode = 'sandbox' } = {}) {
+  return createAdcpServerFromPlatform(
+    {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [{ agent_url: 'https://example.com/creative-agent/mcp' }],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+        compliance_testing: {},
+      },
+      statusMappers: {},
+      accounts: {
+        resolve: async () => ({
+          id: `${principalMode}_acc_1`,
+          operator: 'example.com',
+          mode: principalMode,
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({
+          media_buy_id: 'mb_1',
+          status: 'pending_creatives',
+          confirmed_at: '2026-04-28T00:00:00Z',
+          packages: [],
+        }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({
+          currency: 'USD',
+          reporting_period: { start: '2026-04-01', end: '2026-04-30' },
+          media_buy_deliveries: [],
+        }),
+      },
+    },
+    {
+      name: 'a2a-comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      stateStore: new InMemoryStateStore(),
+      taskRegistry: createInMemoryTaskRegistry(),
+      resolveIdempotencyPrincipal: () => 'a2a-test-principal',
+      complyTest: {
+        force: {
+          creative_status: async params => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'creative',
+            resource_id: params.creative_id,
+            previous_state: 'pending_review',
+            current_state: params.status,
+          }),
+        },
+      },
+    }
+  );
+}
+
 describe('createA2AAdapter', () => {
   describe('agent card', () => {
     it('exposes seller identity fields and auto-seeds skills from registered tools', async () => {
@@ -139,6 +202,37 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.body.capabilities.streaming, false);
       assert.strictEqual(res.body.capabilities.pushNotifications, false);
       assert.deepStrictEqual(res.body.provider, { organization: 'Test Co', url: 'https://example.com' });
+    });
+
+    it('omits comply_test_controller from public A2A agent-card skills', async () => {
+      const adcp = createComplianceDecisioningServer();
+      const a2a = createA2AAdapter({ server: adcp, agentCard: baseCard() });
+      const card = await a2a.getAgentCard();
+      const skillIds = card.skills.map(s => s.id);
+      assert.ok(skillIds.includes('get_products'), 'ordinary AdCP tools remain advertised');
+      assert.ok(!skillIds.includes('comply_test_controller'), 'compliance controller is not public-card discoverable');
+      assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from public card');
+    });
+
+    it('filters comply_test_controller from seller-supplied A2A skill overrides', async () => {
+      const adcp = createComplianceDecisioningServer();
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard({
+          skills: [
+            { id: 'get_products', name: 'get_products', description: 'public sales tool', tags: ['adcp'] },
+            {
+              id: 'comply_test_controller',
+              name: 'comply_test_controller',
+              description: 'private compliance tool',
+              tags: ['adcp'],
+            },
+          ],
+        }),
+      });
+      const card = await a2a.getAgentCard();
+      const skillIds = card.skills.map(s => s.id);
+      assert.deepStrictEqual(skillIds, ['get_products']);
     });
 
     it('allows seller to override skills entirely', async () => {
@@ -470,6 +564,26 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.body.result.status.state, 'failed');
       const dataPart = res.body.result.artifacts[0].parts[0];
       assert.strictEqual(dataPart.data.reason, 'INVALID_INVOCATION');
+    });
+
+    it('guessed comply_test_controller skill from a live principal fails as method-not-found', async () => {
+      const adcp = createComplianceDecisioningServer({ principalMode: 'live' });
+      const app = mountAdapter(createA2AAdapter({ server: adcp, agentCard: baseCard() }));
+      const res = await postJsonRpc(
+        app,
+        messageSend(
+          dataPartMessage('comply_test_controller', {
+            scenario: 'force_creative_status',
+            params: { creative_id: 'cr_1', status: 'approved' },
+          })
+        )
+      );
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.result.status.state, 'failed');
+      const dataPart = res.body.result.artifacts[0].parts[0];
+      assert.strictEqual(dataPart.data.reason, 'HANDLER_THREW');
+      assert.match(dataPart.data.message, /method not found/i);
     });
   });
 

@@ -388,6 +388,7 @@ export type {
   MediaBuyAvailableAction,
   MediaBuyMutationDirection,
   MediaBuyMutationScope,
+  MediaBuyValidAction,
   ModeMismatchRecovery,
   PreflightAllowed,
   PreflightDenial,
