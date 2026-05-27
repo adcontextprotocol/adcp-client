@@ -431,8 +431,22 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
 
   test('digest-mode query rejects payloads that cannot be canonicalized', async () => {
     const recorder = createUpstreamRecorder({ enabled: true });
-    let payload = 'leaf';
-    for (let i = 0; i < 260; i++) payload = [payload];
+    await recorder.runWithPrincipal('p', async () => {
+      recorder.record({
+        method: 'POST',
+        url: 'https://x.example/upload',
+        content_type: 'application/json',
+        payload: { value: Number.NaN },
+      });
+    });
+    assert.throws(() => recorder.query({ principal: 'p', attestationMode: 'digest' }), /JCS: non-finite number/);
+  });
+
+  test('raw recording rejects structured payloads beyond the redaction depth cap', async () => {
+    const events = [];
+    const recorder = createUpstreamRecorder({ enabled: true, onError: event => events.push(event) });
+    let payload = { authorization: 'fake_test_fixture_not_a_real_token_aaaa' };
+    for (let i = 0; i < 260; i++) payload = { wrapper: payload };
     await recorder.runWithPrincipal('p', async () => {
       recorder.record({
         method: 'POST',
@@ -441,10 +455,10 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         payload,
       });
     });
-    assert.throws(
-      () => recorder.query({ principal: 'p', attestationMode: 'digest' }),
-      /JSON payload exceeds max canonicalization depth/
-    );
+    assert.equal(recorder.query({ principal: 'p' }).total, 0);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'payload_build_failed');
+    assert.match(String(events[0].err), /JSON payload exceeds max canonicalization depth/);
   });
 
   test('digest-mode identifier proof scan avoids false negatives in large payloads', async () => {

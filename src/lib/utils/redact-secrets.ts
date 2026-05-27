@@ -6,7 +6,9 @@
  * description both mandate the same recursive walk: any property whose
  * final-path-segment key matches the canonical pattern below has its scalar
  * value replaced with the literal string `"[redacted]"`. The walk is capped
- * at the same depth the upstream-recorder accepts for JSON canonicalization.
+ * at the same depth the upstream-recorder accepts for JSON canonicalization;
+ * the recorder rejects deeper structured payloads after redaction so it does
+ * not store subtrees beyond this cap.
  *
  * Spec: `static/compliance/source/universal/runner-output-contract.yaml`
  * (`payload_redaction.pattern`). The runner uses this to redact request /
@@ -30,8 +32,9 @@ export const SECRET_KEY_PATTERN =
 
 /**
  * Maximum recursion depth for the redaction walk. Keep this aligned with the
- * upstream-recorder JSON canonicalization depth so a digest-mode payload is
- * either redacted and hashable, or rejected before hashing.
+ * upstream-recorder JSON canonicalization depth; recorder paths also run the
+ * depth gate after redaction so structured payloads beyond the cap are
+ * rejected instead of stored with unvisited subtrees.
  */
 const REDACT_MAX_DEPTH = 256;
 

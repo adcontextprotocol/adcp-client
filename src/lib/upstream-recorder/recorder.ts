@@ -587,6 +587,7 @@ function normalizeRecordedPayload(
     if (isJsonContentType(contentType)) {
       try {
         const redacted = redactSecrets(JSON.parse(payload), redactPattern);
+        assertJsonDepth(redacted);
         const json = safeStringify(redacted);
         if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
           return `[truncated ${byteLengthOf(json)} bytes]`;
@@ -606,6 +607,7 @@ function normalizeRecordedPayload(
   }
 
   const redacted = redactSecrets(payload, redactPattern);
+  assertJsonDepth(redacted);
   const json = safeStringify(redacted);
   if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
     return `[truncated ${byteLengthOf(json)} bytes]`;

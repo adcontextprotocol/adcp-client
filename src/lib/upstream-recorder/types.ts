@@ -22,14 +22,15 @@
  * buffer never holds plaintext secrets even briefly.
  */
 interface RecordedCallBase {
+  [key: string]: unknown;
   method: string;
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
   endpoint: string;
   url: string;
   /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
-  host?: string;
+  host: string;
   /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
-  path?: string;
+  path: string;
   /**
    * Media type of the recorded `payload`, mirroring the adapter's outbound
    * `Content-Type` header. Required by the contract — runners use this to
@@ -72,9 +73,11 @@ export interface DigestRecordedCall extends RecordedCallBase {
    * JSON strings are parsed and canonicalized when they contain valid JSON;
    * malformed JSON strings and non-JSON payloads use the post-redaction
    * emitted body bytes. Unsupported JSON values cannot produce a canonical
-   * digest. String-only identifier proofs are deliberately low entropy when
-   * adopters use short or guessable synthetic values; do not run digest-mode
-   * attestations over production identifiers.
+   * digest. Malformed JSON strings are treated as one opaque string for
+   * identifier proof scanning, so substring identifiers inside invalid JSON
+   * are not discoverable. String-only identifier proofs are deliberately low
+   * entropy when adopters use short or guessable synthetic values; do not run
+   * digest-mode attestations over production identifiers.
    */
   payload_digest_sha256: string;
   identifier_match_proofs?: Array<{

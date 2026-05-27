@@ -523,7 +523,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     assert.equal(result.note, NON_JSON_NA_NOTE);
   });
 
-  test('mixed raw/digest payload assertions grade not_applicable when raw calls do not satisfy', () => {
+  test('mixed raw/digest payload assertions fail when raw JSON calls are inspectable misses', () => {
     const ctx = ctxWithTraffic({
       success: true,
       total_count: 2,
@@ -541,20 +541,20 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       [
         {
           check: 'upstream_traffic',
-          description: 'digest call makes payload evidence inconclusive',
+          description: 'raw JSON miss remains actionable beside a digest call',
           payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
         },
       ],
       ctx
     );
-    assert.equal(result.passed, true);
-    assert.equal(result.not_applicable, true);
-    assert.deepEqual(result.actual.missing_payload_paths, []);
-    assert.deepEqual(result.actual.not_applicable_payload_paths, ['users[*].hashed_email']);
-    assert.equal(result.json_pointer, null);
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
+    assert.deepEqual(result.actual.missing_payload_paths, ['users[*].hashed_email']);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, []);
+    assert.equal(result.json_pointer, '/recorded_calls/0/payload');
   });
 
-  test('multi-clause mixed raw/digest payload assertions grade not_applicable when any required clause is inconclusive', () => {
+  test('multi-clause mixed raw/digest payload assertions fail when one raw JSON clause misses', () => {
     const ctx = ctxWithTraffic({
       success: true,
       total_count: 2,
@@ -572,11 +572,41 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       [
         {
           check: 'upstream_traffic',
-          description: 'one required path is visible, another is digest-hidden',
+          description: 'one required path is visible, another misses in raw JSON',
           payload_must_contain: [
             { path: 'users[*].external_id', match: 'present' },
             { path: 'users[*].hashed_email', match: 'present' },
           ],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
+    assert.deepEqual(result.actual.missing_payload_paths, ['users[*].hashed_email']);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, []);
+    assert.equal(result.json_pointer, '/recorded_calls/0/payload');
+  });
+
+  test('digest-only payload assertions still grade not_applicable', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 1,
+      recorded_calls: [
+        makeCall({
+          attestation_mode: 'digest',
+          payload: undefined,
+          payload_digest_sha256: 'a'.repeat(64),
+          payload_length: 12,
+        }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'digest-only payload evidence is inconclusive',
+          payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
         },
       ],
       ctx

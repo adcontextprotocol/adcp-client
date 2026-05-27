@@ -2919,8 +2919,7 @@ function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefi
 /**
  * Returns whether at least one matched call's payload satisfies the
  * `payload_must_contain` predicate, plus a flag indicating the assertion
- * graded `not_applicable` (no matched call had a JSON payload to inspect,
- * or at least one matched call used digest-only attestation).
+ * graded `not_applicable` (no matched call had a JSON payload to inspect).
  *
  * Per spec PRs adcp#3816 (initial JSONPath restriction) and adcp#3987
  * (closes the substring-fallback ambiguity #3845):
@@ -2948,10 +2947,8 @@ function anyMatchedCallSatisfies(
   spec: UpstreamTrafficPayloadMatch
 ): { satisfied: boolean; not_applicable: boolean } {
   let sawApplicableCall = false;
-  let sawDigestCall = false;
   for (const call of calls) {
     if (call.attestation_mode !== 'raw') {
-      sawDigestCall = true;
       continue;
     }
     const isJson = isJsonContentType(call.content_type);
@@ -2972,7 +2969,7 @@ function anyMatchedCallSatisfies(
       if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
     }
   }
-  return { satisfied: false, not_applicable: !sawApplicableCall || sawDigestCall };
+  return { satisfied: false, not_applicable: !sawApplicableCall };
 }
 
 /**
