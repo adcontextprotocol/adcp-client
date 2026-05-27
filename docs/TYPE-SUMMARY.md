@@ -34,6 +34,7 @@ interface TaskResult<T = any> {
     responseTimeMs: number;
     timestamp: string;
     clarificationRounds: number;
+    adcpVersion?: string;        // Seller-served release-precision response adcp_version
   };
   conversation?: Message[];
 }

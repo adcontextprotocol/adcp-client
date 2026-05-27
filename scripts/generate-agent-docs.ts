@@ -1021,7 +1021,7 @@ function generateLlmsTxt(
   ln(`|------|---------|`);
   ln(`| \`AgentConfig\` | Agent connection config (uri, protocol, auth) |`);
   ln(
-    `| \`TaskResult<T>\` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |`
+    `| \`TaskResult<T>\` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted; metadata includes seller-served \`adcpVersion\`) |`
   );
   ln(`| \`InputHandler\` | Callback for agent clarification requests |`);
   ln(`| \`ConversationContext\` | Passed to InputHandler with messages, question, helpers |`);
@@ -1170,6 +1170,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`    responseTimeMs: number;`);
   ln(`    timestamp: string;`);
   ln(`    clarificationRounds: number;`);
+  ln(`    adcpVersion?: string;        // Seller-served release-precision response adcp_version`);
   ln(`  };`);
   ln(`  conversation?: Message[];`);
   ln(`}`);
