@@ -81,9 +81,29 @@ describe('buildSeedCalls', () => {
     });
   });
 
-  test('emits ordering: products → pricing_options → creatives → plans → media_buys', () => {
+  test('buyer_agents → seed_buyer_agent with agent_url lifted and commercial fields direct', () => {
+    const calls = buildSeedCalls({
+      buyer_agents: [
+        {
+          agent_url: 'https://test-runner.aao.example/probe',
+          billing_capabilities: ['operator'],
+          status: 'active',
+        },
+      ],
+    });
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].scenario, 'seed_buyer_agent');
+    assert.deepStrictEqual(calls[0].params, {
+      agent_url: 'https://test-runner.aao.example/probe',
+      billing_capabilities: ['operator'],
+      status: 'active',
+    });
+  });
+
+  test('emits ordering: buyer_agents → products → pricing_options → creatives → plans → media_buys', () => {
     const calls = buildSeedCalls({
       media_buys: [{ media_buy_id: 'mb-1' }],
+      buyer_agents: [{ agent_url: 'https://buyer.example/agent' }],
       products: [{ product_id: 'p-1' }],
       creatives: [{ creative_id: 'c-1' }],
       plans: [{ plan_id: 'pl-1' }],
@@ -91,20 +111,22 @@ describe('buildSeedCalls', () => {
     });
     assert.deepStrictEqual(
       calls.map(c => c.scenario),
-      ['seed_product', 'seed_pricing_option', 'seed_creative', 'seed_plan', 'seed_media_buy']
+      ['seed_buyer_agent', 'seed_product', 'seed_pricing_option', 'seed_creative', 'seed_plan', 'seed_media_buy']
     );
   });
 
   test('flags authoring error when a required id field is missing — seed is not issued', () => {
     const calls = buildSeedCalls({
+      buyer_agents: [{ status: 'active' }],
       products: [{ delivery_type: 'non_guaranteed' }],
       pricing_options: [{ product_id: 'p-1' }],
       creatives: [{ format_id: 'x' }],
     });
-    assert.strictEqual(calls.length, 3);
-    assert.match(calls[0].authoring_error, /product_id/);
-    assert.match(calls[1].authoring_error, /pricing_option_id/);
-    assert.match(calls[2].authoring_error, /creative_id/);
+    assert.strictEqual(calls.length, 4);
+    assert.match(calls[0].authoring_error, /agent_url/);
+    assert.match(calls[1].authoring_error, /product_id/);
+    assert.match(calls[2].authoring_error, /pricing_option_id/);
+    assert.match(calls[3].authoring_error, /creative_id/);
   });
 });
 

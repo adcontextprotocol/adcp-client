@@ -33,6 +33,8 @@ import {
   type AccountStore,
   type Account,
   type BuyerAgent,
+  type BuyerAgentBillingMode,
+  type BuyerAgentStatus,
   type CachedBuyerAgentRegistry,
 } from '@adcp/sdk/server';
 import type { GetSignalsResponse, ActivateSignalRequest, ActivateSignalSuccess } from '@adcp/sdk/types';
@@ -283,6 +285,114 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
   ],
 ]);
 
+const SEEDED_BUYER_AGENT_OVERLAY = new Map<string, BuyerAgent>();
+
+const BUYER_AGENT_BILLING_MODES = new Set<BuyerAgentBillingMode>(['operator', 'agent', 'advertiser']);
+const BUYER_AGENT_STATUSES = new Set<BuyerAgentStatus>(['active', 'suspended', 'blocked']);
+
+function readRequestAccountRef(input: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const topLevel = input?.['account'];
+  if (topLevel != null && typeof topLevel === 'object') return topLevel as Record<string, unknown>;
+  const context = input?.['context'];
+  if (context != null && typeof context === 'object') {
+    const contextAccount = (context as { account?: unknown }).account;
+    if (contextAccount != null && typeof contextAccount === 'object') return contextAccount as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function readSessionId(input: Record<string, unknown> | undefined): string | undefined {
+  const context = input?.['context'];
+  if (context == null || typeof context !== 'object') return undefined;
+  const sessionId = (context as { session_id?: unknown }).session_id;
+  return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+function accountScope(ref: Record<string, unknown> | undefined): string | undefined {
+  if (!ref) return undefined;
+  const accountId = ref['account_id'];
+  if (typeof accountId === 'string' && accountId.length > 0) return `account_id:${accountId}`;
+  const brand = ref['brand'];
+  const brandDomain = brand != null && typeof brand === 'object' ? (brand as { domain?: unknown }).domain : undefined;
+  const operator = ref['operator'];
+  const sandbox = ref['sandbox'];
+  if (typeof brandDomain !== 'string' && typeof operator !== 'string' && typeof sandbox !== 'boolean') {
+    return undefined;
+  }
+  return JSON.stringify({
+    ...(typeof brandDomain === 'string' && { brand_domain: brandDomain }),
+    ...(typeof operator === 'string' && { operator }),
+    ...(typeof sandbox === 'boolean' && { sandbox }),
+  });
+}
+
+function buyerAgentOverlayKey(
+  agentUrl: string,
+  input: Record<string, unknown> | undefined,
+  ref: Record<string, unknown> | undefined
+): string | undefined {
+  const parts: string[] = [];
+  const sessionId = readSessionId(input);
+  if (sessionId) parts.push(`session:${sessionId}`);
+  const scope = accountScope(ref);
+  if (scope) parts.push(`account:${scope}`);
+  return parts.length > 0 ? `${parts.join('|')}:agent:${agentUrl}` : undefined;
+}
+
+function overlayBuyerAgent(
+  base: BuyerAgent,
+  input: Record<string, unknown> | undefined,
+  ref: Record<string, unknown> | undefined
+): BuyerAgent {
+  const key = buyerAgentOverlayKey(base.agent_url, input, ref);
+  const seeded = key ? SEEDED_BUYER_AGENT_OVERLAY.get(key) : undefined;
+  if (!seeded) {
+    return base;
+  }
+  return {
+    ...base,
+    ...seeded,
+    billing_capabilities: new Set(seeded.billing_capabilities),
+  };
+}
+
+function seedBuyerAgentOverlay(
+  params: {
+    agent_url: string;
+    display_name?: string;
+    status?: BuyerAgentStatus;
+    billing_capabilities?: BuyerAgentBillingMode[];
+    sandbox_only?: boolean;
+  },
+  input: Record<string, unknown>
+): void {
+  const existing =
+    Array.from(ONBOARDING_LEDGER.values()).find(agent => agent.agent_url === params.agent_url) ??
+    Array.from(SEEDED_BUYER_AGENT_OVERLAY.values()).find(agent => agent.agent_url === params.agent_url);
+  const key = buyerAgentOverlayKey(params.agent_url, input, readRequestAccountRef(input));
+  if (!key) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'seed_buyer_agent requires a session_id or account scope for this example overlay.',
+    });
+  }
+  const modes = (params.billing_capabilities ?? Array.from(existing?.billing_capabilities ?? ['operator'])).filter(
+    (mode): mode is BuyerAgentBillingMode => BUYER_AGENT_BILLING_MODES.has(mode as BuyerAgentBillingMode)
+  );
+  const status =
+    params.status && BUYER_AGENT_STATUSES.has(params.status) ? params.status : (existing?.status ?? 'active');
+
+  SEEDED_BUYER_AGENT_OVERLAY.set(key, {
+    agent_url: params.agent_url,
+    display_name: params.display_name ?? existing?.display_name ?? 'Compliance seeded buyer agent',
+    status,
+    billing_capabilities: new Set(modes.length > 0 ? modes : ['operator']),
+    sandbox_only: params.sandbox_only ?? existing?.sandbox_only ?? true,
+  });
+  // Mutating commercial state must purge cached registry entries; otherwise a
+  // just-suspended test buyer could remain active until the TTL expires.
+  agentRegistry.clear();
+}
+
 /**
  * `bearerOnly` because this example authenticates via `verifyApiKey`.
  * Sellers wiring `verifySignatureAsAuthenticator` swap to `signingOnly`
@@ -293,7 +403,7 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
  * onboarding ledger. `invalidate(credential)` purges a stale entry when
  * the seller mutates an agent's record (status flip, etc.).
  */
-const agentRegistry: CachedBuyerAgentRegistry = BuyerAgentRegistry.cached(
+const baseAgentRegistry: CachedBuyerAgentRegistry = BuyerAgentRegistry.cached(
   BuyerAgentRegistry.bearerOnly({
     resolveByCredential: async credential => {
       // bearerOnly receives every credential kind; MUST kind-discriminate
@@ -304,6 +414,16 @@ const agentRegistry: CachedBuyerAgentRegistry = BuyerAgentRegistry.cached(
   }),
   { ttlSeconds: 60 }
 );
+
+const agentRegistry: CachedBuyerAgentRegistry = {
+  async resolve(authInfo) {
+    const base = await baseAgentRegistry.resolve(authInfo);
+    if (!base) return base;
+    return overlayBuyerAgent(base, authInfo.input, readRequestAccountRef(authInfo.input));
+  },
+  invalidate: credential => baseAgentRegistry.invalidate(credential),
+  clear: () => baseAgentRegistry.clear(),
+};
 
 // ---------------------------------------------------------------------------
 // AdCP-side adapter — typed against SignalsPlatform.
@@ -358,9 +478,12 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
    * Buyer-agent registry — framework runs `agentRegistry.resolve(authInfo)`
    * once per request and threads the resolved record through `ctx.agent`
    * to specialism handlers AND to `accounts.resolve` (below). When the
-   * resolved agent's `status` is `suspended` / `blocked`, the framework
-   * rejects the request with PERMISSION_DENIED before invoking any
-   * handler — adopters don't reimplement that gate.
+   * resolved agent's durable `status` is `suspended` / `blocked`, the
+   * framework rejects the request with the AdCP 3.1 `AGENT_SUSPENDED` /
+   * `AGENT_BLOCKED` codes before invoking any handler. The scoped
+   * compliance overlay below mirrors that behavior inside `accounts.resolve`
+   * so `seed_buyer_agent` can vary test-only state without mutating the
+   * process-wide onboarding ledger.
    */
   agentRegistry = agentRegistry;
 
@@ -383,8 +506,17 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
       // billing_capabilities. Sellers who don't cross-check operator vs.
       // agent here let any onboarded agent operate on any operator —
       // legitimate for some marketplaces, a leak for others.
-      const buyerAgent = ctx?.agent;
-      void buyerAgent; // demonstration site — wire your own checks here.
+      const buyerAgent =
+        ctx?.agent && ctx.input ? overlayBuyerAgent(ctx.agent, ctx.input, ref as Record<string, unknown>) : ctx?.agent;
+      if (buyerAgent?.status === 'suspended' || buyerAgent?.status === 'blocked') {
+        throw new AdcpError(buyerAgent.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_BLOCKED', {
+          message:
+            buyerAgent.status === 'suspended'
+              ? 'Buyer agent is suspended. Contact the seller to restore access.'
+              : 'Buyer agent is blocked.',
+          recovery: 'terminal',
+        });
+      }
       const operatorId = await upstream.lookupOperator(adcpOperator);
       if (!operatorId) return null;
       return {
@@ -540,6 +672,16 @@ serve(
       // account's `mode` is `'sandbox'` or `'mock'` (per `Account.mode`,
       // AdCP 6.7+). See `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
       complyTest: {
+        seed: {
+          // Test-only commercial-state setup for AdCP 3.1 storyboards that
+          // declare `fixtures.buyer_agents[]`. This overlays the static
+          // onboarding ledger by agent_url, so the existing bearer credential
+          // still authenticates normally while the storyboard can vary status,
+          // sandbox_only, or billing_capabilities for the resolved buyer agent.
+          buyer_agent: (params, ctx) => {
+            seedBuyerAgentOverlay(params, ctx.input);
+          },
+        },
         // Adapter resolves principal from auth context. The same string
         // MUST be returned by both record-time (runWithPrincipal) and
         // query-time — mismatch returns zero per cross-tenant isolation.

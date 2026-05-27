@@ -244,6 +244,15 @@ export interface BuyerAgentResolveInput {
    * to avoid collisions.
    */
   readonly extra?: Record<string, unknown>;
+
+  /**
+   * Raw AdCP request parameters for the current tool call, after transport
+   * decoding and before handler dispatch. Registry implementations normally
+   * key only on `credential`, but compliance-controller overlays may need the
+   * request `context.session_id` or `account` to resolve a scoped test
+   * commercial state for this request.
+   */
+  readonly input?: Record<string, unknown>;
 }
 
 /**
@@ -334,7 +343,8 @@ export type ResolveBuyerAgentByAgentUrl = (agent_url: string) => Promise<BuyerAg
  */
 export type ResolveBuyerAgentByCredential = (
   credential: AdcpCredential,
-  extra?: Record<string, unknown>
+  extra?: Record<string, unknown>,
+  input?: Record<string, unknown>
 ) => Promise<BuyerAgent | null>;
 
 /**
@@ -458,7 +468,7 @@ export function bearerOnly(opts: { resolveByCredential: ResolveBuyerAgentByCrede
       const credential = authInfo.credential;
       const extra = authInfo.extra;
       if (credential === undefined) return null;
-      return resolveByCredential(credential, extra);
+      return resolveByCredential(credential, extra, authInfo.input);
     },
   };
 }
@@ -506,7 +516,7 @@ export function mixed(opts: {
         if (!isVerifiedHttpSigPayload(credential)) return null;
         return resolveByAgentUrl(credential.agent_url);
       }
-      return resolveByCredential(credential, extra);
+      return resolveByCredential(credential, extra, authInfo.input);
     },
   };
 }
