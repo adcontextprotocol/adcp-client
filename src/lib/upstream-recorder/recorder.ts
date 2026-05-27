@@ -5,8 +5,16 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
+import {
+  normalizeSecretKeyPattern,
+  redactSecrets,
+  secretKeyPatternMatches,
+  SECRET_KEY_PATTERN,
+} from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
+import { canonicalize } from '../utils/jcs';
+import { MAX_JSON_DEPTH } from '../utils/json-depth';
+import { IDENTIFIER_DIGEST_LIMIT } from './constants';
 import {
   UpstreamRecorderScopeError,
   type QueryUpstreamTrafficResponse,
@@ -27,6 +35,24 @@ const DEFAULT_QUERY_LIMIT = 100;
 const DEFAULT_MAX_PAYLOAD_BYTES = 65_536; // mirrors spec's `recorded_calls[].payload.maxLength`
 const MAX_BUFFER_SIZE = 100_000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const VALID_PURPOSES = new Set([
+  'platform_primary',
+  'measurement',
+  'attribution',
+  'creative_serving',
+  'identity',
+  'other',
+]);
+
+export class PayloadDigestError extends Error {
+  cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'PayloadDigestError';
+    this.cause = cause;
+  }
+}
 
 /**
  * Wrapped per-call entry stored in the buffer. Carries the public
@@ -73,7 +99,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   // who legitimately want recording in prod.
   warnIfEnabledInProduction();
 
-  const redactPattern = options.redactPattern ?? SECRET_KEY_PATTERN;
+  const redactPattern = normalizeSecretKeyPattern(options.redactPattern ?? SECRET_KEY_PATTERN);
   const bufferSize = clamp(options.bufferSize, 1, MAX_BUFFER_SIZE, DEFAULT_BUFFER_SIZE);
   const ttlMs = clamp(options.ttlMs, 1, MAX_TTL_MS, DEFAULT_TTL_MS);
   const maxPayloadBytes = clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES);
@@ -120,7 +146,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers)) {
       const lower = k.toLowerCase();
-      out[lower] = redactPattern.test(lower) ? '[redacted]' : v;
+      out[lower] = secretKeyPatternMatches(redactPattern, lower) ? '[redacted]' : v;
     }
     return out;
   }
@@ -135,51 +161,8 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
    * is misleading downstream.
    */
   function applyRedactionToPayload(payload: unknown, contentType: string): { value: unknown; bytes: number } {
-    if (payload === undefined) {
-      const value = {};
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (payload === null) return { value: payload, bytes: payloadWireLength(payload) };
-
-    // Binary-shaped bodies — replace with a marker. Adopters that need
-    // the raw bytes recorded for diagnostics can stringify before
-    // calling `record()`.
-    if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
-      const value = `[binary ${payload.length} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (typeof Blob !== 'undefined' && payload instanceof Blob) {
-      const value = `[binary ${payload.size} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (payload instanceof ArrayBuffer) {
-      const value = `[binary ${payload.byteLength} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    if (ArrayBuffer.isView(payload)) {
-      const value = `[binary ${payload.byteLength} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-
-    if (typeof payload === 'string') {
-      // Form-urlencoded redaction: parse, redact, re-stringify so
-      // `access_token=...` bodies don't slip through unredacted.
-      if (isFormUrlEncoded(contentType)) {
-        const redacted = redactFormUrlEncoded(payload, redactPattern);
-        const value = cap(redacted, maxPayloadBytes);
-        return { value, bytes: payloadWireLength(value) };
-      }
-      const value = cap(payload, maxPayloadBytes);
-      return { value, bytes: payloadWireLength(value) };
-    }
-
-    const redacted = redactSecrets(payload, redactPattern);
-    const json = safeStringify(redacted);
-    if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
-      const value = `[truncated ${byteLengthOf(json)} bytes]`;
-      return { value, bytes: payloadWireLength(value) };
-    }
-    return { value: redacted, bytes: payloadWireLength(redacted) };
+    const value = normalizeRecordedPayload(payload, contentType, redactPattern, maxPayloadBytes);
+    return { value, bytes: payloadWireLength(value) };
   }
 
   function classifyPurpose(
@@ -191,7 +174,11 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   ): string | undefined {
     if (!purpose) return undefined;
     try {
-      return purpose({ method, url, host, path, headers });
+      const value = purpose({ method, url, host, path, headers }) as unknown;
+      if (value === undefined) return undefined;
+      if (typeof value === 'string' && VALID_PURPOSES.has(value)) return value;
+      emitError({ kind: 'classifier_invalid_purpose', purpose: typeof value === 'string' ? value : String(value) });
+      return undefined;
     } catch (err) {
       emitError({ kind: 'classifier_threw', err });
       return undefined;
@@ -355,8 +342,18 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       return true;
     });
 
-    const total = matched.length;
-    const items = matched.slice(0, limit).map(e => projectRecordedCall(e.call, params));
+    const items: RecordedCall[] = [];
+    let total = 0;
+    let dropped_count = 0;
+    for (const entry of matched) {
+      const projected = safeProjectRecordedCall(entry.call, params, emitError);
+      if (!projected) {
+        if (params.attestationMode === 'digest') dropped_count++;
+        continue;
+      }
+      total++;
+      if (items.length < limit) items.push(projected);
+    }
     const since_timestamp =
       params.sinceTimestamp ?? matched[0]?.call.timestamp ?? new Date(nowMs - ttlMs).toISOString();
     return {
@@ -364,6 +361,7 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
       total,
       truncated: total > items.length,
       since_timestamp,
+      dropped_count,
     };
   }
 
@@ -396,15 +394,41 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
   };
 }
 
-function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQueryParams): RecordedCall {
+function safeProjectRecordedCall(
+  call: RawRecordedCall,
+  params: UpstreamRecorderQueryParams,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): RecordedCall | null {
+  try {
+    return projectRecordedCall(call, params, emitError);
+  } catch (err) {
+    emitError?.({ kind: 'digest_canonicalization_failed', method: call.method, endpoint: call.endpoint, err });
+    return null;
+  }
+}
+
+function projectRecordedCall(
+  call: RawRecordedCall,
+  params: UpstreamRecorderQueryParams,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): RecordedCall {
   if (params.attestationMode !== 'digest') return call;
-  const payloadDigest = sha256Hex(canonicalPayloadBytes(call.payload, call.content_type));
+  const payloadBytes = canonicalPayloadBytes(call.payload, call.content_type);
+  const payloadDigest = sha256Hex(payloadBytes);
   const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
+  const identifierScanPayload =
+    identifierDigests.length > 0
+      ? parseJsonStringPayloadForScan(call.payload, call.content_type, emitError)
+      : undefined;
+  const matchedIdentifierDigests =
+    identifierDigests.length > 0 && identifierScanPayload !== undefined
+      ? collectMatchedStringLeafDigests(identifierScanPayload, new Set(identifierDigests))
+      : undefined;
   const identifier_match_proofs =
-    identifierDigests.length > 0 && isJsonContentType(call.content_type)
+    identifierDigests.length > 0 && matchedIdentifierDigests
       ? identifierDigests.map(digest => ({
           identifier_value_sha256: digest,
-          found: jsonStringLeafDigests(call.payload).has(digest),
+          found: matchedIdentifierDigests.has(digest),
         }))
       : undefined;
 
@@ -417,7 +441,7 @@ function projectRecordedCall(call: RawRecordedCall, params: UpstreamRecorderQuer
     content_type: call.content_type,
     attestation_mode: 'digest',
     payload_digest_sha256: payloadDigest,
-    payload_length: call.payload_length,
+    payload_length: byteLengthOf(payloadBytes),
     timestamp: call.timestamp,
     ...(call.status_code !== undefined && { status_code: call.status_code }),
     ...(call.purpose !== undefined && { purpose: call.purpose }),
@@ -431,19 +455,23 @@ function normalizeIdentifierDigests(input: string[] | undefined): string[] {
   for (const value of input) {
     if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) continue;
     if (!out.includes(value)) out.push(value);
-    if (out.length >= 64) break;
+    if (out.length >= IDENTIFIER_DIGEST_LIMIT) break;
   }
   return out;
 }
 
-function jsonStringLeafDigests(root: unknown): Set<string> {
-  const out = new Set<string>();
+function collectMatchedStringLeafDigests(root: unknown, wantedDigests: Set<string>): Set<string> {
+  const matched = new Set<string>();
   const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
   while (stack.length > 0) {
     const { value, depth } = stack.pop()!;
-    if (depth > 256) continue;
+    if (depth > MAX_JSON_DEPTH) continue;
     if (typeof value === 'string') {
-      out.add(sha256Hex(value));
+      const digest = sha256Hex(value);
+      if (wantedDigests.has(digest)) {
+        matched.add(digest);
+        if (matched.size === wantedDigests.size) break;
+      }
     } else if (Array.isArray(value)) {
       for (const item of value) stack.push({ value: item, depth: depth + 1 });
     } else if (value !== null && typeof value === 'object') {
@@ -452,39 +480,346 @@ function jsonStringLeafDigests(root: unknown): Set<string> {
       }
     }
   }
-  return out;
+  return matched;
+}
+
+function parseJsonStringPayloadForScan(
+  payload: unknown,
+  contentType: string,
+  emitError?: (event: UpstreamRecorderErrorEvent) => void
+): unknown | undefined {
+  if (!isJsonContentType(contentType)) return undefined;
+  if (typeof payload !== 'string') return payload;
+  try {
+    return JSON.parse(payload);
+  } catch (err) {
+    emitError?.({ kind: 'json_payload_parse_failed', content_type: contentType, err });
+    return payload;
+  }
 }
 
 function canonicalPayloadBytes(payload: unknown, contentType: string): string {
-  if (typeof payload === 'string') return payload;
   if (isJsonContentType(contentType)) {
-    return canonicalJsonStringify(payload) ?? safeStringify(payload) ?? '';
+    if (typeof payload === 'string') {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return payload;
+      }
+      return canonicalJsonStringify(parsed);
+    }
+    return canonicalJsonStringify(payload);
   }
+  if (typeof payload === 'string') return payload;
   return safeStringify(payload) ?? '';
 }
 
-function canonicalJsonStringify(value: unknown): string | undefined {
-  try {
-    return JSON.stringify(canonicalizeJson(value));
-  } catch {
-    return undefined;
-  }
+function canonicalJsonStringify(value: unknown): string {
+  assertJsonDepth(value);
+  return canonicalize(value);
 }
 
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = canonicalizeJson((value as Record<string, unknown>)[key]);
+function assertJsonDepth(root: unknown): void {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  while (stack.length > 0) {
+    const { value, depth } = stack.pop()!;
+    if (depth > MAX_JSON_DEPTH) {
+      throw new RangeError(`JSON payload exceeds max canonicalization depth ${MAX_JSON_DEPTH}`);
     }
-    return out;
+    if (Array.isArray(value)) {
+      for (const item of value) stack.push({ value: item, depth: depth + 1 });
+    } else if (value !== null && typeof value === 'object') {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        stack.push({ value: item, depth: depth + 1 });
+      }
+    }
   }
-  return value;
 }
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+/**
+ * Compute the `RecordedCall.payload_digest_sha256` value. By default this
+ * applies the same body snapshot normalization, payload normalization, and
+ * canonical secret-key redaction used by the recorder before hashing; pass a
+ * custom redaction pattern and `maxPayloadBytes` when your recorder uses matching
+ * options:
+ *
+ * - `createUpstreamRecorder({ redactPattern })` → `computePayloadDigestSha256(..., { redactPattern })`
+ * - `createUpstreamRecorder({ maxPayloadBytes })` → `computePayloadDigestSha256(..., { maxPayloadBytes })`
+ *
+ * Prefer `{ prenormalized: true }` only when the payload has already been
+ * normalized/redacted exactly as the recorder would store it; legacy `false`
+ * remains accepted as the same prenormalized sentinel. The prenormalized path
+ * skips redaction, so the helper rejects secret-shaped keys whose values are
+ * not already the literal `"[redacted]"` marker or an explicit null
+ * placeholder. For form-encoded bodies, duplicate secret-shaped keys are also
+ * rejected because last-wins maps cannot prove that every original value was
+ * inspected before hashing.
+ *
+ * JSON content is serialized with RFC 8785 JCS before hashing. When
+ * `contentType` is JSON-shaped and `payload` is a string, the helper parses
+ * it first so semantically equivalent JSON strings and objects hash to the
+ * same value. On the normalizing path, an unparseable JSON-shaped string is
+ * treated as the emitted body bytes and hashed verbatim after best-effort
+ * redaction. On the prenormalized path, malformed JSON strings throw because
+ * their secret-key structure cannot be proven safe. Unsupported JSON values
+ * and payloads deeper than the recorder's depth cap throw rather than
+ * producing a non-canonical digest.
+ *
+ * The returned digest is lowercase hex, matching the 3.1
+ * `query_upstream_traffic` wire contract.
+ */
+export function computePayloadDigestSha256(
+  payload: unknown,
+  contentType?: string,
+  options?: PayloadDigestOptions
+): string;
+/**
+ * @deprecated Pass `{ redactPattern: /.../ }` instead of the bare `RegExp`
+ * form. The legacy form remains accepted for this major.
+ */
+export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: RegExp): string;
+/**
+ * @deprecated Pass `{ prenormalized: true }` instead of `false`. The legacy
+ * form remains accepted for this major.
+ */
+export function computePayloadDigestSha256(payload: unknown, contentType: string | undefined, options: false): string;
+export function computePayloadDigestSha256(
+  payload: unknown,
+  contentType = 'application/json',
+  options: RegExp | false | PayloadDigestOptions = SECRET_KEY_PATTERN
+): string {
+  const redactPattern =
+    options instanceof RegExp || options === false
+      ? options === false
+        ? false
+        : normalizeSecretKeyPattern(options)
+      : options?.prenormalized
+        ? false
+        : options?.redactPattern === false
+          ? false
+          : normalizeSecretKeyPattern(options?.redactPattern ?? SECRET_KEY_PATTERN);
+  const prenormalizedSafetyPattern =
+    typeof options === 'object' &&
+    options !== null &&
+    !(options instanceof RegExp) &&
+    options.redactPattern instanceof RegExp
+      ? normalizeSecretKeyPattern(options.redactPattern)
+      : SECRET_KEY_PATTERN;
+  const maxPayloadBytes =
+    typeof options === 'object' && options !== null && !(options instanceof RegExp)
+      ? clamp(options.maxPayloadBytes, 0, 16 * 1024 * 1024, DEFAULT_MAX_PAYLOAD_BYTES)
+      : DEFAULT_MAX_PAYLOAD_BYTES;
+  try {
+    if (
+      typeof options === 'object' &&
+      options !== null &&
+      !(options instanceof RegExp) &&
+      options.redactPattern === false &&
+      options.prenormalized !== true
+    ) {
+      throw new PayloadDigestError('PayloadDigestOptions.redactPattern=false requires prenormalized=true');
+    }
+    const payloadForDigest =
+      redactPattern === false
+        ? assertPrenormalizedPayloadSafe(payload, contentType, prenormalizedSafetyPattern)
+        : normalizeRecordedPayload(
+            normalizeFetchPayloadInput(payload, contentType),
+            contentType,
+            redactPattern,
+            maxPayloadBytes
+          );
+    return sha256Hex(canonicalPayloadBytes(payloadForDigest, contentType));
+  } catch (err) {
+    if (err instanceof PayloadDigestError) throw err;
+    throw new PayloadDigestError(err instanceof Error ? err.message : 'Payload digest canonicalization failed', err);
+  }
+}
+
+export type PayloadDigestOptions = {
+  /**
+   * Custom redaction pattern. Passing `false` is accepted only with
+   * `prenormalized: true`; otherwise it would silently bypass redaction.
+   */
+  redactPattern?: RegExp | false;
+  /**
+   * Match `createUpstreamRecorder({ maxPayloadBytes })` when computing
+   * digests outside the recorder.
+   */
+  maxPayloadBytes?: number;
+  /**
+   * Set only for payloads that have already been normalized and redacted.
+   * The helper skips redaction but still scans secret-shaped keys, rejects
+   * malformed JSON strings, and rejects duplicate secret-shaped form keys.
+   */
+  prenormalized?: boolean;
+};
+
+function assertPrenormalizedPayloadSafe(payload: unknown, contentType: string, pattern: RegExp): unknown {
+  let scanTarget = payload;
+  if (typeof payload === 'string' && isJsonContentType(contentType)) {
+    try {
+      scanTarget = JSON.parse(payload);
+    } catch {
+      throw new PayloadDigestError(
+        'Prenormalized JSON payload is malformed; hash the recorder-normalized payload or omit prenormalized.'
+      );
+    }
+  } else if (typeof payload === 'string' && isFormUrlEncoded(contentType)) {
+    assertPrenormalizedFormUrlEncodedSafe(payload, pattern);
+    return payload;
+  }
+  const unsafePath = findUnredactedSecretPath(scanTarget, pattern);
+  if (unsafePath) {
+    throw new PayloadDigestError(
+      `Prenormalized payload contains unredacted secret-shaped key "${unsafePath}"; hash the recorder-normalized payload or omit prenormalized.`
+    );
+  }
+  return payload;
+}
+
+function assertPrenormalizedFormUrlEncodedSafe(body: string, pattern: RegExp): void {
+  const seenSecretKeys = new Set<string>();
+  const params = Array.from(new URLSearchParams(body));
+  for (const [key] of params) {
+    if (!secretKeyPatternMatches(pattern, key)) continue;
+    const normalizedKey = key.toLowerCase();
+    if (seenSecretKeys.has(normalizedKey)) {
+      throw new PayloadDigestError(
+        `Prenormalized form payload contains duplicate secret-shaped key "${key}"; hash the recorder-normalized payload or omit prenormalized.`
+      );
+    }
+    seenSecretKeys.add(normalizedKey);
+  }
+  for (const [key, value] of params) {
+    if (!secretKeyPatternMatches(pattern, key)) continue;
+    if (!isSafelyRedactedSecretValue(value)) {
+      throw new PayloadDigestError(
+        `Prenormalized payload contains unredacted secret-shaped key "${key}"; hash the recorder-normalized payload or omit prenormalized.`
+      );
+    }
+  }
+}
+
+function findUnredactedSecretPath(value: unknown, pattern: RegExp): string | null {
+  const stack: Array<{ value: unknown; path: string }> = [{ value, path: '' }];
+  const seen = new WeakSet<object>();
+  while (stack.length > 0) {
+    const { value: current, path } = stack.pop()!;
+    if (!current || typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      for (let i = current.length - 1; i >= 0; i--) {
+        stack.push({ value: current[i], path: `${path}[${i}]` });
+      }
+      continue;
+    }
+
+    const entries = Object.entries(current as Record<string, unknown>);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const [key, childValue] = entries[i]!;
+      const childPath = path ? `${path}.${key}` : key;
+      if (secretKeyPatternMatches(pattern, key) && !isSafelyRedactedSecretValue(childValue)) return childPath;
+      stack.push({ value: childValue, path: childPath });
+    }
+  }
+  return null;
+}
+
+function isSafelyRedactedSecretValue(value: unknown): boolean {
+  return value === '[redacted]' || value === null;
+}
+
+function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
+  if (payload === undefined) return undefined;
+  if (typeof payload === 'string') {
+    if (!isJsonContentType(contentType)) return payload;
+    try {
+      return JSON.parse(payload);
+    } catch {
+      return payload;
+    }
+  }
+  if (payload instanceof URLSearchParams) return payload.toString();
+  if (typeof FormData !== 'undefined' && payload instanceof FormData) {
+    const out: Record<string, unknown> = {};
+    payload.forEach((v, k) => {
+      out[k] = typeof v === 'string' ? v : '[file]';
+    });
+    return out;
+  }
+  return payload;
+}
+
+function normalizeRecordedPayload(
+  payload: unknown,
+  contentType: string,
+  redactPattern: RegExp,
+  maxPayloadBytes: number
+): unknown {
+  if (payload === undefined) {
+    // Raw-mode `RecordedCall.payload` is required by the 3.1 controller
+    // response schema. GET/HEAD-style calls with no body therefore emit an
+    // empty object instead of omitting the field.
+    return {};
+  }
+  if (payload === null) return payload;
+
+  // Binary-shaped bodies — replace with a marker. Adopters that need
+  // the raw bytes recorded for diagnostics can stringify before
+  // calling `record()`.
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(payload)) {
+    return `[binary ${payload.length} bytes]`;
+  }
+  if (typeof Blob !== 'undefined' && payload instanceof Blob) {
+    return `[binary ${payload.size} bytes]`;
+  }
+  if (payload instanceof ArrayBuffer) {
+    return `[binary ${payload.byteLength} bytes]`;
+  }
+  if (ArrayBuffer.isView(payload)) {
+    return `[binary ${payload.byteLength} bytes]`;
+  }
+
+  if (typeof payload === 'string') {
+    if (isJsonContentType(contentType)) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        // Malformed JSON strings remain raw strings so diagnostics keep the
+        // original body shape instead of pretending the payload was absent.
+        return cap(redactJsonLikeSecretValues(payload, redactPattern), maxPayloadBytes);
+      }
+      const redacted = redactSecrets(parsed, redactPattern);
+      assertJsonDepth(redacted);
+      const json = safeStringify(redacted);
+      if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
+        return `[truncated ${byteLengthOf(json)} bytes]`;
+      }
+      return redacted;
+    }
+    // Form-urlencoded redaction: parse, redact, re-stringify so
+    // `access_token=...` bodies don't slip through unredacted.
+    if (isFormUrlEncoded(contentType)) {
+      return cap(redactFormUrlEncoded(payload, redactPattern), maxPayloadBytes);
+    }
+    return cap(payload, maxPayloadBytes);
+  }
+
+  const redacted = redactSecrets(payload, redactPattern);
+  assertJsonDepth(redacted);
+  const json = safeStringify(redacted);
+  if (json && maxPayloadBytes > 0 && byteLengthOf(json) > maxPayloadBytes) {
+    return `[truncated ${byteLengthOf(json)} bytes]`;
+  }
+  return redacted;
 }
 
 /**
@@ -533,7 +868,8 @@ function makeNoopRecorder(): UpstreamRecorder {
       items: [],
       total: 0,
       truncated: false,
-      since_timestamp: params.sinceTimestamp ?? '',
+      since_timestamp: params.sinceTimestamp ?? new Date(0).toISOString(),
+      dropped_count: 0,
     }),
     clear: () => undefined,
     debug: (): UpstreamRecorderDebugInfo => ({
@@ -581,7 +917,12 @@ async function readBody(
     raw = init.body;
   } else if (input instanceof Request) {
     try {
-      raw = await input.clone().text();
+      const clone = input.clone();
+      if (contentTypeBase(contentType) === 'multipart/form-data') {
+        raw = await clone.formData();
+      } else {
+        raw = await clone.text();
+      }
     } catch {
       raw = undefined;
     }
@@ -616,15 +957,17 @@ async function readBody(
 }
 
 function isJsonContentType(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  const base = contentTypeBase(contentType);
   return base === 'application/json' || /\+json$/.test(base);
 }
 
 function isFormUrlEncoded(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
-  return base === 'application/x-www-form-urlencoded';
+  return contentTypeBase(contentType) === 'application/x-www-form-urlencoded';
+}
+
+function contentTypeBase(contentType: string | undefined): string {
+  if (!contentType) return '';
+  return contentType.split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
 function redactFormUrlEncoded(body: string, pattern: RegExp): string {
@@ -632,12 +975,109 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
     const params = new URLSearchParams(body);
     const out = new URLSearchParams();
     params.forEach((v, k) => {
-      out.append(k, pattern.test(k.toLowerCase()) ? '[redacted]' : v);
+      out.append(k, secretKeyPatternMatches(pattern, k.toLowerCase()) ? '[redacted]' : v);
     });
     return out.toString();
   } catch {
     return body;
   }
+}
+
+function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
+  // Best-effort diagnostic scrub for malformed JSON strings. The output is
+  // not guaranteed to be valid JSON; the invariant is that secret-shaped keys
+  // with scalar/string values are not stored verbatim. Because malformed JSON
+  // has no trustworthy parse tree, object/array-valued secret entries are
+  // replaced wholesale rather than traversed.
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    if (body[i] !== '"') {
+      out += body[i++];
+      continue;
+    }
+
+    const keyToken = readJsonStringToken(body, i);
+    if (!keyToken) {
+      out += body.slice(i);
+      break;
+    }
+
+    let colon = keyToken.end;
+    while (colon < body.length && isJsonWhitespace(body[colon])) colon++;
+    if (body[colon] !== ':') {
+      out += body.slice(i, keyToken.end);
+      i = keyToken.end;
+      continue;
+    }
+
+    let key: unknown;
+    try {
+      key = JSON.parse(keyToken.literal);
+    } catch {
+      out += body.slice(i, keyToken.end);
+      i = keyToken.end;
+      continue;
+    }
+
+    const valueStart = colon + 1;
+    let value = valueStart;
+    while (value < body.length && isJsonWhitespace(body[value])) value++;
+    out += body.slice(i, value);
+    if (typeof key !== 'string' || !secretKeyPatternMatches(pattern, key)) {
+      i = value;
+      continue;
+    }
+
+    out += '"[redacted]"';
+    i = skipJsonLikeValue(body, value);
+  }
+  return out;
+}
+
+function readJsonStringToken(input: string, start: number): { literal: string; end: number } | null {
+  for (let i = start + 1; i < input.length; i++) {
+    const ch = input[i];
+    if (ch === '"') return { literal: input.slice(start, i + 1), end: i + 1 };
+    if (ch === '\\') i++;
+  }
+  return null;
+}
+
+function skipJsonLikeValue(input: string, start: number): number {
+  if (input[start] === '"') {
+    const token = readJsonStringToken(input, start);
+    return token?.end ?? input.length;
+  }
+  if (input[start] === '[' || input[start] === '{') {
+    const opener = input[start];
+    const closer = opener === '[' ? ']' : '}';
+    let depth = 0;
+    for (let i = start; i < input.length; i++) {
+      const ch = input[i];
+      if (ch === '"') {
+        const token = readJsonStringToken(input, i);
+        if (!token) return input.length;
+        i = token.end - 1;
+        continue;
+      }
+      if (ch === opener) depth++;
+      if (ch === closer) {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return input.length;
+  }
+  let i = start;
+  while (i < input.length && input[i] !== ',' && input[i] !== '}' && input[i] !== ']' && !isJsonWhitespace(input[i])) {
+    i++;
+  }
+  return i;
+}
+
+function isJsonWhitespace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t';
 }
 
 function safeStringify(value: unknown): string | undefined {

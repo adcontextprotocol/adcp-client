@@ -263,6 +263,122 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     );
   });
 
+  test('grades digest canonicalization failure on non-finite numbers as not_applicable', async () => {
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      () => ({
+        success: true,
+        data: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: 'INTERNAL_ERROR',
+                error_detail: 'JCS: non-finite number Infinity is not valid JSON',
+              }),
+            },
+          ],
+        },
+      })
+    );
+    const digestOnlyStoryboard = JSON.parse(JSON.stringify(storyboard));
+    digestOnlyStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'hashed emails MUST be proven in digest mode',
+        min_count: 1,
+        identifier_paths: ['audiences[*].add[*].hashed_email'],
+      },
+    ];
+
+    const result = await runStoryboardStep('https://stub.example/mcp', digestOnlyStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.equal(upstreamValidation.not_applicable, true);
+    assert.match(upstreamValidation.note, /non-finite JSON number/);
+  });
+
+  test('grades mixed raw payload and digest identifier proofs in one upstream batch', async () => {
+    let receivedDigests;
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      params => {
+        receivedDigests = params.params?.identifier_value_digests ?? [];
+        return {
+          success: true,
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  recorded_calls: [
+                    {
+                      method: 'POST',
+                      endpoint: 'POST https://api.example.test/v1/audience/upload',
+                      url: 'https://api.example.test/v1/audience/upload',
+                      content_type: 'application/json',
+                      attestation_mode: 'raw',
+                      payload: { users: [{ hashed_email: 'payload-only-marker' }] },
+                      payload_length: 58,
+                      timestamp: '2026-05-02T14:30:01.000Z',
+                    },
+                    {
+                      method: 'POST',
+                      endpoint: 'POST https://api.example.test/v1/audience/upload',
+                      url: 'https://api.example.test/v1/audience/upload',
+                      content_type: 'application/json',
+                      attestation_mode: 'digest',
+                      payload_digest_sha256: sha256Hex('canonical-body'),
+                      payload_length: 68,
+                      identifier_match_proofs: receivedDigests.map(digest => ({
+                        identifier_value_sha256: digest,
+                        found: true,
+                      })),
+                      timestamp: '2026-05-02T14:30:01.000Z',
+                    },
+                  ],
+                  total_count: 2,
+                  since_timestamp: params.params?.since_timestamp,
+                }),
+              },
+            ],
+          },
+        };
+      }
+    );
+
+    const result = await runStoryboardStep('https://stub.example/mcp', storyboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.equal(upstreamValidation.actual.matched_count, 2);
+    assert.deepEqual(upstreamValidation.actual.missing_payload_paths, []);
+    assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
+  });
+
   test('grades raw-required payload assertions not_applicable when controller returns digest only', async () => {
     const { client } = buildStubClient(
       {

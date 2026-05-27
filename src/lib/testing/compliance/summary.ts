@@ -55,6 +55,11 @@ export interface ComplianceSummaryArtifact {
   passed: number;
   failed: number;
   skipped: number;
+  /**
+   * Validation results graded `not_applicable`. Present only when non-zero so
+   * CI/badge consumers can distinguish clean passes from downgraded coverage.
+   */
+  validations_not_applicable?: number;
   not_selected_count: number;
   not_selected_by_reason: Partial<Record<RunnerSelectionReason, number>>;
   skipped_by_reason: Partial<Record<RunnerSkipReason | string, number>>;
@@ -101,6 +106,9 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     passed: result.summary.steps_passed ?? 0,
     failed: result.summary.steps_failed ?? 0,
     skipped: result.summary.steps_skipped ?? 0,
+    ...(result.summary.validations_not_applicable
+      ? { validations_not_applicable: result.summary.validations_not_applicable }
+      : {}),
     not_selected_count: result.summary.steps_not_selected ?? 0,
     not_selected_by_reason: result.summary.not_selected_by_reason ?? {},
     skipped_by_reason: result.summary.skipped_by_reason ?? {},
@@ -270,9 +278,9 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
           continue;
         }
         if (step.skip_reason === 'requirement_unmet' && step.warnings?.[0]) {
-          const prefix = step.warnings[0].match(/^(missing_required_tool_family: needs [^;(]+)/);
-          if (prefix) {
-            recordCause(prefix[1]!.trim(), 'requirement_unmet', scenarioId);
+          const requiredFamily = parseMissingRequiredToolFamilyCause(step.warnings[0]);
+          if (requiredFamily) {
+            recordCause(requiredFamily, 'requirement_unmet', scenarioId);
             continue;
           }
         }
@@ -293,6 +301,13 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
       // about the cap documented on `ComplianceSummarySkipCause.affected`.
       affected: Array.from(affectedSet).slice(0, SKIP_CAUSE_AFFECTED_LIMIT),
     }));
+}
+
+function parseMissingRequiredToolFamilyCause(warning: string): string | null {
+  const match = warning.match(/^missing_required_tool_family: needs\s+([\s\S]*)$/);
+  if (!match) return null;
+  const family = match[1]!.replace(/\s*[;(][\s\S]*$/, '').trim();
+  return family ? `missing_required_tool_family: needs ${family}` : null;
 }
 
 /**

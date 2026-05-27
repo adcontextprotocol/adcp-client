@@ -14,7 +14,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runStoryboard } = require('../../dist/lib/testing/storyboard/index.js');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/index.js');
 const { parseStoryboard, validateStoryboardShape } = require('../../dist/lib/testing/storyboard/loader.js');
 
 function buildStoryboard(overrides = {}) {
@@ -147,6 +147,137 @@ describe('Storyboard.requires gate (#1626)', () => {
 
     const step = result.phases[0].steps[0];
     assert.equal(step.skip.requirement, 'controller', 'first unmet requirement is reported');
+  });
+});
+
+describe('Storyboard upstream_traffic authoring checks', () => {
+  function storyboardWithIdentifierPath(path) {
+    return `
+id: upstream_identifier_path_scope
+version: 1.0.0
+title: upstream identifier path scope
+category: test
+summary: scope check
+agent:
+  interaction_model: sync
+  capabilities: []
+caller:
+  role: buyer_agent
+phases:
+  - id: p1
+    title: Phase 1
+    steps:
+      - id: sync
+        title: Sync
+        task: get_products
+        validations:
+          - check: upstream_traffic
+            description: identifier path scope
+            identifier_paths:
+              - ${path}
+`;
+  }
+
+  test('rejects identifier_paths that point outside the request payload', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('response.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('rejects identifier_paths with request prefix', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('request.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('Request.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('rejects bracket and recursive identifier_paths for all reserved roots', () => {
+    for (const root of ['request', 'response', 'context']) {
+      assert.throws(
+        () => parseStoryboard(storyboardWithIdentifierPath(`$["${root}"].audiences[*].hashed_email`)),
+        /identifier_paths\[0\].*unsupported.*request payload/
+      );
+      assert.throws(
+        () => parseStoryboard(storyboardWithIdentifierPath(`$..${root}.audiences[*].hashed_email`)),
+        /identifier_paths\[0\].*unsupported.*request payload/
+      );
+    }
+  });
+
+  test('rejects unsupported JSONPath identifier_paths that would resolve zero vectors', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('$["audiences"][*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('audiences..hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('rejects keyed numeric-array identifier_paths the runtime does not resolve', () => {
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('audiences[*].add[0].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('accepts documented dotted identifier_paths with wildcard array selectors', () => {
+    assert.doesNotThrow(() => parseStoryboard(storyboardWithIdentifierPath('audiences[*].add[*].hashed_email')));
+  });
+
+  test('accepts existing leading-dollar dotted identifier_paths', () => {
+    assert.doesNotThrow(() => parseStoryboard(storyboardWithIdentifierPath('$.audiences[*].add[*].hashed_email')));
+  });
+
+  test('validates leading-dollar identifier_paths without mutating caller-owned strings', () => {
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'valid programmatic authoring',
+        identifier_paths: [' $.audiences[*].add[*].hashed_email '],
+      },
+    ];
+    validateStoryboardShape(storyboard);
+    assert.equal(
+      storyboard.phases[0].steps[0].validations[0].identifier_paths[0],
+      ' $.audiences[*].add[*].hashed_email '
+    );
+  });
+
+  test('runStoryboardStep invokes identifier_paths authoring validation', async () => {
+    const storyboard = buildStoryboard();
+    storyboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'invalid programmatic authoring',
+        identifier_paths: ['response.audiences[*].hashed_email'],
+      },
+    ];
+
+    await assert.rejects(
+      () =>
+        runStoryboardStep('https://stub.example/mcp', storyboard, 'step1', {
+          _profile: profileWithController,
+        }),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
+  });
+
+  test('runStoryboardStep invokes storyboard shape validation before discovery', async () => {
+    await assert.rejects(
+      () =>
+        runStoryboardStep('https://stub.example/mcp', buildStoryboard({ requires: [] }), 'step1', {
+          _profile: profileWithController,
+        }),
+      /requires: \[\] is not allowed/
+    );
   });
 });
 

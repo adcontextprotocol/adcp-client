@@ -32,18 +32,27 @@
  * });
  *
  * // 3. In your `comply_test_controller` handler for scenario:
- * //    `query_upstream_traffic`, return the recorder's query result
- * //    verbatim:
+ * //    `query_upstream_traffic`, project the recorder's query result
+ * //    onto the controller response shape:
  * function handleQueryUpstreamTraffic(req, principal) {
- *   const { items, total, truncated, since_timestamp } = recorder.query({
- *     principal,
- *     sinceTimestamp: req.params.since_timestamp,
- *     endpointPattern: req.params.endpoint_pattern,
- *     limit: req.params.limit,
- *   });
- *   return { success: true, recorded_calls: items, total_count: total, truncated, since_timestamp };
+ *   return toQueryUpstreamTrafficResponse(
+ *     recorder.query({
+ *       principal,
+ *       sinceTimestamp: req.params.since_timestamp,
+ *       endpointPattern: req.params.endpoint_pattern,
+ *       limit: req.params.limit,
+ *       attestationMode: req.params.attestation_mode,
+ *       identifierValueDigests: req.params.identifier_value_digests,
+ *     })
+ *   );
  * }
  * ```
+ *
+ * Digest-mode queries canonicalize JSON payloads before hashing. If a
+ * recorded JSON payload cannot be canonicalized (for example because it
+ * exceeds the recorder's depth cap), `query()` omits that entry and emits
+ * `digest_canonicalization_failed` through `onError` rather than returning a
+ * non-canonical digest.
  *
  * Production builds with `enabled: false` get a no-op recorder — every
  * method is a pass-through / empty-result, zero per-call overhead.
@@ -52,7 +61,13 @@
  * `@adcp/sdk`'s storyboard runner (PR adcp-client#1289).
  */
 
-export { createUpstreamRecorder, toQueryUpstreamTrafficResponse } from './recorder';
+export {
+  PayloadDigestError,
+  computePayloadDigestSha256,
+  createUpstreamRecorder,
+  toQueryUpstreamTrafficResponse,
+} from './recorder';
+export type { PayloadDigestOptions } from './recorder';
 export { UpstreamRecorderScopeError } from './types';
 export type {
   PurposeClassifier,

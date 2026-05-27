@@ -8,6 +8,7 @@
 import type { TestClient } from './client';
 import { getLogger, resolveAccount } from './client';
 import type { AgentProfile, TaskResult, TestOptions } from './types';
+import type { RecordedCall } from '../upstream-recorder/types';
 import type {
   ComplyTestControllerResponse,
   ListScenariosSuccess,
@@ -34,6 +35,8 @@ export type ControllerScenario =
    * runner-output-contract.yaml v2.0.0, comply-test-controller-request.json.
    */
   | 'query_upstream_traffic';
+
+export type { DigestRecordedCall, RawRecordedCall, RecordedCall } from '../upstream-recorder/types';
 
 /** What capabilities the seller's test controller exposes */
 export interface ControllerCapabilities {
@@ -210,56 +213,6 @@ export async function simulate(
   return result.data as SimulationSuccess | ControllerError;
 }
 
-interface RecordedCallBase {
-  method: string;
-  endpoint: string;
-  url: string;
-  host?: string;
-  path?: string;
-  /**
-   * Media type of the recorded `payload`, mirroring the agent's outbound
-   * `Content-Type` header. Required by the spec so the runner picks the
-   * right matcher deterministically: `payload_must_contain` JSONPath is
-   * valid only when this is `application/json` or `*+json`. Non-JSON
-   * payloads fall back to substring matching for `match: present` and
-   * grade `not_applicable` for `match: equals` / `match: contains_any`.
-   */
-  content_type: string;
-  /**
-   * Byte length of the post-redaction emitted payload representation. Required
-   * for both raw and digest branches by the 3.1 schema.
-   */
-  payload_length: number;
-  timestamp: string;
-  status_code?: number;
-}
-
-/**
- * Single recorded outbound HTTP call returned by `query_upstream_traffic`.
- * Mirrors `comply-test-controller-response.json > UpstreamTrafficSuccess`.
- */
-export type RecordedCall = RawRecordedCall | DigestRecordedCall;
-
-export interface RawRecordedCall extends RecordedCallBase {
-  attestation_mode: 'raw';
-  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
-  payload: unknown;
-  payload_digest_sha256?: never;
-  identifier_match_proofs?: never;
-  [key: string]: unknown;
-}
-
-export interface DigestRecordedCall extends RecordedCallBase {
-  attestation_mode: 'digest';
-  payload?: never;
-  payload_digest_sha256: string;
-  identifier_match_proofs?: Array<{
-    identifier_value_sha256: string;
-    found: boolean;
-  }>;
-  [key: string]: unknown;
-}
-
 /**
  * Per spec PRs adcontextprotocol/adcp#3816 (initial restriction) and
  * adcp#3987 (RFC 6839 §3.1 pin): `payload_must_contain` JSONPath is
@@ -286,10 +239,23 @@ export interface UpstreamTrafficSuccess {
 }
 
 export interface UpstreamTrafficQueryParams {
+  /** ISO 8601 lower bound for recorded calls. */
   since_timestamp?: string;
+  /** Glob matched against each recorded call's `<METHOD> <URL>` endpoint. */
   endpoint_pattern?: string;
+  /** Maximum recorded calls to return. */
   limit?: number;
+  /**
+   * Requested per-call response shape. `raw` returns redacted payloads;
+   * `digest` returns payload digests plus optional identifier proofs.
+   */
   attestation_mode?: 'raw' | 'digest';
+  /**
+   * Lowercase-hex SHA-256 digests of string identifier values the controller
+   * should prove in digest mode. Non-string vectors cannot be represented by
+   * this field and grade not_applicable when only digest attestations are
+   * available.
+   */
   identifier_value_digests?: string[];
 }
 

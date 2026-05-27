@@ -572,15 +572,59 @@ export function enforceStrictSchema(schema: any): any {
   return flattenMutualExclusiveOneOf(strictSchema);
 }
 
-function promoteConditionalParamProperties(strictSchema: any): void {
+function canonicalCodegenJson(value: unknown, keyHint?: string): string {
+  // Build-time JSON Schema snippets only need deterministic key order; avoid
+  // routing the generator through runtime JCS semantics it does not depend on.
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    const items = value.map(item => canonicalCodegenJson(item));
+    // Schema enum order is authoring noise for our conflict check; stringify
+    // first so mixed-type enums like [1, "1"] still sort deterministically.
+    if (keyHint === 'enum') items.sort();
+    return `[${items.join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalCodegenJson(obj[key], key)}`)
+    .join(',')}}`;
+}
+
+/**
+ * json-schema-to-typescript strips `if` / `then` before it can infer params
+ * declared only inside conditionals. Promote the narrow authorial shape we use
+ * today (`allOf[].then.properties.params.properties`) into the root params
+ * object, then let Ajv keep enforcing the full conditional schema at runtime.
+ *
+ * This intentionally does not chase nested `then.allOf`, `else`, `oneOf`, or
+ * arbitrary conditional schemas. If upstream starts authoring those shapes,
+ * the generator should learn that explicit pattern rather than silently
+ * guessing a wider transform.
+ */
+export function promoteConditionalParamProperties(strictSchema: any): void {
   const params = strictSchema.properties?.params;
   if (!params || typeof params !== 'object' || !params.properties || !Array.isArray(strictSchema.allOf)) return;
-  for (const member of strictSchema.allOf) {
+  const rootParamKeys = new Set(Object.keys(params.properties));
+  const promoted = new Map<string, { value: unknown; memberIndex: number }>();
+  for (const [memberIndex, member] of strictSchema.allOf.entries()) {
     const conditionalParams = member?.then?.properties?.params;
     if (!conditionalParams || typeof conditionalParams !== 'object' || !conditionalParams.properties) continue;
     for (const [key, value] of Object.entries(conditionalParams.properties)) {
-      if (params.properties[key] === undefined) {
+      if (rootParamKeys.has(key)) {
+        continue;
+      }
+      if (!promoted.has(key)) {
         params.properties[key] = value;
+        promoted.set(key, { value, memberIndex });
+        continue;
+      }
+      const existing = promoted.get(key)!;
+      if (canonicalCodegenJson(existing.value) !== canonicalCodegenJson(value)) {
+        throw new Error(
+          `Conflicting conditional params property "${key}" while promoting allOf[${memberIndex}].then.properties.params.properties.${key}; first promoted from allOf[${existing.memberIndex}].then.properties.params.properties.${key}`
+        );
       }
     }
   }

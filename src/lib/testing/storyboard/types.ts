@@ -1038,18 +1038,26 @@ export interface StoryboardValidation {
    */
   attestation_mode_required?: 'raw';
   /**
-   * Paths into the storyboard's `sample_request` that name the load-bearing
-   * identifiers the adapter MUST forward upstream. The runner extracts the
-   * values at these paths and asserts each resolved value appears in at
-   * least one matching `recorded_call`'s payload at any depth. Each path
-   * MAY resolve to a single value or an array; ALL resolved values MUST be
-   * present in the recorded payload — single-placeholder fabrication is
-   * the threat model. Path syntax is the portable 3.1 grammar:
-   * request-payload-relative dotted identifier keys, with each segment
-   * optionally followed by `[*]`. Explicit roots (`$.foo`), reserved roots
-   * (`request.*`, `response.*`, `context.*`), bracket-quoted keys, numeric
-   * indexes, recursive descent, and empty segments are storyboard authoring
-   * errors. Per spec PR adcontextprotocol/adcp#3816, replaces the earlier
+   * Paths into the effective request payload that name the load-bearing
+   * identifiers the adapter MUST forward upstream. When the runner has the
+   * actual request payload after context substitution, that payload is the
+   * source of truth; otherwise it falls back to the storyboard's
+   * `sample_request`.
+   *
+   * The runner extracts the values at these paths and asserts each resolved
+   * value appears in at least one matching `recorded_call`'s payload at any
+   * depth. Each path MAY resolve to a single value or an array; ALL resolved
+   * values MUST be present in the recorded payload — single-placeholder
+   * fabrication is the threat model. Portable path syntax is a request-rooted
+   * dotted grammar with optional `[*]` wildcard selectors on segments, for
+   * example `audiences[*].add[*].hashed_email`. Explicit roots (`$.foo`),
+   * reserved roots (`request.*`, `response.*`, `context.*`), bracket-quoted
+   * keys, recursive descent (`$..foo`), numeric indexes, and empty segments
+   * are storyboard authoring errors so controllers do not silently resolve
+   * zero vectors. The runner caps portable digest proofs at 64 unique
+   * identifier values; overflow is graded `not_applicable` because the bound
+   * is runner-side, not a spec value. Per spec PR adcontextprotocol/adcp#3816,
+   * replaces the earlier
    * `buyer_identifier_echo: boolean` shorthand.
    */
   identifier_paths?: string[];
