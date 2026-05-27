@@ -42,6 +42,11 @@ const ADCP_CORE_SCHEMAS = ['media-buy', 'creative-asset', 'product', 'targeting'
 // The adagents schema re-declares types that are already in property schema
 const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 
+// Shared schemas that are authoritative in core.generated.ts but are also
+// pulled into tool compilation through request/response $refs. Keep them out
+// of tools.generated.ts and import references from core.generated.ts instead.
+const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set(['AudienceConstraints', 'PurchaseType']);
+
 // Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
 function loadCachedSchema(schemaRef: string): any {
   try {
@@ -1163,7 +1168,77 @@ function loadCoreSchema(schemaName: string): any {
   }
 }
 
-async function generateToolTypes(tools: ToolDefinition[]) {
+function stripCommentsAndStringLiterals(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*$/gm, ' ')
+    .replace(/(['"`])(?:\\[\s\S]|(?!\1)[\s\S])*?\1/g, ' ');
+}
+
+function collectExportedTypeNames(typeDefinitions: string): Set<string> {
+  const names = new Set<string>();
+  const typePattern = /^export (?:type|interface) (\w+)/gm;
+  let match: RegExpExecArray | null;
+  while ((match = typePattern.exec(typeDefinitions)) !== null) {
+    names.add(match[1]);
+  }
+  return names;
+}
+
+function addCoreGeneratedTypeImports(typeDefinitions: string, typeNames: Iterable<string>): string {
+  const importNames = new Set<string>();
+  let body = typeDefinitions;
+  const importPattern = /^import type \{([\s\S]*?)\} from ['"]\.\/core\.generated['"]; ?\n*/gm;
+
+  body = body.replace(importPattern, (_match, imports: string) => {
+    for (const name of imports.split(',')) {
+      const trimmed = name.trim();
+      if (trimmed) importNames.add(trimmed);
+    }
+    return '';
+  });
+
+  for (const name of typeNames) {
+    importNames.add(name);
+  }
+
+  if (importNames.size === 0) return body;
+
+  const sortedImports = [...importNames].sort();
+  const importBlock = `import type {\n${sortedImports.map(name => `  ${name},`).join('\n')}\n} from './core.generated';\n\n`;
+  return importBlock + body.trimStart();
+}
+
+function addReferencedCoreTypeImports(typeDefinitions: string, coreTypeNames: Set<string>): string {
+  if (coreTypeNames.size === 0) return typeDefinitions;
+
+  const locallyDeclaredTypes = collectExportedTypeNames(typeDefinitions);
+  const searchable = stripCommentsAndStringLiterals(typeDefinitions);
+  const referencedCoreTypes = [...coreTypeNames].filter(name => {
+    if (locallyDeclaredTypes.has(name)) return false;
+    return new RegExp(`\\b${name}\\b`).test(searchable);
+  });
+
+  return addCoreGeneratedTypeImports(typeDefinitions, referencedCoreTypes);
+}
+
+function addCoreGeneratedTypeReExports(typeDefinitions: string, typeNames: Iterable<string>): string {
+  const reExportNames = [...new Set(typeNames)].sort();
+  if (reExportNames.length === 0) return typeDefinitions;
+
+  const exportStatement = `export type { ${reExportNames.join(', ')} } from './core.generated';`;
+  if (typeDefinitions.includes(exportStatement)) return typeDefinitions;
+
+  const importPattern = /^import type \{[\s\S]*?\} from ['"]\.\/core\.generated['"]; ?\n*/m;
+  const importMatch = typeDefinitions.match(importPattern);
+  if (importMatch?.[0]) {
+    return typeDefinitions.replace(importPattern, `${importMatch[0]}${exportStatement}\n\n`);
+  }
+
+  return `${exportStatement}\n\n${typeDefinitions}`;
+}
+
+async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set<string> = new Set()) {
   console.log('🔧 Generating tool parameter and response types...');
 
   let toolTypes = '// Tool Parameter and Response Types\n';
@@ -1185,8 +1260,10 @@ async function generateToolTypes(tools: ToolDefinition[]) {
     },
   };
 
-  // Track generated types to avoid duplicates
-  const generatedTypes = new Set<string>();
+  // Track generated types to avoid duplicates. Some shared schemas are owned by
+  // core.generated.ts but are reached through tool request/response $refs; seed
+  // this set to keep those declarations out of tools.generated.ts.
+  const generatedTypes = new Set<string>(preGeneratedTypes);
   const allGeneratedCode: string[] = [];
 
   for (const tool of tools) {
@@ -1460,6 +1537,31 @@ export function removeNumberedTypeDuplicates(typeDefinitions: string): string {
   );
 
   return filterDuplicateTypeDefinitions(current, new Set<string>());
+}
+
+function removeNumberedCoreTypeDuplicates(typeDefinitions: string, coreTypeNames: Set<string>): string {
+  const locallyDeclaredTypes = collectExportedTypeNames(typeDefinitions);
+  const numberedCoreTypes = [...locallyDeclaredTypes]
+    .map(name => {
+      const numberedMatch = name.match(/^(.+?)(\d+)$/);
+      const base = numberedMatch?.[1];
+      return base ? { numbered: name, base } : null;
+    })
+    .filter((entry): entry is { numbered: string; base: string } => entry !== null && coreTypeNames.has(entry.base));
+
+  if (numberedCoreTypes.length === 0) return typeDefinitions;
+
+  let result = typeDefinitions;
+  for (const { numbered, base } of numberedCoreTypes) {
+    result = result.replace(new RegExp(`\\b${numbered}\\b`, 'g'), base);
+  }
+
+  console.log(
+    `🔢 Deduplicating ${numberedCoreTypes.length} numbered core type(s): ` +
+      numberedCoreTypes.map(t => `${t.numbered}→${t.base}`).join(', ')
+  );
+
+  return filterDuplicateTypeDefinitions(result, new Set(coreTypeNames));
 }
 
 // Helper function to filter duplicate type definitions properly
@@ -1810,12 +1912,8 @@ export function applyIndividualAssetDiscriminators(typeDefinitions: string): str
     }
   }
 
-  // tools.generated.ts has no existing `import` statements — we only inject one when
-  // we actually emitted a reference to a non-local requirements type.
   if (importedRequirementsTypes.length > 0) {
-    const sortedImports = [...new Set(importedRequirementsTypes)].sort();
-    const importBlock = `import type {\n${sortedImports.map(name => `  ${name},`).join('\n')}\n} from './core.generated';\n\n`;
-    result = importBlock + result;
+    result = addCoreGeneratedTypeImports(result, importedRequirementsTypes);
   }
 
   // Emit named union aliases for the slot shapes so ts-to-zod produces named
@@ -2373,7 +2471,7 @@ async function generateTypes() {
   const tools = loadAdCPTools();
 
   // Generate tool types
-  let toolTypes = await generateToolTypes(tools);
+  let toolTypes = await generateToolTypes(tools, CORE_AUTHORED_TOOL_SHARED_TYPES);
 
   // Remove index signature types that were incorrectly generated from oneOf schemas
   // These occur when JSON Schema has additionalProperties: false but oneOf with only required constraints
@@ -2381,7 +2479,10 @@ async function generateTypes() {
   // Remove numbered type duplicates (e.g., EventType1 -> EventType) caused by multiple $ref
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
+  toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
   toolTypes = fixTypedIndexSignatures(toolTypes);
+  toolTypes = addReferencedCoreTypeImports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
+  toolTypes = addCoreGeneratedTypeReExports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
 
   // Compile gap schemas: all schemas not already generated by root schema passes.
   // Only dedup against core types (not tool types) because gap schemas go into

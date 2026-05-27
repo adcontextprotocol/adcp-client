@@ -80,6 +80,7 @@ interface ExportInfo {
   kind: 'interface' | 'type' | 'enum';
   body: string;
   sourceFile: string;
+  sourceSection?: string;
 }
 
 /**
@@ -97,7 +98,15 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
   const exports = new Map<string, ExportInfo>();
 
   let i = 0;
+  let sourceSection: string | undefined;
   while (i < lines.length) {
+    const sectionMatch = (lines[i] ?? '').match(/^\/\/ (.+\.json)$/);
+    if (sectionMatch) {
+      sourceSection = sectionMatch[1];
+      i++;
+      continue;
+    }
+
     // Skip past JSDoc block immediately preceding an export. The closing
     // `*/` is matched anywhere on the line (not just end-of-line) so a
     // single-line JSDoc like `/** brief */ export interface X` parses
@@ -197,11 +206,37 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
     }
 
     const body = lines.slice(blockStart, blockEnd + 1).join('\n');
-    exports.set(name, { name, kind, body, sourceFile: filePath });
+    exports.set(name, { name, kind, body, sourceFile: filePath, sourceSection });
     i = blockEnd + 1;
   }
 
   return exports;
+}
+
+function isBundledMirrorExport(info: ExportInfo): boolean {
+  return info.sourceSection?.startsWith('bundled/') ?? false;
+}
+
+function loadBundledMirrorExportNames(): Set<string> {
+  const sourceCoreTypes = path.join(REPO_ROOT, 'src', 'lib', 'types', 'core.generated.ts');
+  if (!existsSync(sourceCoreTypes)) return new Set();
+
+  return new Set(
+    [...parseExports(sourceCoreTypes).values()].filter(info => isBundledMirrorExport(info)).map(info => info.name)
+  );
+}
+
+function shouldWarnOnExportCollision(
+  existing: ExportInfo,
+  info: ExportInfo,
+  bundledMirrorExportNames: Set<string>
+): boolean {
+  return (
+    stripComments(existing.body).trim() !== stripComments(info.body).trim() &&
+    !isBundledMirrorExport(existing) &&
+    !isBundledMirrorExport(info) &&
+    !bundledMirrorExportNames.has(info.name)
+  );
 }
 
 /**
@@ -456,6 +491,7 @@ function main(): void {
   }
 
   const allExports = new Map<string, ExportInfo>();
+  const bundledMirrorExportNames = loadBundledMirrorExportNames();
   for (const file of sources) {
     const parsed = parseExports(file);
     for (const [name, info] of parsed) {
@@ -471,11 +507,7 @@ function main(): void {
         // (same type emitted from two JSON Schema sources with different
         // descriptions) does not produce a false-positive warning.
         // Structural type drift still triggers the warn.
-        // TODO: root-cause fix — seed generateToolTypes with generatedCoreTypes
-        // so shared schemas (PurchaseType, AudienceConstraints, …) are not
-        // re-emitted in tools.generated.ts in the first place.
-        // Tracked in adcp-client#1976.
-        if (stripComments(existing.body).trim() !== stripComments(info.body).trim()) {
+        if (shouldWarnOnExportCollision(existing, info, bundledMirrorExportNames)) {
           console.warn(
             `[per-tool-types] export-name collision (different bodies): \`${name}\` defined ` +
               `in both ${path.relative(REPO_ROOT, existing.sourceFile)} and ` +
@@ -532,4 +564,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments };
+export const __test__ = { stripComments, shouldWarnOnExportCollision };

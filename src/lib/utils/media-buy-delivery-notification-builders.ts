@@ -3,7 +3,7 @@
 // re-send / supersession semantics:
 //   `scheduled` / `final` / `delayed` / `adjusted` / `window_update`.
 
-import type { GetMediaBuyDeliveryResponse } from '../types/core.generated';
+import type { GetMediaBuyDeliveryResponse } from '../types/tools.generated';
 
 type NotificationFields = Omit<GetMediaBuyDeliveryResponse, 'notification_type'>;
 type Tagged<Tag extends string> = NotificationFields & { notification_type: Tag };

@@ -1,4 +1,5 @@
 import type {
+  AudienceConstraints,
   AudioAssetRequirements,
   CSSAssetRequirements,
   DAASTAssetRequirements,
@@ -6,12 +7,15 @@ import type {
   ImageAssetRequirements,
   JavaScriptAssetRequirements,
   MarkdownAssetRequirements,
+  PurchaseType,
   TextAssetRequirements,
   URLAssetRequirements,
   VASTAssetRequirements,
   VideoAssetRequirements,
   WebhookAssetRequirements,
 } from './core.generated';
+
+export type { AudienceConstraints, PurchaseType } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -18445,19 +18449,6 @@ export interface SyncPlansRequest {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
-/**
- * Audience targeting constraints. Defines who the campaign should reach (include) and must not reach (exclude). The governance agent evaluates seller targeting against these constraints.
- */
-export interface AudienceConstraints {
-  /**
-   * Desired audience criteria. The seller's targeting should align with these. Each criterion is evaluated independently — the combined targeting should satisfy at least one inclusion criterion.
-   */
-  include?: AudienceSelector[];
-  /**
-   * Excluded audience criteria. The seller's targeting must not overlap with these. Exclusions take precedence over inclusions. Used for protected groups, vulnerable communities, regulatory restrictions, or brand safety.
-   */
-  exclude?: AudienceSelector[];
-}
 
 // sync_plans response
 /**
@@ -18560,10 +18551,6 @@ export interface SyncPlansResponse {
 }
 
 // report_plan_outcome parameters
-/**
- * The type of financial commitment this outcome is for. Determines which budget allocation (if any) to charge against. Defaults to 'media_buy' when omitted.
- */
-export type PurchaseType = 'media_buy' | 'rights_license' | 'signal_activation' | 'creative_services';
 /**
  * Outcome type.
  */
