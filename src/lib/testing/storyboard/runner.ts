@@ -33,7 +33,6 @@ import {
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import {
   resolvePath,
-  resolvePathAll,
   resolvePortableIdentifierPathAll,
   toJsonPointer,
   validatePortableIdentifierPath,
