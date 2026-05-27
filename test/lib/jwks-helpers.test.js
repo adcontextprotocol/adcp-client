@@ -67,6 +67,42 @@ describe('pemToAdcpJwk', () => {
     assert.strictEqual(jwk.adcp_use, 'webhook-signing');
   });
 
+  test('governance-signing adcp_use is preserved verbatim', () => {
+    const kp = generateKeyPairSync('ed25519');
+    const jwk = pemToAdcpJwk(spkiPem(kp), {
+      kid: 'addie-governance-2026-04',
+      algorithm: 'ed25519',
+      adcp_use: 'governance-signing',
+    });
+    assert.strictEqual(jwk.adcp_use, 'governance-signing');
+  });
+
+  test('retired response-signing adcp_use is rejected at runtime', () => {
+    const kp = generateKeyPairSync('ed25519');
+    assert.throws(
+      () =>
+        pemToAdcpJwk(spkiPem(kp), {
+          kid: 'addie',
+          algorithm: 'ed25519',
+          adcp_use: 'response-signing',
+        }),
+      err => err instanceof TypeError && /unsupported adcp_use.*response-signing/i.test(err.message)
+    );
+  });
+
+  test('unknown adcp_use is rejected at runtime', () => {
+    const kp = generateKeyPairSync('ed25519');
+    assert.throws(
+      () =>
+        pemToAdcpJwk(spkiPem(kp), {
+          kid: 'addie',
+          algorithm: 'ed25519',
+          adcp_use: 'totally-unknown',
+        }),
+      err => err instanceof TypeError && /unsupported adcp_use.*totally-unknown/i.test(err.message)
+    );
+  });
+
   test('private-key PEM (PKCS#8) → TypeError, no JWK leaked', () => {
     const kp = generateKeyPairSync('ed25519');
     assert.throws(

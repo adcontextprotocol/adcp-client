@@ -9,7 +9,6 @@
  * both for back-compat.
  */
 export {
-  buildResponseSignatureBase,
   buildSignatureBase,
   canonicalAuthority,
   canonicalMethod,
@@ -17,7 +16,6 @@ export {
   formatSignatureParams,
   getHeaderValue,
   type RequestLike,
-  type ResponseLike,
   type SignatureParams,
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
@@ -35,8 +33,6 @@ export { jwkToPublicKey, verifySignature } from './crypto';
 export {
   RequestSignatureError,
   type RequestSignatureErrorCode,
-  ResponseSignatureError,
-  type ResponseSignatureErrorCode,
   WebhookSignatureError,
   type WebhookSignatureErrorCode,
 } from './errors';
@@ -78,8 +74,6 @@ export {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
-  RESPONSE_MANDATORY_COMPONENTS,
-  RESPONSE_SIGNING_TAG,
   type AdcpJsonWebKey,
   type ContentDigestPolicy,
   type RevocationSnapshot,
@@ -88,13 +82,6 @@ export {
   type VerifyResult,
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
-export {
-  createResponseVerifier,
-  verifyResponseSignature,
-  type CreateResponseVerifierOptions,
-  type VerifyResponseOptions,
-  type VerifyResponseResult,
-} from './response-verifier';
 export {
   createWebhookVerifier,
   verifyWebhookSignature,
