@@ -188,6 +188,12 @@ export interface UpstreamTrafficValidationContext {
    * (the contract treats unresolved references as authoring bugs).
    */
   unresolvedSinceRefs?: Set<string>;
+  /**
+   * SHA-256 digests the runner sent as `identifier_value_digests`, keyed by
+   * plaintext identifier values resolved from the step request. Used to pair
+   * digest-mode `identifier_match_proofs` back to storyboard vectors.
+   */
+  identifierDigestByValue?: Map<string, string>;
 }
 
 export interface UpstreamTrafficQueryResult {
@@ -2715,6 +2721,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   // fabrication is the threat. Replaces the earlier `buyer_identifier_echo`
   // boolean shorthand per spec PR adcp#3816.
   const missingIdentifierValues: unknown[] = [];
+  const notApplicableIdentifierValues: unknown[] = [];
   if (validation.identifier_paths && validation.identifier_paths.length > 0) {
     const requestPayload = ctx.request?.payload;
     const sample =
@@ -2725,17 +2732,35 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
       const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
       for (const vector of vectors) {
         if (vector === undefined || vector === null) continue;
-        if (!anyMatchedCallEchoesValue(matched, vector)) {
+        const digest = typeof vector === 'string' ? upstream.identifierDigestByValue?.get(vector) : undefined;
+        const result = anyMatchedCallEchoesValue(matched, vector, digest);
+        if (result.satisfied) continue;
+        if (result.not_applicable) {
+          notApplicableIdentifierValues.push(vector);
+        } else {
           missingIdentifierValues.push(vector);
         }
       }
     }
   }
 
-  const countOk = matchedCount >= minCount;
+  const hasRawIntrospectionAssertions =
+    (validation.payload_must_contain?.length ?? 0) > 0 || (validation.identifier_paths?.length ?? 0) > 0;
+  const rawRequiredDigestDowngrade =
+    validation.attestation_mode_required === 'raw' &&
+    hasRawIntrospectionAssertions &&
+    matched.length > 0 &&
+    matched.every(call => call.attestation_mode === 'digest');
+
+  if (rawRequiredDigestDowngrade) {
+    missingPayloadPaths.length = 0;
+    missingIdentifierValues.length = 0;
+  }
+
+  const countOk = minCount === 0 ? matchedCount === 0 : matchedCount >= minCount;
   const payloadOk = missingPayloadPaths.length === 0;
   const echoOk = missingIdentifierValues.length === 0;
-  const passed = countOk && payloadOk && echoOk;
+  const passed = countOk && (rawRequiredDigestDowngrade || (payloadOk && echoOk));
 
   // Per spec: a payload_must_contain assertion whose ONLY checks were
   // path-based against non-JSON content_types grades not_applicable. When
@@ -2745,13 +2770,20 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     (validation.payload_must_contain?.length ?? 0) > 0 &&
     notApplicablePaths.length === (validation.payload_must_contain?.length ?? 0) &&
     missingPayloadPaths.length === 0;
-  const not_applicable = passed && allPathsNotApplicable && countOk && echoOk;
+  const allIdentifiersNotApplicable =
+    (validation.identifier_paths?.length ?? 0) > 0 &&
+    missingIdentifierValues.length === 0 &&
+    notApplicableIdentifierValues.length > 0;
+  const not_applicable =
+    passed && countOk && (rawRequiredDigestDowngrade || allPathsNotApplicable || allIdentifiersNotApplicable);
 
   const actual = {
     matched_count: matchedCount,
     total_calls: totalCalls,
     missing_payload_paths: missingPayloadPaths,
     missing_identifier_values: missingIdentifierValues,
+    not_applicable_payload_paths: notApplicablePaths,
+    not_applicable_identifier_values: notApplicableIdentifierValues,
   };
 
   // RFC 6901 pointer: when one specific call's payload failed
@@ -2769,7 +2801,11 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
       passed: true,
       ...(not_applicable && { not_applicable: true }),
       ...(not_applicable && {
-        note: `payload_must_contain paths only matched non-JSON content_types — graded not_applicable`,
+        note: rawRequiredDigestDowngrade
+          ? `attestation_mode_required: raw but controller returned digest attestations — graded not_applicable`
+          : allIdentifiersNotApplicable
+            ? `identifier_paths only matched digest attestations without portable proofs — graded not_applicable`
+            : `payload_must_contain paths only matched non-raw or non-JSON content_types — graded not_applicable`,
       }),
       description: validation.description,
       json_pointer: null,
@@ -2781,7 +2817,13 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   }
 
   const errParts: string[] = [];
-  if (!countOk) errParts.push(`expected at least ${minCount} matching call(s); observed ${matchedCount}`);
+  if (!countOk) {
+    errParts.push(
+      minCount === 0
+        ? `expected zero matching call(s); observed ${matchedCount}`
+        : `expected at least ${minCount} matching call(s); observed ${matchedCount}`
+    );
+  }
   if (!payloadOk) errParts.push(`missing payload paths: ${missingPayloadPaths.join(', ')}`);
   if (!echoOk)
     errParts.push(`identifier values not echoed: ${missingIdentifierValues.map(v => JSON.stringify(v)).join(', ')}`);
@@ -2819,6 +2861,9 @@ function buildUpstreamTrafficExpected(validation: StoryboardValidation): Record<
   else expected.min_count = 1;
   if (validation.endpoint_pattern !== undefined) expected.endpoint_pattern = validation.endpoint_pattern;
   if (validation.payload_must_contain !== undefined) expected.payload_must_contain = validation.payload_must_contain;
+  if (validation.attestation_mode_required !== undefined) {
+    expected.attestation_mode_required = validation.attestation_mode_required;
+  }
   if (validation.identifier_paths !== undefined) expected.identifier_paths = validation.identifier_paths;
   return expected;
 }
@@ -2868,6 +2913,7 @@ function anyMatchedCallSatisfies(
 ): { satisfied: boolean; not_applicable: boolean } {
   let sawApplicableCall = false;
   for (const call of calls) {
+    if (call.attestation_mode !== 'raw') continue;
     const isJson = isJsonContentType(call.content_type);
     // All match modes require a structured-JSON payload — non-JSON calls
     // don't contribute regardless of mode (adcp#3987).
@@ -2951,18 +2997,40 @@ function walkLitePath(root: unknown, path: string): unknown[] {
  */
 const CONTAINS_VALUE_MAX_DEPTH = 256;
 
-function anyMatchedCallEchoesValue(calls: RecordedCall[], value: unknown): boolean {
+function anyMatchedCallEchoesValue(
+  calls: RecordedCall[],
+  value: unknown,
+  valueDigest?: string
+): { satisfied: boolean; not_applicable: boolean } {
+  let sawApplicableCall = false;
   for (const call of calls) {
+    if (call.attestation_mode === 'digest') {
+      if (!isJsonContentType(call.content_type)) continue;
+      sawApplicableCall = true;
+      if (
+        valueDigest &&
+        call.identifier_match_proofs?.some(
+          proof => proof.identifier_value_sha256 === valueDigest && proof.found === true
+        )
+      ) {
+        return { satisfied: true, not_applicable: false };
+      }
+      continue;
+    }
+
+    sawApplicableCall = true;
     // Non-JSON payloads land as raw strings — substring-match the
     // stringified vector. Defensible best-effort downgrade per the spec's
     // non-JSON fallback note.
     if (typeof call.payload === 'string') {
-      if (typeof value === 'string' && call.payload.includes(value)) return true;
+      if (typeof value === 'string' && call.payload.includes(value)) {
+        return { satisfied: true, not_applicable: false };
+      }
       continue;
     }
-    if (containsValueAnyDepth(call.payload, value, 0)) return true;
+    if (containsValueAnyDepth(call.payload, value, 0)) return { satisfied: true, not_applicable: false };
   }
-  return false;
+  return { satisfied: false, not_applicable: !sawApplicableCall };
 }
 
 function containsValueAnyDepth(root: unknown, target: unknown, depth: number): boolean {

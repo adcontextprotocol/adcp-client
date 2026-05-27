@@ -1004,7 +1004,11 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `\`@adcp/sdk/upstream-recorder\` is the producer-side reference middleware: a sandbox-only-by-default helper that wraps the adapter's HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a \`query()\` method that maps onto the controller wire shape via \`toQueryUpstreamTrafficResponse()\`. Wire-up is four steps — boot recorder, wrap fetch, scope handlers in \`runWithPrincipal\`, return \`toQueryUpstreamTrafficResponse(recorder.query(...))\` from your \`comply_test_controller\`'s \`query_upstream_traffic\` scenario. Worked example at \`examples/hello_signals_adapter_marketplace.ts\`. See \`skills/build-seller-agent/SKILL.md\` § "Opting into \`upstream_traffic\`" for the full pattern, including multi-tenant principal resolution.`
+    `\`@adcp/sdk/upstream-recorder\` is the producer-side reference middleware: a sandbox-only-by-default helper that wraps the adapter's HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a \`query()\` method that maps onto the controller wire shape via \`toQueryUpstreamTrafficResponse()\`. Wire-up is four steps — boot recorder, wrap fetch, scope handlers in \`runWithPrincipal\`, return \`toQueryUpstreamTrafficResponse(recorder.query(...))\` from your \`comply_test_controller\`'s \`query_upstream_traffic\` scenario. Worked example at \`examples/hello_signals_adapter_marketplace.ts\`, including multi-tenant principal resolution.`
+  );
+  ln();
+  ln(
+    `By default the runner requests \`attestation_mode: "raw"\`, so returned calls include the redacted \`payload\` plus \`payload_length\`. For identifier-only checks it requests \`attestation_mode: "digest"\` with \`identifier_value_digests\`; the recorder can then omit raw payloads and return \`identifier_match_proofs\` showing which hashed storyboard values were observed. Storyboards that require payload introspection can declare \`attestation_mode_required: "raw"\`; if a controller only returns digest attestations, those payload assertions grade \`not_applicable\` rather than inspecting unavailable bodies.`
   );
   ln();
 

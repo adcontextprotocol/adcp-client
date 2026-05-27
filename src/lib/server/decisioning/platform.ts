@@ -227,12 +227,13 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
-  /** Sponsored Intelligence is currently a *protocol* in AdCP 3.0
-   * (`supported_protocols: ['sponsored_intelligence']`), not a specialism.
-   * Required IFF the agent declares the protocol — see
-   * `RequiredPlatformsForProtocols`. When AdCP 3.1 promotes SI to a
-   * specialism (adcontextprotocol/adcp#3961), specialism-keyed dispatch
-   * becomes additive without breaking this field. */
+  /**
+   * Sponsored Intelligence implementation. In AdCP 3.1 this field is required
+   * when the agent claims the `sponsored-intelligence` specialism. The
+   * framework also derives the legacy wire protocol entry
+   * `supported_protocols: ['sponsored_intelligence']` from the SI tool set so
+   * protocol-bundle storyboards and 3.0-era consumers keep working.
+   */
   sponsoredIntelligence?: SponsoredIntelligencePlatform<TCtxMeta>;
   /** @see DecisioningPlatform — § Cross-specialism dispatch (used as the canonical example: `brandRights.acquireRights` consulting `checkGovernance` before granting rights). */
   campaignGovernance?: CampaignGovernancePlatform<TCtxMeta>;
@@ -327,7 +328,8 @@ export type RequiredPlatformsFor<
   TCtxMeta = any,
 > = [S] extends [never]
   ? // Empty specialisms[] (legitimate when the agent's only declared
-    // surface is a *protocol* like sponsored-intelligence pre-3.1).
+    // surface is a protocol or custom tool that is not represented as an
+    // AdCP specialism).
     // `[S] extends [never]` short-circuits the distributive conditional —
     // without this, a generic `S extends ...` over `never` yields `never`,
     // collapsing `P & RequiredPlatformsFor<...>` to `never` and rejecting
@@ -357,24 +359,24 @@ export type RequiredPlatformsFor<
                 ? { signals: SignalsPlatform<TCtxMeta> }
                 : S extends CampaignGovernanceSpecialism
                   ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
-                  : S extends 'property-lists'
-                    ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
-                    : S extends 'collection-lists'
-                      ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
-                      : S extends 'content-standards'
-                        ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
-                        : S extends 'brand-rights'
-                          ? { brandRights: BrandRightsPlatform<TCtxMeta> }
-                          : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-                            {};
+                  : S extends 'sponsored-intelligence'
+                    ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
+                    : S extends 'property-lists'
+                      ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
+                      : S extends 'collection-lists'
+                        ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
+                        : S extends 'content-standards'
+                          ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
+                          : S extends 'brand-rights'
+                            ? { brandRights: BrandRightsPlatform<TCtxMeta> }
+                            : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+                              {};
 // `{}` (not `Record<string, never>`) is the right "no extra requirements"
 // fallthrough — intersects to identity (`P & {} = P`) for specialisms
 // without platform constraints. Same reasoning RequiredCapabilitiesFor
 // documents at its own fall-through. `Record<string, never>` would force
 // the platform to have NO extra properties, collapsing `P & Record<string,
-// never>` to `never` for any platform with handler fields. Hits adopters
-// with empty `specialisms: []` (legitimate when the agent's only declared
-// surface is a *protocol*, like sponsored-intelligence pre-3.1).
+// never>` to `never` for any platform with handler fields.
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to
@@ -390,34 +392,6 @@ export type RequiredPlatformsFor<
  * doesn't yet enforce this. Wiring lands in a follow-up PR with the
  * framework refactor.
  */
-
-/**
- * AdCP supported_protocols values that gate platform requirements. Sister
- * type to `RequiredPlatformsFor<S>` — that one keys off
- * `capabilities.specialisms[]`; this one keys off declared protocols.
- *
- * @internal Not exported. There is no constraint site consuming this today
- *   (no `supported_protocols` field on `DecisioningCapabilities`, no
- *   `createAdcpServer<P>` constraint signature wired). Kept as an internal
- *   placeholder so the type lands alongside the platform field at the same
- *   commit; promotion to public + wiring is deferred until either AdCP 3.1
- *   adds SI to `AdCPSpecialism` (at which point this folds into
- *   `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an explicit
- *   `supported_protocols` declaration field. Adopters needing compile-time
- *   gating today should constrain `platform: P & { sponsoredIntelligence:
- *   SponsoredIntelligencePlatform }` directly at the call site.
- *
- * Note on enum form: `supported_protocols` uses underscore form on the
- * wire (`'sponsored_intelligence'`), not the kebab-case
- * `'sponsored-intelligence'` used by `AdCPSpecialism`. The two enums
- * diverge intentionally — see `core.generated.ts:12520`.
- */
-type SupportedProtocol = 'sponsored_intelligence';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
-type RequiredPlatformsForProtocols<P extends SupportedProtocol, TCtxMeta = any> = P extends 'sponsored_intelligence'
-  ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
-  : Record<string, never>;
 
 /**
  * Compile-time mapping from a claimed specialism to the capability

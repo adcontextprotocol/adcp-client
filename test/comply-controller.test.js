@@ -108,6 +108,31 @@ describe('createComplyController — dispatch', () => {
     assert.strictEqual(result.simulated.spend_percentage, 95);
   });
 
+  it('forwards query_upstream_traffic digest params to the adapter unchanged', async () => {
+    const digest = 'b'.repeat(64);
+    let captured;
+    const controller = createComplyController({
+      queryUpstreamTraffic: params => {
+        captured = params;
+        return { success: true, recorded_calls: [], total_count: 0 };
+      },
+    });
+
+    const result = await controller.handleRaw({
+      scenario: 'query_upstream_traffic',
+      params: {
+        attestation_mode: 'digest',
+        identifier_value_digests: [digest],
+      },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(captured, {
+      attestation_mode: 'digest',
+      identifier_value_digests: [digest],
+    });
+  });
+
   it('passes the raw input to adapters via ctx', async () => {
     let capturedCtx;
     const controller = createComplyController({

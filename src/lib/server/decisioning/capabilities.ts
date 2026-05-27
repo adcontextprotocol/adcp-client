@@ -19,6 +19,7 @@ import type {
   PricingModel,
   GetAdCPCapabilitiesResponse,
 } from '../../types/tools.generated';
+import type { ProductMetricOptimizationLike } from '../../utils/capability-rollups';
 
 /**
  * Pre-resolved alias for the wire `media_buy` block. Used as the projection
@@ -143,6 +144,19 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.supported_optimization_metrics`.
    */
   supported_optimization_metrics?: NonNullable<_MediaBuyCapabilities['supported_optimization_metrics']>;
+
+  /**
+   * Static product catalog used for capability rollups.
+   *
+   * When this is present and `supported_optimization_metrics` is omitted,
+   * the framework derives `media_buy.supported_optimization_metrics` as the
+   * sorted union of every product summary's
+   * `metric_optimization.supported_metrics`. Full AdCP `Product` objects work,
+   * but are not required; a lightweight startup summary with just the
+   * `metric_optimization` block is enough. Dynamic per-account catalogs should
+   * continue to pass an explicit `supported_optimization_metrics` override.
+   */
+  productCatalog?: ReadonlyArray<ProductMetricOptimizationLike>;
 
   /**
    * Frequency-cap support declaration — projected onto

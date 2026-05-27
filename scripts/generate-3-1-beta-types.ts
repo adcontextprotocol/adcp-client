@@ -258,6 +258,7 @@ function stripIfThenElse<T>(node: T): T {
     return node;
   }
   const obj = node as Record<string, unknown>;
+  promoteConditionalParamProperties(obj);
   delete obj.if;
   delete obj.then;
   delete obj.else;
@@ -269,6 +270,21 @@ function stripIfThenElse<T>(node: T): T {
     stripIfThenElse(obj[key]);
   }
   return node;
+}
+
+function promoteConditionalParamProperties(obj: Record<string, unknown>): void {
+  const properties = obj.properties as { params?: { properties?: Record<string, unknown> } } | undefined;
+  const params = properties?.params;
+  if (!params?.properties || !Array.isArray(obj.allOf)) return;
+  for (const member of obj.allOf as Array<Record<string, any>>) {
+    const conditionalParams = member?.then?.properties?.params;
+    if (!conditionalParams?.properties) continue;
+    for (const [key, value] of Object.entries(conditionalParams.properties)) {
+      if (params.properties[key] === undefined) {
+        params.properties[key] = value;
+      }
+    }
+  }
 }
 
 /**

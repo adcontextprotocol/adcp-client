@@ -1401,6 +1401,33 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
   });
 });
 
+describe('query_upstream_traffic params', () => {
+  it('forwards digest attestation params to the store unchanged', async () => {
+    const digest = 'a'.repeat(64);
+    let seen;
+    const store = {
+      async queryUpstreamTraffic(params) {
+        seen = params;
+        return { success: true, recorded_calls: [], total_count: 0 };
+      },
+    };
+
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'query_upstream_traffic',
+      params: {
+        attestation_mode: 'digest',
+        identifier_value_digests: [digest],
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(seen, {
+      attestation_mode: 'digest',
+      identifier_value_digests: [digest],
+    });
+  });
+});
+
 // ── expectControllerError ──────────────────────────────────
 
 describe('expectControllerError', () => {
