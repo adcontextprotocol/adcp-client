@@ -168,10 +168,12 @@ describe('mock-server scenario controller', () => {
     await handle.scenario.reset();
 
     const received = [];
+    const receivedHeaders = [];
     const receiver = createServer((req, res) => {
       const chunks = [];
       req.on('data', chunk => chunks.push(chunk));
       req.on('end', () => {
+        receivedHeaders.push(req.headers);
         received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         res.writeHead(202, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ accepted: true }));
@@ -194,12 +196,30 @@ describe('mock-server scenario controller', () => {
         body: JSON.stringify({
           url: `http://127.0.0.1:${port}/callback`,
           payload: { task_id: 'task_1', status: 'completed' },
+          headers: {
+            authorization: 'Bearer should-not-forward',
+            cookie: 'session=should-not-forward',
+            host: 'should-not-forward',
+            'x-forwarded-host': 'should-not-forward.example',
+            'x-real-ip': '203.0.113.10',
+            'x-original-url': '/admin',
+            'x-request-id': 'req-1',
+            'x-idempotency-key': 'idem-1',
+          },
         }),
       });
       assert.equal(emit.status, 200);
       const attempt = await emit.json();
       assert.equal(attempt.status, 202);
       assert.deepEqual(received, [{ task_id: 'task_1', status: 'completed' }]);
+      assert.equal(receivedHeaders[0]['x-request-id'], 'req-1');
+      assert.equal(receivedHeaders[0]['x-idempotency-key'], 'idem-1');
+      assert.equal(receivedHeaders[0]['authorization'], undefined);
+      assert.equal(receivedHeaders[0]['cookie'], undefined);
+      assert.notEqual(receivedHeaders[0]['host'], 'should-not-forward');
+      assert.equal(receivedHeaders[0]['x-forwarded-host'], undefined);
+      assert.equal(receivedHeaders[0]['x-real-ip'], undefined);
+      assert.equal(receivedHeaders[0]['x-original-url'], undefined);
 
       const webhooks = await (
         await fetch(`${handle.url}/_scenario/webhooks`, {
@@ -208,6 +228,40 @@ describe('mock-server scenario controller', () => {
       ).json();
       assert.equal(webhooks.webhooks.length, 1);
       assert.equal(webhooks.webhooks[0].status, 202);
+    } finally {
+      await new Promise((resolve, reject) => receiver.close(err => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('records webhook redirects without following them', async () => {
+    await handle.scenario.reset();
+
+    const receiver = createServer((_req, res) => {
+      res.writeHead(302, { location: 'https://example.com/escaped' });
+      res.end();
+    });
+
+    await new Promise((resolve, reject) => {
+      receiver.once('error', reject);
+      receiver.listen(0, '127.0.0.1', () => {
+        receiver.removeListener('error', reject);
+        resolve();
+      });
+    });
+
+    try {
+      const port = receiver.address().port;
+      const emit = await fetch(`${handle.url}/_scenario/webhooks/emit`, {
+        method: 'POST',
+        headers: controlHeaders(true),
+        body: JSON.stringify({
+          url: `http://127.0.0.1:${port}/callback`,
+          payload: { task_id: 'task_redirect', status: 'completed' },
+        }),
+      });
+      assert.equal(emit.status, 200);
+      const attempt = await emit.json();
+      assert.equal(attempt.status, 302);
     } finally {
       await new Promise((resolve, reject) => receiver.close(err => (err ? reject(err) : resolve())));
     }
@@ -248,6 +302,35 @@ describe('mock-server scenario controller', () => {
     });
     assert.equal(emit.status, 400);
     assert.equal((await emit.json()).code, 'invalid_webhook_target');
+
+    const webhooks = await (
+      await fetch(`${handle.url}/_scenario/webhooks`, {
+        headers: controlHeaders(),
+      })
+    ).json();
+    assert.equal(webhooks.webhooks.length, 0);
+  });
+
+  it('rejects loopback-like webhook hostnames that are not literal allowlisted loopback', async () => {
+    await handle.scenario.reset();
+
+    for (const url of [
+      'http://[::ffff:127.0.0.2]:9999/callback',
+      'http://0.0.0.0:9999/callback',
+      'http://2130706433:9999/callback',
+      'http://user:pass@127.0.0.1:9999/callback',
+    ]) {
+      const emit = await fetch(`${handle.url}/_scenario/webhooks/emit`, {
+        method: 'POST',
+        headers: controlHeaders(true),
+        body: JSON.stringify({
+          url,
+          payload: { task_id: 'task_rejected', status: 'completed' },
+        }),
+      });
+      assert.equal(emit.status, 400, url);
+      assert.equal((await emit.json()).code, 'invalid_webhook_target');
+    }
 
     const webhooks = await (
       await fetch(`${handle.url}/_scenario/webhooks`, {

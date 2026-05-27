@@ -902,7 +902,7 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     const body = await readJsonObject(req, res);
     if (!body) return;
     const exactReplay = scenario.idempotency.check(
-      `${order.network_code}::lineitem`,
+      `${order.network_code}::${order.order_id}::lineitem`,
       idempotencyKeyFromBody(body),
       stableFingerprint({ order_id: order.order_id, body })
     );

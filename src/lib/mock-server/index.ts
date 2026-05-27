@@ -95,9 +95,12 @@ export interface MockServerHandle {
    * explicit. */
   principalScope: string;
   /** Scenario controller for storyboards and fault-injection harnesses.
+   * Booted handles always include this; optional for structural test doubles.
    * Also exposed over HTTP at `/_scenario/*` on every mock-server. */
-  scenario: MockScenarioHandle;
+  scenario?: MockScenarioHandle;
 }
+
+export type BootedMockServerHandle = MockServerHandle & { scenario: MockScenarioHandle };
 
 export interface PrincipalMappingEntry {
   adcpField: string;
@@ -115,7 +118,7 @@ export interface PrincipalMappingEntry {
  * data + boot function under `src/lib/mock-server/<specialism>/` and a
  * switch case here.
  */
-export async function bootMockServer(options: MockServerOptions): Promise<MockServerHandle> {
+export async function bootMockServer(options: MockServerOptions): Promise<BootedMockServerHandle> {
   switch (options.specialism) {
     case 'signal-marketplace': {
       const { url, close, scenario } = await bootSignalMarketplace({
@@ -289,6 +292,8 @@ function formatSignalMarketplaceSummary(url: string, apiKey: string): string {
     `Operator mapping:`,
     operatorLines,
     ``,
+    scenarioControlLine(url),
+    ``,
     `OpenAPI spec: src/lib/mock-server/signal-marketplace/openapi.yaml`,
     `Routes:`,
     `  GET    ${url}/v2/cohorts`,
@@ -313,6 +318,8 @@ function formatCreativeTemplateSummary(url: string, apiKey: string): string {
     ``,
     `Workspace mapping:`,
     workspaceLines,
+    ``,
+    scenarioControlLine(url),
     ``,
     `OpenAPI spec: src/lib/mock-server/creative-template/openapi.yaml`,
     `Routes:`,
@@ -341,6 +348,8 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `Resolve {advertiser_id} from AdCP-side identifier at runtime via:`,
     `  GET ${url}/_lookup/advertiser?adcp_advertiser=<adcp-side-value>`,
     `(Specific advertiser values are not exposed to adapters — see issue #1225.)`,
+    ``,
+    scenarioControlLine(url),
     ``,
     `OpenAPI spec: src/lib/mock-server/sales-social/openapi.yaml`,
     `Key routes:`,
@@ -376,6 +385,8 @@ function formatSponsoredIntelligenceSummary(url: string, apiKey: string): string
     `Brand mapping:`,
     brandLines,
     ``,
+    scenarioControlLine(url),
+    ``,
     `OpenAPI spec: src/lib/mock-server/sponsored-intelligence/openapi.yaml`,
     `Routes:`,
     `  GET    ${url}/_lookup/brand?adcp_brand=<value>                                (no auth)`,
@@ -408,6 +419,8 @@ function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
     ``,
     `Network mapping:`,
     networkLines,
+    ``,
+    scenarioControlLine(url),
     ``,
     `OpenAPI spec: src/lib/mock-server/sales-guaranteed/openapi.yaml`,
     `Key routes:`,
@@ -452,6 +465,8 @@ function formatCreativeAdServerSummary(url: string, apiKey: string): string {
     `Network mapping:`,
     networkLines,
     ``,
+    scenarioControlLine(url),
+    ``,
     `Key routes:`,
     `  GET    ${url}/v1/formats                                                  # format catalog`,
     `  GET    ${url}/v1/creatives                                                # list (filter: advertiser_id, format_id, status, created_after, creative_ids; cursor pagination)`,
@@ -482,6 +497,8 @@ function formatSalesNonGuaranteedSummary(url: string, apiKey: string): string {
     `Network mapping:`,
     networkLines,
     ``,
+    scenarioControlLine(url),
+    ``,
     `Key routes:`,
     `  GET    ${url}/v1/inventory                                                # ad units`,
     `  GET    ${url}/v1/products                                                 # productized inventory (floor pricing)`,
@@ -502,4 +519,8 @@ function formatSalesNonGuaranteedSummary(url: string, apiKey: string): string {
     `Pacing: 'even' (linear), 'asap' (3× front-load), 'front_loaded' (sqrt curve).`,
     `Delivery synthesis: (budget × elapsed_pct × pacing_curve) → impressions / clicks.`,
   ].join('\n');
+}
+
+function scenarioControlLine(url: string): string {
+  return `Scenario controls: ${url}/_scenario/* (requires X-Mock-Control-Token from handle.scenario.controlToken)`;
 }

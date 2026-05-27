@@ -49,6 +49,7 @@ test('InMemoryReplayStore: has() stays sub-linear as entries-per-keyid grows', (
   // 50x more entries → at most 4x per-op latency. Linear behaviour would be
   // ~50x. The fudge factor absorbs GC + measurement jitter on CI.
   const ratio = growthRatio(smallNs, bigNs);
+  assert.ok(bigNs < 10_000, `has() latency should remain comfortably sub-10us; measured big=${bigNs.toFixed(0)}ns`);
   assert.ok(
     ratio < 4,
     `has() latency should stay sub-linear as entries grow 50x; measured ratio=${ratio.toFixed(2)} (small=${smallNs.toFixed(0)}ns, big=${bigNs.toFixed(0)}ns)`
@@ -72,6 +73,7 @@ test('InMemoryReplayStore: insert() stays sub-linear as entries-per-keyid grows'
   const bigNs = timeBatch(() => bigStore.insert('k1', scope, `fresh-b-${bCounter++}`, ttl, now + 10), 2_000);
 
   const ratio = growthRatio(smallNs, bigNs);
+  assert.ok(bigNs < 10_000, `insert() latency should remain comfortably sub-10us; measured big=${bigNs.toFixed(0)}ns`);
   assert.ok(
     ratio < 4,
     `insert() latency should stay sub-linear as entries grow 50x; measured ratio=${ratio.toFixed(2)} (small=${smallNs.toFixed(0)}ns, big=${bigNs.toFixed(0)}ns)`

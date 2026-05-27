@@ -1,7 +1,12 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { validateHeaderName, validateHeaderValue } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 const WEBHOOK_FETCH_TIMEOUT_MS = 5000;
+const MAX_PATH_REGEX_LENGTH = 512;
+const MAX_SCENARIO_BODY_BYTES = 1_000_000;
+const MAX_WEBHOOK_ATTEMPTS = 256;
+const ALLOWED_WEBHOOK_HEADERS = new Set(['content-type', 'x-request-id', 'x-idempotency-key']);
 
 export interface MockScenarioControllerOptions {
   specialism: string;
@@ -198,6 +203,9 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
     }
     let pathRegexCompiled: RegExp | undefined;
     if (pathRegex !== undefined) {
+      if (pathRegex.length > MAX_PATH_REGEX_LENGTH) {
+        throw new Error(`scenario script match.path_regex must be ${MAX_PATH_REGEX_LENGTH} characters or fewer.`);
+      }
       try {
         pathRegexCompiled = new RegExp(pathRegex);
       } catch {
@@ -224,7 +232,7 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
       ...(pathRegex !== undefined && { path_regex: pathRegex }),
       ...(pathRegexCompiled !== undefined && { path_regex_compiled: pathRegexCompiled }),
       status,
-      headers: input.response?.headers ?? {},
+      headers: normalizeScriptHeaders(input.response?.headers ?? {}),
       body: input.response?.body ?? {
         code: 'scripted_response',
         message: `Scripted response from ${options.specialism} mock scenario controller.`,
@@ -252,6 +260,7 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
     try {
       const response = await fetch(target, {
         method: 'POST',
+        redirect: 'manual',
         headers: {
           'content-type': 'application/json',
           ...attempt.headers,
@@ -260,10 +269,10 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
         signal: AbortSignal.timeout(WEBHOOK_FETCH_TIMEOUT_MS),
       });
       attempt.status = response.status;
-    } catch (err) {
-      attempt.error = err instanceof Error ? err.message : String(err);
+    } catch {
+      attempt.error = 'webhook request failed.';
     }
-    webhooks.push(attempt);
+    recordWebhookAttempt(attempt);
     return attempt;
   }
 
@@ -307,10 +316,10 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
       try {
         const script_id = addScript(body as MockScenarioScriptInput);
         writeJson(res, 201, { script_id });
-      } catch (err) {
+      } catch {
         writeJson(res, 400, {
           code: 'invalid_scenario_script',
-          message: err instanceof Error ? err.message : String(err),
+          message: 'Scenario script configuration is invalid.',
         });
       }
       return true;
@@ -333,10 +342,10 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
       try {
         const attempt = await emitWebhook(url, body.payload ?? {}, headers);
         writeJson(res, 200, attempt);
-      } catch (err) {
+      } catch {
         writeJson(res, 400, {
           code: 'invalid_webhook_target',
-          message: err instanceof Error ? err.message : String(err),
+          message: 'Webhook target is not allowed.',
         });
       }
       return true;
@@ -370,6 +379,13 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
   }
 
   return { handle, idempotency, handleControlRequest, handleScriptedResponse };
+
+  function recordWebhookAttempt(attempt: MockScenarioWebhookAttempt): void {
+    webhooks.push(attempt);
+    if (webhooks.length > MAX_WEBHOOK_ATTEMPTS) {
+      webhooks.splice(0, webhooks.length - MAX_WEBHOOK_ATTEMPTS);
+    }
+  }
 }
 
 export function idempotencyKeyFromBody(body: Record<string, unknown>): string | undefined {
@@ -389,7 +405,7 @@ function scriptMatches(script: MockScenarioScript, method: string, path: string)
   if (script.method !== '*' && script.method !== method.toUpperCase()) return false;
   if (script.path !== undefined) return script.path === path;
   if (script.path_regex_compiled !== undefined) return script.path_regex_compiled.test(path);
-  return false;
+  throw new Error('scenario script has no path matcher.');
 }
 
 function writeScriptedResponse(res: ServerResponse, script: MockScenarioScript): void {
@@ -413,8 +429,15 @@ function writeJson(res: ServerResponse, status: number, body: unknown, headers: 
 
 async function readJsonObject(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
-    chunks.push(chunk as Buffer);
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (totalBytes > MAX_SCENARIO_BODY_BYTES) {
+      writeJson(res, 413, { code: 'request_too_large', message: 'Scenario request body is too large.' });
+      return null;
+    }
+    chunks.push(buffer);
   }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw.trim()) return {};
@@ -454,6 +477,23 @@ function stringRecord(value: Record<string, unknown>): Record<string, string> {
   return out;
 }
 
+function normalizeScriptHeaders(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value !== 'string') {
+      throw new Error('scenario script response.headers values must be strings.');
+    }
+    try {
+      validateHeaderName(name);
+      validateHeaderValue(name, value);
+    } catch {
+      throw new Error('scenario script response.headers must be valid HTTP headers.');
+    }
+    out[name] = value;
+  }
+  return out;
+}
+
 function authorizeScenario(req: IncomingMessage, controlToken: string): boolean {
   const raw = req.headers['x-mock-control-token'];
   const got = Array.isArray(raw) ? raw[0] : raw;
@@ -473,14 +513,44 @@ function validateWebhookTarget(raw: string): URL {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('webhook target must use http or https.');
   }
-  if (!isLoopbackWebhookHostname(url.hostname)) {
+  if (url.username || url.password) {
+    throw new Error('webhook target must not include credentials.');
+  }
+  const rawHostname = extractRawHostname(raw);
+  if (!rawHostname || !isAllowedRawLoopbackWebhookHostname(rawHostname) || !isLoopbackWebhookHostname(url.hostname)) {
     throw new Error('webhook target must be loopback.');
   }
   return url;
 }
 
+function extractRawHostname(raw: string): string | undefined {
+  const schemeIndex = raw.indexOf('://');
+  if (schemeIndex < 0) return undefined;
+  let authority = raw.slice(schemeIndex + 3);
+  const authorityEnd = authority.search(/[/?#]/);
+  if (authorityEnd >= 0) authority = authority.slice(0, authorityEnd);
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) authority = authority.slice(at + 1);
+  if (authority.startsWith('[')) {
+    const close = authority.indexOf(']');
+    return close >= 0 ? authority.slice(0, close + 1).toLowerCase() : undefined;
+  }
+  return authority.split(':')[0]?.toLowerCase();
+}
+
+function isAllowedRawLoopbackWebhookHostname(hostname: string): boolean {
+  return (
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '[::ffff:7f00:1]' ||
+    hostname === '[::ffff:127.0.0.1]'
+  );
+}
+
 function isLoopbackWebhookHostname(hostname: string): boolean {
   const normalized = hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+  // Keep this literal-only so Node fetch never performs a DNS lookup between
+  // validation and connect. Other loopback spellings are intentionally rejected.
   return normalized === '127.0.0.1' || normalized === '::1' || normalized === '::ffff:7f00:1';
 }
 
@@ -488,8 +558,7 @@ function filterWebhookHeaders(headers: Record<string, string>): Record<string, s
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (lower === 'authorization' || lower === 'cookie' || lower === 'host') continue;
-    if (lower === 'content-type' || lower.startsWith('x-')) out[name] = value;
+    if (ALLOWED_WEBHOOK_HEADERS.has(lower)) out[name] = value;
   }
   return out;
 }

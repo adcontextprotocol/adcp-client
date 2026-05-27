@@ -146,6 +146,47 @@ describe('mock-server sales-guaranteed', () => {
     assert.equal(lineItem.status, 'pending_creatives');
   });
 
+  it('scopes line-item idempotency_key replays to the parent order', async () => {
+    const auth = authHeaders(true);
+    const createOrder = async name => {
+      const res = await fetch(`${handle.url}/v1/orders`, {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({
+          name,
+          advertiser_id: 'adv_test',
+          currency: 'USD',
+          budget: 2000,
+        }),
+      });
+      assert.equal(res.status, 201);
+      return res.json();
+    };
+
+    const firstOrder = await createOrder('line item scope first');
+    const secondOrder = await createOrder('line item scope second');
+    const body = {
+      product_id: 'sports_preroll_q2_guaranteed',
+      budget: 500,
+      idempotency_key: 'lineitem-cross-order-scope',
+    };
+
+    const first = await fetch(`${handle.url}/v1/orders/${firstOrder.order_id}/lineitems`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body),
+    });
+    const second = await fetch(`${handle.url}/v1/orders/${secondOrder.order_id}/lineitems`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body),
+    });
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.notEqual((await first.json()).order_id, (await second.json()).order_id);
+  });
+
   it('returns 409 idempotency_conflict on body-mismatched order replay', async () => {
     const auth = authHeaders(true);
     const first = await fetch(`${handle.url}/v1/orders`, {
