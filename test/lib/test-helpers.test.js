@@ -35,6 +35,7 @@ describe('Test Helpers', () => {
       TEST_AGENT_MCP_CONFIG,
       TEST_AGENT_A2A_CONFIG,
       creativeAgent,
+      registerExternalSchemaRoot,
     } = require('../../dist/lib/testing/index.js');
 
     assert.ok(testAgent, 'testAgent should be exported from /testing');
@@ -45,6 +46,7 @@ describe('Test Helpers', () => {
     assert.ok(TEST_AGENT_MCP_CONFIG, 'TEST_AGENT_MCP_CONFIG should be exported from /testing');
     assert.ok(TEST_AGENT_A2A_CONFIG, 'TEST_AGENT_A2A_CONFIG should be exported from /testing');
     assert.ok(creativeAgent, 'creativeAgent should be exported from /testing');
+    assert.strictEqual(typeof registerExternalSchemaRoot, 'function', 'registerExternalSchemaRoot should be public');
   });
 
   test('TEST_AGENT_MCP_CONFIG should have correct structure', () => {

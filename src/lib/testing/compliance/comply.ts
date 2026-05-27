@@ -512,6 +512,8 @@ export interface ComplyOptions extends TestOptions {
   version?: string;
   /** Explicit compliance cache directory override. */
   complianceDir?: string;
+  /** Explicit schema bundle root to pair with the selected compliance cache. */
+  schemaRoot?: string;
 }
 
 /**
@@ -988,11 +990,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     contracts,
     version,
     complianceDir,
+    schemaRoot,
     ...testOptions
   } = options;
   const resolveOptions: ResolveOptions = {
     ...(version !== undefined && { version }),
     ...(complianceDir !== undefined && { complianceDir }),
+    ...(schemaRoot !== undefined && { schemaRoot }),
   };
   const complianceIndex = loadComplianceIndex(resolveOptions);
 
