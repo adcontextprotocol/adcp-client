@@ -1262,7 +1262,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         // the `{ account_id }` arm is refused. Closes adcp-client#1364
         // (implicit) and adcp-client#1468 (derived).
         refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref);
-        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
+        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -1306,7 +1306,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName));
+        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -1809,6 +1809,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           const resolved = await agentRegistry.resolve({
             ...(extra?.authInfo?.credential !== undefined && { credential: extra.authInfo.credential }),
             ...(extra?.authInfo?.extra !== undefined && { extra: extra.authInfo.extra }),
+            input: args,
           });
           if (resolved != null) {
             // Mirror the dispatcher's freeze contract: lock the resolved

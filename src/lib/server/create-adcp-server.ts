@@ -466,6 +466,12 @@ export interface ResolveAccountContext {
    * null for the request's credential.
    */
   agent?: BuyerAgent;
+  /**
+   * Original tool arguments. Account resolvers that need request-scope
+   * metadata for test overlays or dry-run/delete-missing behavior should read
+   * it here rather than re-parsing transport envelopes.
+   */
+  input?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -3579,6 +3585,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const resolved = await agentRegistry.resolve({
               ...(ctx.authInfo?.credential !== undefined && { credential: ctx.authInfo.credential }),
               ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
+              input: params,
             });
             if (resolved != null) {
               // Shallow-freeze the resolved record so downstream code cannot
@@ -3904,6 +3911,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
               ...(ctx.agent != null && { agent: ctx.agent }),
+              input: params,
             });
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
@@ -3950,6 +3958,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
               ...(ctx.agent != null && { agent: ctx.agent }),
+              input: params,
             });
             if (account != null) ctx.account = account;
           } catch (err) {
@@ -5226,7 +5235,36 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       inputSchema: PASSTHROUGH_INPUT_SCHEMA,
       annotations: { readOnlyHint: true },
     },
-    (async (params: any) => {
+    (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
+      if (agentRegistry !== undefined && extra.authInfo !== undefined) {
+        const authInfo = extra.authInfo;
+        const inboundCredential = authInfo.extra?.credential;
+        const credential = authInfo.credential ?? (inboundCredential as ResolvedAuthInfo['credential'] | undefined);
+        try {
+          const resolved = await agentRegistry.resolve({
+            ...(credential !== undefined && { credential }),
+            ...(authInfo.extra !== undefined && { extra: authInfo.extra }),
+            input: params,
+          });
+          if (resolved?.status === 'suspended' || resolved?.status === 'blocked') {
+            return adcpError(resolved.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_BLOCKED', {
+              message:
+                resolved.status === 'suspended'
+                  ? 'Buyer agent is suspended. Contact the seller to restore access.'
+                  : 'Buyer agent is blocked.',
+              recovery: 'terminal',
+            });
+          }
+        } catch (err) {
+          logger.warn('Buyer-agent registry resolution failed for get_adcp_capabilities', {
+            error: err instanceof Error ? redactCredentialPatterns(err.message) : redactCredentialPatterns(String(err)),
+          });
+          return adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Buyer-agent registry is unavailable',
+            recovery: 'transient',
+          });
+        }
+      }
       const data = { ...capabilitiesData };
       const ctx = params?.context;
       if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {

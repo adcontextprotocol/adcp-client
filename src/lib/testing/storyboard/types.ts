@@ -7,6 +7,7 @@
  */
 
 import type { TestOptions } from '../types';
+import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -277,8 +278,12 @@ export interface StepInvariantsObject {
  *   - `creatives[]`     → `seed_creative`        — requires `creative_id`
  *   - `plans[]`         → `seed_plan`            — requires `plan_id`
  *   - `media_buys[]`    → `seed_media_buy`       — requires `media_buy_id`
+ *   - `buyer_agents[]`  → `seed_buyer_agent`     — requires `agent_url`
  *
- * Every other field on the entry is forwarded verbatim as `params.fixture`.
+ * For entity fixtures, every other field on the entry is forwarded verbatim
+ * as `params.fixture`. For `buyer_agents[]`, every other field is forwarded
+ * as a direct `params` field because the controller scenario models the
+ * buyer-agent record itself (`billing_capabilities`, `status`, etc.).
  * Entries without their required id field produce a pre-flight error so the
  * authoring mistake is surfaced before any real step runs.
  */
@@ -288,6 +293,19 @@ export interface StoryboardFixtures {
   creatives?: Array<Record<string, unknown> & { creative_id?: string }>;
   plans?: Array<Record<string, unknown> & { plan_id?: string }>;
   media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
+  buyer_agents?: StoryboardBuyerAgentFixture[];
+}
+
+export interface StoryboardBuyerAgentFixture {
+  agent_url?: string;
+  display_name?: string;
+  status?: BuyerAgentStatus;
+  billing_capabilities?: BuyerAgentBillingMode[];
+  default_account_terms?: BuyerAgent['default_account_terms'];
+  allowed_brands?: string[];
+  aliases?: string[];
+  sandbox_only?: boolean;
+  [key: string]: unknown;
 }
 
 export interface StoryboardPhase {
