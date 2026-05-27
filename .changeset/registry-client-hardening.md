@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Harden `RegistryClient` transport defaults with timeout, max body size, redirect policy, and injectable fetch options. The default registry host now uses the canonical upstream registry, and callers pinned to the legacy host can either update `baseUrl` or opt into `redirect: 'follow'`.
