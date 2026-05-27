@@ -448,7 +448,8 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(result.total, 0);
     assert.deepEqual(result.items, []);
     assert.equal(events.length, 1);
-    assert.equal(events[0].kind, 'payload_build_failed');
+    assert.equal(events[0].kind, 'digest_canonicalization_failed');
+    assert.equal(events[0].endpoint, 'POST https://x.example/upload');
     assert.match(String(events[0].err), /JCS: non-finite number/);
   });
 
@@ -507,6 +508,10 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
     assert.equal(rawResult.total, 1);
     assert.equal(rawResult.items[0].payload, '{"authorization":"[redacted]"');
     assert.doesNotMatch(String(rawResult.items[0].payload), /fake_test_fixture_not_a_real_token_aaaa/);
+
+    const digestOnlyResult = recorder.query({ principal: 'p', attestationMode: 'digest' });
+    assert.equal(digestOnlyResult.total, 1);
+    assert.equal(events.length, 0);
 
     const result = recorder.query({
       principal: 'p',

@@ -110,7 +110,8 @@ function validateUpstreamIdentifierPaths(
           `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request using dotted paths with [*] array selectors`
         );
       }
-      if (firstSegment === 'request' || firstSegment === 'response' || firstSegment === 'context') {
+      const root = firstSegment.toLowerCase();
+      if (root === 'request' || root === 'response' || root === 'context') {
         throw new Error(
           `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
         );

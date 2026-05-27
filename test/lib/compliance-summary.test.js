@@ -94,6 +94,13 @@ describe('buildComplianceSummary', () => {
     assert.deepStrictEqual(s.skipped_by_reason, {});
   });
 
+  test('surfaces validation-level not_applicable counts for gating consumers', () => {
+    const result = passingResult();
+    result.summary.validations_not_applicable = 2;
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.validations_not_applicable, 2);
+  });
+
   test('failing run flattens failures into the contract shape', () => {
     const s = buildComplianceSummary(failingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
     assert.strictEqual(s.failures.length, 2);

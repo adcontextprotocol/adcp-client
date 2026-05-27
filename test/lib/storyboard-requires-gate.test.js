@@ -190,6 +190,10 @@ phases:
       () => parseStoryboard(storyboardWithIdentifierPath('request.audiences[*].hashed_email')),
       /identifier_paths\[0\].*unsupported.*request payload/
     );
+    assert.throws(
+      () => parseStoryboard(storyboardWithIdentifierPath('Request.audiences[*].hashed_email')),
+      /identifier_paths\[0\].*unsupported.*request payload/
+    );
   });
 
   test('rejects bracket and recursive identifier_paths for all reserved roots', () => {

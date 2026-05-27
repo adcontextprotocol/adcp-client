@@ -22,7 +22,11 @@
  * buffer never holds plaintext secrets even briefly.
  */
 interface RecordedCallBase {
-  /** Forward-compatibility for additive spec fields on recorded call items. */
+  /**
+   * Forward-compatibility for future additive spec fields on recorded call
+   * items; adopter-defined fields are still rejected by the current 3.1 wire
+   * schema.
+   */
   [key: string]: unknown;
   method: string;
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
@@ -196,6 +200,7 @@ export type UpstreamRecorderErrorEvent =
   | { kind: 'classifier_invalid_purpose'; purpose: string }
   | { kind: 'url_parse_failed'; url: string }
   | { kind: 'payload_build_failed'; err: unknown }
+  | { kind: 'digest_canonicalization_failed'; method: string; endpoint: string; err: unknown }
   | { kind: 'json_payload_parse_failed'; content_type: string; err: unknown }
   | { kind: 'unscoped_record'; method: string; url: string };
 

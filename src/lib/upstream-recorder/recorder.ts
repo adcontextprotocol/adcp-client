@@ -382,7 +382,7 @@ function safeProjectRecordedCall(
   try {
     return projectRecordedCall(call, params, emitError);
   } catch (err) {
-    emitError?.({ kind: 'payload_build_failed', err });
+    emitError?.({ kind: 'digest_canonicalization_failed', method: call.method, endpoint: call.endpoint, err });
     return null;
   }
 }
@@ -396,7 +396,10 @@ function projectRecordedCall(
   const payloadBytes = canonicalPayloadBytes(call.payload, call.content_type);
   const payloadDigest = sha256Hex(payloadBytes);
   const identifierDigests = normalizeIdentifierDigests(params.identifierValueDigests);
-  const identifierScanPayload = parseJsonStringPayloadForScan(call.payload, call.content_type, emitError);
+  const identifierScanPayload =
+    identifierDigests.length > 0
+      ? parseJsonStringPayloadForScan(call.payload, call.content_type, emitError)
+      : undefined;
   const matchedIdentifierDigests =
     identifierDigests.length > 0 && identifierScanPayload !== undefined
       ? collectMatchedStringLeafDigests(identifierScanPayload, new Set(identifierDigests))
@@ -833,6 +836,9 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
 }
 
 function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
+  // Best-effort diagnostic scrub for malformed JSON strings. The output is
+  // not guaranteed to be valid JSON; the invariant is that secret-shaped keys
+  // with scalar/string values are not stored verbatim.
   let out = '';
   let i = 0;
   while (i < body.length) {
