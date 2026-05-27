@@ -658,6 +658,29 @@ export interface StoryboardStep {
    * {@link ParallelDispatchSpec}.
    */
   parallel_dispatch?: ParallelDispatchSpec;
+  /**
+   * Sequential rate-limit trip/replay probe config. When set on
+   * `expect_rate_limit_not_replayed`, the runner sends fresh-key requests
+   * until the seller returns `RATE_LIMITED`, waits the response
+   * `retry_after`, then replays the same idempotency key to assert the
+   * transient rate-limit response was not cached as the canonical replay.
+   * Requires the `rate_limit_trip_runner` test-kit contract.
+   */
+  rate_limit_trip?: RateLimitTripSpec;
+}
+
+/**
+ * Contract payload for `test-kits/rate-limit-trip-runner.yaml`.
+ */
+export interface RateLimitTripSpec {
+  /** Mutating AdCP task to burst, e.g. `create_media_buy`. */
+  trip_target_task: string;
+  /** Base request payload; the observer rewrites only idempotency_key and correlation_id. */
+  trip_target_sample_request: Record<string, unknown>;
+  /** Sequential fresh-key attempts before grading the probe `rate_limit_not_triggered`; must be in [50, 500]. */
+  max_attempts: number;
+  /** Maximum retry_after wait the runner will honor. Defaults to 30 seconds. */
+  replay_max_wait_seconds?: number;
 }
 
 export type StoryboardValidationCheck =
@@ -765,6 +788,8 @@ export type StoryboardValidationCheck =
    * "upstream_traffic".
    */
   | 'upstream_traffic'
+  /** Contract check for `rate_limit_trip_runner`: RATE_LIMITED must not replay from the idempotency cache. */
+  | 'replay_not_cached_rate_limit'
   /**
    * Cross-response: every resolved response from a `parallel_dispatch` step
    * carries the same value at the named `path`. Used to assert
@@ -1586,6 +1611,8 @@ export type RunnerDetailedSkipReason =
   | 'mcp_mode_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
   | 'oauth_not_advertised'
+  /** rate_limit_trip_runner did not observe RATE_LIMITED within max_attempts. */
+  | 'rate_limit_not_triggered'
   /**
    * Pre-flight `comply_test_controller` seeding failed (adcp-client#778), so
    * every real phase cascade-skipped rather than run against an unseeded
@@ -1632,6 +1659,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   transport_ungradable: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
+  rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',

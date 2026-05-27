@@ -41,6 +41,7 @@ import {
 } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
+import { extractTaskAdcpError } from './rate-limit-trip';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -298,6 +299,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldEqualsContext(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
+    case 'replay_not_cached_rate_limit':
+      return validateReplayNotCachedRateLimit(validation, ctx);
     case 'cross_response_field_equal':
       return validateCrossResponseFieldEqual(validation, ctx);
     case 'cross_response_count_distinct':
@@ -3205,6 +3208,81 @@ function validateCrossResponseFieldEqual(validation: StoryboardValidation, ctx: 
     schema_id: null,
     schema_url: null,
   };
+}
+
+function validateReplayNotCachedRateLimit(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const payload = resolveTarget(ctx).data as Record<string, unknown> | undefined;
+  const tripResponse = payload?.trip_response;
+  const replayResponse = payload?.replay_response;
+  const targetTask = typeof payload?.target_task === 'string' ? payload.target_task : undefined;
+  if (!tripResponse || typeof tripResponse !== 'object' || !replayResponse || typeof replayResponse !== 'object') {
+    const missing = [
+      !tripResponse || typeof tripResponse !== 'object' ? 'trip_response' : undefined,
+      !replayResponse || typeof replayResponse !== 'object' ? 'replay_response' : undefined,
+    ].filter((field): field is string => typeof field === 'string');
+    return {
+      check: validation.check,
+      passed: true,
+      not_applicable: true,
+      description: validation.description,
+      note: `step did not produce rate_limit_trip_runner ${missing.join(' and ')}; replay_not_cached_rate_limit grades not_applicable`,
+      json_pointer: null,
+    };
+  }
+
+  const tripCode = extractSnapshotErrorCode(tripResponse as Record<string, unknown>, targetTask);
+  const replayCode = extractSnapshotErrorCode(replayResponse as Record<string, unknown>, targetTask);
+  if (tripCode !== 'RATE_LIMITED') {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      json_pointer: '/trip_response/error/code',
+      expected: 'RATE_LIMITED trip_response error code',
+      actual: tripCode ?? null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  if (replayCode === 'RATE_LIMITED') {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      error: 'rate_limit_response_cached_as_replay',
+      json_pointer: '/replay_response/error/code',
+      expected: 'replay_response must not return RATE_LIMITED from the idempotency cache',
+      actual: replayCode,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  return {
+    check: validation.check,
+    passed: true,
+    description: validation.description,
+    json_pointer: '/replay_response/error/code',
+    actual: replayCode ?? null,
+  };
+}
+
+function extractSnapshotErrorCode(snapshot: Record<string, unknown>, taskName?: string): string | undefined {
+  const structuredError = snapshot.error;
+  if (structuredError && typeof structuredError === 'object') {
+    const code = (structuredError as Record<string, unknown>).code;
+    if (typeof code === 'string') return code;
+  }
+  const adcpError = snapshot.adcp_error;
+  if (adcpError && typeof adcpError === 'object') {
+    const code = (adcpError as Record<string, unknown>).code;
+    if (typeof code === 'string') return code;
+  }
+  const data = snapshot.data;
+  if (data && typeof data === 'object') {
+    const extracted = extractTaskAdcpError({ success: snapshot.success === true, data }, taskName);
+    if (extracted) return extracted.code;
+  }
+  return undefined;
 }
 
 /**

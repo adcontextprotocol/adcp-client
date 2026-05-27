@@ -32,6 +32,7 @@ import {
 } from './validations';
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import { resolvePath, resolvePortableIdentifierPathAll, toJsonPointer, validatePortableIdentifierPath } from './path';
+import { RateLimitTripObserver, validateRateLimitTripSpec, type RateLimitTripObservation } from './rate-limit-trip';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
@@ -107,6 +108,7 @@ import type {
   StrictValidationSummary,
   SchemaValidationError,
   ValidationResult,
+  RunnerTransport,
 } from './types';
 import {
   buildRoutingContext,
@@ -216,6 +218,7 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
   rate_abuse_opt_out: 'Rate-abuse vector was excluded by request_signing.skipRateAbuse.',
   capability_profile_mismatch: 'Vector is outside the agent capability profile selected for this run.',
   transport_ungradable: 'Vector cannot be graded faithfully by the selected transport.',
+  rate_limit_not_triggered: 'No RATE_LIMITED response was observed within the configured max_attempts.',
 };
 
 function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string): RunnerSelectionResult | undefined {
@@ -3369,7 +3372,7 @@ async function executeStep(
 
   // HTTP probe tasks bypass the MCP client entirely.
   if (PROBE_TASKS.has(step.task)) {
-    return executeProbeStep(step, phaseId, context, allSteps, options, runState);
+    return executeProbeStep(client, step, phaseId, context, allSteps, options, runState);
   }
 
   // Webhook-assertion pseudo-tasks observe the shared receiver instead of
@@ -4377,6 +4380,8 @@ async function executeStep(
 // ────────────────────────────────────────────────────────────
 
 async function executeProbeStep(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- client type varies (TestClient)
+  client: any,
   step: StoryboardStep,
   phaseId: string,
   context: StoryboardContext,
@@ -4387,6 +4392,7 @@ async function executeProbeStep(
   const start = Date.now();
   let httpResult: HttpProbeResult | undefined;
   const probeOpts = { allowPrivateIp: options.allow_http === true };
+  let requestRecordOverride: RunnerRequestRecord | undefined;
 
   if (step.requires_contract) {
     const contracts = new Set(options.contracts ?? []);
@@ -4432,33 +4438,114 @@ async function executeProbeStep(
   } else if (step.task === 'assert_jwks_purpose') {
     httpResult = assertJwksPurpose(runState.priorProbes.get('fetch_brand_jwks'), 'webhook-signing');
   } else if (step.task === 'expect_rate_limit_not_replayed') {
-    httpResult = {
-      url: runState.agentUrl,
-      status: 0,
-      headers: {},
-      body: null,
-      error:
-        'rate_limit_trip_runner contract is configured, but this SDK runner does not yet implement live rate-limit trip/replay probing.',
-    };
+    const specError = validateRateLimitTripSpec(step.rate_limit_trip);
+    if (specError) {
+      httpResult = {
+        url: runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: { attempts: 0, error: 'rate_limit_trip_misconfigured' },
+        error: specError,
+      };
+    } else {
+      const rateLimitTrip = step.rate_limit_trip!;
+      const targetStep: StoryboardStep = {
+        ...step,
+        task: rateLimitTrip.trip_target_task,
+        sample_request: rateLimitTrip.trip_target_sample_request,
+        omit_idempotency_key: true,
+      };
+      const resolvedTargetRequest = buildEffectiveStepRequest(targetStep, context, options, runState);
+      const unresolvedVars = findUnresolvedContextVars(resolvedTargetRequest);
+      if (unresolvedVars.length > 0 && !targetStep.expect_error) {
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        const detail = `Skipped: unresolved context variables from rate_limit_trip.trip_target_sample_request: ${unresolvedVars
+          .map(v => v.key)
+          .join(', ')}.`;
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: false,
+          skipped: true,
+          skip_reason: 'prerequisite_failed',
+          skip: buildSkip('prerequisite_failed', detail),
+          duration_ms: Date.now() - start,
+          validations: [],
+          context,
+          next,
+          extraction: { path: 'none' },
+          error: detail,
+        };
+      }
+      const advertisedTools = resolveAdvertisedTools(options);
+      if (advertisedTools && !advertisedTools.includes(rateLimitTrip.trip_target_task)) {
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        const detail = `Agent did not advertise tool "${rateLimitTrip.trip_target_task}"; agent tools: [${advertisedTools.join(', ')}].`;
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'missing_tool',
+          skip: buildSkip('missing_tool', detail),
+          duration_ms: Date.now() - start,
+          validations: [],
+          context,
+          next,
+          extraction: { path: 'none' },
+        };
+      }
+      const resolvedSpec = {
+        ...rateLimitTrip,
+        trip_target_sample_request: resolvedTargetRequest,
+      };
+      const targetTransport: Extract<RunnerTransport, 'mcp' | 'a2a'> = options.protocol === 'a2a' ? 'a2a' : 'mcp';
+      const observer = new RateLimitTripObserver(client, {
+        keyMinter: generateIdempotencyKey,
+        correlationPrefix: step.id,
+        transport: targetTransport,
+      });
+      const observation = await observer.run(resolvedSpec);
+      httpResult = rateLimitTripObservationToProbeResult(runState.agentUrl, observation);
+      const observedRequest = observation.body.replay_request ?? observation.body.trip_request ?? resolvedTargetRequest;
+      requestRecordOverride = {
+        transport: targetTransport,
+        operation: rateLimitTrip.trip_target_task,
+        payload: redactSecrets(observedRequest),
+        ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+      };
+    }
   }
 
   if (httpResult) runState.priorProbes.set(step.task, httpResult);
 
   const duration = Date.now() - start;
-  const requestRecord: RunnerRequestRecord = {
+  const requestRecord: RunnerRequestRecord = requestRecordOverride ?? {
     transport: 'http',
     operation: step.task,
     payload: null,
     ...(httpResult?.url ? { url: httpResult.url } : runState.agentUrl ? { url: runState.agentUrl } : {}),
   };
   const filteredProbeHeaders = filterResponseHeaders(httpResult?.headers);
+  const responseTransport = requestRecordOverride?.transport ?? 'http';
   const responseRecord: RunnerResponseRecord | undefined = httpResult
     ? {
-        transport: 'http',
+        transport: responseTransport,
         payload: redactSecrets(httpResult.body),
-        status: httpResult.status,
+        ...(responseTransport === 'http' && { status: httpResult.status }),
         ...(filteredProbeHeaders && { headers: filteredProbeHeaders }),
         duration_ms: duration,
+      }
+    : undefined;
+  const redactedHttpResult = httpResult
+    ? {
+        ...httpResult,
+        body: redactSecrets(httpResult.body),
+        ...(responseTransport !== 'http' && { status: undefined }),
       }
     : undefined;
 
@@ -4483,7 +4570,7 @@ async function executeProbeStep(
       skip: { reason: canonicalReason, detail },
       ...(selectionResult && { selection_result: selectionResult }),
       duration_ms: duration,
-      response: httpResult,
+      response: redactedHttpResult,
       validations: [],
       context,
       next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
@@ -4497,7 +4584,7 @@ async function executeProbeStep(
     taskName: step.task,
     ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
     ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
-    httpResult,
+    httpResult: redactedHttpResult,
     agentUrl: runState.agentUrl,
     contributions: runState.contributions,
     request: requestRecord,
@@ -4526,7 +4613,7 @@ async function executeProbeStep(
     task: step.task,
     passed,
     duration_ms: duration,
-    response: httpResult ?? undefined,
+    response: redactedHttpResult ?? undefined,
     validations,
     context,
     error: httpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
@@ -4534,6 +4621,70 @@ async function executeProbeStep(
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction,
+  };
+}
+
+function buildEffectiveStepRequest(
+  step: StoryboardStep,
+  context: StoryboardContext,
+  options: StoryboardRunOptions,
+  runState: ExecutionState
+): Record<string, unknown> {
+  let request: Record<string, unknown>;
+  if (options.request) {
+    request = { ...options.request };
+  } else if (step.expect_error && step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
+  } else if (hasRequestEnricher(step.task)) {
+    request = enrichRequest(step, context, options, runState.runnerVars);
+  } else if (step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
+  } else {
+    request = {};
+  }
+  if (step.context_inputs?.length) {
+    request = applyContextInputs(request, step.context_inputs, context);
+  }
+  request = applyBrandInvariant(request, options, step.task, { omit_account: step.omit_account });
+  if (options.disable_sandbox === true) {
+    request = applyDisableSandboxHint(request, step.task);
+  }
+  return applyIdempotencyInvariant(request, step.task, step);
+}
+
+function resolveAdvertisedTools(options: StoryboardRunOptions): string[] | undefined {
+  return options.agentTools ?? normalizeAgentToolNames(options._profile?.tools);
+}
+
+function rateLimitTripObservationToProbeResult(
+  agentUrl: string,
+  observation: RateLimitTripObservation
+): HttpProbeResult {
+  if (observation.status === 'not_applicable') {
+    return {
+      url: agentUrl,
+      status: 0,
+      headers: {},
+      body: observation.body,
+      skipped: true,
+      skip_reason: observation.skip_reason,
+      error: observation.message,
+    };
+  }
+  if (observation.status === 'failed') {
+    return {
+      url: agentUrl,
+      status: 0,
+      headers: {},
+      body: { ...observation.body, error: observation.error },
+      error: observation.message,
+    };
+  }
+  return {
+    url: agentUrl,
+    status: 200,
+    headers: {},
+    body: observation.body,
   };
 }
 
