@@ -257,10 +257,7 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     assert.equal(upstreamValidation.passed, false);
     assert.match(upstreamValidation.error, /storyboard authoring error/);
     assert.equal(upstreamValidation.actual.matched_count, 0);
-    assert.equal(
-      upstreamValidation.actual.invalid_identifier_paths[0].path,
-      '$.audiences[*].add[*].hashed_email'
-    );
+    assert.equal(upstreamValidation.actual.invalid_identifier_paths[0].path, '$.audiences[*].add[*].hashed_email');
   });
 
   test('grades digest canonicalization failure on non-finite numbers as not_applicable', async () => {
