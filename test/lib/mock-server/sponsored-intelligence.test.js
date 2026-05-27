@@ -303,11 +303,14 @@ describe('mock-server sponsored-intelligence', () => {
       message: 'show me the summer trail shoe',
       idempotency_key: 'turn-closed-replay',
     };
-    const first = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
-      method: 'POST',
-      headers: auth(),
-      body: JSON.stringify(turnBody),
-    });
+    const first = await fetch(
+      `${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`,
+      {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify(turnBody),
+      }
+    );
     assert.equal(first.status, 200);
     const firstBody = await first.json();
 
@@ -317,19 +320,25 @@ describe('mock-server sponsored-intelligence', () => {
       body: JSON.stringify({ reason: 'user_left' }),
     });
 
-    const replay = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
-      method: 'POST',
-      headers: auth(),
-      body: JSON.stringify(turnBody),
-    });
+    const replay = await fetch(
+      `${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`,
+      {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify(turnBody),
+      }
+    );
     assert.equal(replay.status, 200);
     assert.deepEqual(await replay.json(), firstBody);
 
-    const conflict = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
-      method: 'POST',
-      headers: auth(),
-      body: JSON.stringify({ ...turnBody, message: 'changed after close' }),
-    });
+    const conflict = await fetch(
+      `${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`,
+      {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({ ...turnBody, message: 'changed after close' }),
+      }
+    );
     assert.equal(conflict.status, 409);
     assert.equal((await conflict.json()).code, 'idempotency_conflict');
   });

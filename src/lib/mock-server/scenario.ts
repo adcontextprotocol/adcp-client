@@ -1,6 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+const WEBHOOK_FETCH_TIMEOUT_MS = 5000;
+
 export interface MockScenarioControllerOptions {
   specialism: string;
   controlToken?: string;
@@ -61,6 +63,7 @@ interface MockScenarioScript {
   method: string;
   path?: string;
   path_regex?: string;
+  path_regex_compiled?: RegExp;
   status: number;
   headers: Record<string, string>;
   body: unknown;
@@ -193,9 +196,10 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
     if (!path && !pathRegex) {
       throw new Error('scenario script match requires path or path_regex.');
     }
+    let pathRegexCompiled: RegExp | undefined;
     if (pathRegex !== undefined) {
       try {
-        new RegExp(pathRegex);
+        pathRegexCompiled = new RegExp(pathRegex);
       } catch {
         throw new Error('scenario script match.path_regex must be a valid regular expression.');
       }
@@ -218,6 +222,7 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
       method,
       ...(path !== undefined && { path }),
       ...(pathRegex !== undefined && { path_regex: pathRegex }),
+      ...(pathRegexCompiled !== undefined && { path_regex_compiled: pathRegexCompiled }),
       status,
       headers: input.response?.headers ?? {},
       body: input.response?.body ?? {
@@ -252,6 +257,7 @@ export function createMockScenarioController(options: MockScenarioControllerOpti
           ...attempt.headers,
         },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(WEBHOOK_FETCH_TIMEOUT_MS),
       });
       attempt.status = response.status;
     } catch (err) {
@@ -382,7 +388,7 @@ export function writeCachedResponse(res: ServerResponse, cached: CachedIdempoten
 function scriptMatches(script: MockScenarioScript, method: string, path: string): boolean {
   if (script.method !== '*' && script.method !== method.toUpperCase()) return false;
   if (script.path !== undefined) return script.path === path;
-  if (script.path_regex !== undefined) return new RegExp(script.path_regex).test(path);
+  if (script.path_regex_compiled !== undefined) return script.path_regex_compiled.test(path);
   return false;
 }
 
@@ -390,12 +396,7 @@ function writeScriptedResponse(res: ServerResponse, script: MockScenarioScript):
   writeJson(res, script.status, script.body, script.headers);
 }
 
-function writeJson(
-  res: ServerResponse,
-  status: number,
-  body: unknown,
-  headers: Record<string, string> = {}
-): void {
+function writeJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   res.statusCode = status;
   for (const [name, value] of Object.entries(headers)) {
     res.setHeader(name, value);
@@ -472,10 +473,15 @@ function validateWebhookTarget(raw: string): URL {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('webhook target must use http or https.');
   }
-  if (url.hostname !== '127.0.0.1' && url.hostname !== '::1' && url.hostname !== 'localhost') {
+  if (!isLoopbackWebhookHostname(url.hostname)) {
     throw new Error('webhook target must be loopback.');
   }
   return url;
+}
+
+function isLoopbackWebhookHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+  return normalized === '127.0.0.1' || normalized === '::1' || normalized === '::ffff:7f00:1';
 }
 
 function filterWebhookHeaders(headers: Record<string, string>): Record<string, string> {

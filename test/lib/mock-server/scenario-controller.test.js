@@ -104,6 +104,31 @@ describe('mock-server scenario controller', () => {
     assert.ok((traffic.traffic['GET /v1/products'] ?? 0) >= 1, 'scripted hits should still count as traffic');
   });
 
+  it('serves scripted fault responses matched by path_regex', async () => {
+    await handle.scenario.reset();
+
+    const script = await fetch(`${handle.url}/_scenario/script`, {
+      method: 'POST',
+      headers: controlHeaders(true),
+      body: JSON.stringify({
+        match: { method: 'GET', path_regex: '^/v1/prod' },
+        response: {
+          status: 502,
+          body: { code: 'regex_scripted_outage', message: 'regex fixture outage' },
+        },
+        times: 1,
+      }),
+    });
+    assert.equal(script.status, 201);
+
+    const first = await fetch(`${handle.url}/v1/products`, { headers: authHeaders() });
+    assert.equal(first.status, 502);
+    assert.equal((await first.json()).code, 'regex_scripted_outage');
+
+    const second = await fetch(`${handle.url}/v1/products`, { headers: authHeaders() });
+    assert.equal(second.status, 200);
+  });
+
   it('replays idempotency_key requests with the identical status and body', async () => {
     await handle.scenario.reset();
 
@@ -197,6 +222,28 @@ describe('mock-server scenario controller', () => {
       body: JSON.stringify({
         url: 'https://example.com/callback',
         payload: { task_id: 'task_2', status: 'completed' },
+      }),
+    });
+    assert.equal(emit.status, 400);
+    assert.equal((await emit.json()).code, 'invalid_webhook_target');
+
+    const webhooks = await (
+      await fetch(`${handle.url}/_scenario/webhooks`, {
+        headers: controlHeaders(),
+      })
+    ).json();
+    assert.equal(webhooks.webhooks.length, 0);
+  });
+
+  it('rejects localhost webhook targets to avoid hostname rebinding', async () => {
+    await handle.scenario.reset();
+
+    const emit = await fetch(`${handle.url}/_scenario/webhooks/emit`, {
+      method: 'POST',
+      headers: controlHeaders(true),
+      body: JSON.stringify({
+        url: 'http://localhost:9999/callback',
+        payload: { task_id: 'task_3', status: 'completed' },
       }),
     });
     assert.equal(emit.status, 400);

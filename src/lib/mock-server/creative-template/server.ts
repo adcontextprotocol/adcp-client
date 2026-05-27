@@ -75,14 +75,16 @@ export async function bootCreativeTemplate(options: BootOptions): Promise<BootRe
   });
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency, traffic, bump, scenario }).catch(err => {
-      const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
-      writeJson(res, 500, {
-        code: 'internal_error',
-        message: err?.message ?? 'unexpected error',
-        request_id: requestId,
-      });
-    });
+    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency, traffic, bump, scenario }).catch(
+      err => {
+        const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
+        writeJson(res, 500, {
+          code: 'internal_error',
+          message: err?.message ?? 'unexpected error',
+          request_id: requestId,
+        });
+      }
+    );
   });
 
   await new Promise<void>((resolve, reject) => {
