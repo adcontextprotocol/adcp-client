@@ -75,9 +75,10 @@ entity, not the ephemeral token.
 Return `null` from `resolve()`. The framework emits `ACCOUNT_NOT_FOUND` to
 the buyer with `recovery: 'terminal'`.
 
-**Do NOT return `AUTH_REQUIRED`.** That error signals missing or rejected
-credentials — not a missing pre-sync. Buyers receiving `AUTH_REQUIRED` will
-retry with a fresh token, not call `sync_accounts`, and loop indefinitely.
+**Do NOT return `AUTH_REQUIRED`, `AUTH_MISSING`, or `AUTH_INVALID`.** Those
+errors signal missing or rejected credentials — not a missing pre-sync. Buyers
+receiving auth errors will refresh credentials or escalate, not call
+`sync_accounts`, and can loop indefinitely.
 
 ```ts
 // ✓ Correct
@@ -89,7 +90,7 @@ resolve: async (_ref, ctx) => {
 // ✗ Wrong — misleads buyers about how to recover
 resolve: async (_ref, ctx) => {
   const account = await db.findByPrincipal(extractKey(ctx?.authInfo));
-  if (!account) throw new AdcpError('AUTH_REQUIRED', { message: 'call sync_accounts first' });
+  if (!account) throw new AdcpError('AUTH_MISSING', { message: 'call sync_accounts first' });
   return account;
 },
 ```
@@ -118,8 +119,9 @@ policy. Guidance:
 
 This TTL governs the *sync-linkage lifetime*, which is separate from
 `AccountStore.refreshToken` — that hook refreshes an upstream OAuth token
-mid-request when your platform method throws `AUTH_REQUIRED`. The two are
-orthogonal.
+mid-request when your seller-to-upstream platform method throws legacy
+`AUTH_REQUIRED` or the 3.1-native `AUTH_MISSING`. It is not a buyer inbound
+auth recovery path. The two are orthogonal.
 
 **Postgres schema reference** — see `docs/guides/POSTGRES.md` for the
 canonical `adcp_sync_linkages` DDL pattern. The cleanup query there
@@ -198,11 +200,12 @@ const accounts = createDerivedAccountStore<MyMeta>({
 });
 ```
 
-The factory sets `resolution: 'derived'`, throws
+The factory sets `resolution: 'derived'`, still throws legacy-compatible
 `AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
 (skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
-and ignores any buyer-supplied `account_id` (single-tenant by
-definition). Hand-rolled equivalent:
+and ignores any buyer-supplied `account_id` (single-tenant by definition).
+New hand-rolled stores can throw `AuthMissingError` when they intentionally
+emit the AdCP 3.1 missing-request-credential code. Hand-rolled equivalent:
 
 ```ts
 accounts: {

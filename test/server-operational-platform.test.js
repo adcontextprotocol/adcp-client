@@ -17,6 +17,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { defineOperationalPlatform } = require('../dist/lib/server/operational-platform');
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+const { AuthMissingError } = require('../dist/lib/server');
 
 describe('defineOperationalPlatform', () => {
   it('returns the input platform object unchanged', () => {
@@ -74,12 +75,12 @@ describe('defineOperationalPlatform', () => {
 });
 
 describe('OperationalPlatform — error contract', () => {
-  it('extractContext throws AdcpError(AUTH_REQUIRED) when token absent and requireAuth=true', async () => {
+  it('extractContext throws AuthMissingError when token absent and requireAuth=true', async () => {
     const ops = defineOperationalPlatform({
       platformId: 'test',
       extractContext: async (_args, sessionToken, requireAuth = true) => {
         if (!sessionToken && requireAuth) {
-          throw new AdcpError('AUTH_REQUIRED', { message: 'No token available' });
+          throw new AuthMissingError({ message: 'No token available' });
         }
         return { accessToken: sessionToken };
       },
@@ -92,7 +93,7 @@ describe('OperationalPlatform — error contract', () => {
 
     await assert.rejects(
       () => ops.extractContext({}, undefined, true),
-      err => err instanceof AdcpError && err.code === 'AUTH_REQUIRED'
+      err => err instanceof AdcpError && err.code === 'AUTH_MISSING'
     );
   });
 
@@ -101,7 +102,7 @@ describe('OperationalPlatform — error contract', () => {
       platformId: 'test',
       extractContext: async (_args, sessionToken, requireAuth = true) => {
         if (!sessionToken && requireAuth) {
-          throw new AdcpError('AUTH_REQUIRED', { message: 'No token available' });
+          throw new AuthMissingError({ message: 'No token available' });
         }
         return { accessToken: sessionToken };
       },
@@ -167,12 +168,13 @@ describe('OperationalPlatform — three call patterns of extractContext', () => 
     assert.strictEqual(ctx.accessToken, 'stored-token');
   });
 
-  it('storefront fan-out — scrubbed args, optional master token', async () => {
-    const ops = buildOps(async (args, sessionToken) => ({
-      accessToken: sessionToken ?? String(args.context?.managed_access_token ?? ''),
-    }));
-    const ctx = await ops.extractContext({ context: { managed_access_token: 'storefront-creds' } }, undefined);
-    assert.strictEqual(ctx.accessToken, 'storefront-creds');
+  it('storefront fan-out — scrubbed args, credentials come from sessionToken only', async () => {
+    const ops = buildOps(async (args, sessionToken) => {
+      assert.strictEqual(args.context?.managed_access_token, undefined);
+      return { accessToken: sessionToken };
+    });
+    const ctx = await ops.extractContext({ context: { campaign_id: 'cmp_123' } }, 'storefront-master-token');
+    assert.strictEqual(ctx.accessToken, 'storefront-master-token');
   });
 
   it('server-side scan — no args, no token, requireAuth=false', async () => {

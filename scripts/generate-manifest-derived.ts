@@ -2,6 +2,7 @@
 
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
+import { applySdkErrorCodeProseOverlay } from './lib/error-code-prose-overlays';
 
 /**
  * Generate manifest-derived constants from `schemas/cache/{version}/manifest.json`.
@@ -19,10 +20,12 @@ import path from 'path';
  *  - specialism → required-tools mapping
  *
  * This generator reads the bundled manifest and emits a single
- * `src/lib/types/manifest.generated.ts` file as the source of truth. The
- * hand-curated tables in `error-codes.ts` and `capabilities.ts` migrate to
- * importing from here. Drift is impossible by construction — re-running
- * `generate-manifest-derived` regenerates the table from the latest cache.
+ * `src/lib/types/manifest.generated.ts` file as the source of truth, with
+ * narrowly documented SDK-side prose overlays for compatibility guidance
+ * that moved faster than the bundled beta manifest. The hand-curated tables
+ * in `error-codes.ts` and `capabilities.ts` migrate to importing from here.
+ * Re-running `generate-manifest-derived` regenerates the table from the
+ * latest cache plus the explicit overlays below.
  *
  * Tracked: adcp-client#1192.
  */
@@ -97,7 +100,11 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
   // Sort error codes alphabetically for predictable diffs.
   const sortedErrorCodes: Record<string, ManifestErrorCode> = {};
   for (const code of Object.keys(manifest.error_codes).sort()) {
-    sortedErrorCodes[code] = manifest.error_codes[code];
+    const info = manifest.error_codes[code];
+    sortedErrorCodes[code] = {
+      ...info,
+      description: applySdkErrorCodeProseOverlay(code, info.description),
+    };
   }
 
   // Group tools by protocol for the `<PROTOCOL>_TOOLS` arrays.
@@ -178,8 +185,11 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
- * mapping. Replaces the hand-curated tables that previously lived in
- * \`src/lib/utils/capabilities.ts\` and \`src/lib/types/error-codes.ts\`.
+ * mapping. Error-code descriptions may include documented SDK-side prose
+ * overlays applied by \`scripts/generate-manifest-derived.ts\`; recovery and
+ * suggestions remain manifest-derived. Replaces the hand-curated tables that
+ * previously lived in \`src/lib/utils/capabilities.ts\` and
+ * \`src/lib/types/error-codes.ts\`.
  *
  * Source: \`${cacheRel}\` (adcp_version: ${manifest.adcp_version}, generated_at:
  * ${manifest.generated_at}). Re-run \`npm run sync-schemas\` then
