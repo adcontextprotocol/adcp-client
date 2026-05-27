@@ -36,6 +36,7 @@ import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
+import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -1152,6 +1153,10 @@ function buildCapabilityUnsupportedResult(
     ],
     context: {},
     total_duration_ms: 0,
+    // This synthetic phase is an applicability gate, not a real passed
+    // scenario. `overall_passed: true` preserves non-failing CI semantics,
+    // while passed_count stays 0 so rollups do not report unexecuted
+    // storyboards as successful coverage.
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
@@ -1236,6 +1241,9 @@ function buildRequirementUnmetResult(
     ],
     context: {},
     total_duration_ms: 0,
+    // `required_any_of_tools` unmet is an applicability skip. Keep
+    // `overall_passed: true` for CI/non-failing semantics, but do not
+    // increment passed_count because no scenario behavior was exercised.
     passed_count: 0,
     failed_count: 0,
     skipped_count: 1,
@@ -3192,6 +3200,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  validateStoryboardShape(storyboard);
   options = applyStoryboardVersionOptions(storyboard, options);
   registerRunSchemaRoot(options);
   validateTestKit(options.test_kit);
@@ -5140,7 +5149,8 @@ async function prefetchUpstreamTraffic(
   }
 
   const queries = new Map<string, UpstreamTrafficQueryResult>();
-  const identifierDigestByValue = collectUpstreamIdentifierDigests(upstreamChecks, requestPayload, sampleRequest);
+  const identifierDigestCollection = collectUpstreamIdentifierDigests(upstreamChecks, requestPayload, sampleRequest);
+  const identifierDigestByValue = identifierDigestCollection.digests;
   const identifier_value_digests = [...identifierDigestByValue.values()];
   const requiresRawAttestation = upstreamChecks.some(
     check => check.attestation_mode_required === 'raw' || (check.payload_must_contain?.length ?? 0) > 0
@@ -5195,6 +5205,14 @@ async function prefetchUpstreamTraffic(
     queries,
     thisStepSince: requestStartIso,
     ...(identifierDigestByValue.size > 0 ? { identifierDigestByValue } : {}),
+    ...(identifierDigestCollection.clipped > 0
+      ? {
+          identifierDigestLimitExceeded: {
+            limit: identifierDigestCollection.limit,
+            clipped: identifierDigestCollection.clipped,
+          },
+        }
+      : {}),
     ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
     ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
@@ -5204,28 +5222,37 @@ function collectUpstreamIdentifierDigests(
   validations: StoryboardValidation[],
   requestPayload: unknown,
   sampleRequest: Record<string, unknown> | undefined
-): Map<string, string> {
-  const out = new Map<string, string>();
+): { digests: Map<string, string>; limit: number; clipped: number } {
+  const digests = new Map<string, string>();
+  let clipped = 0;
   const sample =
     requestPayload && typeof requestPayload === 'object' && !Array.isArray(requestPayload)
       ? (requestPayload as Record<string, unknown>)
       : sampleRequest;
-  if (!sample) return out;
+  if (!sample) return { digests, limit: IDENTIFIER_DIGEST_LIMIT, clipped };
+  const clippedVectors = new Set<string>();
   for (const validation of validations) {
     for (const path of validation.identifier_paths ?? []) {
       const vectors = resolvePathAll(sample, normalizeStoryboardJsonPath(path));
       for (const vector of vectors) {
         if (typeof vector !== 'string') continue;
-        if (!out.has(vector)) out.set(vector, sha256Hex(vector));
-        if (out.size >= 64) return out;
+        if (digests.has(vector)) continue;
+        if (digests.size >= IDENTIFIER_DIGEST_LIMIT) {
+          if (!clippedVectors.has(vector)) {
+            clippedVectors.add(vector);
+            clipped++;
+          }
+          continue;
+        }
+        digests.set(vector, sha256Hex(vector));
       }
     }
   }
-  return out;
+  return { digests, limit: IDENTIFIER_DIGEST_LIMIT, clipped };
 }
 
 function normalizeStoryboardJsonPath(path: string): string {
-  let p = path;
+  let p = path.trim();
   if (p.startsWith('$.')) p = p.slice(2);
   else if (p.startsWith('$')) p = p.slice(1);
   if (p.startsWith('.')) p = p.slice(1);

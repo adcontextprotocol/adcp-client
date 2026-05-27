@@ -5,7 +5,10 @@
  * the `comply-test-controller-response.json` `recorded_calls[].payload`
  * description both mandate the same recursive walk: any property whose
  * final-path-segment key matches the canonical pattern below has its scalar
- * value replaced with the literal string `"[redacted]"`. Walks at any depth.
+ * value replaced with the literal string `"[redacted]"`. The walk is capped
+ * at the same depth the upstream-recorder accepts for JSON canonicalization;
+ * the recorder rejects deeper structured payloads after redaction so it does
+ * not store subtrees beyond this cap.
  *
  * Spec: `static/compliance/source/universal/runner-output-contract.yaml`
  * (`payload_redaction.pattern`). The runner uses this to redact request /
@@ -18,6 +21,8 @@
  * recorder's `redactPattern` option, but MUST NOT narrow it.
  */
 
+import { MAX_JSON_DEPTH } from './json-depth';
+
 /**
  * Canonical secret-key pattern from the AdCP runner-output contract. Mirrors
  * the spec block: `Authorization`, `Credentials`, tokens, API keys,
@@ -27,15 +32,25 @@
 export const SECRET_KEY_PATTERN =
   /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
 
-/**
- * Maximum recursion depth for the redaction walk. Cheap cycle / hostile-
- * payload guard — a payload deeper than this stops being recursed (the
- * remaining structure passes through verbatim, which is acceptable: a
- * 32-deep nested object would already be an attack surface for any
- * downstream consumer).
- */
-const REDACT_MAX_DEPTH = 32;
+export function normalizeSecretKeyPattern(pattern: RegExp): RegExp {
+  if (!/[gy]/.test(pattern.flags)) return pattern;
+  return new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''));
+}
 
+export function secretKeyPatternMatches(pattern: RegExp, key: string): boolean {
+  const lastIndex = pattern.lastIndex;
+  pattern.lastIndex = 0;
+  const matched = pattern.test(key);
+  pattern.lastIndex = lastIndex;
+  return matched;
+}
+
+/**
+ * Maximum recursion depth for the redaction walk. Keep this aligned with the
+ * upstream-recorder JSON canonicalization depth; recorder paths also run the
+ * depth gate after redaction so structured payloads beyond the cap are
+ * rejected instead of stored with unvisited subtrees.
+ */
 /**
  * Recursively walk `value`, returning a structurally-identical clone with
  * scalar values at secret-shaped keys replaced by `"[redacted]"`. Pass an
@@ -45,17 +60,32 @@ const REDACT_MAX_DEPTH = 32;
  *
  * Non-mutating — the input is never touched.
  */
-export function redactSecrets(value: unknown, pattern: RegExp = SECRET_KEY_PATTERN, depth = 0): unknown {
-  if (depth > REDACT_MAX_DEPTH) return value;
-  if (Array.isArray(value)) return value.map(v => redactSecrets(v, pattern, depth + 1));
+export function redactSecrets(
+  value: unknown,
+  pattern: RegExp = SECRET_KEY_PATTERN,
+  depth = 0,
+  seen: WeakSet<object> = new WeakSet()
+): unknown {
+  const effectivePattern = normalizeSecretKeyPattern(pattern);
+  if (depth > MAX_JSON_DEPTH) return value;
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    const out = value.map(v => redactSecrets(v, effectivePattern, depth + 1, seen));
+    seen.delete(value);
+    return out;
+  }
   if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       out[k] =
-        pattern.test(k) && (typeof v === 'string' || typeof v === 'number')
+        secretKeyPatternMatches(effectivePattern, k) && (typeof v === 'string' || typeof v === 'number')
           ? '[redacted]'
-          : redactSecrets(v, pattern, depth + 1);
+          : redactSecrets(v, effectivePattern, depth + 1, seen);
     }
+    seen.delete(value);
     return out;
   }
   return value;

@@ -140,21 +140,26 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Adopters can compute the rollup from their catalog using the
    * exported {@link rollupOptimizationMetricsFromProducts} helper —
    * keeps the declaration in sync with what products actually offer.
+   * Empty arrays are normalized away and the wire field is omitted; use
+   * omission to mean "no seller-level metric rollup advertised".
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.supported_optimization_metrics`.
    */
   supported_optimization_metrics?: NonNullable<_MediaBuyCapabilities['supported_optimization_metrics']>;
 
   /**
-   * Static product catalog used for capability rollups.
+   * Static product-metric summary used for capability rollups.
    *
    * When this is present and `supported_optimization_metrics` is omitted,
    * the framework derives `media_buy.supported_optimization_metrics` as the
    * sorted union of every product summary's
    * `metric_optimization.supported_metrics`. Full AdCP `Product` objects work,
-   * but are not required; a lightweight startup summary with just the
-   * `metric_optimization` block is enough. Dynamic per-account catalogs should
-   * continue to pass an explicit `supported_optimization_metrics` override.
+   * but this field is not a general product-discovery surface; a lightweight
+   * startup summary with just the `metric_optimization` block is enough.
+   * Dynamic per-account catalogs should continue to pass an explicit
+   * `supported_optimization_metrics` override. If the derived union is empty,
+   * the framework omits `supported_optimization_metrics` from the wire
+   * capabilities response.
    */
   productCatalog?: ReadonlyArray<ProductMetricOptimizationLike>;
 

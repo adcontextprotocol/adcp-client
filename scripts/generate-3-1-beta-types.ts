@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { compile } from 'json-schema-to-typescript';
 import { removeArrayLengthConstraints } from './schema-utils';
-import { enforceStrictSchema, removeNumberedTypeDuplicates } from './generate-types';
+import { enforceStrictSchema, promoteConditionalParamProperties, removeNumberedTypeDuplicates } from './generate-types';
 
 const REPO_ROOT = path.join(__dirname, '..');
 const BETA_VERSION = '3.1.0-beta.5';
@@ -270,21 +270,6 @@ function stripIfThenElse<T>(node: T): T {
     stripIfThenElse(obj[key]);
   }
   return node;
-}
-
-function promoteConditionalParamProperties(obj: Record<string, unknown>): void {
-  const properties = obj.properties as { params?: { properties?: Record<string, unknown> } } | undefined;
-  const params = properties?.params;
-  if (!params?.properties || !Array.isArray(obj.allOf)) return;
-  for (const member of obj.allOf as Array<Record<string, any>>) {
-    const conditionalParams = member?.then?.properties?.params;
-    if (!conditionalParams?.properties) continue;
-    for (const [key, value] of Object.entries(conditionalParams.properties)) {
-      if (params.properties[key] === undefined) {
-        params.properties[key] = value;
-      }
-    }
-  }
 }
 
 /**

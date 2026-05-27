@@ -19,6 +19,9 @@ import { MUTATING_TASKS } from '../../utils/idempotency';
  */
 export const BRANCH_SET_SEMANTICS = ['any_of'] as const;
 
+const IDENTIFIER_PATH_SEGMENT = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
+const IDENTIFIER_PATH_PATTERN = new RegExp(`^${IDENTIFIER_PATH_SEGMENT}(?:\\.${IDENTIFIER_PATH_SEGMENT})*$`);
+
 /** Parse a YAML string into a Storyboard. Throws if required fields are missing. */
 export function parseStoryboard(yamlContent: string): Storyboard {
   const parsed = parse(yamlContent) as Storyboard;
@@ -55,8 +58,9 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  * `parseStoryboard`, and should also be called by any runner entry point
  * that accepts a programmatically-built `Storyboard` object so the same
  * loud-fail-on-drift guarantee holds regardless of how the storyboard was
- * constructed. Mutates steps (resolves `contributes: true` to
- * `contributes_to`) and is idempotent on already-validated inputs.
+ * constructed. Mutates only legacy shorthand fields (resolves
+ * `contributes: true` to `contributes_to`) and is idempotent on
+ * already-validated inputs.
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequires(storyboard);
@@ -70,9 +74,62 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
+      validateUpstreamIdentifierPaths(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
   }
+}
+
+function validateUpstreamIdentifierPaths(
+  storyboardId: string,
+  phase: { id?: string },
+  step: { id?: string; validations?: any[] }
+): void {
+  const validations = step.validations ?? [];
+  for (let validationIndex = 0; validationIndex < validations.length; validationIndex++) {
+    const validation = validations[validationIndex];
+    if (validation?.check !== 'upstream_traffic' || validation.identifier_paths === undefined) continue;
+    if (!Array.isArray(validation.identifier_paths)) {
+      throw new Error(
+        `[${storyboardId}] ${phase.id ?? '?'}.${
+          step.id ?? '?'
+        }.validations[${validationIndex}].identifier_paths: must be an array of request-payload paths`
+      );
+    }
+    for (let pathIndex = 0; pathIndex < validation.identifier_paths.length; pathIndex++) {
+      const path = validation.identifier_paths[pathIndex];
+      if (typeof path !== 'string' || path.length === 0) {
+        throw new Error(
+          `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]: must be a non-empty string`
+        );
+      }
+      const pathErrorPrefix = `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].identifier_paths[${pathIndex}]`;
+      let firstSegment: string;
+      try {
+        const validated = validateIdentifierPathSyntax(path);
+        firstSegment = validated.firstSegment;
+      } catch {
+        throw new Error(
+          `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request using dotted paths with [*] array selectors`
+        );
+      }
+      const root = firstSegment.toLowerCase();
+      if (root === 'request' || root === 'response' || root === 'context') {
+        throw new Error(
+          `${pathErrorPrefix}: "${path}" is unsupported; identifier_paths resolve only against the request payload or sample_request`
+        );
+      }
+    }
+  }
+}
+
+function validateIdentifierPathSyntax(path: string): { normalized: string; firstSegment: string } {
+  const trimmed = path.trim();
+  const normalized = trimmed.startsWith('$.') ? trimmed.slice(2) : trimmed;
+  if (!IDENTIFIER_PATH_PATTERN.test(normalized)) {
+    throw new Error('unsupported identifier path syntax');
+  }
+  return { normalized, firstSegment: normalized.split(/[.[\]]/, 1)[0] ?? '' };
 }
 
 function validateRequiredAnyOfTools(storyboard: Storyboard): void {

@@ -22,11 +22,19 @@
  * buffer never holds plaintext secrets even briefly.
  */
 interface RecordedCallBase {
+  /**
+   * Forward-compatibility for future additive spec fields on recorded call
+   * items; adopter-defined fields are still rejected by the current 3.1 wire
+   * schema.
+   */
+  [key: string]: unknown;
   method: string;
   /** Composed `<METHOD> <URL>` for `endpoint_pattern` matching. */
   endpoint: string;
   url: string;
+  /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
   host: string;
+  /** Parsed from `url` when URL parsing succeeds; the recorder emits `''` on parse failure. */
   path: string;
   /**
    * Media type of the recorded `payload`, mirroring the adapter's outbound
@@ -35,7 +43,12 @@ interface RecordedCallBase {
    * for other types).
    */
   content_type: string;
-  /** Byte length of the emitted payload representation after redaction. */
+  /**
+   * Byte length of the emitted payload representation after redaction. Raw
+   * calls measure the raw emitted payload representation; digest calls
+   * measure the same canonical byte stream covered by
+   * `payload_digest_sha256`.
+   */
   payload_length: number;
   timestamp: string;
   status_code?: number;
@@ -59,9 +72,27 @@ export interface RawRecordedCall extends RecordedCallBase {
 export interface DigestRecordedCall extends RecordedCallBase {
   attestation_mode: 'digest';
   payload?: never;
+  /**
+   * Lowercase hex SHA-256 of the post-redaction payload bytes. JSON object
+   * and array payloads use RFC 8785 JCS canonicalization before hashing.
+   * JSON strings are parsed and canonicalized when they contain valid JSON;
+   * malformed JSON strings and non-JSON payloads use the post-redaction
+   * emitted body bytes. Unsupported JSON values cannot produce a canonical
+   * digest. Malformed JSON strings are treated as one opaque string for
+   * identifier proof scanning, so substring identifiers inside invalid JSON
+   * are not discoverable. String-only identifier proofs are deliberately low
+   * entropy when adopters use short or guessable synthetic values; do not run
+   * digest-mode attestations over production identifiers.
+   */
   payload_digest_sha256: string;
   identifier_match_proofs?: Array<{
+    /** Lowercase hex SHA-256 of a runner-supplied string identifier value. */
     identifier_value_sha256: string;
+    /**
+     * True when the digest matched a string leaf in the redacted JSON
+     * payload. Non-string identifier vectors cannot be proven in digest
+     * mode and should grade not_applicable rather than missing.
+     */
     found: boolean;
   }>;
 }
@@ -71,8 +102,11 @@ export type RecordedCall = RawRecordedCall | DigestRecordedCall;
 /**
  * Optional classifier callback. Invoked at recording time on each call so
  * the recorder can stamp a `purpose` tag without the adopter wiring it
- * through their HTTP layer manually. Returning `undefined` leaves the
- * `purpose` field unset on the resulting `RecordedCall`.
+ * through their HTTP layer manually. Return one of
+ * `platform_primary`, `measurement`, `attribution`, `creative_serving`,
+ * `identity`, or `other`. Returning `undefined` leaves the `purpose` field
+ * unset; returning any other string omits `purpose` and emits
+ * `classifier_invalid_purpose` through `onError`.
  */
 export type PurposeClassifier = (input: {
   method: string;
@@ -148,10 +182,11 @@ export interface UpstreamRecorderOptions {
   /**
    * Optional observability hook. Invoked when the recorder swallows an
    * error that would otherwise be invisible (purpose classifier throw,
-   * URL parse failure, payload-build throw on a hostile getter, record
-   * outside scope when `strict: false`). Adopters wire this to their
-   * logger so silent failures surface in dev sessions. Throwing inside
-   * `onError` is itself swallowed — the hook MUST NOT crash the recorder.
+   * invalid purpose tag, URL parse failure, malformed JSON diagnostic path,
+   * payload-build throw on a hostile getter, record outside scope when
+   * `strict: false`). Adopters wire this to their logger so silent failures
+   * surface in dev sessions. Throwing inside `onError` is itself swallowed —
+   * the hook MUST NOT crash the recorder.
    */
   onError?: (event: UpstreamRecorderErrorEvent) => void;
 }
@@ -162,8 +197,11 @@ export interface UpstreamRecorderOptions {
  */
 export type UpstreamRecorderErrorEvent =
   | { kind: 'classifier_threw'; err: unknown }
+  | { kind: 'classifier_invalid_purpose'; purpose: string }
   | { kind: 'url_parse_failed'; url: string }
   | { kind: 'payload_build_failed'; err: unknown }
+  | { kind: 'digest_canonicalization_failed'; method: string; endpoint: string; err: unknown }
+  | { kind: 'json_payload_parse_failed'; content_type: string; err: unknown }
   | { kind: 'unscoped_record'; method: string; url: string };
 
 /**
@@ -216,7 +254,10 @@ export interface UpstreamRecorderQueryParams {
   /**
    * Requested attestation mode for returned calls. `raw` (default) returns
    * the redacted payload; `digest` returns `payload_digest_sha256` plus
-   * optional identifier echo proofs.
+   * optional identifier echo proofs. Digest projection canonicalizes JSON
+   * payloads before hashing; when a matched JSON payload cannot be
+   * canonicalized, `query()` omits that entry and emits
+   * `digest_canonicalization_failed` through `onError`.
    */
   attestationMode?: 'raw' | 'digest';
   /**
@@ -238,7 +279,9 @@ export interface UpstreamRecorderQueryResult {
   items: RecordedCall[];
   /**
    * Total count BEFORE `limit` truncation. `items.length` may be smaller
-   * when limit clipped the result.
+   * when limit clipped the result. Digest-mode entries dropped by
+   * canonicalization failure are excluded from this count and reported in
+   * `dropped_count` instead.
    */
   total: number;
   /** True when `total > items.length`. */
@@ -246,10 +289,23 @@ export interface UpstreamRecorderQueryResult {
   /**
    * Echo of the requested `sinceTimestamp` (or the recorder-substituted
    * default — the earliest record retained in the buffer when no
-   * `sinceTimestamp` was passed). Lets the runner verify the controller
-   * honored the bound.
+   * `sinceTimestamp` was passed; disabled no-op recorders use the Unix
+   * epoch). Lets the runner verify the controller honored the bound.
    */
   since_timestamp: string;
+  /**
+   * Number of matched entries omitted from returned items after digest
+   * projection failed; `digest_canonicalization_failed` is surfaced through
+   * `onError` when that hook is configured. Only relevant when
+   * `attestationMode: 'digest'` was requested; always `0` in raw mode. A
+   * non-zero value means matched traffic existed but could not be attested
+   * — the runner's
+   * `upstream_traffic` check may grade it `missing` rather than `present`.
+   * Not projected onto the current wire response (the spec's
+   * `UpstreamTrafficSuccess` does not yet define this field); wire
+   * projection will be added when the schema adopts it.
+   */
+  dropped_count: number;
 }
 
 /**
@@ -322,7 +378,9 @@ export interface UpstreamRecorder {
    * Return recorded calls scoped to the requesting principal, filtered by
    * `sinceTimestamp` and `endpointPattern`, and truncated to `limit`.
    * Adopters typically pass the result verbatim into their
-   * `comply_test_controller`'s `query_upstream_traffic` response.
+   * `comply_test_controller`'s `query_upstream_traffic` response. In
+   * digest mode, entries that cannot be canonicalized for
+   * `payload_digest_sha256` are omitted and surfaced through `onError`.
    */
   query(params: UpstreamRecorderQueryParams): UpstreamRecorderQueryResult;
   /**

@@ -156,7 +156,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
   // forcing function so a future refactor can't silently weaken the contract by
   // emitting a different note for one mode.
   const NON_JSON_NA_NOTE =
-    'payload_must_contain paths only matched non-raw or non-JSON content_types — graded not_applicable';
+    'payload_must_contain paths could not be fully inspected in raw JSON attestations — graded not_applicable';
 
   function makeCall(overrides = {}) {
     return {
@@ -523,6 +523,129 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     assert.equal(result.note, NON_JSON_NA_NOTE);
   });
 
+  test('mixed raw/digest payload assertions fail when raw JSON calls are inspectable misses', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 2,
+      recorded_calls: [
+        makeCall({ payload: { users: [{ external_id: 'not-the-path' }] } }),
+        makeCall({
+          attestation_mode: 'digest',
+          payload: undefined,
+          payload_digest_sha256: 'a'.repeat(64),
+          payload_length: 12,
+        }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'raw JSON miss remains actionable beside a digest call',
+          payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
+    assert.deepEqual(result.actual.missing_payload_paths, ['users[*].hashed_email']);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, []);
+    assert.equal(result.json_pointer, '/recorded_calls/0/payload');
+  });
+
+  test('multi-clause mixed raw/digest payload assertions fail when one raw JSON clause misses', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 2,
+      recorded_calls: [
+        makeCall({ payload: { users: [{ external_id: 'resolved-brand' }] } }),
+        makeCall({
+          attestation_mode: 'digest',
+          payload: undefined,
+          payload_digest_sha256: 'a'.repeat(64),
+          payload_length: 12,
+        }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'one required path is visible, another misses in raw JSON',
+          payload_must_contain: [
+            { path: 'users[*].external_id', match: 'present' },
+            { path: 'users[*].hashed_email', match: 'present' },
+          ],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.equal(result.not_applicable, undefined);
+    assert.deepEqual(result.actual.missing_payload_paths, ['users[*].hashed_email']);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, []);
+    assert.equal(result.json_pointer, '/recorded_calls/0/payload');
+  });
+
+  test('digest-only payload assertions still grade not_applicable', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 1,
+      recorded_calls: [
+        makeCall({
+          attestation_mode: 'digest',
+          payload: undefined,
+          payload_digest_sha256: 'a'.repeat(64),
+          payload_length: 12,
+        }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'digest-only payload evidence is inconclusive',
+          payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.deepEqual(result.actual.missing_payload_paths, []);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, ['users[*].hashed_email']);
+    assert.equal(result.json_pointer, null);
+  });
+
+  test('mixed raw JSON and raw non-JSON payload assertions fail when JSON calls are inspectable misses', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 2,
+      recorded_calls: [
+        makeCall({
+          content_type: 'application/x-www-form-urlencoded',
+          payload: 'hashed_email=not-portable',
+        }),
+        makeCall({ payload: { users: [{ external_id: 'not-the-path' }] } }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'raw JSON miss is still actionable',
+          payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, false);
+    assert.deepEqual(result.actual.missing_payload_paths, ['users[*].hashed_email']);
+    assert.deepEqual(result.actual.not_applicable_payload_paths, []);
+    assert.equal(result.json_pointer, '/recorded_calls/1/payload');
+  });
+
   test('identifier_paths fails when storyboard vector is not echoed', () => {
     const ctx = ctxWithTraffic(
       {
@@ -587,6 +710,81 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       ctx
     );
     assert.equal(result.passed, true);
+  });
+
+  test('identifier_paths non-string vectors grade not_applicable in digest mode', () => {
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [
+          makeCall({
+            attestation_mode: 'digest',
+            payload: undefined,
+            payload_digest_sha256: 'a'.repeat(64),
+            payload_length: 12,
+            identifier_match_proofs: [],
+          }),
+        ],
+      },
+      {
+        storyboardStep: {
+          sample_request: { audiences: [{ add: [{ ids: [12345] }] }] },
+        },
+      }
+    );
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'numeric identifiers cannot be proven with string digests',
+          identifier_paths: ['audiences[*].add[*].ids[*]'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.deepEqual(result.actual.not_applicable_identifier_values, [12345]);
+    assert.deepEqual(result.actual.missing_identifier_values, []);
+  });
+
+  test('identifier_paths overflow beyond digest cap grades not_applicable with a runner notice', () => {
+    const vector = 'vec-over-cap';
+    const ctx = ctxWithTraffic(
+      {
+        success: true,
+        total_count: 1,
+        recorded_calls: [
+          makeCall({
+            attestation_mode: 'digest',
+            payload: undefined,
+            payload_digest_sha256: 'a'.repeat(64),
+            payload_length: 12,
+            identifier_match_proofs: [],
+          }),
+        ],
+      },
+      {
+        identifierDigestByValue: new Map(),
+        storyboardStep: { sample_request: { audience: { hashed_email: vector } } },
+      }
+    );
+    ctx.upstreamTraffic.identifierDigestLimitExceeded = { limit: 64, clipped: 1 };
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'overflow digest vector is inconclusive',
+          identifier_paths: ['audience.hashed_email'],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.match(result.note, /recorder buffer capped at 64 unique digests/);
+    assert.deepEqual(result.actual.identifier_digest_limit_exceeded, { limit: 64, clipped: 1 });
   });
 
   test('identifier_paths uses the resolved request payload before raw storyboard placeholders', () => {
