@@ -31,7 +31,14 @@ import type {
 import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
 import { isJsonContentType } from '../test-controller';
 import { globToRegExp } from '../../utils/glob';
-import { resolvePath, resolvePathAll, toJsonPointer } from './path';
+import {
+  resolvePath,
+  resolvePathAll,
+  resolvePortableIdentifierPathAll,
+  toJsonPointer,
+  validatePortableIdentifierPath,
+  type PortableIdentifierPathIssue,
+} from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 
@@ -2620,6 +2627,29 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
  */
 function validateUpstreamTraffic(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   const expected = buildUpstreamTrafficExpected(validation);
+  const invalidIdentifierPaths = collectInvalidIdentifierPaths(validation.identifier_paths);
+  if (invalidIdentifierPaths.length > 0) {
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error:
+        'storyboard authoring error: invalid upstream_traffic.identifier_paths: ' +
+        invalidIdentifierPaths.map(issue => `${issue.path} (${issue.reason})`).join('; '),
+      json_pointer: null,
+      expected,
+      actual: {
+        matched_count: 0,
+        total_calls: 0,
+        missing_payload_paths: [],
+        missing_identifier_values: [],
+        invalid_identifier_paths: invalidIdentifierPaths,
+      },
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
   const upstream = ctx.upstreamTraffic;
   // Adopter opted out (or controller wasn't detected): grade not_applicable.
   // missing_test_controller controller-side, not failed — opt-in by adopter
@@ -2750,7 +2780,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
         ? (requestPayload as Record<string, unknown>)
         : ctx.storyboardStep?.sample_request;
     for (const path of validation.identifier_paths) {
-      const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
+      const vectors = sample !== undefined ? resolvePortableIdentifierPathAll(sample, path) : [];
       for (const vector of vectors) {
         if (vector === undefined || vector === null) continue;
         const digest = typeof vector === 'string' ? upstream.identifierDigestByValue?.get(vector) : undefined;
@@ -2876,6 +2906,15 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     request: query.request,
     response: query.response,
   };
+}
+
+function collectInvalidIdentifierPaths(paths: string[] | undefined): PortableIdentifierPathIssue[] {
+  const invalid: PortableIdentifierPathIssue[] = [];
+  for (const path of paths ?? []) {
+    const reason = validatePortableIdentifierPath(path);
+    if (reason) invalid.push({ path, reason });
+  }
+  return invalid;
 }
 
 /**
