@@ -1,0 +1,4 @@
+# Intentionally minimal test-kit override for the creative_template storyboard.
+# The optional audio_build phase only needs this flag; the rest of the Acme
+# Outdoor defaults come from the storyboard sample request and bundled fixtures.
+supports_audio_formats: true

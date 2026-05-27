@@ -76,21 +76,7 @@ Audio templates (TTS / mix / master, e.g. AudioStack / ElevenLabs / Resemble) fo
    The `audioAsset` builder injects the `asset_type: 'audio'` discriminator the creative-manifest oneOf requires.
 4. Seed an audio template in your upstream platform — see `tpl_audiostack_spot_30s_v1` in `src/lib/mock-server/creative-template/seed-data.ts` for the worked reference.
 
-**Storyboard coverage for audio is not yet upstream** — the `creative_template/build_creative` step asserts display-shaped assets, tracked at [adcontextprotocol/adcp#4015](https://github.com/adcontextprotocol/adcp/issues/4015). Until that ships, audio adopters validate via `npm run compliance:fork-matrix -- --test-name-pattern="hello-creative-adapter-template"` (display + video gate inherited) plus a manual round-trip against the seeded audio template:
-
-```bash
-npx adcp mock-server creative-template --port 4250
-# In another shell:
-curl -X POST http://127.0.0.1:4250/v3/workspaces/ws_acme_studio/renders \
-  -H 'Authorization: Bearer mock_creative_template_key_do_not_use_in_prod' \
-  -H 'Content-Type: application/json' \
-  -d '{"template_id":"tpl_audiostack_spot_30s_v1","mode":"build","inputs":[{"slot_id":"script","value":"Built for the trail."}],"client_request_id":"smoke-1"}'
-# → { "render_id": "rnd_…", "status": "queued" }
-# Poll twice (queued → running → complete):
-curl -H 'Authorization: Bearer mock_creative_template_key_do_not_use_in_prod' \
-  http://127.0.0.1:4250/v3/workspaces/ws_acme_studio/renders/rnd_…
-# Final: { ..., "status": "complete", "output": { "audio_url": "….mp3", "preview_url": "...", "assets": [{ "kind": "audio_url", "mime_type": "audio/mpeg" }] } }
-```
+The `creative_template` storyboard includes an optional `audio_build` phase. Enable it with a test kit that sets `supports_audio_formats: true` once your `list_creative_formats` response declares an audio format; the hello adapter CI gate asserts both the discovered audio format and the seeded AudioStack-style build output.
 
 ### `creative-generative`
 
