@@ -69,6 +69,24 @@ describe('bridgeFromSessionStore', () => {
     assert.deepEqual(loadCalls[1], { tenant: 'B' });
   });
 
+  it('passes the resolved bridge context to loadSession', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: (_input, ctx) => ({
+        seeds: new Map([[ctx.account.ctx_metadata.bridge_session_id, { name: 'Resolved-account product' }]]),
+      }),
+      selectSeededProducts: session => session.seeds,
+    });
+
+    const products = await bridge.getSeededProducts({
+      input: { account: { account_id: 'buyer-supplied' } },
+      account: { ctx_metadata: { bridge_session_id: 'resolved-session' } },
+    });
+
+    assert.equal(products.length, 1);
+    assert.equal(products[0].product_id, 'resolved-session');
+    assert.equal(products[0].name, 'Resolved-account product');
+  });
+
   it('accepts an async loadSession', async () => {
     const bridge = bridgeFromSessionStore({
       loadSession: async () => ({ seeds: new Map([['p1', { name: 'Async product' }]]) }),

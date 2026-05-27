@@ -5,17 +5,18 @@ description: Use when building an AdCP seller agent — a publisher, SSP, or ret
 
 # Build a Seller Agent
 
-A seller agent receives briefs from buyers, returns products, accepts media buys, manages creatives, and reports delivery. The fastest path to a passing agent is to **fork a worked adapter** and replace its `// SWAP:` markers with calls to your backend. Each `// SWAP:` comment marks one line you change to your platform's backend call — change only those lines, run the gate, ship. ([`examples/CONTRIBUTING.md`](../../examples/CONTRIBUTING.md) covers the SWAP-marker convention in detail.) This skill tells you which adapter to fork and what cross-cutting rules apply across all of them.
+A seller agent receives briefs from buyers, returns products, accepts media buys, manages creatives, and reports delivery. The fastest path to a passing agent is to **fork a worked adapter** and replace its `// SWAP:` markers with calls to your backend. Each `// SWAP:` comment marks one line you change to your platform's backend call — change only those lines, run the gate, ship. ([`examples/CONTRIBUTING.md`](../../examples/CONTRIBUTING.md) covers the SWAP-marker convention in detail.) Proxy-shaped sellers use the lighter `proxy-seller-snap/` bridge-pattern fork target plus a live-OAuth sandbox runner. This skill tells you which adapter to fork and what cross-cutting rules apply across all of them.
 
 ## Pick your fork target
 
-Each of these is a worked, currently-running, three-gate-tested reference adapter. Fork it, swap the upstream, ship.
+Each `hello_*_adapter_*` entry is a worked, currently-running, three-gate-tested reference adapter. `proxy-seller-snap/` is a bridge-pattern fork target for the seed-read problem; pair it with your own live-OAuth sandbox gate before production.
 
 | Specialism              | Fork this                                                                                         | Mock upstream                               | Storyboard             |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------- | ---------------------- |
 | `sales-guaranteed`      | [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts)         | `npx adcp mock-server sales-guaranteed`     | `sales_guaranteed`     |
 | `sales-non-guaranteed`  | [`hello_seller_adapter_non_guaranteed.ts`](../../examples/hello_seller_adapter_non_guaranteed.ts) | `npx adcp mock-server sales-non-guaranteed` | `sales_non_guaranteed` |
 | `sales-social`          | [`hello_seller_adapter_social.ts`](../../examples/hello_seller_adapter_social.ts)                 | `npx adcp mock-server sales-social`         | `sales_social`         |
+| Proxy-shaped seller     | [`proxy-seller-snap/`](../../examples/proxy-seller-snap/)                                        | upstream sandbox / OAuth                    | bridge + live run      |
 | Multi-tenant holdco hub | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts)     | composed                                    | per specialism         |
 
 The other sales-\* specialisms reuse one of the primary fork targets and apply specialism deltas:
@@ -92,6 +93,8 @@ To pass storyboards, you need the runner's `comply_test_controller.seed_product`
 - **Handler reads from a store you control** (most SSPs, most creative agents — `audience-sync` adopters with a local audience cache, `creative-template` adopters with a local format registry). Point `comply_test_controller` at the same store. Seed writes to your DB, handler reads from your DB, loop closes naturally. **No bridge needed** — if seeds DO appear in responses but your `tsc` / type-check fails on seed-merge wiring, you wired it unnecessarily; remove it.
 
 - **Handler reads from a system you don't control** (DSPs proxying to Meta/Snap/TikTok, retail-media networks reading retailer catalog APIs, signals agents brokering third-party data marketplaces, walled-garden brokers). A seeded write to your local store is dead — your handler never sees it; if `comply_test_controller` seeds never appear in your responses, that's the symptom. **Wire the `TestControllerBridge`** ([`docs/guides/VALIDATE-YOUR-AGENT.md` § "Platform-proxy sellers"](../../docs/guides/VALIDATE-YOUR-AGENT.md#platform-proxy-sellers-state-of-record-lives-upstream)). The real handler still runs first (so a broken upstream call still fails the conformance gate), and the SDK merges seeded fixtures into the response after.
+
+  Start from [`examples/proxy-seller-snap/`](../../examples/proxy-seller-snap/) for the concrete fork shape: `TestControllerBridge<TAccount>`, `bridgeFromSessionStore`, resolved-account session keying, `getSeededProducts`, `getSeededCreatives`, and governance list selectors. Keep `resolveAccount` as the production trust boundary and pair bridge-green storyboards with a live-OAuth sandbox run; bridge passes prove wire conformance, not upstream adapter health.
 
 Either path earns the **wire-conformance** half of compliance — your storyboards pass, you speak AdCP correctly. The **live-integration** half requires marker-free passes against a real test surface (sandbox credentials with real upstream traffic), independent of whether the bridge is wired. The `_bridge` marker the SDK stamps on bridge-merged responses tracks which steps in a storyboard run used fixtures vs real upstream.
 
