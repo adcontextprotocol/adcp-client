@@ -243,7 +243,8 @@ import {
   InvalidRequestError, // generic field-level bad input
   InvalidStateError, // illegal transition (paused → archived violations)
   BackwardsTimeRangeError, // start_time >= end_time
-  AuthRequiredError, // need auth, then retry
+  AuthMissingError, // no Authorization header was presented
+  AuthInvalidError, // credentials were presented but rejected
   PermissionDeniedError, // auth present, lacks scope
   RateLimitedError, // throttled (clamps retry_after to [1, 3600])
   UnsupportedFeatureError, // tool unimplemented
@@ -252,6 +253,10 @@ import {
   PolicyViolationError, // categorical content rejection
 } from '@adcp/sdk/server';
 ```
+
+`AuthRequiredError` still exists for older code and emits legacy `AUTH_REQUIRED`;
+new seller code should use `AuthMissingError` / `AuthInvalidError` so buyers can
+distinguish missing credentials from rejected credentials.
 
 Each class encodes the right `code` / `recovery` / `field` shape. **Don't throw generic `Error`** — the framework catches that and maps to `SERVICE_UNAVAILABLE`, which the buyer can't pattern-match.
 

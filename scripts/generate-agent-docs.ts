@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import path from 'path';
+import { applySdkErrorCodeProseOverlay } from './lib/error-code-prose-overlays';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -327,7 +328,7 @@ function parseErrorCodes(): ErrorCodeEntry[] {
   return Object.entries(codes)
     .map(([code, info]) => ({
       code,
-      description: info?.description ?? '',
+      description: applySdkErrorCodeProseOverlay(code, info?.description ?? ''),
       recovery: (info?.recovery as ErrorCodeEntry['recovery']) ?? 'transient',
     }))
     .sort((a, b) => a.code.localeCompare(b.code));
@@ -516,6 +517,9 @@ function generateLlmsTxt(
   ln(
     `> Note: the \`Library\` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.`
   );
+  ln(
+    `> Note: generated error-code prose may include explicit SDK compatibility overlays applied by \`scripts/lib/error-code-prose-overlays.ts\` when bundled beta manifest wording lags SDK behavior.`
+  );
   ln();
   ln(`## What is AdCP`);
   ln();
@@ -573,7 +577,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthRequiredError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. Each maps to its wire error code with \`recovery\` baked in. Throw from any platform method or \`accounts.resolve\`.`
+    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthMissingError\`, \`AuthInvalidError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. \`AuthRequiredError\` remains as a deprecated \`AUTH_REQUIRED\` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with \`recovery\` baked in. Throw from platform methods. In \`accounts.resolve\`, use auth errors only for inbound authentication failures; missing sync linkage or unknown account references should stay \`ACCOUNT_NOT_FOUND\` / \`null\`.`
   );
   ln();
   ln(
@@ -581,7 +585,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` for tools that send no \`account\` field on the wire (\`list_creative_formats\`, \`preview_creative\`, \`provide_performance_feedback\`) — set it to return a synthetic publisher-wide entry instead of \`null\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, single-tenant agents where there is no \`account_id\` on the wire and the auth principal alone identifies the tenant (audiostack, flashtalking, single-namespace retail-media). Provide \`toAccount(ctx)\`; the factory throws \`AUTH_REQUIRED\` on missing-credential calls and ignores buyer-supplied \`account_id\` (single-tenant by definition). All four live at \`@adcp/sdk/server\`.`
+    `**Four reference \`AccountStore\` shapes.** Pick the one whose onboarding model matches yours. **Shape A — \`InMemoryImplicitAccountStore\`**: \`resolution: 'implicit'\`, buyer-driven \`sync_accounts\` populates the auth-principal → accounts map. **Shape B — \`createOAuthPassthroughResolver\`**: \`resolution: 'explicit'\`, returns just the \`resolve\` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — \`extract bearer → GET /me/adaccounts → match by id\`). **Shape C — \`createRosterAccountStore\`**: \`resolution: 'explicit'\`, returns a complete \`AccountStore\` for adopters who own the roster (storefront table, admin-UI-managed JSON). Supports \`resolveWithoutRef\` for tools that send no \`account\` field on the wire (\`list_creative_formats\`, \`preview_creative\`, \`provide_performance_feedback\`) — set it to return a synthetic publisher-wide entry instead of \`null\`. **Shape D — \`createDerivedAccountStore\`**: \`resolution: 'derived'\`, single-tenant agents where there is no \`account_id\` on the wire and the auth principal alone identifies the tenant (audiostack, flashtalking, single-namespace retail-media). Provide \`toAccount(ctx)\`; the factory still emits legacy-compatible \`AUTH_REQUIRED\` on missing-credential calls and ignores buyer-supplied \`account_id\` (single-tenant by definition). Buyer code must continue to handle \`AUTH_REQUIRED\` alongside \`AUTH_MISSING\` / \`AUTH_INVALID\`. All four live at \`@adcp/sdk/server\`.`
   );
   ln();
   ln(
@@ -1021,7 +1025,7 @@ function generateLlmsTxt(
   ln(`|------|---------|`);
   ln(`| \`AgentConfig\` | Agent connection config (uri, protocol, auth) |`);
   ln(
-    `| \`TaskResult<T>\` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted) |`
+    `| \`TaskResult<T>\` | Return type of every tool call (status + data/error/adcpError/correlationId/deferred/submitted; metadata includes seller-served \`adcpVersion\`) |`
   );
   ln(`| \`InputHandler\` | Callback for agent clarification requests |`);
   ln(`| \`ConversationContext\` | Passed to InputHandler with messages, question, helpers |`);
@@ -1170,6 +1174,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`    responseTimeMs: number;`);
   ln(`    timestamp: string;`);
   ln(`    clarificationRounds: number;`);
+  ln(`    adcpVersion?: string;        // Seller-served release-precision response adcp_version`);
   ln(`  };`);
   ln(`  conversation?: Message[];`);
   ln(`}`);

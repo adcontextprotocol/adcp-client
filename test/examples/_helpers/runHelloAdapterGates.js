@@ -35,13 +35,14 @@ const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
  * @property {Parameters<typeof bootMockServer>[0]} [mockOptions] — extra mock-server boot opts
  * @property {(grader: any) => any[]} [filterFailures] — narrow the failures list (default: all)
  * @property {string} [storyboardSummary]     — optional storyboard description for the test name
- * @property {Array<{id: string, label?: string, auth?: string, testKitPath?: string}>} [extraStoryboards]
+ * @property {Array<{id: string, label?: string, auth?: string, testKitPath?: string, assertResult?: (grader: any) => void}>} [extraStoryboards]
  *           — additional storyboards run against the same agent process after the
  *             primary storyboard. Each entry runs as its own `it()` gate with
  *             default-strict failure assertion. `auth` overrides the bearer
  *             passed to the grader; `testKitPath` is forwarded to the grader as
  *             `--test-kit PATH` so storyboard steps with `auth.from_test_kit: true`
- *             or `$test_kit.<path>` references resolve.
+ *             or `$test_kit.<path>` references resolve. `assertResult` runs after
+ *             the zero-failure check for adapter-specific observations.
  * @property {Array<{label: string, run: (ctx: {agentUrl: string, mockUrl: string, authToken: string, callTool: (toolName: string, args: Record<string, unknown>, auth?: string) => Promise<any>}) => Promise<void>}>} [extraMcpAssertions]
  *           — direct MCP assertions that run against the already-booted
  *             example and mock server. Use for adapter-specific invariants
@@ -179,6 +180,7 @@ function runHelloAdapterGates(config) {
           `storyboard ${extra.id} reported ${failures.length} failed step(s):\n` + formatFailures(failures)
         );
         assert.notEqual(grader.overall_status, 'failing');
+        if (extra.assertResult) extra.assertResult(grader);
       });
     }
 

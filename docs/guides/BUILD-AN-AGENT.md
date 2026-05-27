@@ -264,16 +264,16 @@ Pick based on the caller: `extractResult` when you just want the payload and can
 
 Three shapes round-trip as errors:
 
-- **Typed error class — preferred for v6.** `throw new AuthRequiredError()`, `throw new PermissionDeniedError('action')`, `throw new RateLimitedError(retryAfterSeconds)`, `throw new ServiceUnavailableError()`, `throw new IdempotencyConflictError()`, `throw new BudgetTooLowError()`, plus the not-found family (`AccountNotFoundError`, `MediaBuyNotFoundError`, `PackageNotFoundError`, `ProductNotFoundError`, `CreativeNotFoundError`) and the governance family (`GovernanceDeniedError`, `PolicyViolationError`, `ComplianceUnsatisfiedError`). Each maps to its wire error code with `recovery` baked in. Throw from any platform method or `accounts.resolve`. Imports come from `@adcp/sdk/server`.
+- **Typed error class — preferred for v6.** `throw new AuthMissingError()`, `throw new AuthInvalidError()`, `throw new PermissionDeniedError('action')`, `throw new RateLimitedError(retryAfterSeconds)`, `throw new ServiceUnavailableError()`, `throw new IdempotencyConflictError()`, `throw new BudgetTooLowError()`, plus the not-found family (`AccountNotFoundError`, `MediaBuyNotFoundError`, `PackageNotFoundError`, `ProductNotFoundError`, `CreativeNotFoundError`) and the governance family (`GovernanceDeniedError`, `PolicyViolationError`, `ComplianceUnsatisfiedError`). `AuthRequiredError` remains as a deprecated `AUTH_REQUIRED` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with `recovery` baked in. Throw from any platform method or `accounts.resolve`. Imports come from `@adcp/sdk/server`.
 - **Spec-defined tool failure** — return the tool's `*Error` arm directly: `return { errors: [{ code: 'PRODUCT_NOT_FOUND', message: 'no such product' }] }`. The dispatcher detects the Error arm by shape, sets `isError: true`, and preserves the `errors[]` / `context` / `ext` fields on `structuredContent`. Use this when the AdCP spec defines a per-tool error variant for the condition you're surfacing.
 - **`AdcpError(code, opts)` raw escape hatch** — for codes without a typed wrapper, or for codes you want to inject custom `details` into. The typed classes are sugar over this.
 
 ```typescript
 // Typed (preferred)
-import { AuthRequiredError, PermissionDeniedError, RateLimitedError } from '@adcp/sdk/server';
+import { AuthMissingError, PermissionDeniedError, RateLimitedError } from '@adcp/sdk/server';
 
 createMediaBuy: async (req, ctx) => {
-  if (!ctx.account.authInfo) throw new AuthRequiredError();
+  if (!ctx.authInfo?.credential && !ctx.account.authInfo) throw new AuthMissingError();
   if (!agentCanCreate(ctx.agent, ctx.account.id)) throw new PermissionDeniedError('create_media_buy');
   if (rateLimitHit(ctx.account.id)) throw new RateLimitedError(60);
   /* ... */
@@ -593,7 +593,7 @@ If you need manual control (e.g., with `createTaskCapableServer`), builders are 
 
 ```typescript
 import { productsResponse, mediaBuyResponse, deliveryResponse, taskToolResponse } from '@adcp/sdk';
-// For error envelopes, throw a typed error class — `AuthRequiredError`,
+// For error envelopes, throw a typed error class — `AuthMissingError`,
 // `PermissionDeniedError`, `RateLimitedError`, etc. — from `@adcp/sdk/server`.
 
 const response = productsResponse({ products, cache_scope: 'public' });
@@ -656,7 +656,7 @@ throw new PermissionDeniedError('account_access', { message: 'Contact support' }
 
 For codes without a typed wrapper, `throw new AdcpError('CUSTOM_CODE', { recovery, message })` is the raw escape hatch.
 
-> **Heads-up for buyer-agent authors**: four codes are spec-`correctable` but operator-semantically human-escalate — don't auto-mutate-and-retry on `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, or `AUTH_REQUIRED`. Surface to the user. (`AUTH_REQUIRED` conflates missing-creds with revoked-creds; until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits these, treat as escalate.) See `skills/call-adcp-agent/SKILL.md` for the full callout.
+> **Heads-up for buyer-agent authors**: five codes are spec-`correctable` but operator-semantically human-escalate — don't auto-mutate-and-retry on `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, `AUTH_REQUIRED`, or `AUTH_MISSING`. Surface to the user unless your agent owns a credential-refresh path. `AUTH_INVALID` is terminal by default because retrying revoked credentials creates an SSO retry storm.
 
 See `docs/llms.txt` for the full error code table with recovery classifications.
 
@@ -783,7 +783,7 @@ See [`examples/signals-agent.ts`](../../examples/signals-agent.ts) for a complet
 See [`examples/error-compliant-server.ts`](../../examples/error-compliant-server.ts) for a media buy agent demonstrating:
 
 - Multiple tools (`get_products`, `create_media_buy`, `get_media_buy_delivery`)
-- Structured error handling (throw the typed error classes from `@adcp/sdk/server` — `AuthRequiredError`, `RateLimitedError`, etc. — see § "Returning errors from handlers")
+- Structured error handling (throw the typed error classes from `@adcp/sdk/server` — `AuthMissingError`, `AuthInvalidError`, `RateLimitedError`, etc. — see § "Returning errors from handlers")
 - Rate limiting
 - Business logic validation
 

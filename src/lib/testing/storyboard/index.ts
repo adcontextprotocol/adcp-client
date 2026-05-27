@@ -25,6 +25,7 @@ export type {
   StepInvariantsObject,
   StoryboardPhase,
   StoryboardStep,
+  RateLimitTripSpec,
   StoryboardValidation,
   StoryboardValidationCheck,
   WebhookFilterSpec,
@@ -164,6 +165,22 @@ export { buildRequest, hasRequestBuilder } from './request-builder';
 
 // Validations
 export { runValidations } from './validations';
+export {
+  RateLimitTripObserver,
+  RATE_LIMIT_TRIP_CONTRACT,
+  RATE_LIMIT_TRIP_DEFAULT_REPLAY_MAX_WAIT_SECONDS,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MAX,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MIN,
+  extractTaskAdcpError,
+  validateRateLimitTripSpec,
+  type RateLimitTripFailureCode,
+  type RateLimitTripClient,
+  type RateLimitTripObservation,
+  type RateLimitTripObserverOptions,
+  type RateLimitTripResponseSnapshot,
+  type RateLimitTripStructuredResult,
+  type RateLimitTripTaskOptions,
+} from './rate-limit-trip';
 
 // `./junit` is deliberately NOT re-exported. The CLI requires it
 // directly from `dist/lib/testing/storyboard/junit.js` and the function

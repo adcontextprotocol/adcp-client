@@ -79,6 +79,7 @@ interface TaskResult<T> {
     clarificationRounds: number;
     status: TaskStatus;
     inputRequest?: InputRequest;  // Present when status === 'input-required'
+    adcpVersion?: string;         // Seller-served release-precision response adcp_version
   };
 }
 ```

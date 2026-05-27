@@ -15,6 +15,8 @@ const {
   InvalidRequestError,
   InvalidStateError,
   BackwardsTimeRangeError,
+  AuthMissingError,
+  AuthInvalidError,
   AuthRequiredError,
   PermissionDeniedError,
   RateLimitedError,
@@ -127,7 +129,19 @@ describe('Typed AdcpError subclasses — code + spec-correct recovery shape', ()
     assert.match(e.message, /before end_time/);
   });
 
-  it('AuthRequiredError', () => {
+  it('AuthMissingError', () => {
+    const e = new AuthMissingError();
+    assert.equal(e.code, 'AUTH_MISSING');
+    assert.equal(e.recovery, 'correctable');
+  });
+
+  it('AuthInvalidError', () => {
+    const e = new AuthInvalidError();
+    assert.equal(e.code, 'AUTH_INVALID');
+    assert.equal(e.recovery, 'terminal');
+  });
+
+  it('AuthRequiredError remains a deprecated AUTH_REQUIRED compatibility wrapper', () => {
     const e = new AuthRequiredError();
     assert.equal(e.code, 'AUTH_REQUIRED');
     assert.equal(e.recovery, 'correctable');
@@ -193,6 +207,8 @@ describe('Typed AdcpError subclasses — code + spec-correct recovery shape', ()
       new InvalidRequestError('f', 'm'),
       new InvalidStateError('f', 'm'),
       new BackwardsTimeRangeError(),
+      new AuthMissingError(),
+      new AuthInvalidError(),
       new AuthRequiredError(),
       new PermissionDeniedError('a'),
       new RateLimitedError(60),
@@ -239,6 +255,8 @@ describe('Typed AdcpError subclasses — code + spec-correct recovery shape', ()
       new InvalidRequestError('f', 'm'),
       new InvalidStateError('f', 'm'),
       new BackwardsTimeRangeError(),
+      new AuthMissingError(),
+      new AuthInvalidError(),
       new AuthRequiredError(),
       new PermissionDeniedError('a'),
       new RateLimitedError(60),

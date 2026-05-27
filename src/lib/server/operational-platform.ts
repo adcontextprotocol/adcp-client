@@ -129,8 +129,8 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
    *
    * @param args - Optional request args (storefront fan-out path)
    * @param sessionToken - Stored access token (poller path)
-   * @param requireAuth - Throw `AdcpError('AUTH_REQUIRED')` when no
-   *   token is available. Defaults to `true`.
+   * @param requireAuth - Throw `AuthMissingError` when no token is
+   *   available. Defaults to `true`.
    *
    * @remarks Post-migration the SDK will likely split this into
    * `synthesizeFromToken` / `synthesizeFromArgs` (see #1530 for the
@@ -236,8 +236,7 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
  *
  * @example
  * ```ts
- * import { defineOperationalPlatform } from '@adcp/sdk/server';
- * import { AdcpError } from '@adcp/sdk/server';
+ * import { AuthMissingError, defineOperationalPlatform, type OperationalContext } from '@adcp/sdk/server';
  *
  * interface SnapOpCtx extends OperationalContext {
  *   advertiserId: string;
@@ -246,12 +245,11 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
  * export const snapOperational = defineOperationalPlatform<SnapOpCtx>({
  *   platformId: 'snap',
  *   extractContext: async (args, sessionToken, requireAuth = true) => {
- *     const token = sessionToken ?? String(args.snap_access_token ?? '');
- *     if (!token && requireAuth) {
- *       throw new AdcpError('AUTH_REQUIRED', { message: 'No Snap token available' });
+ *     if (!sessionToken && requireAuth) {
+ *       throw new AuthMissingError({ message: 'No Snap token available' });
  *     }
  *     return {
- *       accessToken: token || undefined,
+ *       accessToken: sessionToken,
  *       advertiserId: String(args.advertiser_id ?? ''),
  *     };
  *   },

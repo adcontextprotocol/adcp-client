@@ -30,7 +30,12 @@ const { ProtocolResponseParser, ADCP_STATUS, TaskExecutor, ProtocolClient } = re
 
 const parser = new ProtocolResponseParser();
 
-function a2aWrappedSubmittedResponse({ adcpTaskId = 'tk_X', a2aTaskId = 'a2a-uuid', adcpStatus = 'submitted' } = {}) {
+function a2aWrappedSubmittedResponse({
+  adcpTaskId = 'tk_X',
+  a2aTaskId = 'a2a-uuid',
+  adcpStatus = 'submitted',
+  adcpVersion,
+} = {}) {
   return {
     jsonrpc: '2.0',
     id: 1,
@@ -48,7 +53,7 @@ function a2aWrappedSubmittedResponse({ adcpTaskId = 'tk_X', a2aTaskId = 'a2a-uui
           parts: [
             {
               kind: 'data',
-              data: { status: adcpStatus, task_id: adcpTaskId },
+              data: { status: adcpStatus, task_id: adcpTaskId, ...(adcpVersion && { adcp_version: adcpVersion }) },
             },
           ],
           metadata: { adcp_task_id: adcpTaskId },
@@ -279,6 +284,163 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
   });
 });
 
+describe('ProtocolResponseParser.getAdcpVersion', () => {
+  test('reads adcp_version from MCP structuredContent', () => {
+    assert.strictEqual(parser.getAdcpVersion({ structuredContent: { adcp_version: '3.1-beta.5' } }), '3.1-beta.5');
+  });
+
+  test('reads adcp_version from flat AdCP envelope', () => {
+    assert.strictEqual(parser.getAdcpVersion({ adcp_version: '3.0' }), '3.0');
+  });
+
+  test('reads adcp_version from A2A task DataPart', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpVersion: '3.1' });
+    assert.strictEqual(parser.getAdcpVersion(response), '3.1');
+  });
+
+  test('reads adcp_version from nested A2A task DataPart response wrapper', () => {
+    const response = a2aWrappedSubmittedResponse();
+    response.result.artifacts[0].parts[0].data = {
+      response: {
+        status: 'completed',
+        adcp_version: '3.1-beta.2',
+      },
+    };
+    assert.strictEqual(parser.getAdcpVersion(response), '3.1-beta.2');
+  });
+
+  test('reads adcp_version from latest A2A message DataPart', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        result: {
+          kind: 'message',
+          parts: [
+            {
+              kind: 'data',
+              data: { adcp_version: '3.0' },
+            },
+            {
+              kind: 'data',
+              data: { adcp_version: '3.1' },
+            },
+          ],
+        },
+      }),
+      '3.1'
+    );
+  });
+
+  test('reads adcp_version from MCP JSON text fallback', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        content: [{ type: 'text', text: JSON.stringify({ status: 'completed', adcp_version: '3.1-beta.5' }) }],
+      }),
+      '3.1-beta.5'
+    );
+  });
+
+  test('reads adcp_version from legacy tasks/get task wrapper', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        task: {
+          status: 'completed',
+          adcp_version: '3.1-beta.5',
+        },
+      }),
+      '3.1-beta.5'
+    );
+  });
+
+  test('reads adcp_version from nested legacy tasks/get task response wrapper', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        task: {
+          response: {
+            status: 'completed',
+            adcp_version: '3.1-beta.5',
+          },
+        },
+      }),
+      '3.1-beta.5'
+    );
+  });
+
+  test('ignores response.adcp_version when response is domain payload data', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        result: {
+          kind: 'task',
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    session_id: 'si_session_1',
+                    session_status: 'active',
+                    response: {
+                      text: 'Business payload, not an AdCP envelope',
+                      adcp_version: 'domain-data-not-envelope',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      undefined
+    );
+
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        result: {
+          kind: 'task',
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    session_id: 'si_session_2',
+                    session_status: 'active',
+                    response: {
+                      status: 'active',
+                      adcp_version: 'domain-status-not-envelope',
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      undefined
+    );
+  });
+
+  test('reads nested response.adcp_version when nested response is envelope-like', () => {
+    assert.strictEqual(
+      parser.getAdcpVersion({
+        task: {
+          response: {
+            status: 'completed',
+            errors: [],
+            adcp_version: '3.1-beta.5',
+          },
+        },
+      }),
+      '3.1-beta.5'
+    );
+  });
+
+  test('returns undefined when adcp_version is absent or non-string', () => {
+    assert.strictEqual(parser.getAdcpVersion({ structuredContent: { adcp_version: 3.1 } }), undefined);
+    assert.strictEqual(parser.getAdcpVersion({ content: [{ type: 'text', text: 'not json' }] }), undefined);
+    assert.strictEqual(parser.getAdcpVersion({}), undefined);
+  });
+});
+
 describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)', () => {
   const mockAgent = {
     id: 'test-a2a-seller',
@@ -337,5 +499,56 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.status, 'submitted');
     assert.strictEqual(result.submitted.taskId, 'tk_latest_text');
+  });
+
+  test('surfaces A2A DataPart adcp_version on result metadata', async () => {
+    ProtocolClient.callTool = mock.fn(async () =>
+      a2aWrappedCompletedArtifactData({
+        adcp_version: '3.1-beta.5',
+        media_buy_id: 'mb_a2a_version',
+        media_buy_status: 'pending_creatives',
+        packages: [],
+      })
+    );
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.metadata.adcpVersion, '3.1-beta.5');
+  });
+
+  test('A2A wrapped tasks/get adcp_version flows through submitted waitForCompletion metadata', async () => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get') {
+        return a2aWrappedCompletedArtifactData({
+          status: 'completed',
+          task_id: 'tk_poll_a2a',
+          task_type: 'create_media_buy',
+          adcp_version: '3.1-beta.5',
+          result: {
+            media_buy_id: 'mb_poll_a2a',
+            media_buy_status: 'pending_creatives',
+            packages: [],
+          },
+        });
+      }
+      return a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_poll_a2a' });
+    });
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const submitted = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+    const result = await submitted.submitted.waitForCompletion(10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.metadata.adcpVersion, '3.1-beta.5');
   });
 });

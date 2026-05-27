@@ -116,6 +116,12 @@ export interface ResolveSchemaRefsOptions {
    */
   maxBodyBytes?: number;
   /**
+   * Caller-scoped test/dev opt-in for loopback/private HTTP `$ref`
+   * fetches. Production callers should leave this false. IMDS/link-local
+   * metadata endpoints remain blocked by `ssrfSafeFetch`.
+   */
+  allowInternalReferences?: boolean;
+  /**
    * Optional custom fetcher for external `$ref` URIs. Defaults to a
    * built-in that uses `ssrfSafeFetch` with HTTPS-only + 1 MiB cap +
    * 5 s timeout. Callers can swap this for a digest-enforcing variant
@@ -276,6 +282,7 @@ function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unk
 
 interface ResolveContext {
   parentRoot: Record<string, unknown>;
+  currentUri: string;
   parentOrigin: NormalizedOrigin;
   /** Lowercased AAO mirror hosts that are accepted as `$ref` targets. */
   mirrorHosts: ReadonlySet<string>;
@@ -300,9 +307,10 @@ interface ResolveContext {
  */
 function makeDefaultFetcher(
   timeoutMs: number,
-  maxBodyBytes: number
+  maxBodyBytes: number,
+  allowInternalReferences: boolean
 ): (uri: string) => Promise<Record<string, unknown>> {
-  const allowHttp = isInternalProbesAllowed();
+  const allowHttp = allowInternalReferences || isInternalProbesAllowed();
   return async (uri: string) => {
     let res;
     try {
@@ -315,15 +323,17 @@ function makeDefaultFetcher(
       });
     } catch (err) {
       if (err instanceof SsrfRefusedError) {
+        const isTransient =
+          err.code === 'dns_lookup_failed' || err.code === 'dns_empty' || err.code === 'body_exceeds_limit';
         throw new SchemaRefSandboxError('fetch_failed', `\`$ref: ${uri}\` — SSRF guard refused: ${err.message}`, {
           ref: uri,
-          details: { ssrfCode: err.code },
+          details: { ssrfCode: err.code, transient: isTransient },
         });
       }
       throw new SchemaRefSandboxError(
         'fetch_failed',
         `\`$ref: ${uri}\` — ${err instanceof Error ? err.message : String(err)}`,
-        { ref: uri }
+        { ref: uri, details: { transient: true } }
       );
     }
     if (res.status >= 300 && res.status < 400) {
@@ -339,7 +349,7 @@ function makeDefaultFetcher(
     if (res.status < 200 || res.status >= 300) {
       throw new SchemaRefSandboxError('fetch_failed', `\`$ref: ${uri}\` — HTTP ${res.status}`, {
         ref: uri,
-        details: { httpStatus: res.status },
+        details: { httpStatus: res.status, transient: res.status >= 500 },
       });
     }
     let parsed: unknown;
@@ -362,9 +372,9 @@ function makeDefaultFetcher(
 /**
  * Validate that an external (non-`#/`) `$ref` target is in the
  * allowed set: same-origin as parent OR under the AAO mirror namespace.
- * Returns the normalized target origin on success; throws otherwise.
+ * Returns the absolute target URI on success; throws otherwise.
  */
-function assertRefAllowed(ref: string, ctx: ResolveContext): NormalizedOrigin {
+function assertRefAllowed(ref: string, ctx: ResolveContext): string {
   if (ref.toLowerCase().startsWith('file:')) {
     throw new SchemaRefSandboxError(
       'file_scheme_rejected',
@@ -374,18 +384,24 @@ function assertRefAllowed(ref: string, ctx: ResolveContext): NormalizedOrigin {
       }
     );
   }
-  const target = normalizeOrigin(ref);
+  let targetUri: string;
+  try {
+    targetUri = new URL(ref, ctx.currentUri).href;
+  } catch {
+    throw new SchemaRefSandboxError('invalid_ref', `\`$ref: ${ref}\` — could not parse as a URI`, { ref });
+  }
+  const target = normalizeOrigin(targetUri);
   if (!target) {
     throw new SchemaRefSandboxError('invalid_ref', `\`$ref: ${ref}\` — could not parse as a URI`, { ref });
   }
   // Same-origin?
   if (target.origin === ctx.parentOrigin.origin) {
-    return target;
+    return targetUri;
   }
   // AAO mirror namespace? Spec is `https://` only — `http://` mirror
   // refs are rejected even when the host matches.
-  if (ctx.mirrorHosts.has(target.hostname) && ref.toLowerCase().startsWith('https://')) {
-    return target;
+  if (ctx.mirrorHosts.has(target.hostname) && targetUri.toLowerCase().startsWith('https://')) {
+    return targetUri;
   }
   const mirrorList = [...ctx.mirrorHosts].join(', ');
   throw new SchemaRefSandboxError(
@@ -471,19 +487,32 @@ async function walk(node: unknown, depth: number, ctx: ResolveContext): Promise<
       // Parent digest is the trust anchor; same-origin / mirror refs
       // inherit trust. Callers wanting per-`$ref` digest verification
       // pass a custom `fetchExternal` that enforces it.
-      assertRefAllowed(ref, ctx);
+      const refUri = assertRefAllowed(ref, ctx);
       let body: Record<string, unknown>;
-      const cached = ctx.externalCache.get(ref);
+      const cached = ctx.externalCache.get(refUri);
       if (cached) {
         body = cached;
       } else {
-        body = await ctx.fetchExternal(ref);
-        ctx.externalCache.set(ref, body);
+        try {
+          body = await ctx.fetchExternal(refUri);
+        } catch (err) {
+          if (err instanceof SchemaRefSandboxError) throw err;
+          throw new SchemaRefSandboxError(
+            'fetch_failed',
+            `\`$ref: ${refUri}\` — ${err instanceof Error ? err.message : String(err)}`,
+            {
+              ref: refUri,
+              details: { transient: true },
+            }
+          );
+        }
+        ctx.externalCache.set(refUri, body);
       }
       // External fetch opens a new document layer. We treat each
       // external fetch as one depth step.
       const refCtx: ResolveContext = {
         ...ctx,
+        currentUri: refUri,
         // The fetched document becomes the parent for its own intra-doc
         // pointers. Same-origin checks for its own external $refs still
         // use the ORIGINAL parent origin (the trust root). Per spec the
@@ -542,8 +571,10 @@ export async function resolveSchemaRefs(
   }
   const timeoutMs = options.timeoutMs ?? 5_000;
   const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
+  const allowInternalReferences = options.allowInternalReferences === true;
   const ctx: ResolveContext = {
     parentRoot: schema,
+    currentUri: parentUri,
     parentOrigin,
     mirrorHosts: new Set(
       (options.mirrorHosts ?? (options.mirrorHost ? [options.mirrorHost] : DEFAULT_MIRROR_HOSTS)).map(h =>
@@ -552,7 +583,7 @@ export async function resolveSchemaRefs(
     ),
     maxDepth: options.maxDepth ?? DEFAULT_MAX_REF_DEPTH,
     maxRefCount: options.maxRefCount ?? DEFAULT_MAX_REF_COUNT,
-    fetchExternal: options.fetchExternal ?? makeDefaultFetcher(timeoutMs, maxBodyBytes),
+    fetchExternal: options.fetchExternal ?? makeDefaultFetcher(timeoutMs, maxBodyBytes, allowInternalReferences),
     externalCache: new Map(),
     count: { value: 0 },
     maxDepthSeen: { value: 0 },

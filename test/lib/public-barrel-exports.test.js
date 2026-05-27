@@ -26,6 +26,16 @@ import type {
   ListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
+import {
+  createCanonicalReferenceResolver,
+  type CanonicalRef,
+  type CanonicalReferenceResolutionResult,
+} from '@adcp/sdk/v2/format-schema';
+import {
+  AuthInvalidError,
+  AuthMissingError,
+  AuthRequiredError,
+} from '@adcp/sdk/server';
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
   RequireCacheScopeWhenProducts,
@@ -52,6 +62,18 @@ const serverSyncError: ServerSyncCreativesPayload = syncError;
 const acceptsListPayload = (_payload: ListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
+const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+
+const canonicalResolver = createCanonicalReferenceResolver();
+const canonicalRef: CanonicalRef = {
+  uri: 'https://creative.adcontextprotocol.org/schemas/example.json',
+  digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+};
+const acceptsCanonicalResult = (_result: CanonicalReferenceResolutionResult) => {};
+void canonicalResolver;
+void canonicalRef;
+void acceptsCanonicalResult;
+
 const scoped = ensureGetProductsCacheScope({ products: [], cache_scope: 'legacy' as string });
 const scope: 'public' | 'account' = scoped.cache_scope;
 
@@ -73,6 +95,7 @@ const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache
 void typedNative;
 void builtKind;
 void serverSyncError;
+void authErrors;
 void scope;
 void required;
 void generatedScope;
@@ -97,6 +120,7 @@ void generatedInjectedScope;
             '@adcp/sdk': ['dist/lib/index'],
             '@adcp/sdk/server': ['dist/lib/server/index'],
             '@adcp/sdk/types': ['dist/lib/types/index'],
+            '@adcp/sdk/v2/format-schema': ['dist/lib/v2/format-schema/index'],
           },
         },
         files: ['public-barrel-smoke.ts'],

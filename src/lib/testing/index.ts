@@ -91,6 +91,7 @@ export {
   type TestStepResult,
   type AgentProfile,
   type TaskResult,
+  type TestClient,
   type Logger,
 } from './agent-tester';
 
@@ -261,6 +262,13 @@ export {
   // Validations
   runValidations,
   resolvePath,
+  // Rate-limit trip/replay observer
+  RateLimitTripObserver,
+  RATE_LIMIT_TRIP_CONTRACT,
+  RATE_LIMIT_TRIP_DEFAULT_REPLAY_MAX_WAIT_SECONDS,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MAX,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MIN,
+  validateRateLimitTripSpec,
   // Sandbox entities
   getSandboxEntities,
   getSandboxBrands,
@@ -287,7 +295,15 @@ export {
   type StepInvariantsObject,
   type StoryboardPhase,
   type StoryboardStep,
+  type RateLimitTripSpec,
   type StoryboardValidation,
+  type RateLimitTripClient,
+  type RateLimitTripFailureCode,
+  type RateLimitTripObservation,
+  type RateLimitTripObserverOptions,
+  type RateLimitTripResponseSnapshot,
+  type RateLimitTripStructuredResult,
+  type RateLimitTripTaskOptions,
   type StoryboardContext,
   type StoryboardRunOptions,
   type ValidationResult,

@@ -257,6 +257,11 @@ interface DeferredTaskState {
   createdAt: number;
 }
 
+interface TaskStatusPollResult {
+  task: TaskInfo;
+  rawResponse: Record<string, unknown>;
+}
+
 /**
  * Core task execution engine that handles the conversation loop with agents
  */
@@ -420,6 +425,8 @@ export class TaskExecutor {
     if (args.response !== undefined) {
       const replayed = this.responseParser.getReplayed(args.response);
       if (replayed !== undefined) meta.replayed = replayed;
+      const adcpVersion = this.responseParser.getAdcpVersion(args.response);
+      if (adcpVersion) meta.adcpVersion = adcpVersion;
       const serverContextId = this.responseParser.getContextId(args.response);
       if (serverContextId) meta.contextId = serverContextId;
       const serverTaskId = this.responseParser.getTaskId(args.response);
@@ -1295,6 +1302,7 @@ export class TaskExecutor {
           startTime,
           status: 'deferred',
           clarificationRounds: 1,
+          response,
         }),
         conversation: messages,
         debug_logs: debugLogs,
@@ -1364,11 +1372,11 @@ export class TaskExecutor {
     }
   }
 
-  async getTaskStatus(
+  private async getTaskStatusWithRawResponse(
     agent: AgentConfig,
     taskId: string,
     transport?: import('../protocols').TransportOptions
-  ): Promise<TaskInfo> {
+  ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
     // Dispatched as a buyer-callable tool over the agent's transport
@@ -1416,7 +1424,18 @@ export class TaskExecutor {
     // mapper handles the AdCP-spec flat shape, the legacy
     // `{ task: ... }` nested wrapper, and MCP `structuredContent` /
     // A2A latest structured DataPart envelopes.
-    return mapTasksGetResponseToTaskInfo(response);
+    return {
+      task: mapTasksGetResponseToTaskInfo(response),
+      rawResponse: response,
+    };
+  }
+
+  async getTaskStatus(
+    agent: AgentConfig,
+    taskId: string,
+    transport?: import('../protocols').TransportOptions
+  ): Promise<TaskInfo> {
+    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport)).task;
   }
 
   async pollTaskCompletion<T>(
@@ -1484,8 +1503,11 @@ export class TaskExecutor {
       // `TaskResult` so the caller sees an actionable error instead of an
       // opaque uncaught exception escaping from the polling loop.
       let status: TaskInfo;
+      let rawResponse: Record<string, unknown> | undefined;
       try {
-        status = await this.getTaskStatus(agent, taskId, transport);
+        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport);
+        status = pollResult.task;
+        rawResponse = pollResult.rawResponse;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Bounded `\S{1,128}` task-id segment (no `.*`) keeps the match
@@ -1522,7 +1544,7 @@ export class TaskExecutor {
               agent,
               responseTimeMs: Date.now() - status.createdAt,
               status: 'completed',
-              response: status.result,
+              response: rawResponse,
             }),
           });
         }
@@ -1541,7 +1563,7 @@ export class TaskExecutor {
             agent,
             responseTimeMs: Date.now() - status.createdAt,
             status: 'failed',
-            response: status.result,
+            response: rawResponse,
           }),
         });
       }
@@ -1566,7 +1588,7 @@ export class TaskExecutor {
             agent,
             responseTimeMs: Date.now() - status.createdAt,
             status: 'failed',
-            response: status.result,
+            response: rawResponse,
           }),
         });
       }
@@ -1591,7 +1613,7 @@ export class TaskExecutor {
             agent,
             responseTimeMs: Date.now() - status.createdAt,
             status: status.status,
-            response: status.result,
+            response: rawResponse,
           }),
         });
       }
@@ -1617,6 +1639,7 @@ export class TaskExecutor {
             agent,
             startTime: pollStartTime,
             status: 'failed',
+            response: rawResponse,
           }),
         });
       }

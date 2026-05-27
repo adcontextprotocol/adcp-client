@@ -242,11 +242,79 @@ The publisher catalog is the cross-publisher equivalent of a single
 seller's `format_options[]`. Same `format_option_id` discipline; one extra
 hop to fetch the publisher's adagents.json.
 
-## 4. `format_schema` references
+## 4. `format_schema` and `platform_extensions` references
 
 Custom format declarations carry a URI+digest reference to an
-out-of-tree JSON Schema document. 7.10 ships the spec's normative fetch
-contract + `$ref` sandboxer.
+out-of-tree JSON Schema document. `platform_extensions[]` uses the
+same immutable `{ uri, digest }` reference shape for extension
+definitions. 7.10 ships a shared resolver for both fields so adopters
+do not hand-roll the fetch path.
+
+```ts
+import { createCanonicalReferenceResolver } from '@adcp/sdk/v2/format-schema';
+
+const resolver = createCanonicalReferenceResolver({
+  // Optional caller-scoped cache; omitted means a resolver-local Map.
+  // No process-global singleton is required.
+  timeoutMs: 5_000,
+  maxBodyBytes: 1024 * 1024,
+  // Test/storyboard runners that intentionally use loopback fixtures can
+  // opt in per resolver. Production callers should omit this.
+  allowInternalReferences: false,
+});
+
+const schemaResult = await resolver.resolveFormatSchema(formatSchemaRef);
+if (!schemaResult.ok) {
+  // Stable statuses: invalid_ref, blocked_unsafe_url,
+  // digest_mismatch, invalid_schema, unresolvable.
+  reportFormatDiagnostic(schemaResult.status, schemaResult.code);
+} else {
+  // `document` is digest-verified, `$ref`-resolved, bounded, and
+  // compiled as Draft-07 / Draft 2019-09 JSON Schema.
+  validateManifest(schemaResult.document);
+}
+
+const extensionResult = await resolver.resolvePlatformExtension(platformExtensionRef);
+```
+
+The transport contract is identical for both fields: HTTPS-only in
+production, SSRF guarded, DNS pinned, redirects disabled, 1 MiB default
+body cap, 5 second default timeout, SHA-256 digest verification, and
+immutable `uri@digest` caching. Transient fetch failures return
+`status: 'unresolvable'`; digest mismatches return
+`status: 'digest_mismatch'` so callers can treat them as substitution
+signals.
+
+`platform_extensions` may also be bundled on `get_products` responses
+under `extensions`, keyed by `<uri>@<digest>`. Prefer the bundled
+definition when present, and fall back to the resolver only for missing
+definitions:
+
+```ts
+const key = `${platformExtensionRef.uri}@${platformExtensionRef.digest}`;
+const bundled = getProductsResponse.extensions?.[key];
+const resolvedExtension = bundled ? undefined : await resolver.resolvePlatformExtension(platformExtensionRef);
+const extension = bundled ?? (resolvedExtension?.ok ? resolvedExtension.document : undefined);
+```
+
+Resolver statuses are stable:
+
+| Status | Meaning | Retry |
+|---|---|---|
+| `resolved` | Reference fetched, digest-verified, and parsed. `format_schema` is also `$ref`-resolved and compiled. | n/a |
+| `invalid_ref` | Local `{ uri, digest }` shape is malformed. | no |
+| `blocked_unsafe_url` | SSRF/redirect/sandbox policy blocked the URI or a `$ref`. | no |
+| `digest_mismatch` | Body hash did not match the supplied digest. Treat as substitution. | no |
+| `invalid_schema` | Body is not usable as the expected JSON object/schema. | no |
+| `unresolvable` | DNS, timeout, 5xx, body-cap, 404, or another fetch failure. | check `retryable` |
+
+For cache reuse, keep a `createCanonicalReferenceResolver()` instance
+around. The one-shot `resolveFormatSchema()` and
+`resolvePlatformExtension()` helpers are convenient for scripts but
+create a fresh resolver each call.
+
+Low-level helpers remain exported when you need to split the steps
+manually:
 
 ```ts
 import { fetchFormatSchema, resolveSchemaRefs } from '@adcp/sdk/v2/format-schema';
@@ -265,9 +333,9 @@ const { schema: resolved, refCount, maxDepthSeen } = await resolveSchemaRefs(sch
 // `resolved` is safe to feed to Ajv. Every $ref already inlined.
 ```
 
-The sandboxer accepts a custom `fetchExternal` if you want per-`$ref`
-digest enforcement (e.g., from an internal registry of `uri@digest`
-pairs):
+The resolver and sandboxer both accept a custom `fetchExternal` if you
+want per-`$ref` digest enforcement (e.g., from an internal registry of
+`uri@digest` pairs):
 
 ```ts
 const { schema: resolved } = await resolveSchemaRefs(schema, ref.uri, {
@@ -279,9 +347,10 @@ const { schema: resolved } = await resolveSchemaRefs(schema, ref.uri, {
 ```
 
 `DEFAULT_MAX_KEYWORDS` (10 000) and `DEFAULT_VALIDATION_BUDGET_MS`
-(250) are exported for the eventual Ajv-wiring layer — actual
-enforcement of the schema-compile DoS bounds is the manifest
-validator's job and lands in a future release.
+(250) are exported for manifest validation. The canonical reference
+resolver enforces `DEFAULT_MAX_KEYWORDS` before compiling custom
+format schemas; the validation budget remains the caller's per-manifest
+runtime concern.
 
 ## 5. AdCP 3.1.0-beta.5 opt-in
 

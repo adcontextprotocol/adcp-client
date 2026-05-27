@@ -6,8 +6,11 @@
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
- * mapping. Replaces the hand-curated tables that previously lived in
- * `src/lib/utils/capabilities.ts` and `src/lib/types/error-codes.ts`.
+ * mapping. Error-code descriptions may include documented SDK-side prose
+ * overlays applied by `scripts/generate-manifest-derived.ts`; recovery and
+ * suggestions remain manifest-derived. Replaces the hand-curated tables that
+ * previously lived in `src/lib/utils/capabilities.ts` and
+ * `src/lib/types/error-codes.ts`.
  *
  * Source: `schemas/cache/3.1.0-beta.5/manifest.json` (adcp_version: 3.1.0-beta.5, generated_at:
  * 2026-05-26T09:44:17.428Z). Re-run `npm run sync-schemas` then
@@ -86,7 +89,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "broaden targeting or upload more audience members"
   },
   AUTH_INVALID: {
-    description: "Credentials were presented but rejected — revoked, malformed signature, or a key no longer in the seller's keystore. Sellers MUST return this code when an `Authorization` header was present but verification failed. Exception: agents with a valid OAuth 2.1 refresh grant MAY treat this as correctable when the rejection reason is token expiry — silently refresh and retry once; if the refresh fails or the seller explicitly signals revocation, escalate to human.",
+    description: "Credentials were presented but rejected — revoked, expired, malformed signature, or a key no longer in the seller's keystore. Sellers MUST return this code when an `Authorization` header was present but verification failed. SDK server runtime treats this code as terminal and does not refresh or retry it; use `AUTH_MISSING` / legacy `AUTH_REQUIRED` for missing request credentials that can be refreshed via `AccountStore.refreshToken`.",
     recovery: "terminal",
     suggestion: "do NOT auto-retry — credentials were rejected; rotate keys, refresh OAuth tokens once if applicable, otherwise escalate to a human"
   },
@@ -176,7 +179,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "pick a value from error.details.allowed_values (or re-fetch the format) and resubmit"
   },
   CREDENTIAL_IN_ARGS: {
-    description: "The seller detected a buyer-principal credential placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the transport's authentication channel. Buyer-principal credentials MUST arrive on the transport's authentication channel (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3) and MUST NOT travel inside the task payload. Distinct from `AUTH_REQUIRED` (no credentials presented or presented credentials rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date.",
+    description: "The seller detected a buyer-principal credential placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the transport's authentication channel. Buyer-principal credentials MUST arrive on the transport's authentication channel (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3) and MUST NOT travel inside the task payload. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date.",
     recovery: "terminal",
     suggestion: "do NOT auto-retry — auto-retry re-logs the credential on each attempt. Move the credential out of request args (top-level, `context`, `ext`, any nested location) onto the transport authentication channel (Authorization: Bearer, RFC 9421 signature, MCP/A2A authentication framing); rotate the leaked credential, then resubmit on the transport channel only"
   },

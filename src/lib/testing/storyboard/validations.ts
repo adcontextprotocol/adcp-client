@@ -31,10 +31,18 @@ import type {
 import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
 import { isJsonContentType } from '../test-controller';
 import { globToRegExp } from '../../utils/glob';
-import { resolvePath, resolvePathAll, toJsonPointer } from './path';
+import {
+  resolvePath,
+  resolvePathAll,
+  resolvePortableIdentifierPathAll,
+  toJsonPointer,
+  validatePortableIdentifierPath,
+  type PortableIdentifierPathIssue,
+} from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 import { validateCanonicalFormatSatisfaction } from './canonical-format-satisfaction';
+import { extractTaskAdcpError } from './rate-limit-trip';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -292,6 +300,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldEqualsContext(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
+    case 'replay_not_cached_rate_limit':
+      return validateReplayNotCachedRateLimit(validation, ctx);
     case 'cross_response_field_equal':
       return validateCrossResponseFieldEqual(validation, ctx);
     case 'cross_response_count_distinct':
@@ -2636,6 +2646,29 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
  */
 function validateUpstreamTraffic(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
   const expected = buildUpstreamTrafficExpected(validation);
+  const invalidIdentifierPaths = collectInvalidIdentifierPaths(validation.identifier_paths);
+  if (invalidIdentifierPaths.length > 0) {
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error:
+        'storyboard authoring error: invalid upstream_traffic.identifier_paths: ' +
+        invalidIdentifierPaths.map(issue => `${issue.path} (${issue.reason})`).join('; '),
+      json_pointer: null,
+      expected,
+      actual: {
+        matched_count: 0,
+        total_calls: 0,
+        missing_payload_paths: [],
+        missing_identifier_values: [],
+        invalid_identifier_paths: invalidIdentifierPaths,
+      },
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
   const upstream = ctx.upstreamTraffic;
   // Adopter opted out (or controller wasn't detected): grade not_applicable.
   // missing_test_controller controller-side, not failed — opt-in by adopter
@@ -2766,7 +2799,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
         ? (requestPayload as Record<string, unknown>)
         : ctx.storyboardStep?.sample_request;
     for (const path of validation.identifier_paths) {
-      const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
+      const vectors = sample !== undefined ? resolvePortableIdentifierPathAll(sample, path) : [];
       for (const vector of vectors) {
         if (vector === undefined || vector === null) continue;
         const digest = typeof vector === 'string' ? upstream.identifierDigestByValue?.get(vector) : undefined;
@@ -2892,6 +2925,15 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     request: query.request,
     response: query.response,
   };
+}
+
+function collectInvalidIdentifierPaths(paths: string[] | undefined): PortableIdentifierPathIssue[] {
+  const invalid: PortableIdentifierPathIssue[] = [];
+  for (const path of paths ?? []) {
+    const reason = validatePortableIdentifierPath(path);
+    if (reason) invalid.push({ path, reason });
+  }
+  return invalid;
 }
 
 /**
@@ -3182,6 +3224,81 @@ function validateCrossResponseFieldEqual(validation: StoryboardValidation, ctx: 
     schema_id: null,
     schema_url: null,
   };
+}
+
+function validateReplayNotCachedRateLimit(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const payload = resolveTarget(ctx).data as Record<string, unknown> | undefined;
+  const tripResponse = payload?.trip_response;
+  const replayResponse = payload?.replay_response;
+  const targetTask = typeof payload?.target_task === 'string' ? payload.target_task : undefined;
+  if (!tripResponse || typeof tripResponse !== 'object' || !replayResponse || typeof replayResponse !== 'object') {
+    const missing = [
+      !tripResponse || typeof tripResponse !== 'object' ? 'trip_response' : undefined,
+      !replayResponse || typeof replayResponse !== 'object' ? 'replay_response' : undefined,
+    ].filter((field): field is string => typeof field === 'string');
+    return {
+      check: validation.check,
+      passed: true,
+      not_applicable: true,
+      description: validation.description,
+      note: `step did not produce rate_limit_trip_runner ${missing.join(' and ')}; replay_not_cached_rate_limit grades not_applicable`,
+      json_pointer: null,
+    };
+  }
+
+  const tripCode = extractSnapshotErrorCode(tripResponse as Record<string, unknown>, targetTask);
+  const replayCode = extractSnapshotErrorCode(replayResponse as Record<string, unknown>, targetTask);
+  if (tripCode !== 'RATE_LIMITED') {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      json_pointer: '/trip_response/error/code',
+      expected: 'RATE_LIMITED trip_response error code',
+      actual: tripCode ?? null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  if (replayCode === 'RATE_LIMITED') {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      error: 'rate_limit_response_cached_as_replay',
+      json_pointer: '/replay_response/error/code',
+      expected: 'replay_response must not return RATE_LIMITED from the idempotency cache',
+      actual: replayCode,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  return {
+    check: validation.check,
+    passed: true,
+    description: validation.description,
+    json_pointer: '/replay_response/error/code',
+    actual: replayCode ?? null,
+  };
+}
+
+function extractSnapshotErrorCode(snapshot: Record<string, unknown>, taskName?: string): string | undefined {
+  const structuredError = snapshot.error;
+  if (structuredError && typeof structuredError === 'object') {
+    const code = (structuredError as Record<string, unknown>).code;
+    if (typeof code === 'string') return code;
+  }
+  const adcpError = snapshot.adcp_error;
+  if (adcpError && typeof adcpError === 'object') {
+    const code = (adcpError as Record<string, unknown>).code;
+    if (typeof code === 'string') return code;
+  }
+  const data = snapshot.data;
+  if (data && typeof data === 'object') {
+    const extracted = extractTaskAdcpError({ success: snapshot.success === true, data }, taskName);
+    if (extracted) return extracted.code;
+  }
+  return undefined;
 }
 
 /**
