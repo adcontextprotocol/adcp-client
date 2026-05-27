@@ -34,6 +34,7 @@ import { globToRegExp } from '../../utils/glob';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
+import { validateCanonicalFormatSatisfaction } from './canonical-format-satisfaction';
 
 /**
  * Broader validation context that carries the run-level state a single
@@ -295,6 +296,21 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateCrossResponseFieldEqual(validation, ctx);
     case 'cross_response_count_distinct':
       return validateCrossResponseCountDistinct(validation, ctx);
+    case 'canonical_format_satisfaction':
+      if (ctx.taskName !== 'create_media_buy') {
+        return {
+          check: validation.check,
+          passed: false,
+          description: validation.description,
+          error: 'canonical_format_satisfaction applies only to create_media_buy storyboard steps',
+          json_pointer: null,
+          expected: 'create_media_buy',
+          actual: ctx.taskName,
+        };
+      }
+      return requireTaskResult(ctx, validation, tr =>
+        validateCanonicalFormatSatisfaction(validation, ctx.request, ctx.storyboardContext, tr)
+      );
     case 'array_length':
       return validateArrayLength(validation, resolveTarget(ctx));
     default:

@@ -787,6 +787,24 @@ export type StoryboardValidationCheck =
    */
   | 'cross_response_count_distinct'
   /**
+   * Assert that the `create_media_buy` package format selector outcome matches
+   * canonical product capability satisfaction rules. `value: true` means the
+   * request should be accepted because its selector satisfies the product's
+   * `format_options[]`; `value: false` means the request should be rejected
+   * because the selector does not satisfy those constraints.
+   *
+   * The validator uses the actual runner request plus prior `get_products`
+   * context. It normalizes legacy `format_ids[]` through product
+   * `v1_format_ref[]` / the v1→canonical projection path, resolves canonical
+   * `format_option_refs[]`, and checks directional containment for dimensions,
+   * sizes, duration declarations, and remaining canonical params. Negative
+   * cases only pass on a format-specific rejection, so unrelated auth or tenant
+   * failures do not mask selector bugs. Failure output names the likely bug
+   * class: normalization, directionality, or range containment. Added for
+   * adcp-client#2060.
+   */
+  | 'canonical_format_satisfaction'
+  /**
    * Assert the cardinality of the array at `path`. Two configurations are
    * supported: exact-count via `value: N` (passes only when the resolved
    * array has exactly N entries) and range via `min` / `max` (either bound
