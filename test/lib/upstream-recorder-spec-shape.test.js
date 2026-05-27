@@ -335,6 +335,27 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         message: /access_token/,
       }
     );
+
+    assert.throws(
+      () => computePayloadDigestSha256({ authorization: { nested: 'fake_test_fixture' } }, 'application/json', false),
+      {
+        name: 'PayloadDigestError',
+        message: /authorization/,
+      }
+    );
+
+    assert.doesNotThrow(() =>
+      computePayloadDigestSha256({ authorization: null, token: false, password: true }, 'application/json', false)
+    );
+  });
+
+  test('computePayloadDigestSha256 scans deep prenormalized payloads without recursive stack overflow', () => {
+    let payload = { authorization: '[redacted]' };
+    for (let i = 0; i < 10_000; i++) payload = { wrapper: payload };
+    assert.throws(() => computePayloadDigestSha256(payload, 'application/json', false), {
+      name: 'PayloadDigestError',
+      message: /JSON payload exceeds max canonicalization depth/,
+    });
   });
 
   test('computePayloadDigestSha256 redacts cyclic object payloads and rejects unsafe prenormalized cycles', () => {

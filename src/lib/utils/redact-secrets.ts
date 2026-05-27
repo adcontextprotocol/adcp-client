@@ -21,6 +21,8 @@
  * recorder's `redactPattern` option, but MUST NOT narrow it.
  */
 
+import { MAX_JSON_DEPTH } from './json-depth';
+
 /**
  * Canonical secret-key pattern from the AdCP runner-output contract. Mirrors
  * the spec block: `Authorization`, `Credentials`, tokens, API keys,
@@ -36,8 +38,6 @@ export const SECRET_KEY_PATTERN =
  * depth gate after redaction so structured payloads beyond the cap are
  * rejected instead of stored with unvisited subtrees.
  */
-const REDACT_MAX_DEPTH = 256;
-
 /**
  * Recursively walk `value`, returning a structurally-identical clone with
  * scalar values at secret-shaped keys replaced by `"[redacted]"`. Pass an
@@ -53,7 +53,7 @@ export function redactSecrets(
   depth = 0,
   seen: WeakSet<object> = new WeakSet()
 ): unknown {
-  if (depth > REDACT_MAX_DEPTH) return value;
+  if (depth > MAX_JSON_DEPTH) return value;
   if (Array.isArray(value)) {
     if (seen.has(value)) return '[Circular]';
     seen.add(value);

@@ -580,6 +580,8 @@ function canonicalCodegenJson(value: unknown, keyHint?: string): string {
   }
   if (Array.isArray(value)) {
     const items = value.map(item => canonicalCodegenJson(item));
+    // Schema enum order is authoring noise for our conflict check; stringify
+    // first so mixed-type enums like [1, "1"] still sort deterministically.
     if (keyHint === 'enum') items.sort();
     return `[${items.join(',')}]`;
   }

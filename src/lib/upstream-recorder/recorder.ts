@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
 import { canonicalize } from '../utils/jcs';
+import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { IDENTIFIER_DIGEST_LIMIT } from './constants';
 import {
   UpstreamRecorderScopeError,
@@ -29,7 +30,6 @@ const DEFAULT_QUERY_LIMIT = 100;
 const DEFAULT_MAX_PAYLOAD_BYTES = 65_536; // mirrors spec's `recorded_calls[].payload.maxLength`
 const MAX_BUFFER_SIZE = 100_000;
 const MAX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-const MAX_JSON_DEPTH = 256;
 const VALID_PURPOSES = new Set([
   'platform_primary',
   'measurement',
@@ -544,8 +544,9 @@ function sha256Hex(value: string): string {
  * Prefer `{ prenormalized: true }` only when the payload has already been
  * normalized/redacted exactly as the recorder would store it; legacy `false`
  * remains accepted as the same prenormalized sentinel. The prenormalized path
- * skips redaction, so the helper rejects secret-shaped keys whose scalar values
- * are not already `"[redacted]"`.
+ * skips redaction, so the helper rejects secret-shaped keys whose values are
+ * not already the literal `"[redacted]"` marker or an explicit null/boolean
+ * placeholder.
  *
  * JSON content is serialized with RFC 8785 JCS before hashing. When
  * `contentType` is JSON-shaped and `payload` is a string, the helper parses
@@ -631,33 +632,35 @@ function assertPrenormalizedPayloadSafe(payload: unknown, contentType: string, p
   return payload;
 }
 
-function findUnredactedSecretPath(
-  value: unknown,
-  pattern: RegExp,
-  path = '',
-  seen: WeakSet<object> = new WeakSet()
-): string | null {
-  if (!value || typeof value !== 'object') return null;
-  if (seen.has(value)) return null;
-  seen.add(value);
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      const child = findUnredactedSecretPath(value[i], pattern, `${path}[${i}]`, seen);
-      if (child) return child;
+function findUnredactedSecretPath(value: unknown, pattern: RegExp): string | null {
+  const stack: Array<{ value: unknown; path: string }> = [{ value, path: '' }];
+  const seen = new WeakSet<object>();
+  while (stack.length > 0) {
+    const { value: current, path } = stack.pop()!;
+    if (!current || typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      for (let i = current.length - 1; i >= 0; i--) {
+        stack.push({ value: current[i], path: `${path}[${i}]` });
+      }
+      continue;
     }
-    return null;
-  }
-  for (const [key, childValue] of Object.entries(value as Record<string, unknown>)) {
-    const childPath = path ? `${path}.${key}` : key;
-    if (pattern.test(key) && isUnredactedSecretScalar(childValue)) return childPath;
-    const child = findUnredactedSecretPath(childValue, pattern, childPath, seen);
-    if (child) return child;
+
+    const entries = Object.entries(current as Record<string, unknown>);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const [key, childValue] = entries[i]!;
+      const childPath = path ? `${path}.${key}` : key;
+      if (pattern.test(key) && !isSafelyRedactedSecretValue(childValue)) return childPath;
+      stack.push({ value: childValue, path: childPath });
+    }
   }
   return null;
 }
 
-function isUnredactedSecretScalar(value: unknown): boolean {
-  return (typeof value === 'string' || typeof value === 'number') && value !== '[redacted]';
+function isSafelyRedactedSecretValue(value: unknown): boolean {
+  return value === '[redacted]' || value === null || value === true || value === false;
 }
 
 function normalizeFetchPayloadInput(payload: unknown, contentType: string): unknown {
@@ -909,7 +912,10 @@ function redactFormUrlEncoded(body: string, pattern: RegExp): string {
 function redactJsonLikeSecretValues(body: string, pattern: RegExp): string {
   // Best-effort diagnostic scrub for malformed JSON strings. The output is
   // not guaranteed to be valid JSON; the invariant is that secret-shaped keys
-  // with scalar/string values are not stored verbatim.
+  // with scalar/string values are not stored verbatim. Because malformed JSON
+  // has no trustworthy parse tree, object/array-valued secret entries can
+  // leave nested diagnostic fragments behind; callers must treat this only as
+  // a bounded last-resort scrub before storage.
   let out = '';
   let i = 0;
   while (i < body.length) {
