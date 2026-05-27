@@ -1,6 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_API_KEY, TEMPLATES, WORKSPACES, type MockTemplate, type MockWorkspace } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -12,6 +19,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 interface MockRender {
@@ -52,9 +60,22 @@ export async function bootCreativeTemplate(options: BootOptions): Promise<BootRe
   const bump = (routeTemplate: string): void => {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   };
+  const scenario = createMockScenarioController({
+    specialism: 'creative-template',
+    snapshot: () => ({
+      renders: renders.size,
+      idempotency: idempotency.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      renders.clear();
+      idempotency.clear();
+      traffic.clear();
+    },
+  });
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency, traffic, bump }).catch(err => {
+    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency, traffic, bump, scenario }).catch(err => {
       const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
       writeJson(res, 500, {
         code: 'internal_error',
@@ -78,6 +99,7 @@ export async function bootCreativeTemplate(options: BootOptions): Promise<BootRe
 
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -93,12 +115,15 @@ interface HandlerCtx {
   idempotency: Map<string, string>;
   traffic: Map<string, number>;
   bump: (routeTemplate: string) => void;
+  scenario: ReturnType<typeof createMockScenarioController>;
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: HandlerCtx): Promise<void> {
   const url = new URL(req.url ?? '/', `http://127.0.0.1`);
   const path = url.pathname;
   const method = req.method ?? 'GET';
+
+  if (await ctx.scenario.handleControlRequest(req, res, method, path)) return;
 
   // Façade-detection traffic dump — harness-only, no auth required.
   if (method === 'GET' && path === '/_debug/traffic') {
@@ -157,6 +182,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
     writeJson(res, 404, { code: 'workspace_not_found', message: `Workspace ${workspaceId} not found.` });
     return;
   }
+
+  if (await ctx.scenario.handleScriptedResponse(res, method, path, (m, p) => ctx.bump(`${m} ${p}`))) return;
 
   // Bump traffic counters on each real-route hit so /_debug/traffic can later
   // report which endpoints the adapter actually exercised.
@@ -222,6 +249,15 @@ async function handleCreateRender(
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
     return;
   }
+  const exactReplay = ctx.scenario.idempotency.check(
+    `${ws.workspace_id}::render`,
+    idempotencyKeyFromBody(body),
+    stableFingerprint(body)
+  );
+  if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+    writeCachedResponse(res, exactReplay.response);
+    return;
+  }
   const { template_id, inputs, mode, client_request_id } = body as Record<string, unknown>;
   if (typeof template_id !== 'string' || !Array.isArray(inputs) || (mode !== 'preview' && mode !== 'build')) {
     writeJson(res, 400, {
@@ -278,7 +314,9 @@ async function handleCreateRender(
     ctx.idempotency.set(`${ws.workspace_id}::${client_request_id}`, renderId);
   }
 
-  writeJson(res, 202, serializeRender(render));
+  const responseBody = serializeRender(render);
+  if (exactReplay.kind === 'fresh') exactReplay.record({ status: 202, body: responseBody });
+  writeJson(res, 202, responseBody);
 }
 
 function handleGetRender(renderId: string, ctx: HandlerCtx, ws: MockWorkspace, res: ServerResponse): void {

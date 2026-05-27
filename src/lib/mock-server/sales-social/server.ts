@@ -8,6 +8,13 @@ import {
   type MockAdvertiser,
   type MockOAuthClient,
 } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -23,6 +30,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 interface IssuedAccessToken {
@@ -109,6 +117,28 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   function bump(routeTemplate: string): void {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   }
+  const scenario = createMockScenarioController({
+    specialism: 'sales-social',
+    snapshot: () => ({
+      audiences: audiences.size,
+      catalogs: catalogs.size,
+      creatives: creatives.size,
+      pixels: pixels.size,
+      idempotency: idempotency.size,
+      tokens: tokensByAccess.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      tokensByAccess.clear();
+      tokensByRefresh.clear();
+      audiences.clear();
+      catalogs.clear();
+      creatives.clear();
+      pixels.clear();
+      idempotency.clear();
+      traffic.clear();
+    },
+  });
 
   function issueTokens(client: MockOAuthClient): IssuedAccessToken {
     const now = Date.now();
@@ -159,6 +189,7 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
 
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -172,6 +203,8 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     const url = new URL(req.url ?? '/', `http://127.0.0.1`);
     const path = url.pathname;
     const method = req.method ?? 'GET';
+
+    if (await scenario.handleControlRequest(req, res, method, path)) return;
 
     // Façade-detection traffic dump — harness-only, no auth required.
     // Returns per-endpoint hit counts for assertion in the matrix runner.
@@ -251,6 +284,8 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
       });
       return;
     }
+
+    if (await scenario.handleScriptedResponse(res, method, path, (m, p) => bump(`${m} ${p}`))) return;
 
     // Sub-path routing — bump traffic counters on each route hit so
     // /_debug/traffic can later report which endpoints the adapter actually
@@ -413,6 +448,15 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   ): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${advertiser.advertiser_id}::audience`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, description, source_type, client_request_id } = body as Record<string, unknown>;
     if (typeof name !== 'string' || typeof source_type !== 'string') {
       writeJson(res, 400, { code: 'invalid_request', message: 'name and source_type are required strings.' });
@@ -457,7 +501,9 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${advertiser.advertiser_id}::audience::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(audience));
+    const responseBody = stripBodyFingerprint(audience);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   async function handleUploadAudience(
@@ -535,6 +581,15 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   ): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${advertiser.advertiser_id}::catalog`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, vertical, client_request_id } = body as Record<string, unknown>;
     if (typeof name !== 'string' || typeof vertical !== 'string') {
       writeJson(res, 400, { code: 'invalid_request', message: 'name and vertical are required.' });
@@ -567,7 +622,9 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${advertiser.advertiser_id}::catalog::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(cat));
+    const responseBody = stripBodyFingerprint(cat);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   async function handleUploadCatalog(
@@ -610,6 +667,15 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   ): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${advertiser.advertiser_id}::creative`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, format_id, primary_text, cta_label, landing_page_url, media_url, client_request_id } = body as Record<
       string,
       unknown
@@ -663,7 +729,9 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${advertiser.advertiser_id}::creative::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(cr));
+    const responseBody = stripBodyFingerprint(cr);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   // ────────────────────────────────────────────────────────────
@@ -681,6 +749,15 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   ): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${advertiser.advertiser_id}::pixel`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, domain, client_request_id } = body as Record<string, unknown>;
     if (typeof name !== 'string') {
       writeJson(res, 400, { code: 'invalid_request', message: 'name is required.' });
@@ -714,7 +791,9 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${advertiser.advertiser_id}::pixel::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(px));
+    const responseBody = stripBodyFingerprint(px);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   // ────────────────────────────────────────────────────────────

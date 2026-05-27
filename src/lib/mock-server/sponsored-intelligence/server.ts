@@ -1,6 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { BRANDS, DEFAULT_API_KEY, OFFERINGS, type MockBrand, type MockOffering, type MockProduct } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -12,6 +19,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 type ConversationStatus = 'active' | 'closed';
@@ -111,6 +119,21 @@ export async function bootSponsoredIntelligence(options: BootOptions): Promise<B
   const bump = (routeTemplate: string): void => {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   };
+  const scenario = createMockScenarioController({
+    specialism: 'sponsored-intelligence',
+    snapshot: () => ({
+      conversations: conversations.size,
+      offering_queries: offeringQueries.size,
+      idempotency: idempotency.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      conversations.clear();
+      idempotency.clear();
+      offeringQueries.clear();
+      traffic.clear();
+    },
+  });
 
   const server = createServer((req, res) => {
     handleRequest(req, res, {
@@ -122,6 +145,7 @@ export async function bootSponsoredIntelligence(options: BootOptions): Promise<B
       offeringQueries,
       traffic,
       bump,
+      scenario,
     }).catch(err => {
       const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
       writeJson(res, 500, {
@@ -146,6 +170,7 @@ export async function bootSponsoredIntelligence(options: BootOptions): Promise<B
 
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -162,12 +187,15 @@ interface HandlerCtx {
   offeringQueries: Map<string, OfferingQuery>;
   traffic: Map<string, number>;
   bump: (routeTemplate: string) => void;
+  scenario: ReturnType<typeof createMockScenarioController>;
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: HandlerCtx): Promise<void> {
   const url = new URL(req.url ?? '/', `http://127.0.0.1`);
   const path = url.pathname;
   const method = req.method ?? 'GET';
+
+  if (await ctx.scenario.handleControlRequest(req, res, method, path)) return;
 
   if (method === 'GET' && path === '/_debug/traffic') {
     writeJson(res, 200, { traffic: Object.fromEntries(ctx.traffic) });
@@ -221,6 +249,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
     writeJson(res, 404, { code: 'brand_not_found', message: `Brand ${brandId} not found.` });
     return;
   }
+
+  if (await ctx.scenario.handleScriptedResponse(res, method, path, (m, p) => ctx.bump(`${m} ${p}`))) return;
 
   const offMatch = subPath.match(/^\/offerings\/([^/]+)$/);
   if (method === 'GET' && offMatch && offMatch[1]) {
@@ -321,6 +351,15 @@ async function handleStartConversation(
   }
   if (!isObject(body)) {
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
+    return;
+  }
+  const exactReplay = ctx.scenario.idempotency.check(
+    `${brand.brand_id}::init`,
+    idempotencyKeyFromBody(body),
+    stableFingerprint(body)
+  );
+  if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+    writeCachedResponse(res, exactReplay.response);
     return;
   }
   const { intent, offering_id, offering_query_id, identity, client_request_id } = body as Record<string, unknown>;
@@ -451,7 +490,9 @@ async function handleStartConversation(
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
     ctx.idempotency.set(`${brand.brand_id}::init::${client_request_id}`, conversationId);
   }
-  writeJson(res, 201, serializeConversation(conversation, brand));
+  const responseBody = serializeConversation(conversation, brand);
+  if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+  writeJson(res, 201, responseBody);
 }
 
 async function handleSendTurn(
@@ -469,14 +510,6 @@ async function handleSendTurn(
     });
     return;
   }
-  if (conversation.status !== 'active') {
-    writeJson(res, 409, {
-      code: 'conversation_closed',
-      message: `Conversation ${conversationId} is ${conversation.status}; cannot accept new turns.`,
-    });
-    return;
-  }
-
   let body: unknown;
   try {
     body = await readJson(req);
@@ -486,6 +519,22 @@ async function handleSendTurn(
   }
   if (!isObject(body)) {
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
+    return;
+  }
+  const exactReplay = ctx.scenario.idempotency.check(
+    `${brand.brand_id}::${conversationId}::turn`,
+    idempotencyKeyFromBody(body),
+    stableFingerprint(body)
+  );
+  if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+    writeCachedResponse(res, exactReplay.response);
+    return;
+  }
+  if (conversation.status !== 'active') {
+    writeJson(res, 409, {
+      code: 'conversation_closed',
+      message: `Conversation ${conversationId} is ${conversation.status}; cannot accept new turns.`,
+    });
     return;
   }
   const { message, action_response, client_request_id } = body as Record<string, unknown>;
@@ -546,7 +595,9 @@ async function handleSendTurn(
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
     ctx.idempotency.set(`${brand.brand_id}::${conversationId}::${client_request_id}`, turn.turn_id);
   }
-  writeJson(res, 200, serializeTurn(turn, conversation, brand));
+  const responseBody = serializeTurn(turn, conversation, brand);
+  if (exactReplay.kind === 'fresh') exactReplay.record({ status: 200, body: responseBody });
+  writeJson(res, 200, responseBody);
 }
 
 async function handleCloseConversation(

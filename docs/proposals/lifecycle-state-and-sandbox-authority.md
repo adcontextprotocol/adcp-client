@@ -415,14 +415,17 @@ each specialism. Status as of this writing:
 - **Exists today**: `bin/adcp.js mock-server` runs per-specialism
   upstream-API REST fixtures (Celtra-shaped, GAM-shaped, TikTok-shaped,
   default port 4500). Static request/response shapes are in place.
-- **Open work**: per-specialism scenario state machines (seeded media
-  buys, lifecycle transitions driven by storyboard steps, scriptable
-  responses for fault-injection tests). Today these live in adopter
-  code (e.g., hello-adapter's `seededMediaBuys` Map and `complyTest:`
-  block); Phase 2 cleanup deletes them from the adopter — which only
-  works if the mock-server picks them up. That migration is its own
-  workstream; not blocked by this proposal but a prerequisite for the
-  hello-adapter cleanup section above to be safe to land.
+- **Exists now**: the mock-server has a per-specialism scenario
+  controller, exposed through the programmatic boot handle and HTTP
+  `/_scenario/*` routes protected by the generated
+  `X-Mock-Control-Token`. It provides fixture-state snapshots, reset
+  between storyboard runs, one-shot scripted responses for authenticated
+  fault-injection tests, `idempotency_key` exact replay/cache-conflict
+  handling on state-creation fixture routes, and loopback-only webhook
+  emission/capture stubs. Per-specialism fixtures still own their
+  business state machines (orders, activations, renders, conversations,
+  etc.), but the shared controller is the scaffolding storyboards use to
+  drive and clean them.
 
 Owners of new specialisms adding mock-server fixtures should plan for
 the scenario-driving surface area, not just the static request/response

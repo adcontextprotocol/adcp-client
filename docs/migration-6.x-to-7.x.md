@@ -109,9 +109,9 @@ A buy created on a `'sandbox'` account stays sandbox-routed for its whole lifecy
 
 This is what makes the three-mode model work end-to-end: a single request's mode is permanent on its tail.
 
-## Mock-server scenario state [planned]
+## Mock-server scenario state
 
-Tracked at [adcp-client#1495](https://github.com/adcontextprotocol/adcp-client/issues/1495). The `bin/adcp.js mock-server` today serves static request/response shapes; the URL-routing rollout (Phase 2 of the [lifecycle-state-and-sandbox-authority proposal](./proposals/lifecycle-state-and-sandbox-authority.md) — see § Implementation status) needs scriptable per-specialism state machines so storyboards can drive `'mock'`-mode lifecycle transitions end-to-end without the adopter wiring `complyTest:` themselves. Until that lands, `'mock'` mode is best-effort for adapters that don't pair it with their own controller seeds.
+Tracked at [adcp-client#1495](https://github.com/adcontextprotocol/adcp-client/issues/1495). The `bin/adcp.js mock-server` now exposes shared scenario scaffolding on every specialism fixture: HTTP `/_scenario/*` routes, protected by the generated `X-Mock-Control-Token`, plus a programmatic `handle.scenario` object from `bootMockServer()`. Storyboard harnesses can reset fixture state between runs, inspect per-specialism state snapshots, inject one-shot scripted responses for fault tests, emit/capture loopback-only webhook stubs, and rely on exact `idempotency_key` replay handling on state-creation fixture routes. The per-specialism fixtures still own domain lifecycles (orders, activations, renders, conversations, etc.), but storyboards no longer need adopter-side maps just to drive or clear the common scenario surface.
 
 ## Self-grade checklist
 

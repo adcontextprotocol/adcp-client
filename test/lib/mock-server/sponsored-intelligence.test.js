@@ -292,6 +292,48 @@ describe('mock-server sponsored-intelligence', () => {
     assert.equal(body.code, 'conversation_closed');
   });
 
+  it('replays an exact idempotency_key turn after the conversation closes', async () => {
+    const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'closed replay test', idempotency_key: 'init-closed-replay' }),
+    });
+    const conv = await init.json();
+    const turnBody = {
+      message: 'show me the summer trail shoe',
+      idempotency_key: 'turn-closed-replay',
+    };
+    const first = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify(turnBody),
+    });
+    assert.equal(first.status, 200);
+    const firstBody = await first.json();
+
+    await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ reason: 'user_left' }),
+    });
+
+    const replay = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify(turnBody),
+    });
+    assert.equal(replay.status, 200);
+    assert.deepEqual(await replay.json(), firstBody);
+
+    const conflict = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ ...turnBody, message: 'changed after close' }),
+    });
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json()).code, 'idempotency_conflict');
+  });
+
   it('rejects POST /conversations replay with mismatched body (idempotency_conflict)', async () => {
     const first = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
       method: 'POST',

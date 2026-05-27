@@ -21,6 +21,7 @@ import { bootSignalMarketplace } from './signal-marketplace/server';
 import { DEFAULT_API_KEY as SIGNAL_MARKETPLACE_DEFAULT_API_KEY, OPERATORS } from './signal-marketplace/seed-data';
 import { bootSponsoredIntelligence } from './sponsored-intelligence/server';
 import { BRANDS as SI_BRANDS, DEFAULT_API_KEY as SI_DEFAULT_API_KEY } from './sponsored-intelligence/seed-data';
+import type { MockScenarioHandle } from './scenario';
 
 // Canonical Recipe shapes per specialism — adopters wrapping these
 // upstream mocks build their hello-agent's `Product.implementation_config`
@@ -30,6 +31,18 @@ import { BRANDS as SI_BRANDS, DEFAULT_API_KEY as SI_DEFAULT_API_KEY } from './sp
 // share one definition.
 export { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from './sales-guaranteed/recipe';
 export { buildAuctionLikeRecipe, AUCTION_LIKE_OVERLAP, type AuctionLikeRecipe } from './sales-non-guaranteed/recipe';
+export {
+  MockIdempotencyReplayStore,
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type CachedIdempotentResponse,
+  type MockScenarioHandle,
+  type MockScenarioScriptInput,
+  type MockScenarioState,
+  type MockScenarioWebhookAttempt,
+} from './scenario';
 
 export interface MockServerOptions {
   specialism: string;
@@ -81,6 +94,9 @@ export interface MockServerHandle {
    * Surfaces in the harness prompt to make the auth-translation requirement
    * explicit. */
   principalScope: string;
+  /** Scenario controller for storyboards and fault-injection harnesses.
+   * Also exposed over HTTP at `/_scenario/*` on every mock-server. */
+  scenario: MockScenarioHandle;
 }
 
 export interface PrincipalMappingEntry {
@@ -102,7 +118,7 @@ export interface PrincipalMappingEntry {
 export async function bootMockServer(options: MockServerOptions): Promise<MockServerHandle> {
   switch (options.specialism) {
     case 'signal-marketplace': {
-      const { url, close } = await bootSignalMarketplace({
+      const { url, close, scenario } = await bootSignalMarketplace({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -111,6 +127,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatSignalMarketplaceSummary(url, apiKey),
         principalScope: 'X-Operator-Id header (required on every request)',
         principalMapping: OPERATORS.map(op => ({
@@ -122,7 +139,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'creative-ad-server': {
-      const { url, close } = await bootCreativeAdServer({
+      const { url, close, scenario } = await bootCreativeAdServer({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -131,6 +148,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatCreativeAdServerSummary(url, apiKey),
         principalScope: 'X-Network-Code header (required on every request)',
         principalMapping: CREATIVE_AD_SERVER_NETWORKS.map(net => ({
@@ -142,7 +160,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'creative-template': {
-      const { url, close } = await bootCreativeTemplate({
+      const { url, close, scenario } = await bootCreativeTemplate({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -151,6 +169,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatCreativeTemplateSummary(url, apiKey),
         principalScope: 'URL path segment /v3/workspaces/{workspace_id}/...',
         principalMapping: WORKSPACES.map(ws => ({
@@ -162,7 +181,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'sales-social': {
-      const { url, close } = await bootSalesSocial({ port: options.port });
+      const { url, close, scenario } = await bootSalesSocial({ port: options.port });
       const client = OAUTH_CLIENTS[0];
       if (!client) throw new Error('sales-social: no OAuth clients seeded');
       return {
@@ -174,6 +193,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
           tokenPath: '/oauth/token',
         },
         close,
+        scenario,
         summary: () => formatSalesSocialSummary(url, client),
         principalScope: 'URL path segment /v1.3/advertiser/{advertiser_id}/...',
         principalMapping: ADVERTISERS.map(adv => ({
@@ -185,7 +205,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'sales-guaranteed': {
-      const { url, close } = await bootSalesGuaranteed({
+      const { url, close, scenario } = await bootSalesGuaranteed({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -194,6 +214,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatSalesGuaranteedSummary(url, apiKey),
         principalScope: 'X-Network-Code header (required on every request)',
         principalMapping: SALES_GUARANTEED_NETWORKS.map(net => ({
@@ -205,7 +226,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'sponsored-intelligence': {
-      const { url, close } = await bootSponsoredIntelligence({
+      const { url, close, scenario } = await bootSponsoredIntelligence({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -214,6 +235,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatSponsoredIntelligenceSummary(url, apiKey),
         principalScope: 'URL path segment /v1/brands/{brand_id}/...',
         principalMapping: SI_BRANDS.map(b => ({
@@ -225,7 +247,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     case 'sales-non-guaranteed': {
-      const { url, close } = await bootSalesNonGuaranteed({
+      const { url, close, scenario } = await bootSalesNonGuaranteed({
         port: options.port,
         apiKey: options.apiKey,
       });
@@ -234,6 +256,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         url,
         auth: { kind: 'static_bearer', apiKey },
         close,
+        scenario,
         summary: () => formatSalesNonGuaranteedSummary(url, apiKey),
         principalScope: 'X-Network-Code header (required on every request)',
         principalMapping: SALES_NON_GUARANTEED_NETWORKS.map(net => ({

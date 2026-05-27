@@ -681,6 +681,35 @@ describe('mock-server sales-guaranteed', () => {
       assert.equal(res.status, 400);
     });
 
+    it('POST /v1/proposals replays exact idempotency_key requests and conflicts on body changes', async () => {
+      const body = {
+        brief: 'Idempotent proposal',
+        product_ids: ['sports_preroll_q2_guaranteed'],
+        idempotency_key: 'proposal-idem-key-0001',
+      };
+      const first = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(body),
+      });
+      const second = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(body),
+      });
+      assert.equal(first.status, 201);
+      assert.equal(second.status, 201);
+      assert.deepEqual(await second.json(), await first.json());
+
+      const conflict = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ ...body, brief: 'Changed proposal' }),
+      });
+      assert.equal(conflict.status, 409);
+      assert.equal((await conflict.json()).code, 'idempotency_conflict');
+    });
+
     it('GET /v1/proposals/{id} echoes the record', async () => {
       const create = await fetch(`${handle.url}/v1/proposals`, {
         method: 'POST',
