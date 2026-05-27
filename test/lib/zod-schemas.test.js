@@ -642,8 +642,7 @@ describe('Zod Schema Validation', () => {
       'UpdateMediaBuyRequestSchema',
       'PackageUpdateSchema',
       'ProvidePerformanceFeedbackRequestSchema',
-      // MediaBuyFeaturesSchema uses z.record(z.string(), z.boolean()) which is a typed
-      // record — correctly kept as intersection to preserve the value type constraint.
+      'MediaBuyFeaturesSchema',
     ];
 
     for (const name of schemasToCheck) {
