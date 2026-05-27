@@ -84,7 +84,8 @@ export interface TestOptions {
   /**
    * Version-envelope emission mode. Defaults to `auto`; 3.0 storyboards emit
    * the legacy major marker only, while 3.1 storyboards also emit the exact
-   * `adcp_version` marker.
+   * `adcp_version` marker. Compliance discovery may negotiate `major-only`
+   * for strict pre-3.1 agents.
    */
   versionEnvelope?: VersionEnvelopeMode;
   /** Custom User-Agent string sent with all outbound requests */
@@ -227,6 +228,13 @@ export interface TestOptions {
   _client?: unknown;
   /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
   _profile?: AgentProfile;
+  /**
+   * @internal Server-declared AdCP version learned during capability discovery.
+   * Storyboard response validation uses this for version-skew compatibility
+   * without forcing the transport client to pin a schema bundle that may not
+   * ship with the installed SDK.
+   */
+  _serverAdcpVersion?: string;
   /** @internal Test controller capabilities from comply() — set when comply_test_controller detected */
   _controllerCapabilities?: ControllerDetection;
   /** @internal Pre-created webhook receiver, used for unit-test injection. When
@@ -303,6 +311,11 @@ export interface AgentProfile {
    * `get_adcp_capabilities.adcp.supported_versions`.
    */
   adcp_supported_versions?: string[];
+  /**
+   * Seller's full AdCP build version from
+   * `get_adcp_capabilities.adcp.build_version`.
+   */
+  adcp_build_version?: string;
   supported_protocols?: string[];
   /** Specialism claims from get_adcp_capabilities.specialisms */
   specialisms?: string[];

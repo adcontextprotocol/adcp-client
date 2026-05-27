@@ -83,6 +83,49 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].name, 'Test Product');
     });
 
+    test('should unwrap markerless 3.0 get_products MCP response without cache_scope', () => {
+      const mcpResponse = {
+        structuredContent: {
+          products: [],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+        responseAdcpVersion: '3.0',
+      });
+
+      assert.deepStrictEqual(result.products, []);
+      assert.strictEqual(result.cache_scope, undefined);
+      assert.strictEqual(result.adcp_version, undefined);
+    });
+
+    test('should unwrap markerless 3.0 get_products A2A response without cache_scope', () => {
+      const a2aResponse = {
+        result: {
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    products: [],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aResponse, 'get_products', 'a2a', {
+        responseAdcpVersion: '3.0',
+      });
+
+      assert.deepStrictEqual(result.products, []);
+      assert.strictEqual(result.cache_scope, undefined);
+      assert.strictEqual(result.adcp_version, undefined);
+    });
+
     test('should unwrap nested response field in A2A data part', () => {
       // Some agents wrap AdCP responses in an extra { response: { ... } } layer
       const a2aResponse = {

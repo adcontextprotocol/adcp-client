@@ -100,6 +100,24 @@ export function isAdcpVersionSupported(version: string, supportedVersions: reado
   });
 }
 
+export function isPre31AdcpVersion(version: string | undefined): boolean {
+  if (version === undefined) return false;
+  const trimmed = version.trim();
+  if (trimmed.length === 0) return false;
+
+  const withoutLegacyPrefix = trimmed.startsWith('v') ? trimmed.slice(1) : trimmed;
+  const match = /^(\d+)(?:\.(\d+))?/.exec(withoutLegacyPrefix);
+  if (!match?.[1]) return false;
+
+  const major = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(major)) return false;
+  if (major < 3) return true;
+  if (major > 3) return false;
+
+  const minor = match[2] === undefined ? 0 : Number.parseInt(match[2], 10);
+  return Number.isFinite(minor) && minor < 1;
+}
+
 function prereleaseFamilyAlias(version: string): string | undefined {
   const match = /^(\d+\.\d+-[0-9A-Za-z-]+)\.\d+$/.exec(version);
   return match?.[1];

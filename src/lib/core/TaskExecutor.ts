@@ -971,6 +971,9 @@ export class TaskExecutor {
       // Now unwrap the response
       const unwrapped = unwrapProtocolResponse(response, toolName, undefined, {
         filterInvalidProducts: this.config.filterInvalidProducts,
+        ...(this.responseAdcpVersionForValidation() && {
+          responseAdcpVersion: this.responseAdcpVersionForValidation(),
+        }),
       });
 
       // Log successful extraction with result details
@@ -1989,7 +1992,10 @@ export class TaskExecutor {
       // `pricing_options must NOT have fewer than 1 items` and similar
       // shape mismatches that don't exist in v2.5. The v3 → v2 path is
       // already correctly version-pinned via lastKnownServerVersion.
-      const validationVersion = this.lastKnownServerVersion === 'v2' ? 'v2.5' : this.config.adcpVersion;
+      const validationVersion =
+        this.lastKnownServerVersion === 'v2'
+          ? 'v2.5'
+          : (this.responseAdcpVersionForValidation() ?? this.config.adcpVersion);
       const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, validationVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
@@ -2023,6 +2029,11 @@ export class TaskExecutor {
         errors: mode === 'strict' ? [`Validation error: ${errorMessage}`] : [],
       };
     }
+  }
+
+  private responseAdcpVersionForValidation(): string | undefined {
+    if (this.config.versionEnvelope === 'major-only') return '3.0';
+    return undefined;
   }
 
   /**

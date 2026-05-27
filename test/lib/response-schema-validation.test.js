@@ -95,6 +95,11 @@ describe('validateResponseSchema', () => {
       assert.ok(result.error.includes('cache_scope'), `Expected cache_scope error, got: ${result.error}`);
     });
 
+    it('passes when cache_scope is missing on a server-declared 3.0 products response', () => {
+      const result = validateResponseSchema('get_products', { products: [] }, '3.0');
+      assert.strictEqual(result.passed, true);
+    });
+
     it('passes for unchanged wholesale-feed responses without products', () => {
       const result = validateResponseSchema('get_products', {
         unchanged: true,
