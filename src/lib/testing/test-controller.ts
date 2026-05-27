@@ -239,10 +239,23 @@ export interface UpstreamTrafficSuccess {
 }
 
 export interface UpstreamTrafficQueryParams {
+  /** ISO 8601 lower bound for recorded calls. */
   since_timestamp?: string;
+  /** Glob matched against each recorded call's `<METHOD> <URL>` endpoint. */
   endpoint_pattern?: string;
+  /** Maximum recorded calls to return. */
   limit?: number;
+  /**
+   * Requested per-call response shape. `raw` returns redacted payloads;
+   * `digest` returns payload digests plus optional identifier proofs.
+   */
   attestation_mode?: 'raw' | 'digest';
+  /**
+   * Lowercase-hex SHA-256 digests of string identifier values the controller
+   * should prove in digest mode. Non-string vectors cannot be represented by
+   * this field and grade not_applicable when only digest attestations are
+   * available.
+   */
   identifier_value_digests?: string[];
 }
 

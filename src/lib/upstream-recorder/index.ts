@@ -32,16 +32,19 @@
  * });
  *
  * // 3. In your `comply_test_controller` handler for scenario:
- * //    `query_upstream_traffic`, return the recorder's query result
- * //    verbatim:
+ * //    `query_upstream_traffic`, project the recorder's query result
+ * //    onto the controller response shape:
  * function handleQueryUpstreamTraffic(req, principal) {
- *   const { items, total, truncated, since_timestamp } = recorder.query({
- *     principal,
- *     sinceTimestamp: req.params.since_timestamp,
- *     endpointPattern: req.params.endpoint_pattern,
- *     limit: req.params.limit,
- *   });
- *   return { success: true, recorded_calls: items, total_count: total, truncated, since_timestamp };
+ *   return toQueryUpstreamTrafficResponse(
+ *     recorder.query({
+ *       principal,
+ *       sinceTimestamp: req.params.since_timestamp,
+ *       endpointPattern: req.params.endpoint_pattern,
+ *       limit: req.params.limit,
+ *       attestationMode: req.params.attestation_mode,
+ *       identifierValueDigests: req.params.identifier_value_digests,
+ *     })
+ *   );
  * }
  * ```
  *

@@ -65,12 +65,14 @@ export interface DigestRecordedCall extends RecordedCallBase {
   attestation_mode: 'digest';
   payload?: never;
   /**
-   * Lowercase hex SHA-256 of the post-redaction payload bytes. JSON and
-   * `*+json` payloads use RFC 8785 JCS canonicalization before hashing;
-   * non-JSON payloads use the post-redaction emitted body bytes. String-only
-   * identifier proofs are deliberately low entropy when adopters use short
-   * or guessable synthetic values; do not run digest-mode attestations over
-   * production identifiers.
+   * Lowercase hex SHA-256 of the post-redaction payload bytes. JSON object
+   * and array payloads use RFC 8785 JCS canonicalization when possible before
+   * hashing; string payloads and non-JSON payloads use the post-redaction
+   * emitted body bytes. If canonicalization cannot represent the value, the
+   * reference recorder falls back to JSON.stringify so recording remains
+   * non-fatal. String-only identifier proofs are deliberately low entropy
+   * when adopters use short or guessable synthetic values; do not run
+   * digest-mode attestations over production identifiers.
    */
   payload_digest_sha256: string;
   identifier_match_proofs?: Array<{

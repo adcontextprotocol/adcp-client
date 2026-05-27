@@ -506,11 +506,19 @@ function sha256Hex(value: string): string {
 }
 
 /**
- * Compute the `RecordedCall.payload_digest_sha256` value for a redacted
- * payload. JSON-shaped payloads are serialized with RFC 8785 JCS before
- * hashing; non-JSON payloads are hashed over their post-redaction emitted
- * byte representation. The returned digest is lowercase hex, matching the
- * 3.1 `query_upstream_traffic` wire contract.
+ * Compute the `RecordedCall.payload_digest_sha256` value for an already
+ * redacted payload. This helper does not redact for you; it mirrors the
+ * recorder projection after record-time redaction has completed.
+ *
+ * JSON objects/arrays are serialized with RFC 8785 JCS before hashing when
+ * JCS can represent the value. Plain string payloads are treated as emitted
+ * body bytes and hashed verbatim, which is also the non-JSON behavior. If a
+ * JSON-shaped value cannot be JCS-canonicalized (for example unsupported
+ * values or excessive depth), the recorder falls back to `JSON.stringify`
+ * before hashing so recording remains non-fatal.
+ *
+ * The returned digest is lowercase hex, matching the 3.1
+ * `query_upstream_traffic` wire contract.
  */
 export function computePayloadDigestSha256(payload: unknown, contentType = 'application/json'): string {
   return sha256Hex(canonicalPayloadBytes(payload, contentType));

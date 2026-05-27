@@ -1038,15 +1038,22 @@ export interface StoryboardValidation {
    */
   attestation_mode_required?: 'raw';
   /**
-   * Paths into the storyboard's `sample_request` that name the load-bearing
-   * identifiers the adapter MUST forward upstream. The runner extracts the
-   * values at these paths and asserts each resolved value appears in at
-   * least one matching `recorded_call`'s payload at any depth. Each path
-   * MAY resolve to a single value or an array; ALL resolved values MUST be
-   * present in the recorded payload — single-placeholder fabrication is
-   * the threat model. Path syntax: same dotted-with-`[*]` form as
-   * `payload_must_contain.path`. Per spec PR adcontextprotocol/adcp#3816,
-   * replaces the earlier `buyer_identifier_echo: boolean` shorthand.
+   * Paths into the effective request payload that name the load-bearing
+   * identifiers the adapter MUST forward upstream. When the runner has the
+   * actual request payload after context substitution, that payload is the
+   * source of truth; otherwise it falls back to the storyboard's
+   * `sample_request`. Paths that target `response.*` or `context.*` are
+   * rejected at load time because digest-mode collection only sees request
+   * payload/sample-request values before `query_upstream_traffic` runs.
+   *
+   * The runner extracts the values at these paths and asserts each resolved
+   * value appears in at least one matching `recorded_call`'s payload at any
+   * depth. Each path MAY resolve to a single value or an array; ALL resolved
+   * values MUST be present in the recorded payload — single-placeholder
+   * fabrication is the threat model. Path syntax: same dotted-with-`[*]`
+   * form as `payload_must_contain.path`. Per spec PR
+   * adcontextprotocol/adcp#3816, replaces the earlier
+   * `buyer_identifier_echo: boolean` shorthand.
    */
   identifier_paths?: string[];
   /**
