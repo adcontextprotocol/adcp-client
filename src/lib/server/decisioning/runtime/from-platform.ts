@@ -2203,8 +2203,8 @@ type SubmittedEnvelope = {
  * presented and rejected — so we deliberately do NOT refresh on it (auto-
  * retry against an SSO endpoint on a revoked token is the retry-storm
  * pattern adcp#3730 split the code to prevent). If the refresh hook itself
- * throws, projects to `AUTH_REQUIRED` with `recovery: 'correctable'` so
- * the buyer re-links via their UI flow.
+ * throws, projects to legacy-compatible `AUTH_REQUIRED` with
+ * `recovery: 'correctable'` so existing buyers re-link via their UI flow.
  *
  * Parameterized over `TCtxMeta` (#1168) so adopters' refresh hooks see
  * typed `account.ctx_metadata` rather than `unknown`. Default `unknown`
@@ -2232,8 +2232,8 @@ const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'A
  * SSO retry-storm pattern adcp#3730 split the code to prevent.
  *
  * Failure modes:
- *   - Refresh hook throws → re-throw `AUTH_REQUIRED` with `recovery: 'correctable'`
- *     so the buyer re-links via their UI.
+ *   - Refresh hook throws → re-throw legacy-compatible `AUTH_REQUIRED` with
+ *     `recovery: 'correctable'` so the buyer re-links via their UI.
  *   - Retried call throws a refreshable auth code again → bubble out
  *     (don't refresh a second time).
  */
@@ -2263,9 +2263,10 @@ async function runWithTokenRefresh<TCtxMeta, T>(
         recovery: 'correctable',
       });
     }
-    // `authInfo` became optional in #1286. Token refresh only fires after an
-    // AUTH_REQUIRED throw — meaning an upstream call attempted to use a
-    // token, which means `authInfo` was populated before the throw.
+    // `authInfo` became optional in #1286. Token refresh only fires after a
+    // refreshable auth throw (legacy AUTH_REQUIRED or 3.1 AUTH_MISSING) —
+    // meaning an upstream call attempted to use a token, so `authInfo` was
+    // populated before the throw.
     // Defensive guard: if for some reason it isn't, the refreshed token
     // still flows on the next request rather than crashing here.
     if (refresh.account.authInfo) {
@@ -2283,7 +2284,7 @@ async function runWithTokenRefresh<TCtxMeta, T>(
  * throws → wire `adcp_error` envelope; other thrown errors bubble to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
  *
- * When `refresh` is provided and the call throws `AUTH_REQUIRED`, the
+ * When `refresh` is provided and the call throws a refreshable auth code, the
  * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
  * `account.authInfo.token`, and retries the platform method once.
  */

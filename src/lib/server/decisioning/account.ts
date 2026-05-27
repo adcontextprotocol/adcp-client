@@ -648,13 +648,14 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
 
   /**
    * Mid-request token refresh hook. Optional. Called by the framework when
-   * a platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })` AND
-   * `refreshToken` is defined — the framework refreshes via this hook,
-   * mutates `account.authInfo.token` with the returned value, and retries
-   * the failing platform method exactly once.
+   * a platform method throws a refreshable token-auth code (`AUTH_REQUIRED`
+   * for legacy compatibility or `AUTH_MISSING` for an AdCP 3.1-native
+   * missing request credential) AND `refreshToken` is defined — the
+   * framework refreshes via this hook, mutates `account.authInfo.token` with
+   * the returned value, and retries the failing platform method exactly once.
    *
    * The reason string lets adopters distinguish trigger conditions:
-   *   - `'auth_required'` — platform method threw AUTH_REQUIRED in flight.
+   *   - `'auth_required'` — platform method threw refreshable auth in flight.
    *
    * Treat as an open string union: future values may be added. Adopters
    * SHOULD switch exhaustively (`default: throw`) so behavior drift on
@@ -676,7 +677,7 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    *
    * **Concurrency.** `refreshToken` MUST be safe under concurrent
    * invocation on the same account — two parallel in-flight calls hitting
-   * AUTH_REQUIRED at once will both call this hook. Adopters whose
+   * refreshable auth at once will both call this hook. Adopters whose
    * upstream provider rate-limits refresh should coalesce internally
    * (e.g., a per-account in-flight refresh promise). The framework does
    * not coalesce.
