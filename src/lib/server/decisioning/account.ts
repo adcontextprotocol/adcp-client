@@ -651,8 +651,9 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * a platform method throws a refreshable token-auth code (`AUTH_REQUIRED`
    * for legacy compatibility or `AUTH_MISSING` for an AdCP 3.1-native
    * missing request credential) AND `refreshToken` is defined — the
-   * framework refreshes via this hook, mutates `account.authInfo.token` with
-   * the returned value, and retries the failing platform method exactly once.
+   * framework refreshes via this hook, mutates or creates `account.authInfo`
+   * with the returned token, and retries the failing platform method exactly
+   * once.
    *
    * The reason string lets adopters distinguish trigger conditions:
    *   - `'auth_required'` — platform method threw refreshable auth in flight.
@@ -667,13 +668,12 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * retail-media OAuth flows) where the SDK caches an upstream token
    * server-side and the buyer's auth-to-this-agent is separate.
    *
-   * **Account-object identity contract.** The framework mutates
-   * `account.authInfo.token` (and `expiresAt` if returned) on the Account
-   * passed in. Adopters who memoize / cache `Account` objects across
-   * requests MUST return a fresh copy from `accounts.resolve()` for each
-   * request — sharing a cached Account would leak the refreshed token to
-   * any subsequent caller that resolves the same id. Returning a new
-   * object literal per call (the canonical pattern) is safe.
+   * **Account-object identity contract.** The framework mutates a
+   * request-local Account clone before retrying, creating an OAuth-shaped
+   * auth principal if the resolver omitted one. The resolver-returned object
+   * is not written back. Adopters should still avoid caching secret-bearing
+   * `Account.authInfo` objects across unrelated callers, but SDK refresh
+   * retry does not mutate a cached resolver object in place.
    *
    * **Concurrency.** `refreshToken` MUST be safe under concurrent
    * invocation on the same account — two parallel in-flight calls hitting

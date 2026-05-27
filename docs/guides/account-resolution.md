@@ -119,8 +119,9 @@ policy. Guidance:
 
 This TTL governs the *sync-linkage lifetime*, which is separate from
 `AccountStore.refreshToken` — that hook refreshes an upstream OAuth token
-mid-request when your platform method throws legacy `AUTH_REQUIRED` or the
-3.1-native `AUTH_MISSING`. The two are orthogonal.
+mid-request when your seller-to-upstream platform method throws legacy
+`AUTH_REQUIRED` or the 3.1-native `AUTH_MISSING`. It is not a buyer inbound
+auth recovery path. The two are orthogonal.
 
 **Postgres schema reference** — see `docs/guides/POSTGRES.md` for the
 canonical `adcp_sync_linkages` DDL pattern. The cleanup query there

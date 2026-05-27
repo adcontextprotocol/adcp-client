@@ -1259,22 +1259,24 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     const { AuthMissingError } = require('../dist/lib/server');
     let attempt = 0;
     let refreshArgs;
+    const sharedResolvedAccount = {
+      id: 'acc_missing',
+      name: 'Acme',
+      status: 'active',
+      ctx_metadata: {},
+    };
     const platform = buildPlatform({
       accounts: {
-        resolve: async () => ({
-          id: 'acc_missing',
-          name: 'Acme',
-          status: 'active',
-          ctx_metadata: {},
-          authInfo: { kind: 'oauth', token: 'refreshable_token' },
-        }),
+        resolve: async () => sharedResolvedAccount,
         getAccountFinancials: async (req, ctx) => {
           attempt += 1;
           if (attempt === 1) {
-            assert.strictEqual(ctx.account.authInfo.token, 'refreshable_token');
+            assert.strictEqual(ctx.account.authInfo, undefined, 'first call has no upstream credential');
             throw new AuthMissingError({ message: 'Authorization header missing on upstream request' });
           }
+          assert.strictEqual(ctx.account.authInfo.kind, 'oauth');
           assert.strictEqual(ctx.account.authInfo.token, 'fresh_token');
+          assert.strictEqual(ctx.account.authInfo.expiresAt, 1800000000000);
           return {
             account: { account_id: 'acc_missing' },
             currency: 'USD',
@@ -1285,7 +1287,7 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
         },
         refreshToken: async (account, reason) => {
           refreshArgs = { accountId: account.id, reason };
-          return { token: 'fresh_token' };
+          return { token: 'fresh_token', expiresAt: 1800000000000 };
         },
       },
     });
@@ -1302,6 +1304,69 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.strictEqual(attempt, 2, 'platform method ran twice (initial + retry)');
     assert.deepStrictEqual(refreshArgs, { accountId: 'acc_missing', reason: 'auth_required' });
     assert.strictEqual(result.structuredContent.spend.total_spend, 4.25);
+    assert.strictEqual(
+      sharedResolvedAccount.authInfo,
+      undefined,
+      'refresh writes to request-local account clone, not resolver-owned object'
+    );
+  });
+
+  it('getAccountFinancials refresh does not alias resolver-owned authInfo (adcp#3730)', async () => {
+    const { AuthRequiredError } = require('../dist/lib/server');
+    let attempt = 0;
+    const sharedResolvedAccount = {
+      id: 'acc_stale',
+      name: 'Acme',
+      status: 'active',
+      ctx_metadata: { nested: { upstreamAccountId: 'upstream-1' } },
+      authInfo: { kind: 'oauth', token: 'stale_token', claims: { sub: 'buyer-1' } },
+    };
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => sharedResolvedAccount,
+        getAccountFinancials: async (req, ctx) => {
+          attempt += 1;
+          if (attempt === 1) {
+            assert.strictEqual(ctx.account.authInfo.token, 'stale_token');
+            assert.deepStrictEqual(ctx.account.authInfo.claims, { sub: 'buyer-1' });
+            throw new AuthRequiredError({ message: 'token expired upstream' });
+          }
+          assert.strictEqual(ctx.account.authInfo.token, 'fresh_token');
+          ctx.account.authInfo.claims.sub = 'request-local';
+          ctx.account.ctx_metadata.nested.upstreamAccountId = 'request-local-upstream';
+          return {
+            account: { account_id: 'acc_stale' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 8.75, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async () => ({ token: 'fresh_token' }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'auth-refresh-request-local',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_stale' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(attempt, 2, 'platform method ran twice (initial + retry)');
+    assert.strictEqual(result.structuredContent.spend.total_spend, 8.75);
+    assert.deepStrictEqual(
+      sharedResolvedAccount.authInfo,
+      { kind: 'oauth', token: 'stale_token', claims: { sub: 'buyer-1' } },
+      'refresh writes to a request-local authInfo clone, not resolver-owned authInfo'
+    );
+    assert.deepStrictEqual(
+      sharedResolvedAccount.ctx_metadata,
+      { nested: { upstreamAccountId: 'upstream-1' } },
+      'request-local account clone does not alias nested resolver-owned metadata'
+    );
   });
 
   it('getAccountFinancials projects AuthMissingError to AUTH_MISSING when refreshToken is absent (adcp#3730)', async () => {

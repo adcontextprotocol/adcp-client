@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import path from 'path';
+import { applySdkErrorCodeProseOverlay } from './lib/error-code-prose-overlays';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -327,7 +328,7 @@ function parseErrorCodes(): ErrorCodeEntry[] {
   return Object.entries(codes)
     .map(([code, info]) => ({
       code,
-      description: info?.description ?? '',
+      description: applySdkErrorCodeProseOverlay(code, info?.description ?? ''),
       recovery: (info?.recovery as ErrorCodeEntry['recovery']) ?? 'transient',
     }))
     .sort((a, b) => a.code.localeCompare(b.code));
@@ -516,6 +517,9 @@ function generateLlmsTxt(
   ln(
     `> Note: the \`Library\` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.`
   );
+  ln(
+    `> Note: generated error-code prose may include explicit SDK compatibility overlays applied by \`scripts/lib/error-code-prose-overlays.ts\` when bundled beta manifest wording lags SDK behavior.`
+  );
   ln();
   ln(`## What is AdCP`);
   ln();
@@ -573,7 +577,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthMissingError\`, \`AuthInvalidError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. \`AuthRequiredError\` remains as a deprecated \`AUTH_REQUIRED\` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with \`recovery\` baked in. Throw from any platform method or \`accounts.resolve\`.`
+    `**Typed errors instead of \`new AdcpError(code, ...)\`.** \`AuthMissingError\`, \`AuthInvalidError\`, \`PermissionDeniedError(action)\`, \`RateLimitedError(retryAfterSeconds)\`, \`ServiceUnavailableError\`, \`UnsupportedFeatureError(feature)\`, \`GovernanceDeniedError\`, \`PolicyViolationError\`, \`IdempotencyConflictError\`, \`InvalidRequestError\`, \`InvalidStateError\`, plus the not-found family (\`AccountNotFoundError\`, \`MediaBuyNotFoundError\`, \`PackageNotFoundError\`, \`ProductNotFoundError\`, \`CreativeNotFoundError\`) and the budget / state family. \`AuthRequiredError\` remains as a deprecated \`AUTH_REQUIRED\` compatibility wrapper for older sellers; new seller code should use the split auth classes. Each maps to its wire error code with \`recovery\` baked in. Throw from platform methods. In \`accounts.resolve\`, use auth errors only for inbound authentication failures; missing sync linkage or unknown account references should stay \`ACCOUNT_NOT_FOUND\` / \`null\`.`
   );
   ln();
   ln(

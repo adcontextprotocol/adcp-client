@@ -2198,7 +2198,7 @@ type SubmittedEnvelope = {
  * is defined and the platform method throws `AdcpError` with a
  * recovery-correctable auth code (`AUTH_REQUIRED` from 3.0.x sellers, or
  * `AUTH_MISSING` from 3.1+ sellers), `projectSync` refreshes the account's
- * token via the hook, mutates `account.authInfo.token`, and retries the
+ * token via the hook, mutates or creates `account.authInfo`, and retries the
  * platform method ONCE. `AUTH_INVALID` is terminal — credentials were
  * presented and rejected — so we deliberately do NOT refresh on it (auto-
  * retry against an SSO endpoint on a revoked token is the retry-storm
@@ -2216,6 +2216,19 @@ interface RefreshConfig<TCtxMeta = unknown> {
   fn?: (account: Account<TCtxMeta>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
 }
 
+function cloneAccountForRequest<TCtxMeta>(account: Account<TCtxMeta>): Account<TCtxMeta> {
+  try {
+    return structuredClone(account);
+  } catch (cause) {
+    const publicError = new AdcpError('CONFIGURATION_ERROR', {
+      message: 'Resolved account is not safely cloneable for request-local auth refresh.',
+      recovery: 'terminal',
+    });
+    (publicError as Error & { cause?: unknown }).cause = cause;
+    throw publicError;
+  }
+}
+
 /** Auth codes that signal "credentials missing, refresh and retry once." */
 const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'AUTH_MISSING']);
 
@@ -2224,8 +2237,8 @@ const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'A
  * auth codes (`AUTH_REQUIRED` on 3.0.x sellers, `AUTH_MISSING` on 3.1+).
  * Without a refresh fn (or no `refresh` at all) this passes the call
  * through. With one, catches the refreshable code, calls `refresh.fn`,
- * mutates `account.authInfo.token` (and `expiresAt` if returned), and
- * retries the inner call exactly once.
+ * mutates or creates `account.authInfo` (including `expiresAt` when
+ * returned), and retries the inner call exactly once.
  *
  * `AUTH_INVALID` is intentionally NOT refreshed — it's terminal by
  * spec (credentials presented and rejected); refreshing creates the
@@ -2251,30 +2264,30 @@ async function runWithTokenRefresh<TCtxMeta, T>(
     let refreshed: { token: string; expiresAt?: number };
     try {
       refreshed = await refresh.fn(refresh.account, 'auth_required');
-    } catch {
+    } catch (cause) {
       // Refresh-fn exception text is intentionally NOT echoed on the wire
       // — upstream identity-provider error messages routinely embed
       // refresh-token prefixes, internal hostnames, OAuth provider error
       // codes, and stack-trace fragments. Adopters log details server-
       // side; the buyer gets a fixed message + correctable recovery
       // signaling they need to re-authorize.
-      throw new AdcpError('AUTH_REQUIRED', {
+      const publicError = new AdcpError('AUTH_REQUIRED', {
         message: 'Token refresh failed; re-authentication required',
         recovery: 'correctable',
       });
+      (publicError as Error & { cause?: unknown }).cause = cause;
+      throw publicError;
     }
-    // `authInfo` became optional in #1286. Token refresh only fires after a
-    // refreshable auth throw (legacy AUTH_REQUIRED or 3.1 AUTH_MISSING) —
-    // meaning an upstream call attempted to use a token, so `authInfo` was
-    // populated before the throw.
-    // Defensive guard: if for some reason it isn't, the refreshed token
-    // still flows on the next request rather than crashing here.
-    if (refresh.account.authInfo) {
-      refresh.account.authInfo.token = refreshed.token;
-      if (refreshed.expiresAt !== undefined) {
-        refresh.account.authInfo.expiresAt = refreshed.expiresAt;
-      }
+    // `authInfo` became optional in #1286. A 3.1-native AUTH_MISSING can mean
+    // the upstream request had no usable credential at all, so attach the
+    // freshly minted OAuth-style token even when the resolver omitted
+    // account.authInfo.
+    const authInfo = refresh.account.authInfo ?? { kind: 'oauth' as const };
+    authInfo.token = refreshed.token;
+    if (refreshed.expiresAt !== undefined) {
+      authInfo.expiresAt = refreshed.expiresAt;
     }
+    refresh.account.authInfo = authInfo;
     return fn();
   }
 }
@@ -2286,7 +2299,7 @@ async function runWithTokenRefresh<TCtxMeta, T>(
  *
  * When `refresh` is provided and the call throws a refreshable auth code, the
  * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
- * `account.authInfo.token`, and retries the platform method once.
+ * `account.authInfo`, and retries the platform method once.
  */
 async function projectSync<TResult, TWire, TCtxMeta = unknown>(
   fn: () => Promise<TResult>,
@@ -4739,11 +4752,15 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
           recovery: 'terminal',
         });
       }
-      const toolCtx = { ...resolveCtx, account: resolved };
+      // Request-local clone: refreshToken mutates account.authInfo before the
+      // retry. Never write refreshed credentials onto a resolver-owned object;
+      // adopters sometimes cache Account rows between requests.
+      const account = cloneAccountForRequest(resolved);
+      const toolCtx = { ...resolveCtx, account };
       return projectSync(
         () => accounts.getAccountFinancials!(params, toolCtx),
         r => r,
-        accounts.refreshToken ? { account: resolved, fn: accounts.refreshToken.bind(accounts) } : undefined
+        accounts.refreshToken ? { account, fn: accounts.refreshToken.bind(accounts) } : undefined
       );
     };
   }

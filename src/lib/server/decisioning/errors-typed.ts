@@ -259,8 +259,8 @@ export class AuthRequiredError extends AdcpError {
  * Credentials were presented but rejected — revoked, malformed signature,
  * or a key no longer in the seller's keystore. Recovery: terminal — do NOT
  * auto-retry. Auto-retry creates an SSO retry-storm indistinguishable from
- * brute-force probing. Agents with a valid OAuth 2.1 refresh grant MAY
- * silently refresh and retry once.
+ * brute-force probing. The decisioning runtime treats this as terminal even
+ * when an account store has a refresh hook.
  *
  * **Credential-leak guard.** `opts.message` and `opts.details` cross to
  * the buyer verbatim on the wire envelope. Do NOT place rejected
