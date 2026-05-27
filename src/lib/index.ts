@@ -1578,5 +1578,22 @@ export {
   hasBrandRightsTools,
   expectControllerError,
   expectControllerSuccess,
+  RateLimitTripObserver,
+  RATE_LIMIT_TRIP_CONTRACT,
+  RATE_LIMIT_TRIP_DEFAULT_REPLAY_MAX_WAIT_SECONDS,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MAX,
+  RATE_LIMIT_TRIP_MAX_ATTEMPTS_MIN,
+  validateRateLimitTripSpec,
 } from './testing/index';
-export type { ControllerErrorWithDetail } from './testing/index';
+export type {
+  ControllerErrorWithDetail,
+  TestClient,
+  RateLimitTripSpec,
+  RateLimitTripClient,
+  RateLimitTripFailureCode,
+  RateLimitTripObservation,
+  RateLimitTripObserverOptions,
+  RateLimitTripResponseSnapshot,
+  RateLimitTripStructuredResult,
+  RateLimitTripTaskOptions,
+} from './testing/index';

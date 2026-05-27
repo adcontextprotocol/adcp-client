@@ -33,6 +33,7 @@ export type {
   TaskResult,
   Logger,
 } from './types';
+export type { TestClient } from './client';
 
 // Re-export client utilities
 export { setAgentTesterLogger, getLogger, createTestClient, runStep } from './client';
