@@ -9,6 +9,13 @@ import {
   type MockNetwork,
   type MockProduct,
 } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -21,6 +28,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 type OrderStatus = 'draft' | 'pending_approval' | 'approved' | 'delivering' | 'completed' | 'canceled' | 'rejected';
@@ -137,6 +145,25 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   const bump = (routeTemplate: string): void => {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   };
+  const scenario = createMockScenarioController({
+    specialism: 'sales-guaranteed',
+    snapshot: () => ({
+      orders: orders.size,
+      creatives: creatives.size,
+      tasks: tasks.size,
+      proposals: proposals.size,
+      idempotency: idempotency.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      orders.clear();
+      creatives.clear();
+      tasks.clear();
+      proposals.clear();
+      idempotency.clear();
+      traffic.clear();
+    },
+  });
 
   const server = createServer((req, res) => {
     handleRequest(req, res).catch(err => {
@@ -157,6 +184,7 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   const url = `http://127.0.0.1:${boundPort}`;
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -167,6 +195,8 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const path = url.pathname;
     const method = req.method ?? 'GET';
+
+    if (await scenario.handleControlRequest(req, res, method, path)) return;
 
     // Façade-detection traffic dump — harness-only, no auth required.
     if (method === 'GET' && path === '/_debug/traffic') {
@@ -224,6 +254,8 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       writeJson(res, 403, { code: 'unknown_network', message: `Unknown network: ${networkCode}` });
       return;
     }
+
+    if (await scenario.handleScriptedResponse(res, method, path, (m, p) => bump(`${m} ${p}`))) return;
 
     if (method === 'GET' && path === '/v1/inventory') {
       bump('GET /v1/inventory');
@@ -497,6 +529,15 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   async function handleCreateCreative(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${network.network_code}::creative`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, format_id, advertiser_id, snippet, client_request_id } = body as Record<string, unknown>;
     if (typeof name !== 'string' || typeof format_id !== 'string' || typeof advertiser_id !== 'string') {
       writeJson(res, 400, { code: 'invalid_request', message: 'name, format_id, advertiser_id are required.' });
@@ -531,7 +572,9 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${network.network_code}::creative::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(cr));
+    const responseBody = stripBodyFingerprint(cr);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   // ────────────────────────────────────────────────────────────
@@ -544,6 +587,15 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   async function handleCreateProposal(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${network.network_code}::proposal`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { brief, total_budget, product_ids } = body as Record<string, unknown>;
     const briefStr = typeof brief === 'string' ? brief : undefined;
     const budget = isObject(total_budget)
@@ -600,7 +652,9 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       updated_at: now,
     };
     proposals.set(proposalId, proposal);
-    writeJson(res, 201, serializeProposal(proposal));
+    const responseBody = serializeProposal(proposal);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   function handleGetProposal(proposal: ProposalState, res: ServerResponse): void {
@@ -735,6 +789,15 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   async function handleCreateOrder(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${network.network_code}::order`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const { name, advertiser_id, currency, budget, client_request_id } = body as Record<string, unknown>;
     if (
       typeof name !== 'string' ||
@@ -791,7 +854,9 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${network.network_code}::order::${client_request_id}`, id);
     }
-    writeJson(res, 201, serializeOrder(order));
+    const responseBody = serializeOrder(order);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   function handleGetOrder(order: OrderState, res: ServerResponse): void {
@@ -834,6 +899,17 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   }
 
   async function handleCreateLineItem(req: IncomingMessage, order: OrderState, res: ServerResponse): Promise<void> {
+    const body = await readJsonObject(req, res);
+    if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${order.network_code}::${order.order_id}::lineitem`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint({ order_id: order.order_id, body })
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     if (order.status === 'completed' || order.status === 'canceled' || order.status === 'rejected') {
       writeJson(res, 422, {
         code: 'invalid_state_transition',
@@ -841,8 +917,6 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       });
       return;
     }
-    const body = await readJsonObject(req, res);
-    if (!body) return;
     const { product_id, budget, ad_unit_targeting, client_request_id } = body as Record<string, unknown>;
     if (typeof product_id !== 'string' || typeof budget !== 'number') {
       writeJson(res, 400, { code: 'invalid_request', message: 'product_id and budget are required.' });
@@ -880,7 +954,9 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     if (typeof client_request_id === 'string' && client_request_id.length > 0) {
       idempotency.set(`${order.network_code}::lineitem::${client_request_id}`, id);
     }
-    writeJson(res, 201, stripBodyFingerprint(li));
+    const responseBody = stripBodyFingerprint(li);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   function handleAttachCreative(

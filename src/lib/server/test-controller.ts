@@ -142,7 +142,8 @@ export type SeedScenario =
   | 'seed_creative'
   | 'seed_plan'
   | 'seed_media_buy'
-  | 'seed_creative_format';
+  | 'seed_creative_format'
+  | 'seed_buyer_agent';
 
 /**
  * Scenario name constants for force_* and simulate_* (the advertised set).
@@ -178,6 +179,7 @@ export const SEED_SCENARIOS = {
   SEED_PLAN: 'seed_plan',
   SEED_MEDIA_BUY: 'seed_media_buy',
   SEED_CREATIVE_FORMAT: 'seed_creative_format',
+  SEED_BUYER_AGENT: 'seed_buyer_agent',
 } as const satisfies Record<string, SeedScenario>;
 
 /**
@@ -361,6 +363,14 @@ export interface TestControllerStore {
   seedCreativeFormat?(formatId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 
   /**
+   * Seed a buyer-agent commercial relationship. The seller SHOULD scope the
+   * seeded record to the current compliance session / auth principal so
+   * storyboards can exercise per-agent gates without requiring a bespoke
+   * bearer-prefix convention.
+   */
+  seedBuyerAgent?(agentUrl: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /**
    * Return outbound HTTP calls the agent has made since `since_timestamp`,
    * scoped to the calling principal. Backs the `upstream_traffic` storyboard
    * validation per spec PR adcontextprotocol/adcp#3816 — runners assert that
@@ -379,6 +389,8 @@ export interface TestControllerStore {
     since_timestamp?: string;
     endpoint_pattern?: string;
     limit?: number;
+    attestation_mode?: 'raw' | 'digest';
+    identifier_value_digests?: string[];
   }): Promise<UpstreamTrafficSuccessResponse>;
 
   /**
@@ -395,12 +407,16 @@ export interface TestControllerStore {
  * types as of 3.1.0-beta.2; the local shape is preserved for adopters
  * mid-migration and for the SDK's typed `recorded_calls` widening.
  *
- * `recorded_calls` is typed as an opaque array — the spec's per-item
- * shape (method / endpoint / url / content_type / payload / timestamp
- * required, host / path / status_code optional) is the runtime contract
- * but isn't expressed in TypeScript here so adopters can return their
- * own typed `RecordedCall[]` (e.g. from `@adcp/sdk/upstream-recorder`)
- * without `exactOptionalPropertyTypes` collisions on optional fields.
+ * `recorded_calls` is typed as an opaque array. The spec's per-item shape is
+ * a discriminated raw/digest attestation: raw items carry
+ * `attestation_mode: "raw"`, `payload`, `payload_length`, and metadata;
+ * digest items carry `attestation_mode: "digest"`,
+ * `payload_digest_sha256`, `payload_length`, and optional
+ * `identifier_match_proofs[]` for requested `identifier_value_digests`.
+ * The runtime contract is intentionally not re-expressed here so adopters
+ * can return their own typed `RecordedCall[]` (e.g. from
+ * `@adcp/sdk/upstream-recorder`) without `exactOptionalPropertyTypes`
+ * collisions on optional fields.
  * The wire-shape Ajv test in
  * `test/lib/upstream-recorder-spec-shape.test.js` enforces the runtime
  * contract; adopters validating their own shape against the spec schema
@@ -536,14 +552,6 @@ export function enforceMapCap<V>(
 // ────────────────────────────────────────────────────────────
 
 /**
- * Extension scenarios accepted by the dispatcher but not yet members of
- * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
- * that introduced them. Auto-advertised when the matching store method
- * is present. Promoted to first-class constants once a release ships the
- * schema. (Empty at 3.1.0-beta.2 — `query_upstream_traffic` was promoted.)
- */
-
-/**
  * Force-transition extension scenarios for resource families whose status
  * enum exists in the spec but isn't yet a member of
  * `ListScenariosSuccess['scenarios']`. Issue #1819 — unblocks the
@@ -568,23 +576,14 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceUpstreamUnavailable', CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE],
 ];
 
-/**
- * Canonical scenarios from the generated `ListScenariosSuccess` enum. Used
- * for the typed `compliance_testing.scenarios` capability block, which the
- * generated Zod validator constrains to the enum's literal union — an
- * extension scenario like `query_upstream_traffic` (not yet in the schema
- * cache) gets rejected by `get_adcp_capabilities` response validation when
- * its enum hasn't picked up the spec PR yet.
- */
 function scenariosFromStore(store: TestControllerStore): ControllerScenario[] {
   return SCENARIO_MAP.filter(([method]) => typeof store[method] === 'function').map(([, scenario]) => scenario);
 }
 
 /**
- * All scenarios — canonical + extensions accepted by the dispatcher but
- * not yet in `CONTROLLER_SCENARIOS`. Used for `list_scenarios` which is
- * open-for-extension (the `comply_test_controller`'s discovery scenario
- * accepts unknown strings per the spec).
+ * All scenarios — first-class controller scenarios plus temporary extension
+ * scenarios accepted by the dispatcher. Used for `list_scenarios`, which is
+ * open for extension per the comply controller contract.
  */
 function allScenariosFromStore(store: TestControllerStore): string[] {
   const out: string[] = scenariosFromStore(store);
@@ -689,12 +688,25 @@ function fixturesEquivalent(a: Record<string, unknown>, b: Record<string, unknow
   }
 }
 
+const BUYER_AGENT_ORDER_INSENSITIVE_FIELDS = new Set(['billing_capabilities', 'aliases', 'allowed_brands']);
+
+function normalizeBuyerAgentSeedFixture(fixture: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...fixture };
+  for (const key of BUYER_AGENT_ORDER_INSENSITIVE_FIELDS) {
+    const value = normalized[key];
+    if (Array.isArray(value)) {
+      normalized[key] = [...value].sort((a, b) => canonicalJson(a).localeCompare(canonicalJson(b)));
+    }
+  }
+  return normalized;
+}
+
 /** Dispatch a seed scenario through the correct adapter method, honoring the
  * spec idempotency rules when a {@link SeedFixtureCache} is provided. */
 /**
  * Build the seed-cache key for a scenario. When `scope` is present (the
- * request's `account.account_id`), it's prefixed so two sandbox accounts
- * on one server can each seed the same `product_id` with divergent
+ * request's account / session scope), it's prefixed so two sandbox accounts
+ * or sessions on one server can each seed the same fixture id with divergent
  * fixtures without colliding in the process-wide `SeedFixtureCache`.
  *
  * Without scope (legacy callers, or requests with no `account` envelope),
@@ -705,6 +717,39 @@ function fixturesEquivalent(a: Record<string, unknown>, b: Record<string, unknow
  */
 function makeSeedCacheKey(unscopedKey: string, scope: string | undefined): string {
   return scope != null && scope.length > 0 ? `${scope}:${unscopedKey}` : unscopedKey;
+}
+
+function makeSeedCacheScope(input: Record<string, unknown>): string | undefined {
+  const parts: string[] = [];
+  const context = input.context;
+  if (context != null && typeof context === 'object') {
+    const sessionId = (context as { session_id?: unknown }).session_id;
+    if (typeof sessionId === 'string' && sessionId.length > 0) parts.push(`session:${sessionId}`);
+  }
+
+  const account =
+    input.account ??
+    (context != null && typeof context === 'object' ? (context as { account?: unknown }).account : undefined);
+  if (account != null && typeof account === 'object') {
+    const accountRef = account as { account_id?: unknown; brand?: unknown; operator?: unknown; sandbox?: unknown };
+    if (typeof accountRef.account_id === 'string' && accountRef.account_id.length > 0) {
+      parts.push(`account_id:${accountRef.account_id}`);
+    } else if (
+      accountRef.brand !== undefined ||
+      accountRef.operator !== undefined ||
+      accountRef.sandbox !== undefined
+    ) {
+      parts.push(
+        `account_ref:${canonicalJson({
+          ...(accountRef.brand !== undefined && { brand: accountRef.brand }),
+          ...(accountRef.operator !== undefined && { operator: accountRef.operator }),
+          ...(accountRef.sandbox !== undefined && { sandbox: accountRef.sandbox }),
+        })}`
+      );
+    }
+  }
+
+  return parts.length > 0 ? parts.join('|') : undefined;
 }
 
 async function dispatchSeed(
@@ -740,7 +785,7 @@ async function dispatchSeed(
   }
 
   // Route to adapter + pick a cache key unique per (kind, id).
-  type SeedDispatch = { key: string; invoke: () => Promise<void> };
+  type SeedDispatch = { key: string; fixture: Record<string, unknown>; invoke: () => Promise<void> };
   let dispatch: SeedDispatch | null = null;
   let missingParam: string | null = null;
 
@@ -754,6 +799,7 @@ async function dispatchSeed(
       const productId = params.product_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_product:${productId}`, scope),
+        fixture,
         invoke: () => store.seedProduct!(productId, fixture),
       };
       break;
@@ -768,6 +814,7 @@ async function dispatchSeed(
       const pricingOptionId = params.pricing_option_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_pricing_option:${productId}:${pricingOptionId}`, scope),
+        fixture,
         invoke: () => store.seedPricingOption!(productId, pricingOptionId, fixture),
       };
       break;
@@ -781,6 +828,7 @@ async function dispatchSeed(
       const creativeId = params.creative_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_creative:${creativeId}`, scope),
+        fixture,
         invoke: () => store.seedCreative!(creativeId, fixture),
       };
       break;
@@ -794,6 +842,7 @@ async function dispatchSeed(
       const planId = params.plan_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_plan:${planId}`, scope),
+        fixture,
         invoke: () => store.seedPlan!(planId, fixture),
       };
       break;
@@ -807,6 +856,7 @@ async function dispatchSeed(
       const mediaBuyId = params.media_buy_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_media_buy:${mediaBuyId}`, scope),
+        fixture,
         invoke: () => store.seedMediaBuy!(mediaBuyId, fixture),
       };
       break;
@@ -820,7 +870,46 @@ async function dispatchSeed(
       const formatId = params.format_id as string;
       dispatch = {
         key: makeSeedCacheKey(`seed_creative_format:${formatId}`, scope),
+        fixture,
         invoke: () => store.seedCreativeFormat!(formatId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_BUYER_AGENT: {
+      if (!params?.agent_url) {
+        missingParam = 'seed_buyer_agent requires params.agent_url';
+        break;
+      }
+      if (!store.seedBuyerAgent) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const agentUrl = params.agent_url as string;
+      const { agent_url: _agentUrl, fixture: _fixture, ...directFields } = params;
+      void _agentUrl;
+      void _fixture;
+      if (rawFixture !== undefined && Object.keys(directFields).length > 0) {
+        return controllerError(
+          'INVALID_PARAMS',
+          'seed_buyer_agent accepts either direct params fields or params.fixture, not both'
+        );
+      }
+      const buyerAgentFixture = normalizeBuyerAgentSeedFixture(rawFixture !== undefined ? fixture : directFields);
+      if (Object.prototype.hasOwnProperty.call(buyerAgentFixture, 'agent_url')) {
+        return controllerError(
+          'INVALID_PARAMS',
+          'seed_buyer_agent does not accept agent_url inside params.fixture; use top-level params.agent_url'
+        );
+      }
+      for (const key of Object.keys(buyerAgentFixture)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          return controllerError(
+            'INVALID_PARAMS',
+            `${scenario} fixture key ${JSON.stringify(key)} is reserved and rejected to prevent prototype pollution`
+          );
+        }
+      }
+      dispatch = {
+        key: makeSeedCacheKey(`seed_buyer_agent:${agentUrl}`, scope),
+        fixture: buyerAgentFixture,
+        invoke: () => store.seedBuyerAgent!(agentUrl, buyerAgentFixture),
       };
       break;
     }
@@ -834,7 +923,7 @@ async function dispatchSeed(
   // a missing prior entry is treated as a fresh seed rather than a crash.
   const prior = cache?.has(dispatch.key) ? cache.get(dispatch.key) : undefined;
   if (prior !== undefined) {
-    if (!fixturesEquivalent(prior, fixture)) {
+    if (!fixturesEquivalent(prior, dispatch.fixture)) {
       return controllerError(
         'INVALID_PARAMS',
         `Fixture for ${sanitizeLabel(dispatch.key)} diverges from the previously seeded fixture. ` +
@@ -850,7 +939,7 @@ async function dispatchSeed(
   }
 
   await dispatch.invoke();
-  cache?.set(dispatch.key, fixture);
+  cache?.set(dispatch.key, dispatch.fixture);
   return wrapStoreSuccess({ success: true, message: SEED_MESSAGES.fresh });
 }
 
@@ -869,11 +958,6 @@ async function handleTestControllerRequestImpl(
   // sessionless probes.
   if (scenario === 'list_scenarios') {
     const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : allScenariosFromStore(storeOrFactory);
-    // Cast: the generated union doesn't yet include extension scenarios
-    // (e.g. `query_upstream_traffic` from spec PR adcp#3816, schema not
-    // released yet). The wire shape says `scenarios` is open-for-extension
-    // — runners and sellers MUST accept unknown strings — so the runtime
-    // shape is correct. Drop the cast once the schema cache picks them up.
     return wrapStoreSuccess({ success: true, scenarios });
   }
 
@@ -1075,32 +1159,22 @@ async function handleTestControllerRequestImpl(
       case SEED_SCENARIOS.SEED_CREATIVE:
       case SEED_SCENARIOS.SEED_PLAN:
       case SEED_SCENARIOS.SEED_MEDIA_BUY:
-      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT: {
-        // Per-account seed-cache scope (issue #1215). Two sandbox accounts on
-        // one server can each seed the same `product_id` with divergent
-        // fixtures; without a scope prefix the cache treats divergent replays
-        // as INVALID_PARAMS even when each account's fixture is internally
-        // self-consistent. Read the request envelope's `account.account_id`
-        // (no resolver call here — test-controller is a generic helper that
-        // doesn't know about platform.accounts.resolve, and read-time
-        // misalignment is fine because the cache only governs idempotency,
-        // not user-visible state). Empty/missing → unscoped (legacy keys).
-        const account = input.account;
-        const scope =
-          account != null && typeof account === 'object'
-            ? (() => {
-                const id = (account as { account_id?: unknown }).account_id;
-                return typeof id === 'string' && id.length > 0 ? id : undefined;
-              })()
-            : undefined;
+      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
+      case SEED_SCENARIOS.SEED_BUYER_AGENT: {
+        // Seed-cache scope (issue #1215). Two sandbox accounts or sessions on
+        // one server can each seed the same fixture id with divergent fixtures;
+        // without a scope prefix the cache treats divergent replays as
+        // INVALID_PARAMS even when each scoped fixture is internally
+        // self-consistent. No resolver call here — test-controller is a
+        // generic helper that doesn't know about platform.accounts.resolve,
+        // and read-time misalignment is fine because the cache only governs
+        // idempotency, not user-visible state.
+        const scope = makeSeedCacheScope(input);
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache, scope);
       }
 
-      // Extension scenarios — accepted by the dispatcher but not yet
-      // members of CONTROLLER_SCENARIOS. Promoted to first-class constants
-      // once a release ships the schema. Today: `query_upstream_traffic`
-      // (spec PR adcp#3816), `force_audience_status` /
-      // `force_catalog_item_status` (issue #1819 / spec adcp#2860).
+      // Extension scenarios accepted by the dispatcher until the spec
+      // promotes them to first-class controller scenarios.
       case FORCE_AUDIENCE_STATUS_SCENARIO: {
         if (!store.forceAudienceStatus) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
@@ -1157,11 +1231,7 @@ async function handleTestControllerRequestImpl(
         if (!store.queryUpstreamTraffic) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
-        const queryParams = (params ?? {}) as {
-          since_timestamp?: string;
-          endpoint_pattern?: string;
-          limit?: number;
-        };
+        const queryParams = (params ?? {}) as Parameters<NonNullable<TestControllerStore['queryUpstreamTraffic']>>[0];
         return wrapStoreSuccess(await store.queryUpstreamTraffic(queryParams));
       }
 

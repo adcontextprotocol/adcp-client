@@ -99,6 +99,7 @@ import type {
   SyncGovernanceRequest,
 } from '../../../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
+import { rollupOptimizationMetricsFromProducts } from '../../../utils/capability-rollups';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
@@ -979,15 +980,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // (adcp#4670) are AdCP 3.1 additions. They have no corresponding
   // `features.*` boolean — buyers gate on presence of the block itself.
   const at = platform.capabilities.audience_targeting;
-  const rawConversionTracking = platform.capabilities.conversion_tracking;
-  const conversionTrackingDeclaresTargets =
-    rawConversionTracking != null && Object.prototype.hasOwnProperty.call(rawConversionTracking, 'supported_targets');
-  const ct =
-    rawConversionTracking != null && !conversionTrackingDeclaresTargets
-      ? { ...rawConversionTracking, supported_targets: ['cost_per'] as Array<'cost_per'> }
-      : rawConversionTracking;
+  const ct = platform.capabilities.conversion_tracking;
   const cs = platform.capabilities.content_standards;
-  const som = platform.capabilities.supported_optimization_metrics;
+  const explicitSom = platform.capabilities.supported_optimization_metrics;
+  const derivedSom =
+    explicitSom == null && platform.capabilities.productCatalog != null
+      ? rollupOptimizationMetricsFromProducts(platform.capabilities.productCatalog)
+      : undefined;
+  const somCandidate = explicitSom ?? derivedSom;
+  const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
   const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;
   const supportsProposals =
@@ -1019,6 +1020,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       },
     }),
   };
+
+  if (process.env.NODE_ENV !== 'production') {
+    if (explicitSom != null) {
+      fwLogger.info(
+        `[adcp/decisioning] using explicit media_buy.supported_optimization_metrics override (${explicitSom.length} metric${explicitSom.length === 1 ? '' : 's'}).`
+      );
+    } else if (derivedSom != null) {
+      fwLogger.info(
+        `[adcp/decisioning] derived media_buy.supported_optimization_metrics from productCatalog (${derivedSom.length} metric${derivedSom.length === 1 ? '' : 's'}).`
+      );
+    }
+  }
 
   // Brand-protocol capability projection. Adopters who declare
   // `capabilities.brand` get the block projected via `overrides.brand`.
@@ -1249,7 +1262,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         // the `{ account_id }` arm is refused. Closes adcp-client#1364
         // (implicit) and adcp-client#1468 (derived).
         refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref);
-        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
+        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -1293,7 +1306,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName));
+        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -1796,6 +1809,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           const resolved = await agentRegistry.resolve({
             ...(extra?.authInfo?.credential !== undefined && { credential: extra.authInfo.credential }),
             ...(extra?.authInfo?.extra !== undefined && { extra: extra.authInfo.extra }),
+            input: args,
           });
           if (resolved != null) {
             // Mirror the dispatcher's freeze contract: lock the resolved
@@ -4242,7 +4256,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 /**
- * Adapt `SponsoredIntelligencePlatform` (v6 protocol-keyed shape) onto the v5
+ * Adapt `SponsoredIntelligencePlatform` (v6 platform-specialism shape) onto the v5
  * `SponsoredIntelligenceHandlers` handler-bag the dispatcher consumes.
  *
  * Auto-store on `initiateSession`: stash a session record keyed by

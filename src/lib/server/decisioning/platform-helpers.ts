@@ -245,8 +245,9 @@ export function defineSignalsPlatform<TCtxMeta = Record<string, unknown>>(
 
 /**
  * Type-level identity for a `SponsoredIntelligencePlatform` sub-object.
- * SI is currently a *protocol* in AdCP 3.0, not a specialism — adopters
- * declare SI by providing this field; the framework auto-derives
+ * SI is both a protocol-bundle surface and an AdCP 3.1 specialism.
+ * Adopters declare the implementation here; when they claim the
+ * `sponsored-intelligence` specialism, the framework auto-derives
  * `'sponsored_intelligence'` into the wire-side `supported_protocols`.
  *
  * @example

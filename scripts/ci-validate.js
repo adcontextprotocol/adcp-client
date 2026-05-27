@@ -112,16 +112,31 @@ async function validateCI() {
     failures.push('Type generation failed');
   }
 
-  subsection('Check for schema changes');
+  subsection('Sync registry OpenAPI and generate registry types');
   totalTests++;
-  const diffResult = runCommand('git diff --exit-code src/lib/types/ src/lib/agents/', process.cwd(), { silent: true });
-  if (diffResult.success) {
-    log('✅ Schemas are up to date', 'green');
+  const registryGenerateResult = runCommand('npm run generate-registry-types');
+  if (registryGenerateResult.success) {
+    log('✅ Registry type generation completed', 'green');
     passedTests++;
   } else {
-    log('❌ Schema changes detected - types are out of sync', 'red');
-    log('   Run: npm run sync-schemas && npm run generate-types', 'yellow');
-    failures.push('Generated types are out of sync with schemas');
+    log('❌ Registry type generation failed', 'red');
+    failures.push('Registry type generation failed');
+  }
+
+  subsection('Check for schema changes');
+  totalTests++;
+  const diffResult = runCommand(
+    'git diff --exit-code src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml',
+    process.cwd(),
+    { silent: true }
+  );
+  if (diffResult.success) {
+    log('✅ Schemas and registry OpenAPI are up to date', 'green');
+    passedTests++;
+  } else {
+    log('❌ Schema or registry OpenAPI changes detected - types are out of sync', 'red');
+    log('   Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types', 'yellow');
+    failures.push('Generated types are out of sync with schemas or registry OpenAPI');
   }
 
   subsection('Check version synchronization');

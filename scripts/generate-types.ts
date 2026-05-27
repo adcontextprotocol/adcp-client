@@ -366,6 +366,8 @@ export function enforceStrictSchema(schema: any): any {
     );
   }
 
+  promoteConditionalParamProperties(strictSchema);
+
   if (strictSchema.patternProperties) {
     strictSchema.patternProperties = Object.fromEntries(
       Object.entries(strictSchema.patternProperties).map(([key, value]) => [key, enforceStrictSchema(value)])
@@ -568,6 +570,20 @@ export function enforceStrictSchema(schema: any): any {
   }
 
   return flattenMutualExclusiveOneOf(strictSchema);
+}
+
+function promoteConditionalParamProperties(strictSchema: any): void {
+  const params = strictSchema.properties?.params;
+  if (!params || typeof params !== 'object' || !params.properties || !Array.isArray(strictSchema.allOf)) return;
+  for (const member of strictSchema.allOf) {
+    const conditionalParams = member?.then?.properties?.params;
+    if (!conditionalParams || typeof conditionalParams !== 'object' || !conditionalParams.properties) continue;
+    for (const [key, value] of Object.entries(conditionalParams.properties)) {
+      if (params.properties[key] === undefined) {
+        params.properties[key] = value;
+      }
+    }
+  }
 }
 
 /**

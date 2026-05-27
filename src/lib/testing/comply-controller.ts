@@ -71,6 +71,7 @@ import type {
   CreativeStatus,
   MediaBuyStatus,
 } from '../types/core.generated';
+import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../server/decisioning/buyer-agent';
 import type { McpToolResponse } from '../server/responses';
 
 // ────────────────────────────────────────────────────────────
@@ -116,6 +117,18 @@ export interface SeedMediaBuyParams {
 export interface SeedCreativeFormatParams {
   format_id: string;
   fixture: Record<string, unknown>;
+}
+
+export interface SeedBuyerAgentParams {
+  agent_url: string;
+  display_name?: string;
+  status?: BuyerAgentStatus;
+  billing_capabilities?: BuyerAgentBillingMode[];
+  default_account_terms?: BuyerAgent['default_account_terms'];
+  allowed_brands?: string[];
+  aliases?: string[];
+  sandbox_only?: boolean;
+  [key: string]: unknown;
 }
 
 export interface ForceCreativeStatusParams {
@@ -228,6 +241,8 @@ export interface QueryUpstreamTrafficParams {
   since_timestamp?: string;
   endpoint_pattern?: string;
   limit?: number;
+  attestation_mode?: 'raw' | 'digest';
+  identifier_value_digests?: string[];
 }
 
 /** Adapter for the `query_upstream_traffic` extension scenario. Returns
@@ -244,6 +259,10 @@ export interface QueryUpstreamTrafficParams {
  *       ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
  *       ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
  *       ...(params.limit !== undefined && { limit: params.limit }),
+ *       ...(params.attestation_mode !== undefined && { attestationMode: params.attestation_mode }),
+ *       ...(params.identifier_value_digests !== undefined && {
+ *         identifierValueDigests: params.identifier_value_digests,
+ *       }),
  *     });
  *     return toQueryUpstreamTrafficResponse(result);
  *   },
@@ -290,6 +309,7 @@ export interface ComplyControllerConfig {
     plan?: SeedAdapter<SeedPlanParams>;
     media_buy?: SeedAdapter<SeedMediaBuyParams>;
     creative_format?: SeedAdapter<SeedCreativeFormatParams>;
+    buyer_agent?: SeedAdapter<SeedBuyerAgentParams>;
   };
 
   /** Force adapters (state transitions and directives). */
@@ -455,6 +475,13 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
       await seed.creative_format!({ format_id: formatId, fixture: fixture ?? {} }, ctx);
     };
   }
+  if (seed?.buyer_agent) {
+    store.seedBuyerAgent = async (agentUrl, fixture) => {
+      const { agent_url: _ignored, ...safeFixture } = fixture ?? {};
+      void _ignored;
+      await seed.buyer_agent!({ ...safeFixture, agent_url: agentUrl }, ctx);
+    };
+  }
 
   if (force?.creative_status) {
     store.forceCreativeStatus = (creativeId, status, rejection_reason) =>
@@ -515,16 +542,12 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
-  // Extension scenarios (not yet in the schema cache's `ControllerScenario`
-  // enum — dispatcher accepts them under `TOOL_INPUT_SHAPE.scenario:
-  // z.string()`'s open-extension pattern). Cast through unknown until the
-  // schemas land, then these become `CONTROLLER_SCENARIOS.*` references.
-  // Bundle the cleanup when codegen catches up:
-  //   - audience_status / catalog_item_status: issue #1819 + spec adcp#2860
-  //   - query_upstream_traffic: spec adcp#3816
+  // Extension scenarios not yet in the schema cache's `ControllerScenario`
+  // enum are still accepted by the dispatcher under the open-extension
+  // `TOOL_INPUT_SHAPE.scenario: z.string()` pattern.
   if (config.force?.audience_status) out.push('force_audience_status' as unknown as ControllerScenario);
   if (config.force?.catalog_item_status) out.push('force_catalog_item_status' as unknown as ControllerScenario);
-  if (config.queryUpstreamTraffic) out.push('query_upstream_traffic' as unknown as ControllerScenario);
+  if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
   return out;
 }
 

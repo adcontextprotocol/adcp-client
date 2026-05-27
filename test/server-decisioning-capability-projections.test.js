@@ -89,54 +89,27 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
     assert.strictEqual(ct.multi_source_event_dedup, true);
     assert.deepStrictEqual(ct.supported_action_sources, ['website', 'app']);
-  });
-
-  it('conversion_tracking defaults supported_targets to cost_per when omitted', async () => {
-    const server = createAdcpServerFromPlatform(
-      basePlatform({
-        conversion_tracking: {
-          multi_source_event_dedup: true,
-          supported_action_sources: ['website'],
-        },
-      }),
-      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    assert.strictEqual(
+      ct.supported_targets,
+      undefined,
+      'omitted supported_targets must stay omitted; target-less event goals are the only guaranteed default'
     );
-    const result = await dispatchCapabilities(server);
-    const ct = result.structuredContent?.media_buy?.conversion_tracking;
-    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
-    assert.deepStrictEqual(ct.supported_targets, ['cost_per']);
   });
 
-  it('conversion_tracking preserves explicit supported_targets overrides', async () => {
+  it('conversion_tracking preserves explicit supported_targets override', async () => {
     const server = createAdcpServerFromPlatform(
       basePlatform({
         conversion_tracking: {
-          multi_source_event_dedup: true,
           supported_targets: ['cost_per', 'per_ad_spend'],
         },
       }),
       { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
     );
     const result = await dispatchCapabilities(server);
-    const ct = result.structuredContent?.media_buy?.conversion_tracking;
-    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
-    assert.deepStrictEqual(ct.supported_targets, ['cost_per', 'per_ad_spend']);
-  });
-
-  it('conversion_tracking preserves explicit supported_targets: undefined as omission opt-out', async () => {
-    const server = createAdcpServerFromPlatform(
-      basePlatform({
-        conversion_tracking: {
-          multi_source_event_dedup: true,
-          supported_targets: undefined,
-        },
-      }),
-      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
-    );
-    const result = await dispatchCapabilities(server);
-    const ct = result.structuredContent?.media_buy?.conversion_tracking;
-    assert.ok(ct, `conversion_tracking missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
-    assert.strictEqual(ct.supported_targets, undefined);
+    assert.deepStrictEqual(result.structuredContent?.media_buy?.conversion_tracking?.supported_targets, [
+      'cost_per',
+      'per_ad_spend',
+    ]);
   });
 
   it('content_standards projects onto get_adcp_capabilities.media_buy', async () => {
@@ -405,6 +378,36 @@ describe('Capability projections — declarative capability blocks on Decisionin
     const som = result.structuredContent?.media_buy?.supported_optimization_metrics;
     assert.ok(som, `supported_optimization_metrics missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
     assert.deepStrictEqual(som, ['clicks', 'completed_views', 'views']);
+  });
+
+  it('supported_optimization_metrics auto-derives from a declared product catalog', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        productCatalog: [
+          { product_id: 'p1', metric_optimization: { supported_metrics: ['views', 'clicks'] } },
+          { product_id: 'p2', metric_optimization: { supported_metrics: ['completed_views', 'views'] } },
+        ],
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_optimization_metrics, [
+      'clicks',
+      'completed_views',
+      'views',
+    ]);
+  });
+
+  it('explicit supported_optimization_metrics wins over productCatalog derivation', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        supported_optimization_metrics: ['clicks'],
+        productCatalog: [{ product_id: 'p1', metric_optimization: { supported_metrics: ['views'] } }],
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    assert.deepStrictEqual(result.structuredContent?.media_buy?.supported_optimization_metrics, ['clicks']);
   });
 
   it('frequency_capping projects onto get_adcp_capabilities.media_buy', async () => {

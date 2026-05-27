@@ -10,6 +10,13 @@ import {
   type MockOperator,
   type MockPricingTier,
 } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -23,6 +30,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 export async function bootSignalMarketplace(options: BootOptions): Promise<BootResult> {
@@ -46,6 +54,19 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
   const bump = (routeTemplate: string): void => {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   };
+  const scenario = createMockScenarioController({
+    specialism: 'signal-marketplace',
+    snapshot: () => ({
+      activations: activations.size,
+      idempotency: idempotency.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      activations.clear();
+      idempotency.clear();
+      traffic.clear();
+    },
+  });
 
   const server = createServer((req, res) => {
     handleRequest(req, res, {
@@ -57,6 +78,7 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
       idempotency,
       traffic,
       bump,
+      scenario,
     }).catch(err => {
       // Defense-in-depth — handlers should never throw, but if one does we
       // emit a 500 with a request_id so adopter logs can still trace it.
@@ -84,6 +106,7 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
   const url = `http://127.0.0.1:${boundPort}`;
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -100,6 +123,7 @@ interface HandlerCtx {
   idempotency: Map<string, string>;
   traffic: Map<string, number>;
   bump: (routeTemplate: string) => void;
+  scenario: ReturnType<typeof createMockScenarioController>;
 }
 
 interface MockActivation {
@@ -122,6 +146,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
   const url = new URL(req.url ?? '/', `http://127.0.0.1`);
   const path = url.pathname;
   const method = req.method ?? 'GET';
+
+  if (await ctx.scenario.handleControlRequest(req, res, method, path)) return;
 
   // Façade-detection traffic dump — harness-only, no auth required.
   // Returns per-endpoint hit counts so the matrix runner can assert that
@@ -187,6 +213,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
     });
     return;
   }
+
+  if (await ctx.scenario.handleScriptedResponse(res, method, path, (m, p) => ctx.bump(`${m} ${p}`))) return;
 
   // Bump traffic counters on each real-route hit so /_debug/traffic can
   // later report which endpoints the adapter actually exercised.
@@ -271,6 +299,15 @@ async function handleCreateActivation(
   }
   if (!isObject(body)) {
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
+    return;
+  }
+  const exactReplay = ctx.scenario.idempotency.check(
+    `${op.operator_id}::activation`,
+    idempotencyKeyFromBody(body),
+    stableFingerprint(body)
+  );
+  if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+    writeCachedResponse(res, exactReplay.response);
     return;
   }
   const { cohort_id, destination_id, pricing_id, duration_days, client_request_id } = body as Record<string, unknown>;
@@ -373,7 +410,9 @@ async function handleCreateActivation(
     ctx.idempotency.set(`${op.operator_id}::${client_request_id}`, activationId);
   }
 
-  writeJson(res, 201, serializeActivation(activation));
+  const responseBody = serializeActivation(activation);
+  if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+  writeJson(res, 201, responseBody);
 }
 
 function handleGetActivation(activationId: string, ctx: HandlerCtx, op: MockOperator, res: ServerResponse): void {

@@ -134,7 +134,7 @@ export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean",
 // ====== ComplyTestControllerRequest ======
 
 /** single | ComplyTestControllerRequest.scenario */
-export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic"] as const;
+export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic", "force_upstream_unavailable"] as const;
 
 // ====== ControllerError ======
 
@@ -244,7 +244,7 @@ export const GetProductsAsyncInputRequired_ReasonValues = ["CLARIFICATION_NEEDED
 /** single | GetProductsRequest.buying_mode */
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
-export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "format_ids", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "format_ids", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_allowed", "signal_targeting_options", "signal_targeting_rules", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
 // ====== GetProductsResponse ======
 
@@ -305,7 +305,12 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListScenariosSuccess ======
 
 /** array of | ListScenariosSuccess.scenarios */
-export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic"] as const;
+export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic", "force_upstream_unavailable"] as const;
+
+// ====== PackageSignalTargetingGroup ======
+
+/** single | PackageSignalTargetingGroup.operator */
+export const PackageSignalTargetingGroup_OperatorValues = ["any", "none"] as const;
 
 // ====== PerformanceFeedback ======
 
@@ -318,6 +323,13 @@ export const PerformanceFeedback_StatusValues = ["accepted", "queued", "applied"
 export const PixelTrackerAsset_EventValues = ["impression", "viewable_mrc_50", "viewable_mrc_100", "viewable_video_50", "audible_video_complete", "click", "custom"] as const;
 /** single | PixelTrackerAsset.method */
 export const PixelTrackerAsset_MethodValues = ["img", "js"] as const;
+
+// ====== Placement ======
+
+/** single | Placement.kind */
+export const Placement_KindValues = ["publisher_ref", "seller_inline"] as const;
+/** single | Placement.mode */
+export const Placement_ModeValues = ["targetable", "included"] as const;
 
 // ====== PolicyEntry ======
 
@@ -333,6 +345,11 @@ export const PreviewCreativeRequest_RequestTypeValues = ["single", "batch", "var
 
 /** single | Price.period */
 export const Price_PeriodValues = ["night", "month", "year", "one_time"] as const;
+
+// ====== ProductSignalTargetingOption ======
+
+/** single | ProductSignalTargetingOption.activation_status */
+export const ProductSignalTargetingOption_ActivationStatusValues = ["ready", "requires_activation"] as const;
 
 // ====== PropertyError ======
 
@@ -402,6 +419,13 @@ export const RightsConstraint_ApprovalStatusValues = ["pending", "approved", "re
 
 /** array of | SIComponentCatalog.components */
 export const SIComponentCatalog_ComponentsValues = ["Text", "Button", "Link", "Image", "Card", "ProductCard", "List", "Row", "Column", "IntegrationAction", "AppHandoff"] as const;
+
+// ====== SignalTargetingRules ======
+
+/** single | SignalTargetingRules.resolution_model */
+export const SignalTargetingRules_ResolutionModelValues = ["direct_targeting", "seller_planned"] as const;
+/** single | SignalTargetingRules.selection_mode */
+export const SignalTargetingRules_SelectionModeValues = ["optional", "required", "fixed"] as const;
 
 // ====== SIIdentity ======
 
@@ -503,27 +527,6 @@ export const WholesaleFeedWebhook_NotificationTypeValues = ["product.created", "
 // imports to the canonical name; aliases remain for one minor
 // version. (adcp-client#941)
 
-// --- BriefAsset1 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset1.objective duplicates the canonical export. */
-export const BriefAsset1_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset2 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset2.objective duplicates the canonical export. */
-export const BriefAsset2_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset3 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset3.objective duplicates the canonical export. */
-export const BriefAsset3_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset4 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset4.objective duplicates the canonical export. */
-export const BriefAsset4_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset5 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset5.objective duplicates the canonical export. */
-export const BriefAsset5_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset6 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset6.objective duplicates the canonical export. */
-export const BriefAsset6_ObjectiveValues = BriefAsset_ObjectiveValues;
-// --- BriefAsset7 ---
-/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset7.objective duplicates the canonical export. */
-export const BriefAsset7_ObjectiveValues = BriefAsset_ObjectiveValues;
 // --- BuildCreativeInputRequired ---
 /** @deprecated use `BuildCreativeAsyncInputRequired_ReasonValues` — same literal set, BuildCreativeInputRequired.reason duplicates the canonical export. */
 export const BuildCreativeInputRequired_ReasonValues = BuildCreativeAsyncInputRequired_ReasonValues;
@@ -602,6 +605,12 @@ export const GetProductsInputRequired_ReasonValues = GetProductsAsyncInputRequir
 // --- GetSignalsResponse ---
 /** @deprecated use `GetProductsResponse_CacheScopeValues` — same literal set, GetSignalsResponse.cache_scope duplicates the canonical export. */
 export const GetSignalsResponse_CacheScopeValues = GetProductsResponse_CacheScopeValues;
+// --- PackageSignalTargetingGroup1 ---
+/** @deprecated use `PackageSignalTargetingGroup_OperatorValues` — same literal set, PackageSignalTargetingGroup1.operator duplicates the canonical export. */
+export const PackageSignalTargetingGroup1_OperatorValues = PackageSignalTargetingGroup_OperatorValues;
+// --- ProductSignalTargetingOption ---
+/** @deprecated use `FeatureRequirement_IfNotCoveredValues` — same literal set, ProductSignalTargetingOption.allowed_targeting_modes duplicates the canonical export. */
+export const ProductSignalTargetingOption_AllowedTargetingModesValues = FeatureRequirement_IfNotCoveredValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;

@@ -1,15 +1,12 @@
 /**
- * SponsoredIntelligencePlatform — brand-agent specialism interface (v6.0,
- * protocol-keyed).
+ * SponsoredIntelligencePlatform — brand-agent specialism interface.
  *
- * AdCP 3.0 declares Sponsored Intelligence as a *protocol*
- * (`supported_protocols: ['sponsored_intelligence']`), not a specialism.
- * The platform field is therefore required IFF the agent declares the
- * protocol — see `RequiredPlatformsForProtocols` in `../platform.ts` and
- * the protocol-keyed branch of the dispatch validator. When AdCP 3.1 adds
- * `'sponsored-intelligence'` to `AdCPSpecialism` (tracked at
- * adcontextprotocol/adcp#3961), specialism-keyed dispatch becomes additive
- * — this interface keeps working unchanged.
+ * In AdCP 3.1, Sponsored Intelligence is both a specialism
+ * (`specialisms: ['sponsored-intelligence']`) and a protocol-bundle surface
+ * (`supported_protocols: ['sponsored_intelligence']`). The platform field is
+ * required when the agent claims the specialism, and the framework continues
+ * to derive the underscore protocol entry from the registered SI tools for
+ * protocol-storyboard and 3.0-era compatibility.
  *
  * Surface: four wire tools — `si_get_offering`, `si_initiate_session`,
  * `si_send_message`, `si_terminate_session`. Maps directly onto the v5
@@ -43,7 +40,8 @@
  * execution semantics). `terminateSession` is naturally idempotent on
  * `session_id` and intentionally lacks an `idempotency_key`.
  *
- * Status: 6.7 (preview). Behavior frozen on AdCP 3.0 SI surface.
+ * Status: AdCP 3.1 specialism surface with 3.0-compatible protocol
+ * declaration.
  *
  * @public
  */

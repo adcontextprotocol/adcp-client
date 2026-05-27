@@ -33,12 +33,12 @@ Both are optional. Unlike the older three blocks, **the 3.1 additions do NOT for
 
 New exported helper `rollupOptimizationMetricsFromProducts(products)` computes the seller-level union from a product catalog. Returns a sorted, deduplicated array. Adopters call it at startup or on catalog mutation to keep the seller-level declaration mechanically derived from product-level facts — closes the drift surface called out in #1818.
 
-For `conversion_tracking.supported_targets`, the framework now defaults to `['cost_per']` whenever an adopter declares `conversion_tracking` without a `supported_targets` property. `cost_per` is the conservative event-goal target kind every conversion-tracking seller can compute; adopters must explicitly opt into `per_ad_spend` or `maximize_value` once their event-ingestion pipeline captures value fields. Explicit arrays are honored unchanged, and `supported_targets: undefined` preserves the raw AdCP omission semantics.
+The `conversion_tracking.supported_targets` portion of #1818 is handled by the broader 3.1 unblock changeset: explicit seller declarations are preserved, while omitted values stay omitted because the 3.1 schema only guarantees target-less event goals by default.
 
 **Verification**
 
 - 8 unit tests on the rollup helper (union, dedup, sort, empty, defensive-drop, non-mutating)
-- 6 new integration tests on the projection
-- All affected tests pass; `tsc --noEmit --project tsconfig.lib.json` clean
+- 3 new integration tests on the projection
+- All 25 affected tests pass; `tsc --noEmit --project tsconfig.lib.json` clean
 
 Part of the 8.1.0-beta.N adoption sweep.

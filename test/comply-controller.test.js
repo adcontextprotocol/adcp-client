@@ -108,6 +108,31 @@ describe('createComplyController — dispatch', () => {
     assert.strictEqual(result.simulated.spend_percentage, 95);
   });
 
+  it('forwards query_upstream_traffic digest params to the adapter unchanged', async () => {
+    const digest = 'b'.repeat(64);
+    let captured;
+    const controller = createComplyController({
+      queryUpstreamTraffic: params => {
+        captured = params;
+        return { success: true, recorded_calls: [], total_count: 0 };
+      },
+    });
+
+    const result = await controller.handleRaw({
+      scenario: 'query_upstream_traffic',
+      params: {
+        attestation_mode: 'digest',
+        identifier_value_digests: [digest],
+      },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(captured, {
+      attestation_mode: 'digest',
+      identifier_value_digests: [digest],
+    });
+  });
+
   it('passes the raw input to adapters via ctx', async () => {
     let capturedCtx;
     const controller = createComplyController({
@@ -274,6 +299,27 @@ describe('createComplyController — seed idempotency', () => {
     assert.strictEqual(result.previous_state, undefined);
     assert.strictEqual(result.current_state, undefined);
     assert.ok(persisted.has('p1'));
+  });
+
+  it('does not let nested fixture.agent_url override seed.buyer_agent params', async () => {
+    const seen = [];
+    const controller = createComplyController({
+      seed: {
+        buyer_agent: params => {
+          seen.push(params);
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'seed_buyer_agent',
+      params: {
+        agent_url: 'https://outer.example/agent',
+        fixture: { agent_url: 'https://inner.example/agent', billing_capabilities: ['operator'] },
+      },
+    });
+    assert.strictEqual(result.success, false);
+    assert.match(result.error_detail, /agent_url inside params\.fixture/);
+    assert.deepStrictEqual(seen, []);
   });
 
   it('re-seeds with equivalent fixture returns SeedSuccess message="Fixture re-seeded (equivalent)" and still invokes adapter', async () => {

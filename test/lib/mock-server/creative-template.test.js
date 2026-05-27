@@ -34,7 +34,7 @@ describe('mock-server creative-template', () => {
     });
     assert.equal(acmeRes.status, 200);
     const acmeBody = await acmeRes.json();
-    assert.equal(acmeBody.templates.length, 4); // 3 display + 1 video
+    assert.equal(acmeBody.templates.length, 5); // 3 display + 1 video + 1 audio
 
     // Summit doesn't have video access — only display templates
     const summitRes = await fetch(`${handle.url}/v3/workspaces/ws_summit_studio/templates`, {

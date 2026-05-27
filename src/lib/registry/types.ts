@@ -82,12 +82,36 @@ export type ExpandProductIdentifiersRequest = NonNullable<
   operations['expandProductIdentifiers']['requestBody']
 >['content']['application/json'];
 
+/** Query parameters for GET /api/brands/registry */
+export type ListBrandsOptions = NonNullable<operations['listBrands']['parameters']['query']>;
+
+/** Query parameters for GET /api/registry/agents */
+export type ListAgentsQuery = NonNullable<operations['listAgents']['parameters']['query']>;
+
+/** Response from GET /api/registry/agents (200) */
+export type ListAgentsResponse = operations['listAgents']['responses']['200']['content']['application/json'] & {
+  /**
+   * Backward-compatible SDK field. Current registry responses may omit source
+   * summaries, so RegistryClient normalizes this to an empty object.
+   */
+  sources: Record<string, unknown>;
+};
+
+/** Response from GET /api/registry/publishers (200) */
+export type ListPublishersResponse = operations['listPublishers']['responses']['200']['content']['application/json'] & {
+  /**
+   * Backward-compatible SDK field. Current registry responses may omit source
+   * summaries, so RegistryClient normalizes this to an empty object.
+   */
+  sources: Record<string, unknown>;
+};
+
 /** Query parameters for GET /api/registry/feed */
 export type FeedQuery = NonNullable<operations['getRegistryFeed']['parameters']['query']>;
 
 /** Query parameters for GET /api/registry/agents/search */
 export type AgentSearchQuery = NonNullable<operations['searchAgentProfiles']['parameters']['query']> & {
-  /** Agent type filter (creative, signals, sales, governance, si). */
+  /** Agent type filter. Accepts current registry types plus legacy aliases. */
   type?: string;
   /** Sort order. */
   sort?: string;
@@ -184,10 +208,18 @@ export interface FindCompanyResult {
 
 /** Configuration for the registry client. */
 export interface RegistryClientConfig {
-  /** Base URL of the AdCP registry. Defaults to https://adcontextprotocol.org */
+  /** Base URL of the AdCP registry. Defaults to https://agenticadvertising.org */
   baseUrl?: string;
   /** API key for authenticated registry access. Falls back to ADCP_REGISTRY_API_KEY env var. */
   apiKey?: string;
+  /** Request timeout in milliseconds. Defaults to 10 seconds. */
+  timeoutMs?: number;
+  /** Maximum response body size in bytes before JSON parsing. Defaults to 256 KiB. */
+  maxBodyBytes?: number;
+  /** Redirect policy for registry requests. Defaults to 'error'. */
+  redirect?: 'follow' | 'error';
+  /** Fetch implementation for tests and custom runtimes. Defaults to globalThis.fetch. */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Options for list/search endpoints with pagination. */
@@ -198,9 +230,15 @@ export interface ListOptions {
 }
 
 /** Options for listing agents with filtering. */
-export interface ListAgentsOptions {
-  type?: 'creative' | 'signals' | 'sales' | 'governance' | 'si';
-  health?: boolean;
-  capabilities?: boolean;
-  properties?: boolean;
-}
+export type ListAgentsOptions = Omit<
+  ListAgentsQuery,
+  'type' | 'health' | 'capabilities' | 'properties' | 'compliance' | 'verified' | 'verification_mode'
+> & {
+  type?: ListAgentsQuery['type'] | 'si';
+  health?: boolean | 'true';
+  capabilities?: boolean | 'true';
+  properties?: boolean | 'true';
+  compliance?: boolean | 'true';
+  verified?: boolean | 'true';
+  verification_mode?: ListAgentsQuery['verification_mode'] | 'spec' | 'live';
+};

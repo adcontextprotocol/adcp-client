@@ -35,6 +35,13 @@ import {
   type MockFormat,
   type MockNetwork,
 } from './seed-data';
+import {
+  createMockScenarioController,
+  idempotencyKeyFromBody,
+  stableFingerprint,
+  writeCachedResponse,
+  type MockScenarioHandle,
+} from '../scenario';
 
 export interface BootOptions {
   port: number;
@@ -47,6 +54,7 @@ export interface BootOptions {
 export interface BootResult {
   url: string;
   close: () => Promise<void>;
+  scenario: MockScenarioHandle;
 }
 
 interface CreativeState extends MockCreative {
@@ -80,6 +88,28 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
   const bump = (routeTemplate: string): void => {
     traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
   };
+  const resetCreatives = (): void => {
+    creatives.clear();
+    for (const seed of seededCreatives) {
+      creatives.set(seed.creative_id, {
+        ...seed,
+        body_fingerprint: sha256(JSON.stringify(seed)),
+      });
+    }
+  };
+  const scenario = createMockScenarioController({
+    specialism: 'creative-ad-server',
+    snapshot: () => ({
+      creatives: creatives.size,
+      idempotency: idempotency.size,
+      traffic: Object.fromEntries(traffic),
+    }),
+    reset: () => {
+      resetCreatives();
+      idempotency.clear();
+      traffic.clear();
+    },
+  });
 
   const server = createServer((req, res) => {
     handleRequest(req, res).catch(err => {
@@ -100,6 +130,7 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
   const url = `http://127.0.0.1:${boundPort}`;
   return {
     url,
+    scenario: scenario.handle,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()));
@@ -110,6 +141,8 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
     const reqUrl = new URL(req.url ?? '/', url);
     const path = reqUrl.pathname;
     const method = req.method ?? 'GET';
+
+    if (await scenario.handleControlRequest(req, res, method, path)) return;
 
     // Façade-detection traffic dump — harness-only, no auth required.
     if (method === 'GET' && path === '/_debug/traffic') {
@@ -181,6 +214,8 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
       writeJson(res, 403, { code: 'unknown_network', message: `Unknown network: ${networkCode}` });
       return;
     }
+
+    if (await scenario.handleScriptedResponse(res, method, path, (m, p) => bump(`${m} ${p}`))) return;
 
     if (method === 'GET' && path === '/v1/formats') {
       bump('GET /v1/formats');
@@ -292,6 +327,15 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
   async function handleCreateCreative(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
     const body = await readJsonObject(req, res);
     if (!body) return;
+    const exactReplay = scenario.idempotency.check(
+      `${network.network_code}::creative`,
+      idempotencyKeyFromBody(body),
+      stableFingerprint(body)
+    );
+    if (exactReplay.kind === 'replay' || exactReplay.kind === 'conflict') {
+      writeCachedResponse(res, exactReplay.response);
+      return;
+    }
     const name = typeof body.name === 'string' ? body.name : null;
     const advertiserId = typeof body.advertiser_id === 'string' ? body.advertiser_id : null;
     const explicitFormatId = typeof body.format_id === 'string' ? body.format_id : null;
@@ -416,7 +460,9 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
     if (clientRequestId) {
       idempotency.set(`${network.network_code}::creative::${clientRequestId}`, creativeId);
     }
-    writeJson(res, 201, stripFingerprint(cr));
+    const responseBody = stripFingerprint(cr);
+    if (exactReplay.kind === 'fresh') exactReplay.record({ status: 201, body: responseBody });
+    writeJson(res, 201, responseBody);
   }
 
   async function handleUpdateCreative(req: IncomingMessage, cr: CreativeState, res: ServerResponse): Promise<void> {

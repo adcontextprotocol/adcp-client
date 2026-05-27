@@ -19,6 +19,7 @@ import type {
   PricingModel,
   GetAdCPCapabilitiesResponse,
 } from '../../types/tools.generated';
+import type { ProductMetricOptimizationLike } from '../../utils/capability-rollups';
 
 /**
  * Pre-resolved alias for the wire `media_buy` block. Used as the projection
@@ -112,14 +113,6 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Omit when the platform doesn't track conversions.
    *
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.conversion_tracking`.
-   *
-   * When this block is present and `supported_targets` is omitted, the
-   * framework projects `supported_targets: ['cost_per']`. `cost_per` is the
-   * conservative event-goal target every conversion-tracking seller can
-   * compute; declare `per_ad_spend` / `maximize_value` only when your event
-   * ingestion pipeline captures value fields. Explicit arrays are honored
-   * unchanged. To preserve the raw AdCP omission semantics for this field,
-   * set `supported_targets: undefined` explicitly on the block.
    */
   conversion_tracking?: NonNullable<_MediaBuyCapabilities['conversion_tracking']>;
 
@@ -151,6 +144,19 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Wire spec: `core/get-adcp-capabilities-response.json#media_buy.supported_optimization_metrics`.
    */
   supported_optimization_metrics?: NonNullable<_MediaBuyCapabilities['supported_optimization_metrics']>;
+
+  /**
+   * Static product catalog used for capability rollups.
+   *
+   * When this is present and `supported_optimization_metrics` is omitted,
+   * the framework derives `media_buy.supported_optimization_metrics` as the
+   * sorted union of every product summary's
+   * `metric_optimization.supported_metrics`. Full AdCP `Product` objects work,
+   * but are not required; a lightweight startup summary with just the
+   * `metric_optimization` block is enough. Dynamic per-account catalogs should
+   * continue to pass an explicit `supported_optimization_metrics` override.
+   */
+  productCatalog?: ReadonlyArray<ProductMetricOptimizationLike>;
 
   /**
    * Frequency-cap support declaration — projected onto

@@ -7,6 +7,7 @@
  */
 
 import type { TestOptions } from '../types';
+import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -38,6 +39,16 @@ export interface Storyboard {
   /** Tools that make this storyboard applicable (at least one must be present) */
   required_tools?: string[];
   /**
+   * Strict tool-family advertisement gates. Each family is satisfied when
+   * the agent advertises at least one listed tool; missing a family skips
+   * the whole storyboard with `requirement_unmet` and a
+   * `missing_required_tool_family:` detail prefix. The standard `comply()`
+   * path populates `agentTools` before this gate runs; direct callers that
+   * reuse a client should provide `agentTools` or `_profile.tools` so the
+   * runner can enforce it without discovery ambiguity.
+   */
+  required_any_of_tools?: RequiredToolFamily[];
+  /**
    * Runtime requirements this storyboard depends on. Each name describes
    * something the runner detects from the agent or from operator-supplied
    * options; an unmet requirement skips the whole storyboard with
@@ -46,15 +57,10 @@ export interface Storyboard {
    *
    * Recognised names:
    *   - `controller` — the agent must advertise `comply_test_controller`.
-   *     Detected from `options.agentTools`. Callers reusing an external
-   *     client without supplying `agentTools` (the `_client`-without-tools
-   *     escape hatch — same shape as the `required_tools` gate) bypass
-   *     this check; their storyboard runs into the per-step
-   *     `missing_test_controller` cascade instead. The gate degrades
-   *     rather than false-fails — by design — but adopters relying on
-   *     `requires: [controller]` for whole-storyboard skip semantics
-   *     should populate `agentTools` (the standard `comply()` path
-   *     always does).
+   *     Detected from `options.agentTools`, `_profile.tools`, or discovery
+   *     on reused clients. Direct callers that deliberately provide none of
+   *     those surfaces bypass this check; their storyboard runs into the
+   *     per-step `missing_test_controller` cascade instead.
    *   - `seeded_state` — the operator must pass `--asserts-seeded-state`
    *     (or set `assertsSeededState: true`) declaring that initial state
    *     has been provisioned out-of-band (HTTP admin, pre-test script,
@@ -199,6 +205,11 @@ export interface Storyboard {
   invariants?: StoryboardInvariants;
 }
 
+export interface RequiredToolFamily {
+  tools: [string, string, ...string[]];
+  rationale?: string;
+}
+
 /**
  * Storyboard-level invariants declaration. `undefined` / array / object
  * shapes all map onto the same "resolve to AssertionSpec[]" path in
@@ -267,8 +278,12 @@ export interface StepInvariantsObject {
  *   - `creatives[]`     → `seed_creative`        — requires `creative_id`
  *   - `plans[]`         → `seed_plan`            — requires `plan_id`
  *   - `media_buys[]`    → `seed_media_buy`       — requires `media_buy_id`
+ *   - `buyer_agents[]`  → `seed_buyer_agent`     — requires `agent_url`
  *
- * Every other field on the entry is forwarded verbatim as `params.fixture`.
+ * For entity fixtures, every other field on the entry is forwarded verbatim
+ * as `params.fixture`. For `buyer_agents[]`, every other field is forwarded
+ * as a direct `params` field because the controller scenario models the
+ * buyer-agent record itself (`billing_capabilities`, `status`, etc.).
  * Entries without their required id field produce a pre-flight error so the
  * authoring mistake is surfaced before any real step runs.
  */
@@ -278,6 +293,19 @@ export interface StoryboardFixtures {
   creatives?: Array<Record<string, unknown> & { creative_id?: string }>;
   plans?: Array<Record<string, unknown> & { plan_id?: string }>;
   media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
+  buyer_agents?: StoryboardBuyerAgentFixture[];
+}
+
+export interface StoryboardBuyerAgentFixture {
+  agent_url?: string;
+  display_name?: string;
+  status?: BuyerAgentStatus;
+  billing_capabilities?: BuyerAgentBillingMode[];
+  default_account_terms?: BuyerAgent['default_account_terms'];
+  allowed_brands?: string[];
+  aliases?: string[];
+  sandbox_only?: boolean;
+  [key: string]: unknown;
 }
 
 export interface StoryboardPhase {
@@ -1004,6 +1032,12 @@ export interface StoryboardValidation {
    */
   payload_must_contain?: UpstreamTrafficPayloadMatch[];
   /**
+   * Raw payload introspection requirement. When set to `raw`, controllers
+   * that downgrade the response to digest-only attestations cause this
+   * validation to grade `not_applicable` instead of failed.
+   */
+  attestation_mode_required?: 'raw';
+  /**
    * Paths into the storyboard's `sample_request` that name the load-bearing
    * identifiers the adapter MUST forward upstream. The runner extracts the
    * values at these paths and asserts each resolved value appears in at
@@ -1186,7 +1220,7 @@ export interface StoryboardRunOptions extends TestOptions {
   response_derived_not_applicable_context_keys?: Record<string, string>;
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
-  /** Agent's available tools (for requires_tool filtering) */
+  /** Agent's available tools for storyboard/step-level tool gates. */
   agentTools?: string[];
   /**
    * Allow plain-http agent URLs during compliance runs. Normally rejected
