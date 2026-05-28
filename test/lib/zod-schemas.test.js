@@ -78,6 +78,8 @@ describe('Zod Schema Validation', () => {
       media_buy_id: 'mb_123',
       status: 'pending_start', // Must match enum value
       promoted_offering: 'Nike Spring Collection 2024',
+      confirmed_at: '2026-01-15T10:00:00Z',
+      revision: 1,
       total_budget: 50000,
       packages: [],
     };
@@ -237,6 +239,8 @@ describe('Zod Schema Validation', () => {
           status: 'active',
           currency: 'USD',
           total_budget: 50000,
+          confirmed_at: '2026-01-15T10:00:00Z',
+          revision: 1,
           packages: [
             {
               package_id: 'pkg_1',
@@ -273,6 +277,8 @@ describe('Zod Schema Validation', () => {
           status: 'active',
           currency: 'USD',
           total_budget: 50000,
+          confirmed_at: '2026-01-15T10:00:00Z',
+          revision: 1,
           packages: [
             {
               package_id: 'pkg_1',
@@ -297,56 +303,27 @@ describe('Zod Schema Validation', () => {
     );
   });
 
-  test('GetMediaBuysResponseSchema rejects invalid creative approval status', async () => {
+  test('CreativeApprovalStatusSchema rejects invalid creative approval status', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
 
-    const invalidResponse = {
-      status: 'completed',
-      media_buys: [
-        {
-          media_buy_id: 'mb_123',
-          status: 'active',
-          currency: 'USD',
-          total_budget: 50000,
-          packages: [
-            {
-              package_id: 'pkg_1',
-              creative_approvals: [
-                {
-                  creative_id: 'cr_1',
-                  approval_status: 'invalid_status',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    };
-
-    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
-    assert.ok(!result.success, 'GetMediaBuysResponse with invalid approval_status should fail');
+    const result = schemas.CreativeApprovalStatusSchema.safeParse('invalid_status');
+    assert.ok(!result.success, 'CreativeApprovalStatusSchema with invalid approval_status should fail');
   });
 
-  test('GetMediaBuysResponseSchema rejects media buy missing required fields', async () => {
+  test('MediaBuySchema rejects media buy missing required fields', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
     }
 
-    // Missing required: status, currency, total_budget, packages
-    const invalidResponse = {
-      status: 'completed',
-      media_buys: [
-        {
-          media_buy_id: 'mb_123',
-          // status, currency, total_budget, packages all missing
-        },
-      ],
+    // Missing required: status, confirmed_at, total_budget, packages, revision
+    const invalidMediaBuy = {
+      media_buy_id: 'mb_123',
     };
 
-    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
-    assert.ok(!result.success, 'GetMediaBuysResponse with missing required fields should fail');
+    const result = schemas.MediaBuySchema.safeParse(invalidMediaBuy);
+    assert.ok(!result.success, 'MediaBuy with missing required fields should fail');
   });
 
   // --- Lifecycle field tests ---
@@ -454,6 +431,7 @@ describe('Zod Schema Validation', () => {
           status: 'active',
           currency: 'USD',
           total_budget: 25000,
+          confirmed_at: '2026-01-15T10:00:00Z',
           revision: 3,
           history: [
             { revision: 3, timestamp: '2026-01-18T12:00:00Z', action: 'resumed', actor: 'buyer-agent' },
@@ -480,6 +458,33 @@ describe('Zod Schema Validation', () => {
     assert.ok(
       result.success,
       `GetMediaBuysResponse with history should succeed: ${JSON.stringify(result.error?.issues)}`
+    );
+  });
+
+  test('GetMediaBuysResponseSchema rejects history entries missing revision', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const invalidResponse = {
+      status: 'completed',
+      media_buys: [
+        {
+          media_buy_id: 'mb_789',
+          status: 'active',
+          currency: 'USD',
+          total_budget: 25000,
+          packages: [{ package_id: 'pkg_1', budget: 25000 }],
+          history: [{ timestamp: '2026-01-18T12:00:00Z', action: 'resumed' }],
+        },
+      ],
+    };
+
+    const result = schemas.GetMediaBuysResponseSchema.safeParse(invalidResponse);
+    assert.ok(!result.success, 'GetMediaBuysResponse history entry without revision should fail');
+    assert.ok(
+      result.error.issues.some(issue => issue.path.join('.') === 'media_buys.0.history.0.revision'),
+      `Expected history revision error, got: ${JSON.stringify(result.error.issues)}`
     );
   });
 
@@ -566,6 +571,8 @@ describe('Zod Schema Validation', () => {
       media_buy_id: 'mb_123',
       status: 'active',
       promoted_offering: 'Test Campaign',
+      confirmed_at: '2026-01-15T10:00:00Z',
+      revision: 1,
       total_budget: 10000,
       packages: [],
       vendor_extension: 'top-level extra field',

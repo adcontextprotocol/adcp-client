@@ -50,6 +50,10 @@ function postProcessRecordIntersections(input) {
   return runPostProcess('postProcessRecordIntersections', input, '.zod-record-intersections-');
 }
 
+function postProcessRecordSizeConstraints(input) {
+  return runPostProcess('postProcessRecordSizeConstraints', input, '.zod-record-size-');
+}
+
 function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
@@ -154,6 +158,20 @@ export const MediaBuyFeaturesSchema = z.record(z.string(), z.boolean()).and(z.ob
   assert.match(output, /export const MediaBuyFeaturesSchema = z\.object\(/);
   assert.match(output, /\.catchall\(z\.boolean\(\)\)/);
   assert.doesNotMatch(output, /MediaBuyFeaturesSchema = z\.record\(z\.string\(\), z\.boolean\(\)\)\.and/);
+});
+
+test('postProcessRecordSizeConstraints strips unsupported record max/min/length calls', () => {
+  const output = postProcessRecordSizeConstraints(`
+export const CappedSchema = z.record(z.string(), z.unknown()).max(1000);
+export const NestedSchema = z.record(z.string(), z.union([z.string(), z.number()])).min(1);
+export const ExactSchema = z.record(z.string(), z.boolean()).length(2);
+export const ArraySchema = z.array(z.string()).max(5);
+`);
+
+  assert.match(output, /CappedSchema = z\.record\(z\.string\(\), z\.unknown\(\)\);/);
+  assert.match(output, /NestedSchema = z\.record\(z\.string\(\), z\.union\(\[z\.string\(\), z\.number\(\)\]\)\);/);
+  assert.match(output, /ExactSchema = z\.record\(z\.string\(\), z\.boolean\(\)\);/);
+  assert.match(output, /ArraySchema = z\.array\(z\.string\(\)\)\.max\(5\);/);
 });
 
 test('postProcessMarkerUnionObjectIntersections keeps unions once markers gain fields', () => {

@@ -92,6 +92,7 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-beta.2',
   '3.1.0-beta.3',
   '3.1.0-beta.5',
+  '3.1.0-beta.7',
 ] as const;
 
 /**
@@ -299,10 +300,10 @@ export function parseAdcpMajorVersion(version: string): number {
  * with a patch digit.
  *
  * Behavior:
- *   - \`"3.1.0-beta.5"\` → \`"3.1-beta.5"\`
+ *   - \`"3.1.0-beta.7"\` → \`"3.1-beta.7"\`
  *   - \`"3.1.0"\`        → \`"3.1"\`
  *   - \`"3.0.12"\`       → \`"3.0"\`
- *   - Already-release-precision input (\`"3.1"\`, \`"3.1-beta.5"\`) passes through
+ *   - Already-release-precision input (\`"3.1"\`, \`"3.1-beta.7"\`) passes through
  *   - Legacy aliases (\`"v2.5"\`, \`"v3"\`) pass through unchanged — the wire
  *     regex doesn't accept them anyway; the v2.5 path uses
  *     \`adcp_major_version\` instead of \`adcp_version\` for transport.
@@ -317,7 +318,7 @@ export function toReleasePrecisionVersion(version: string): string {
     const [, major, minor, pre = ''] = semverMatch;
     return \`\${major}.\${minor}\${pre}\`;
   }
-  // Already release-precision (no patch digit). Includes \`3.1\`, \`3.1-beta.5\`.
+  // Already release-precision (no patch digit). Includes \`3.1\`, \`3.1-beta.7\`.
   if (/^\\d+\\.\\d+(-[A-Za-z0-9.-]+)?$/.test(trimmed)) return trimmed;
   // Legacy aliases (\`v3\`, \`v2.5\`, \`v2.6\`) and anything we don't recognize —
   // pass through so the wire validator can flag genuine drift.

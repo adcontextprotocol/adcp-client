@@ -10,6 +10,18 @@ const {
 } = require('../../dist/lib/server/index.js');
 
 describe('seed_buyer_agent controller scenario', () => {
+  test('flat store advertises seed_buyer_agent in list_scenarios', async () => {
+    const result = await handleTestControllerRequest(
+      {
+        async seedBuyerAgent() {},
+      },
+      { scenario: 'list_scenarios' }
+    );
+
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.scenarios, ['seed_buyer_agent']);
+  });
+
   test('flat store dispatches seed_buyer_agent with commercial fields as fixture', async () => {
     const seen = [];
     const store = {

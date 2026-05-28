@@ -22,6 +22,11 @@
 /** single | ActivateSignalRequest.action */
 export const ActivateSignalRequest_ActionValues = ["activate", "deactivate"] as const;
 
+// ====== AgentProfilePayload ======
+
+/** single | AgentProfilePayload.type */
+export const AgentProfilePayload_TypeValues = ["sales", "creative", "signals", "governance", "measurement", "unknown"] as const;
+
 // ====== AppItem ======
 
 /** single | AppItem.platform */
@@ -33,6 +38,15 @@ export const AppItem_PlatformValues = ["ios", "android"] as const;
 export const AudioAssetRequirements_ChannelsValues = ["mono", "stereo"] as const;
 /** array of | AudioAssetRequirements.formats */
 export const AudioAssetRequirements_FormatsValues = ["mp3", "aac", "wav", "ogg", "flac"] as const;
+
+// ====== AuthorizationPayload ======
+
+/** single | AuthorizationPayload.authorization_type */
+export const AuthorizationPayload_AuthorizationTypeValues = ["property_ids", "property_tags", "inline_properties", "publisher_properties", "signal_ids", "signal_tags"] as const;
+/** single | AuthorizationPayload.delegation_type */
+export const AuthorizationPayload_DelegationTypeValues = ["direct", "delegated", "ad_network"] as const;
+/** single | AuthorizationPayload.evidence */
+export const AuthorizationPayload_EvidenceValues = ["adagents_json", "agent_claim", "community", "override"] as const;
 
 // ====== AuthorizationResult ======
 
@@ -134,12 +148,12 @@ export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean",
 // ====== ComplyTestControllerRequest ======
 
 /** single | ComplyTestControllerRequest.scenario */
-export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic", "force_upstream_unavailable"] as const;
+export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_creative_purge", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "seed_measurement_catalog", "query_upstream_traffic", "query_provenance_audit_observations", "force_upstream_unavailable"] as const;
 
 // ====== ControllerError ======
 
 /** single | ControllerError.error */
-export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE", "NOT_FOUND", "UNKNOWN_SCENARIO", "INVALID_PARAMS", "FORBIDDEN", "INTERNAL_ERROR"] as const;
+export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE", "NOT_FOUND", "UNKNOWN_SCENARIO", "INVALID_PARAMS", "FORBIDDEN", "JCS_NON_FINITE_NUMBER", "INTERNAL_ERROR"] as const;
 
 // ====== CreateMediaBuyAsyncInputRequired ======
 
@@ -312,7 +326,7 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListScenariosSuccess ======
 
 /** array of | ListScenariosSuccess.scenarios */
-export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "query_upstream_traffic", "force_upstream_unavailable"] as const;
+export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_creative_purge", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "seed_measurement_catalog", "query_upstream_traffic", "query_provenance_audit_observations", "force_upstream_unavailable"] as const;
 
 // ====== PackageSignalTargetingGroup ======
 
@@ -426,6 +440,18 @@ export const RightsConstraint_ApprovalStatusValues = ["pending", "approved", "re
 
 /** array of | SIComponentCatalog.components */
 export const SIComponentCatalog_ComponentsValues = ["Text", "Button", "Link", "Image", "Card", "ProductCard", "List", "Row", "Column", "IntegrationAction", "AppHandoff"] as const;
+
+// ====== SignalCoverageForecast ======
+
+/** single | SignalCoverageForecast.bucket_completeness */
+export const SignalCoverageForecast_BucketCompletenessValues = ["complete", "partial"] as const;
+/** single | SignalCoverageForecast.bucket_semantics */
+export const SignalCoverageForecast_BucketSemanticsValues = ["exclusive", "overlapping"] as const;
+
+// ====== SignalForecastDimension ======
+
+/** single | SignalForecastDimension.presence */
+export const SignalForecastDimension_PresenceValues = ["present", "absent"] as const;
 
 // ====== SignalTargetingRules ======
 

@@ -16,6 +16,7 @@ const {
   resolveAdcpVersion,
 } = require('../../dist/lib/index.js');
 const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
+const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
 
 const TEST_AGENT = {
   id: 'test-agent',
@@ -32,8 +33,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.5' });
-      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.5');
+      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: ADCP_VERSION });
+      assert.strictEqual(client.getAdcpVersion(), ADCP_VERSION);
     });
   });
 
@@ -44,8 +45,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new AgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.5' });
-      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.5');
+      const client = new AgentClient(TEST_AGENT, { adcpVersion: ADCP_VERSION });
+      assert.strictEqual(client.getAdcpVersion(), ADCP_VERSION);
     });
   });
 
@@ -56,8 +57,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: '3.1.0-beta.5' });
-      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.5');
+      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: ADCP_VERSION });
+      assert.strictEqual(client.getAdcpVersion(), ADCP_VERSION);
     });
   });
 
@@ -71,24 +72,24 @@ describe('adcpVersion constructor option', () => {
       const server = createAdcpServer({
         name: 'test-server',
         version: '1.0.0',
-        adcpVersion: '3.1.0-beta.5',
+        adcpVersion: ADCP_VERSION,
       });
-      assert.strictEqual(server.getAdcpVersion(), '3.1.0-beta.5');
+      assert.strictEqual(server.getAdcpVersion(), ADCP_VERSION);
     });
 
     test('config.version (app version) and adcpVersion are independent', () => {
       const server = createAdcpServer({
         name: 'test-server',
         version: '7.4.2', // publisher app version
-        adcpVersion: '3.1.0-beta.5', // protocol version
+        adcpVersion: ADCP_VERSION, // protocol version
       });
-      assert.strictEqual(server.getAdcpVersion(), '3.1.0-beta.5');
+      assert.strictEqual(server.getAdcpVersion(), ADCP_VERSION);
     });
   });
 
   describe('parseAdcpMajorVersion', () => {
     test('extracts major from semver', () => {
-      assert.strictEqual(parseAdcpMajorVersion('3.1.0-beta.5'), 3);
+      assert.strictEqual(parseAdcpMajorVersion(ADCP_VERSION), 3);
       assert.strictEqual(parseAdcpMajorVersion('3.0.0'), 3);
       assert.strictEqual(parseAdcpMajorVersion('4.0.0'), 4);
     });
@@ -110,11 +111,11 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('accepts pins that resolve to a bundled version', () => {
-      // SDK bundles the current ADCP_VERSION ('3.1.0-beta.5'). The full-semver
+      // SDK bundles the current ADCP_VERSION. The full-semver
       // pin, the release-precision prerelease pin, and the release-precision
       // pin without a numeric tag all resolve to the same bundle.
-      assert.strictEqual(resolveAdcpVersion('3.1.0-beta.5'), '3.1.0-beta.5');
-      assert.strictEqual(resolveAdcpVersion('3.1-beta.5'), '3.1-beta.5');
+      assert.strictEqual(resolveAdcpVersion(ADCP_VERSION), ADCP_VERSION);
+      assert.strictEqual(resolveAdcpVersion(ADCP_RELEASE_PRECISION), ADCP_RELEASE_PRECISION);
       assert.strictEqual(resolveAdcpVersion('3.1-beta'), '3.1-beta');
     });
 
@@ -196,11 +197,11 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('SingleAgentClient.requireSupportedMajor accepts release-precision prerelease supported_versions', async () => {
-      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.5' });
+      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: ADCP_VERSION });
       client.getCapabilities = async () => ({
         version: 'v3',
         majorVersions: [3],
-        supportedVersions: ['3.1-beta.5'],
+        supportedVersions: [ADCP_RELEASE_PRECISION],
         protocols: [],
         features: {},
         idempotency: { replayTtlSeconds: 86400 },

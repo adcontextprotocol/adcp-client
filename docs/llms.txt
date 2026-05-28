@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-27
-> Library: @adcp/sdk v8.1.0-beta.13
+> Generated at: 2026-05-28
+> Library: @adcp/sdk v8.1.0-beta.14
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -269,7 +269,7 @@ Request parameters for cross-protocol capability discovery.
 Request parameters for listing accounts accessible to the authenticated agent.
 
 **Request:**
-- Optional: `status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'`, `pagination: Pagination Request`, `sandbox: boolean`, `context: Context`
+- Optional: `account: Account Ref`, `status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'`, `pagination: Pagination Request`, `sandbox: boolean`, `context: Context`
 
 **Response (success branch):**
 - Required: `accounts: object[]`
@@ -368,8 +368,8 @@ Request parameters for creating a media buy.
 - Optional: `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, `po_number: string`, +5 more
 
 **Response (success branch):**
-- Required: `media_buy_id: string`, `packages: object[]`
-- Optional: `account: Account`, `invoice_recipient: Business Entity`, `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `confirmed_at: string`, `creative_deadline: string`, `revision: integer`, `currency: string`, +6 more
+- Required: `media_buy_id: string`, `confirmed_at: string,null`, `revision: integer`, `packages: object[]`
+- Optional: `account: Account`, `invoice_recipient: Business Entity`, `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `creative_deadline: string`, `currency: string`, `total_budget: number`, `valid_actions: object[]`, +4 more
 
 **Watch out:**
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
@@ -383,8 +383,8 @@ Request parameters for updating campaign and package settings.
 - Optional: `revision: integer`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `start_time: Start Timing`, `end_time: string`, `packages: object[]`, `invoice_recipient: Business Entity`, +4 more
 
 **Response (success branch):**
-- Required: `media_buy_id: string`
-- Optional: `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `revision: integer`, `currency: string`, `total_budget: number`, `implementation_date: string,null`, `invoice_recipient: Business Entity`, `affected_packages: object[]`, +4 more
+- Required: `media_buy_id: string`, `revision: integer`
+- Optional: `media_buy_status: Media Buy Status`, `status: Media Buy Status`, `currency: string`, `total_budget: number`, `implementation_date: string,null`, `invoice_recipient: Business Entity`, `affected_packages: object[]`, `valid_actions: object[]`, +3 more
 
 **Watch out:**
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
@@ -567,7 +567,7 @@ Request parameters for validating a creative manifest against canonical formats 
 
 **Request:**
 - Required: `manifest: Creative Manifest`
-- Optional: `targets: object[]`
+- Optional: `account: Account Ref`, `brand: Brand Ref`, `targets: object[]`
 
 **Response (success branch):**
 - Required: `results: object[]`
@@ -815,7 +815,7 @@ Request parameters for evaluating creative features from a governance agent.
 
 **Response (success branch):**
 - Required: `results: object[]`
-- Optional: `detail_url: string`, `pricing_option_id: string`, `vendor_cost: number`, `currency: string`, `consumption: Creative Consumption`, `context: Context`
+- Optional: `detail_url: string`, `audit_observations: object[]`, `pricing_option_id: string`, `vendor_cost: number`, `currency: string`, `consumption: Creative Consumption`, `context: Context`
 
 #### `sync_plans`
 
@@ -952,14 +952,23 @@ Flow: `sync_plans → sync_accounts → sync_governance → get_rights → acqui
 
 ### Creative
 
-**Creative lifecycle** — Full creative lifecycle on a stateful platform: sync multiple creatives, list with filtering, build and preview across formats, observe status transitions.
-Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → list_creatives → preview_creative → build_creative`
+**Creative lifecycle** — Baseline creative lifecycle on a stateful platform: sync display creatives, list with filtering, and preview renderings.
+Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → list_creatives → preview_creative`
+
+**Creative report_usage rejects out-of-band billing** — Verifies that a creative agent declaring bills_through_adcp: false rejects report_usage records with accepted: 0 and BILLING_OUT_OF_BAND.
+Flow: `get_adcp_capabilities → report_usage`
+
+**Creative lifecycle webhooks** — Registers account-level creative lifecycle notifications, forces a seller-side status transition, observes creative.status_changed, and verifies list_creatives snapshot repair plus optional creative.purged coverage.
+Flow: `sync_accounts → sync_creatives → comply_test_controller → expect_webhook → list_creatives → comply_test_controller → expect_webhook → list_creatives`
 
 **Native in-feed creative lifecycle** — End-to-end native_in_feed conformance: format discovery, full 12-slot asset bundle submission with pixel trackers, per-constraint validation rejection paths, and feed-rendered preview.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
 
 **Sales agent with creative capabilities** — Stateful sales agent that accepts pushed creative assets and renders them in its environment.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
+
+**Seller accepts a provenance carve-out claim surfaced as an audit observation** — Buyer submits AI-assisted creatives with human_oversight directed/edited and disclosure.required false. Seller invokes an on-list verifier, records OVERSIGHT_DISCLOSURE_CARVEOUT_CLAIMED audit observations, and accepts the creatives rather than treating the observations as rejections.
+Flow: `get_products → sync_creatives → comply_test_controller`
 
 **Seller enforces provenance_requirements on sync_creatives** — Seller publishes provenance_requirements + accepted_verifiers on a product. Four structural rejections (no provenance, missing digital_source_type, off-list verifier, missing disclosure), then a corrected resubmission with on-list verifier is accepted.
 Flow: `get_products → sync_creatives`
@@ -972,6 +981,9 @@ Flow: `get_adcp_capabilities → list_creatives → list_creative_formats → bu
 
 **Creative template and transformation agent** — Stateless creative agent that takes assets in, applies templates, and produces tags or rendered output.
 Flow: `get_adcp_capabilities → list_creative_formats → preview_creative → build_creative`
+
+**Canonical format validate_input** — Validates 3.1 canonical-format dry-run semantics: structural pass/fail across canonical slots and unvalidatable_nondeterministic for seeded products.
+Flow: `validate_input`
 
 ### Campaign Governance
 
@@ -994,6 +1006,9 @@ Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_produ
 
 **Seller fulfills a media buy with audience targeting from a synced CRM audience** — Verifies that a seller advertising audience_targeting can ingest a CRM audience via sync_audiences, accept a media buy whose targeting_overlay references the bound audience_id, reject malformed audience references, and report delivery for the audience-targeted buy. Sibling to media_buy_seller/performance_buy_flow on the audience side: the unbound-id rejection is the discriminating assertion.
 Flow: `sync_accounts → get_products → sync_audiences → create_media_buy → comply_test_controller → get_media_buy_delivery`
+
+**Seller carries product allowed actions into per-buy available actions** — Validates the AdCP 3.1 media-buy action-discovery flow: product allowed_actions[], buy available_actions[], SLAWindow duration fields, self-serve mutation, and ACTION_NOT_ALLOWED enforcement.
+Flow: `get_products → create_media_buy → get_media_buys → update_media_buy`
 
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1076,6 +1091,9 @@ Flow: `sync_accounts → get_products`
 **Seller handles product refinement** — Verifies that a media buy seller supports buying_mode: refine with product-level and request-level changes.
 Flow: `sync_accounts → get_products`
 
+**Vendor-metric external catalog precondition** — Exercises the 3.1 SHOULD-window behavior for vendor_metric goals whose metric_id is absent from a seeded measurement.metrics[] catalog.
+Flow: `sync_accounts → comply_test_controller → create_media_buy`
+
 **Vendor-metric optimization-goal: acceptance and rejection** — Verifies that a seller supporting vendor_metric_optimization accepts a media buy whose optimization_goal has kind 'vendor_metric' when all preconditions are met, and rejects goals that fail either the capability check or the reporting-coherence check.
 Flow: `sync_accounts → get_products → create_media_buy`
 
@@ -1083,35 +1101,39 @@ Flow: `sync_accounts → get_products → create_media_buy`
 Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy`
 
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
-Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_governance → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
-**Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side — accepts sync_governance, calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim; pure sellers without governance composition do not claim this specialism and skip the governance scenarios as not_applicable.
+**Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side after baseline sync_governance registration — calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim for the full governance-check loop.
 Flow: `get_adcp_capabilities`
 
-**Seller rejects sync_governance with more than one governance agent** — Verifies that a governance-aware seller rejects a sync_governance request carrying more than one governance_agents entry, enforcing the maxItems: 1 constraint.
+**Seller rejects sync_governance with more than one governance agent** — Verifies that any seller required to implement sync_governance rejects a request carrying more than one governance_agents entry, enforcing the maxItems: 1 constraint.
 Flow: `sync_accounts → sync_governance`
 
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
-Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_governance → list_creative_formats → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
-Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
 
 **Non-guaranteed auction-based media buy** — Seller agent for auction-based, non-guaranteed buying where the buyer sets bid prices and budgets.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → get_products → sync_governance → create_media_buy → get_media_buys → update_media_buy → get_media_buy_delivery`
 
 **Media buy via proposal acceptance** — Seller agent that generates curated media plan proposals the buyer can review, refine, and accept.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
-### Products
+**Wholesale product feed webhook registration** — Validates account-level notification_configs[] registration for agents that advertise product wholesale feed webhook events.
+Flow: `sync_accounts`
 
-**Canonical formats producer scenario** — Validates that get_products can expose a seeded product through both v1 format_ids and v2 canonical format_options without drift.
+**Wholesale product feed versioning** — Validates get_products wholesale feed versioning: bootstrap responses carry wholesale_feed_version/cache_scope and matching if_wholesale_feed_version probes return unchanged without product rows.
 Flow: `get_products`
 
 ### Reporting
+
+**Billing finality delivery and usage reporting** — Verifies that 3.1 billing-grade delivery rows distinguish provisional from final numbers and that report_usage accepts final usage records with finality metadata.
+Flow: `sync_accounts → create_media_buy → comply_test_controller → get_media_buy_delivery → comply_test_controller → get_media_buy_delivery → report_usage`
 
 **Seller returns valid delivery reporting** — Verifies that get_media_buy_delivery returns schema-compliant delivery data after simulated delivery via the test controller.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1121,6 +1143,11 @@ Flow: `sync_accounts → get_products → create_media_buy → comply_test_contr
 
 **End-to-end vendor-metric accountability: declaration → filter → emission** — Buyer discovers products that declare a vendor metric, creates a media buy, and verifies vendor-metric values appear in the delivery report.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
+
+### Products
+
+**Canonical formats producer scenarios** — Validates that get_products can expose seeded canonical-format products through dual, v1-only, v2-only, custom, experimental, and divergent declaration shapes.
+Flow: `get_products`
 
 ### Signals
 
@@ -1139,6 +1166,12 @@ Flow: `get_adcp_capabilities → get_signals → activate_signal`
 **get_signals pagination cursor integrity** — Validates the cursor↔has_more invariant on a paginated get_signals response by walking from a continuation page to the next page under a broad query.
 Flow: `get_adcp_capabilities → get_signals`
 
+**Wholesale signals feed webhook registration** — Validates account-level notification_configs[] registration for agents that advertise signal wholesale feed webhook events.
+Flow: `sync_accounts`
+
+**Wholesale signals feed versioning** — Validates get_signals wholesale feed versioning: bootstrap responses carry wholesale_feed_version/cache_scope and matching if_wholesale_feed_version probes return unchanged without signal rows.
+Flow: `get_signals`
+
 ### Sponsored Intelligence (SI)
 
 **Sponsored intelligence baseline** — Baseline domain storyboard — every SI agent must discover offerings, initiate a session, exchange messages, and terminate cleanly.
@@ -1152,7 +1185,7 @@ Flow: `get_adcp_capabilities → si_get_offering → si_initiate_session → si_
 Flow: `get_adcp_capabilities → list_accounts → sync_audiences`
 
 **Social platform** — Social media platform that accepts audience segments, native creatives, and conversion events from buyer agents.
-Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_audiences → sync_creatives → sync_catalogs → sync_creatives → sync_catalogs → sync_creatives → preview_creative → expect_substitution_safe → sync_event_sources → log_event → get_account_financials`
+Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_governance → sync_audiences → sync_creatives → sync_catalogs → sync_creatives → sync_catalogs → sync_creatives → preview_creative → expect_substitution_safe → sync_event_sources → log_event → get_account_financials`
 
 ### Core
 
@@ -1178,6 +1211,12 @@ Flow: `get_adcp_capabilities → get_media_buys`
 Flow: `get_adcp_capabilities → create_media_buy → expect_webhook → create_media_buy → get_media_buys → expect_rate_limit_not_replayed`
 
 **Notification config event-scope rejection** — Validates that sync_accounts.accounts[].notification_configs[] rejects media-buy-anchored notification types even though they are valid notification-type enum values.
+Flow: `sync_accounts`
+
+**Notification config lifecycle** — Validates account-level notification_configs[] lifecycle behavior on sync_accounts: paused registration, durable echo, subscriber-keyed replacement, and clear.
+Flow: `sync_accounts → list_accounts → sync_accounts → list_accounts → sync_accounts → list_accounts`
+
+**Notification config semantic rejections** — Validates account-level notification_configs[] semantic rejection for duplicate subscriber keys.
 Flow: `sync_accounts`
 
 **Pagination cursor integrity — list_creative_formats** — Validates the cursor↔has_more invariant on list_creative_formats by seeding two formats and walking pages with max_results=1.
@@ -1209,6 +1248,9 @@ Flow: `get_adcp_capabilities`
 
 **Webhook emission — outbound webhook conformance (signing + idempotency)** — Any agent that emits webhooks MUST carry a stable idempotency_key across retries and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
 Flow: `get_adcp_capabilities → expect_webhook → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
+
+**Wholesale feed bulk-change webhook registration** — Validates account-level notification_configs[] registration for agents that advertise wholesale_feed.bulk_change webhook events.
+Flow: `sync_accounts`
 
 ### Governance
 
@@ -1247,7 +1289,7 @@ Flow: `get_adcp_capabilities → comply_test_controller → get_products`
 **Comply test controller — live-account denial gate** — Verifies that a seller exposing comply_test_controller refuses calls from live-mode (non-sandbox) accounts with FORBIDDEN.
 Flow: `comply_test_controller`
 
-**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
+**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of static credentials or OAuth MUST be implemented and correctly advertised.
 
 ### Security transport
 
@@ -1347,7 +1389,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `TERMS_REJECTED` | correctable | Buyer-proposed measurement_terms were rejected by the seller. The error details SHOULD identify which specific term was rejected and the seller's acceptable range or supported vendors. |
 | `UNSUPPORTED_FEATURE` | correctable | A requested feature or field is not supported by this seller. |
 | `UNSUPPORTED_GRANULARITY` | correctable | The requested `time_granularity` on `get_media_buy_delivery` is not in the product's declared `reporting_capabilities.windowed_pull_granularities`. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about reporting-window granularity — the buyer asked for hourly pull-recovery on a product that only honors daily pulls, for example. Sellers MAY echo the declared set in `error.details.supported_granularities` when the caller is authorized to read the product's reporting capabilities — the same set is already available via `get_adcp_capabilities`, so the echo is a convenience, not load-bearing. Sellers MUST NOT echo a granularity set the caller could not otherwise read (per-product capability views vary by buyer entitlement). The `error.field` SHOULD point at `time_granularity`. Buyers that need higher-frequency recovery than the seller's pull set supports MUST rely on the webhook channel as primary at that frequency — the seller's `available_reporting_frequencies` may legitimately exceed `windowed_pull_granularities` (e.g., a stream-tap webhook on Kafka with warehouse pulls only at daily). |
-| `UNSUPPORTED_PROVISIONING` | correctable | The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for explicit-account platforms where accounts are pre-provisioned out of band and discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found. |
+| `UNSUPPORTED_PROVISIONING` | correctable | The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found. |
 | `VALIDATION_ERROR` | correctable | Request contains invalid field values or violates business rules beyond schema validation. |
 | `VERSION_UNSUPPORTED` | correctable | The declared adcp_version (release-precision) or adcp_major_version (deprecated) is not supported by this seller. The error details SHOULD follow `error-details/version-unsupported.json` — `supported_versions` (release-precision strings) is authoritative for retry; `supported_majors` is deprecated. |
 

@@ -89,7 +89,9 @@ serve(() =>
           );
         }
         if (params.filters?.min_coverage_percentage) {
-          results = results.filter(s => s.coverage_percentage >= params.filters!.min_coverage_percentage!);
+          results = results.filter(
+            (s: any) => (s.coverage_percentage ?? 0) >= params.filters!.min_coverage_percentage!
+          );
         }
 
         // Limit

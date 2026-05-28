@@ -19,6 +19,8 @@ import { productsResponse } from '../lib/server';
 
 const rootCreateMediaBuyPayload: RootCreateMediaBuyPayload = {
   media_buy_id: 'mb_1',
+  confirmed_at: '2026-01-01T00:00:00Z',
+  revision: 1,
   packages: [],
   status: 'active',
 };

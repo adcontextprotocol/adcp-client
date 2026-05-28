@@ -1,8 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Sync the AdCP 3.1.0-beta.5 schema bundle into
- * `schemas/cache/3.1.0-beta.5/`. Clients pinning `adcpVersion:
- * "3.1.0-beta.5"` or `"3.1-beta"` get strict validation against these
+ * Sync the AdCP 3.1.0-beta.7 schema bundle into
+ * `schemas/cache/3.1.0-beta.7/`. Clients pinning `adcpVersion:
+ * "3.1.0-beta.7"` or `"3.1-beta"` get strict validation against these
  * schemas.
  *
  * Wraps `syncSchemas()` so we inherit cosign verification, sha256 check,
@@ -20,7 +20,7 @@ import { syncSchemas } from './sync-schemas';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
-const BETA_VERSION = '3.1.0-beta.5';
+const BETA_VERSION = '3.1.0-beta.7';
 const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
 
 /**
@@ -94,10 +94,14 @@ async function main(): Promise<void> {
   // primary GA pin remains the default bundle for downstream consumers.
   restoreLatestSymlink(SCHEMA_CACHE_DIR, primary);
   restoreLatestSymlink(COMPLIANCE_CACHE_DIR, primary);
-  // `syncSchemas` also overwrites tracked artifacts (registry.yaml, protocol
-  // skills) from the synced tarball. Those track the primary pin, not the
-  // opt-in beta — restore them from HEAD.
-  restoreFromHead(RESTORE_PATHS);
+  // When the beta is the primary pin, the synced tracked artifacts are the
+  // desired state; restoring from HEAD would undo the intended schema bump.
+  if (primary !== BETA_VERSION) {
+    // `syncSchemas` also overwrites tracked artifacts (registry.yaml, protocol
+    // skills) from the synced tarball. Those track the primary pin, not the
+    // opt-in beta — restore them from HEAD.
+    restoreFromHead(RESTORE_PATHS);
+  }
   console.log(`✅ ${BETA_VERSION} schemas at schemas/cache/${BETA_VERSION}/`);
 }
 

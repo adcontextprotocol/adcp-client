@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-05-27
-> @adcp/sdk v8.1.0-beta.13
+> Generated at: 2026-05-28
+> @adcp/sdk v8.1.0-beta.14
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -135,6 +135,7 @@ _Response (success branch):_
 _Request:_
 ```
 {
+  account: Account Ref
   status: 'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed'
   pagination: Pagination Request
   sandbox: boolean
@@ -369,14 +370,14 @@ _Response (success branch):_
 ```
 {
   media_buy_id: string  // required
+  confirmed_at: string,null  // required
+  revision: integer  // required
   packages: object[]  // required
   account: Account
   invoice_recipient: Business Entity
   media_buy_status: Media Buy Status
   status: Media Buy Status
-  confirmed_at: string
   creative_deadline: string
-  revision: integer
   currency: string
   total_budget: number
   valid_actions: object[]
@@ -417,9 +418,9 @@ _Response (success branch):_
 ```
 {
   media_buy_id: string  // required
+  revision: integer  // required
   media_buy_status: Media Buy Status
   status: Media Buy Status
-  revision: integer
   currency: string
   total_budget: number
   implementation_date: string,null
@@ -850,6 +851,8 @@ _Request:_
 ```
 {
   manifest: Creative Manifest  // required
+  account: Account Ref
+  brand: Brand Ref
   targets: object[]
 }
 ```
@@ -1343,6 +1346,7 @@ _Response (success branch):_
 {
   results: object[]  // required
   detail_url: string
+  audit_observations: object[]
   pricing_option_id: string
   vendor_cost: number
   currency: string

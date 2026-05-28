@@ -726,12 +726,14 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           }),
       }));
 
+      localBuyRevisions.set(overrideKey(networkCode, order.order_id), 1);
       return {
         media_buy_id: order.order_id,
         // pending_creatives — buy is auction-confirmed but no creatives
         // attached yet. Buyer transitions to `active` after sync_creatives.
         media_buy_status: 'pending_creatives',
         confirmed_at: order.created_at ?? new Date().toISOString(),
+        revision: 1,
         packages: packagesOut,
       };
     },
@@ -804,9 +806,13 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         nextStatus = flightStarted ? 'active' : 'pending_start';
         adapterStatusOverrides.set(overrideKey(networkCode, id), nextStatus);
       }
+      const revisionKey = overrideKey(networkCode, id);
+      const nextRevision = (localBuyRevisions.get(revisionKey) ?? 1) + 1;
+      localBuyRevisions.set(revisionKey, nextRevision);
       return {
         media_buy_id: existing.order_id,
         media_buy_status: nextStatus,
+        revision: nextRevision,
       };
     },
 
@@ -913,6 +919,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
             currency: o.currency,
             ...(o.budget !== undefined && { total_budget: o.budget }),
             ...(o.updated_at !== undefined && { confirmed_at: o.updated_at }),
+            revision: localBuyRevisions.get(overrideKey(networkCode, o.order_id)) ?? 1,
             ...(o.created_at !== undefined && { created_at: o.created_at }),
             ...(o.updated_at !== undefined && { updated_at: o.updated_at }),
             ...(o.flight_start && { start_time: o.flight_start }),
@@ -1053,6 +1060,8 @@ const simulatedDelivery = new Map<
   }
 >();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
+
+const localBuyRevisions = new Map<string, number>();
 
 serve(
   ({ taskStore }) =>

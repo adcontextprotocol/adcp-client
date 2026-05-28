@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const { createComplyController, TestControllerError, createSeedFixtureCache } = require('../dist/lib/testing');
 
 describe('createComplyController — list_scenarios', () => {
-  it('advertises only the adapters that are registered (force/simulate, not seeds)', async () => {
+  it('advertises only the adapters that are registered', async () => {
     const controller = createComplyController({
       seed: { product: () => {} },
       force: {
@@ -15,14 +15,23 @@ describe('createComplyController — list_scenarios', () => {
     });
     const result = await controller.handleRaw({ scenario: 'list_scenarios' });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual([...result.scenarios].sort(), ['force_creative_status', 'simulate_delivery']);
+    assert.deepStrictEqual([...result.scenarios].sort(), [
+      'force_creative_status',
+      'seed_product',
+      'simulate_delivery',
+    ]);
   });
 
-  it('returns empty scenarios when only seeds are configured (seeds are not advertised)', async () => {
-    const controller = createComplyController({ seed: { product: () => {} } });
+  it('advertises seed scenarios when seed adapters are configured', async () => {
+    const controller = createComplyController({
+      seed: {
+        buyer_agent: () => {},
+        product: () => {},
+      },
+    });
     const result = await controller.handleRaw({ scenario: 'list_scenarios' });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual(result.scenarios, []);
+    assert.deepStrictEqual([...result.scenarios].sort(), ['seed_buyer_agent', 'seed_product']);
   });
 
   it('advertises force_create_media_buy_arm and force_task_completion when registered', async () => {
@@ -30,11 +39,18 @@ describe('createComplyController — list_scenarios', () => {
       force: {
         create_media_buy_arm: params => ({ success: true, forced: { arm: params.arm } }),
         task_completion: () => ({ success: true, previous_state: 'running', current_state: 'completed' }),
+        creative_purge: () => ({ success: true, previous_state: 'active', current_state: 'purged' }),
+        upstream_unavailable: () => ({ success: true, previous_state: 'available', current_state: 'unavailable' }),
       },
     });
     const result = await controller.handleRaw({ scenario: 'list_scenarios' });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual([...result.scenarios].sort(), ['force_create_media_buy_arm', 'force_task_completion']);
+    assert.deepStrictEqual([...result.scenarios].sort(), [
+      'force_create_media_buy_arm',
+      'force_creative_purge',
+      'force_task_completion',
+      'force_upstream_unavailable',
+    ]);
   });
 });
 
@@ -133,6 +149,25 @@ describe('createComplyController — dispatch', () => {
     });
   });
 
+  it('routes query_provenance_audit_observations to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      queryProvenanceAuditObservations: params => {
+        captured = params;
+        return { success: true, creative_id: params.creative_id, audit_observations: [] };
+      },
+    });
+
+    const result = await controller.handleRaw({
+      scenario: 'query_provenance_audit_observations',
+      params: { creative_id: 'cr-1', include_non_blocking: true },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.creative_id, 'cr-1');
+    assert.deepStrictEqual(captured, { creative_id: 'cr-1', include_non_blocking: true });
+  });
+
   it('passes the raw input to adapters via ctx', async () => {
     let capturedCtx;
     const controller = createComplyController({
@@ -198,6 +233,43 @@ describe('createComplyController — dispatch', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.current_state, 'completed');
     assert.deepStrictEqual(captured, { task_id: 'task-42', result: { output: 'done' } });
+  });
+
+  it('routes force.creative_purge to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        creative_purge: params => {
+          captured = params;
+          return { success: true, previous_state: 'active', current_state: 'purged' };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_creative_purge',
+      params: { creative_id: 'cr-1', purge_kind: 'soft', reason_code: 'policy_revocation' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.current_state, 'purged');
+    assert.deepStrictEqual(captured, { creative_id: 'cr-1', purge_kind: 'soft', reason_code: 'policy_revocation' });
+  });
+
+  it('routes force.upstream_unavailable to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        upstream_unavailable: params => {
+          captured = params;
+          return { success: true, previous_state: 'available', current_state: 'unavailable' };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_upstream_unavailable',
+      params: { tool: 'get_products', upstream_name: 'catalog' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(captured, { tool: 'get_products', upstream_name: 'catalog' });
   });
 
   it('returns UNKNOWN_SCENARIO for force_task_completion when adapter not registered', async () => {
@@ -320,6 +392,34 @@ describe('createComplyController — seed idempotency', () => {
     assert.strictEqual(result.success, false);
     assert.match(result.error_detail, /agent_url inside params\.fixture/);
     assert.deepStrictEqual(seen, []);
+  });
+
+  it('routes seed.measurement_catalog to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      seed: {
+        measurement_catalog: params => {
+          captured = params;
+        },
+      },
+    });
+
+    const result = await controller.handleRaw({
+      scenario: 'seed_measurement_catalog',
+      params: {
+        vendor: 'acme',
+        metrics: [{ metric_id: 'viewability' }],
+        fixture: { source: 'sandbox' },
+      },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.message, 'Fixture seeded');
+    assert.deepStrictEqual(captured, {
+      vendor: 'acme',
+      metrics: [{ metric_id: 'viewability' }],
+      fixture: { source: 'sandbox' },
+    });
   });
 
   it('re-seeds with equivalent fixture returns SeedSuccess message="Fixture re-seeded (equivalent)" and still invokes adapter', async () => {

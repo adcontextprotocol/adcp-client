@@ -936,10 +936,12 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         // Stamp the buy's lifecycle entry so update_media_buy can enforce
         // the spec's MediaBuyStatus state machine on subsequent patches.
         localBuyStatus.set(order.order_id, 'pending_creatives');
+        localBuyRevisions.set(order.order_id, 1);
         return {
           media_buy_id: order.order_id,
           media_buy_status: 'pending_creatives',
           confirmed_at: new Date().toISOString(),
+          revision: 1,
           packages: packagesOut,
         };
       };
@@ -1025,9 +1027,12 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // Mock doesn't model partial updates; production wires each patch
       // field onto the upstream's OrderService update endpoint. The
       // worked example just echoes success with the post-transition status.
+      const nextRevision = (localBuyRevisions.get(buyId) ?? 1) + 1;
+      localBuyRevisions.set(buyId, nextRevision);
       return {
         media_buy_id: buyId,
         media_buy_status: nextStatus,
+        revision: nextRevision,
       };
     },
 
@@ -1050,6 +1055,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
             currency: o.currency,
             ...(o.budget !== undefined && { total_budget: o.budget }),
             confirmed_at: o.updated_at,
+            revision: localBuyRevisions.get(o.order_id) ?? 1,
             created_at: o.created_at,
             updated_at: o.updated_at,
             packages: lineItems.map(li => ({
@@ -1210,6 +1216,7 @@ type MediaBuyStatus =
   | 'rejected'
   | 'canceled';
 const localBuyStatus = new Map<string, MediaBuyStatus>();
+const localBuyRevisions = new Map<string, number>();
 
 // Persist `packages[].targeting_overlay` from create_media_buy and echo it
 // on get_media_buys. The seller spec MANDATES this echo for any seller

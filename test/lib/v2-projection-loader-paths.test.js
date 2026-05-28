@@ -25,6 +25,7 @@ const { spawnSync } = require('node:child_process');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SRC_DIST = path.join(REPO_ROOT, 'dist');
 const SRC_SCHEMAS_DATA = path.join(SRC_DIST, 'lib', 'schemas-data');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 let tmpRoot;
 
@@ -32,9 +33,9 @@ before(() => {
   if (!fs.existsSync(path.join(SRC_DIST, 'lib', 'v2', 'projection', 'registry.js'))) {
     throw new Error('Test setup expects dist/ to be built. Run `npm run build:lib` first.');
   }
-  if (!fs.existsSync(path.join(SRC_SCHEMAS_DATA, '3.1.0-beta.5', 'registries', 'v1-canonical-mapping.json'))) {
+  if (!fs.existsSync(path.join(SRC_SCHEMAS_DATA, ADCP_VERSION, 'registries', 'v1-canonical-mapping.json'))) {
     throw new Error(
-      'Test setup expects dist/lib/schemas-data/3.1.0-beta.5/registries/v1-canonical-mapping.json. ' +
+      `Test setup expects dist/lib/schemas-data/${ADCP_VERSION}/registries/v1-canonical-mapping.json. ` +
         'Run `npm run sync-schemas:3.1-beta && npm run build:lib` first.'
     );
   }

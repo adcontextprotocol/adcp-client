@@ -31,6 +31,9 @@ import type { ProductMetricOptimizationLike } from '../../utils/capability-rollu
  * budget on the published `.d.ts` and tsc OOMs.
  */
 type _MediaBuyCapabilities = NonNullable<GetAdCPCapabilitiesResponse['media_buy']>;
+type _ComplianceTestingScenario = NonNullable<
+  NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']>['scenarios']
+>[number];
 
 export interface DecisioningCapabilities<TConfig = unknown> {
   /**
@@ -386,20 +389,10 @@ export type BrandCapabilities = NonNullable<NonNullable<GetAdCPCapabilitiesRespo
 export interface ComplianceTestingCapabilities {
   /**
    * Scenarios this agent advertises support for. Wire enum is the
-   * spec-narrowed force + simulate set; seed scenarios are
-   * deliberately NOT advertised here (the controller's own
-   * `list_scenarios` response follows the same rule). Adopters who
-   * wire seed adapters get them dispatched correctly at runtime; they
-   * just don't appear in capability discovery. Framework defaults
-   * this from the adopter-supplied `complyTest` adapter set when
-   * omitted.
+   * canonical scenario enum, excluding `list_scenarios` because that
+   * is a discovery operation rather than a test capability. Framework
+   * defaults this from the adopter-supplied `complyTest` adapter set
+   * when omitted.
    */
-  scenarios?: ReadonlyArray<
-    | 'force_creative_status'
-    | 'force_account_status'
-    | 'force_media_buy_status'
-    | 'force_session_status'
-    | 'simulate_delivery'
-    | 'simulate_budget_spend'
-  >;
+  scenarios?: ReadonlyArray<_ComplianceTestingScenario>;
 }

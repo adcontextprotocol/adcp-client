@@ -462,6 +462,7 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
     const payload = {
       media_buy_id: 'mb_canceled',
       status: 'canceled',
+      revision: 2,
       affected_packages: [],
       context: { correlation_id: 'corr-1' },
       _message: 'Completed update_media_buy',

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Generate TypeScript request/response interfaces from the cached AdCP
- * 3.1.0-beta.5 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
+ * 3.1.0-beta.7 schema bundle. Output: `src/lib/types/v3-1-beta/tools.generated.ts`.
  *
  * The SDK's primary type surface (`src/lib/types/tools.generated.ts`) is
  * pinned to the GA `ADCP_VERSION` (3.0.x). The v3-1-beta surface is an
@@ -26,10 +26,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { compile } from 'json-schema-to-typescript';
 import { removeArrayLengthConstraints } from './schema-utils';
-import { enforceStrictSchema, promoteConditionalParamProperties, removeNumberedTypeDuplicates } from './generate-types';
+import {
+  applyCodegenSchemaWorkarounds,
+  enforceStrictSchema,
+  promoteConditionalParamProperties,
+  removeNumberedTypeDuplicates,
+} from './generate-types';
 
 const REPO_ROOT = path.join(__dirname, '..');
-const BETA_VERSION = '3.1.0-beta.5';
+const BETA_VERSION = '3.1.0-beta.7';
 const BETA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache', BETA_VERSION);
 const OUTPUT_DIR = path.join(REPO_ROOT, 'src/lib/types/v3-1-beta');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'tools.generated.ts');
@@ -51,7 +56,7 @@ interface SchemaIndex {
 
 /**
  * Resolve a schema $ref to a path in the cached beta bundle. The bundle ships
- * with refs already normalized to `/schemas/3.1.0-beta.5/...`; this just
+ * with refs already normalized to `/schemas/${BETA_VERSION}/...`; this just
  * strips the leading version segment so the relative path resolves against
  * the cache root.
  */
@@ -385,7 +390,9 @@ async function main(): Promise<void> {
   const definitions: Record<string, any> = {};
   const properties: Record<string, any> = {};
   const pack = (name: string, raw: any): void => {
-    const prepped = stripIfThenElse(enforceStrictSchema(removeArrayLengthConstraints(raw)));
+    const prepped = stripIfThenElse(
+      enforceStrictSchema(removeArrayLengthConstraints(applyCodegenSchemaWorkarounds(raw, name)))
+    );
     propagateRootRequiredIntoOneOfBranches(prepped);
     reseatLocalRefs(prepped, name);
     definitions[name] = prepped;

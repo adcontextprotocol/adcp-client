@@ -187,6 +187,8 @@ function createAgent({ taskStore }: ServeContext) {
         const buy = {
           media_buy_id: mediaBuyId,
           status: 'pending_creatives' as const,
+          confirmed_at: new Date().toISOString(),
+          revision: 1,
           packages: (params.packages ?? []).map((pkg, i) => ({
             package_id: `pkg_${i}_${Date.now()}`,
             product_id: pkg.product_id,
@@ -214,6 +216,8 @@ function createAgent({ taskStore }: ServeContext) {
           media_buys: buys.map(b => ({
             media_buy_id: b.media_buy_id as string,
             status: b.status as any,
+            confirmed_at: b.confirmed_at as string,
+            revision: b.revision as number,
             currency: 'USD',
             packages: (b.packages as any[]) ?? [],
           })),

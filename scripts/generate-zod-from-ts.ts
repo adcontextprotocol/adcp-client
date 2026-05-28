@@ -276,6 +276,51 @@ function postProcessUndefinedUnions(content: string): string {
 }
 
 /**
+ * ts-to-zod maps TypeScript index signatures with maxProperties JSDoc to
+ * `z.record(...).max(n)`, but Zod v4 records do not expose string/array-style
+ * `.max()`. Keep the record validator and drop the property-count constraint;
+ * JSON-schema validation remains the source of truth for those rare caps.
+ */
+function postProcessRecordSizeConstraints(content: string): string {
+  const MARKER = 'z.record(';
+  let result = '';
+  let i = 0;
+
+  while (i < content.length) {
+    if (!content.startsWith(MARKER, i)) {
+      result += content[i];
+      i++;
+      continue;
+    }
+
+    const recordStart = i;
+    i += MARKER.length;
+    let depth = 1;
+    while (i < content.length && depth > 0) {
+      if (content[i] === '"' || content[i] === "'") {
+        const quote = content[i];
+        i++;
+        while (i < content.length && content[i] !== quote) {
+          if (content[i] === '\\') i++;
+          i++;
+        }
+      } else if (content[i] === '(') {
+        depth++;
+      } else if (content[i] === ')') {
+        depth--;
+      }
+      i++;
+    }
+
+    result += content.slice(recordStart, i);
+    const sizeMatch = content.slice(i).match(/^\.(?:min|max|length)\(\d+\)/);
+    if (sizeMatch) i += sizeMatch[0].length;
+  }
+
+  return result;
+}
+
+/**
  * Post-process generated Zod schemas to strip .and(z.record(...)) intersections
  * and equivalent record-only union intersections from object schemas that
  * already have .passthrough().
@@ -1631,6 +1676,10 @@ async function generateZodSchemas() {
     // has no JSON Schema representation, breaking MCP SDK's toJSONSchema() conversion.
     zodSchemas = postProcessUndefinedUnions(zodSchemas);
 
+    // Post-process: Drop unsupported `.max()`/`.min()`/`.length()` calls on
+    // z.record() emitted from object property-count JSDoc.
+    zodSchemas = postProcessRecordSizeConstraints(zodSchemas);
+
     // Post-process: Strip .and(z.record(z.string(), z.unknown())) from object schemas.
     // These intersections come from TypeScript index signatures and are redundant with
     // .passthrough(). They also create ZodIntersection types that lose .shape access.
@@ -1728,6 +1777,7 @@ export const __test__ = {
   postProcessMarkerUnionObjectIntersections,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
+  postProcessRecordSizeConstraints,
 };
 
 export { generateZodSchemas };

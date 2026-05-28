@@ -4,6 +4,7 @@ const {
   handleTestControllerRequest,
   TestControllerError,
   CONTROLLER_SCENARIOS,
+  SEED_SCENARIOS,
   SESSION_ENTRY_CAP,
   enforceMapCap,
   toMcpResponse,
@@ -35,11 +36,30 @@ describe('handleTestControllerRequest', () => {
         async forceSessionStatus() {},
         async forceCreateMediaBuyArm() {},
         async forceTaskCompletion() {},
+        async forceCreativePurge() {},
+        async forceUpstreamUnavailable() {},
         async simulateDelivery() {},
         async simulateBudgetSpend() {},
+        async seedProduct() {},
+        async seedPricingOption() {},
+        async seedCreative() {},
+        async seedPlan() {},
+        async seedMediaBuy() {},
+        async seedCreativeFormat() {},
+        async seedMeasurementCatalog() {},
+        async seedBuyerAgent() {},
+        async queryProvenanceAuditObservations() {
+          return { success: true, creative_id: 'cr-1', audit_observations: [] };
+        },
+        async queryUpstreamTraffic() {
+          return { success: true, recorded_calls: [], total_count: 0, truncated: false };
+        },
       };
       const result = await handleTestControllerRequest(store, { scenario: 'list_scenarios' });
-      assert.strictEqual(result.scenarios.length, 8);
+      assert.deepStrictEqual(
+        [...result.scenarios].sort(),
+        [...Object.values(CONTROLLER_SCENARIOS), ...Object.values(SEED_SCENARIOS)].sort()
+      );
     });
 
     it('returns empty scenarios for empty store', async () => {
@@ -493,6 +513,66 @@ describe('handleTestControllerRequest', () => {
     });
   });
 
+  describe('force_creative_purge (3.1 beta)', () => {
+    it('forwards creative_id and purge params to store', async () => {
+      const calls = [];
+      const store = {
+        async forceCreativePurge(creativeId, params) {
+          calls.push({ creativeId, params });
+          return { success: true, previous_state: 'active', current_state: 'purged' };
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_creative_purge',
+        params: {
+          creative_id: 'cr-1',
+          purge_kind: 'soft',
+          reason_code: 'policy_revocation',
+          reason_detail: 'Policy cleanup',
+        },
+      });
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(calls, [
+        {
+          creativeId: 'cr-1',
+          params: { purge_kind: 'soft', reason_code: 'policy_revocation', reason_detail: 'Policy cleanup' },
+        },
+      ]);
+    });
+
+    it('returns INVALID_PARAMS without creative_id', async () => {
+      const store = { async forceCreativePurge() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_creative_purge',
+        params: { purge_kind: 'hard' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.creative_id/);
+    });
+
+    it('rejects invalid purge_kind', async () => {
+      const store = { async forceCreativePurge() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_creative_purge',
+        params: { creative_id: 'cr-1', purge_kind: 'bogus' },
+      });
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /purge_kind/);
+    });
+
+    it('rejects invalid reason_code', async () => {
+      const store = { async forceCreativePurge() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_creative_purge',
+        params: { creative_id: 'cr-1', reason_code: 'policy' },
+      });
+      assert.strictEqual(result.success, false);
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /reason_code/);
+    });
+  });
+
   describe('seed_creative_format (3.0.1)', () => {
     it('forwards formatId + fixture to store', async () => {
       const calls = [];
@@ -519,6 +599,94 @@ describe('handleTestControllerRequest', () => {
       });
       assert.strictEqual(result.error, 'INVALID_PARAMS');
       assert.match(result.error_detail, /requires params\.format_id/);
+    });
+  });
+
+  describe('seed_measurement_catalog (3.1 beta)', () => {
+    it('forwards vendor, metrics, and fixture to store', async () => {
+      const calls = [];
+      const store = {
+        async seedMeasurementCatalog(params) {
+          calls.push(params);
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_measurement_catalog',
+        params: {
+          vendor: 'acme',
+          metrics: [{ metric_id: 'viewability', display_name: 'Viewability' }],
+          fixture: { source: 'sandbox' },
+        },
+      });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.message, 'Fixture seeded');
+      assert.deepStrictEqual(calls, [
+        {
+          vendor: 'acme',
+          metrics: [{ metric_id: 'viewability', display_name: 'Viewability' }],
+          fixture: { source: 'sandbox' },
+        },
+      ]);
+    });
+
+    it('allows the same vendor to seed distinct metric catalogs', async () => {
+      const calls = [];
+      const store = {
+        async seedMeasurementCatalog(params) {
+          calls.push(params);
+        },
+      };
+      const seedCache = createSeedFixtureCache();
+
+      const first = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_measurement_catalog',
+          params: {
+            vendor: 'acme',
+            metrics: [{ metric_id: 'viewability', display_name: 'Viewability' }],
+            fixture: { source: 'sandbox-a' },
+          },
+        },
+        { seedCache }
+      );
+      const second = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_measurement_catalog',
+          params: {
+            vendor: 'acme',
+            metrics: [{ metric_id: 'attention', display_name: 'Attention' }],
+            fixture: { source: 'sandbox-b' },
+          },
+        },
+        { seedCache }
+      );
+
+      assert.strictEqual(first.success, true);
+      assert.strictEqual(second.success, true);
+      assert.strictEqual(second.message, 'Fixture seeded');
+      assert.strictEqual(calls.length, 2);
+    });
+
+    it('returns INVALID_PARAMS without metrics', async () => {
+      const store = { async seedMeasurementCatalog() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_measurement_catalog',
+        params: { vendor: 'acme' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.vendor and params\.metrics/);
+    });
+
+    it('returns INVALID_PARAMS without vendor', async () => {
+      const store = { async seedMeasurementCatalog() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_measurement_catalog',
+        params: { metrics: [] },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.vendor and params\.metrics/);
     });
   });
 
@@ -1404,9 +1572,13 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
       async forceSessionStatus() {},
       async forceCreateMediaBuyArm() {},
       async forceTaskCompletion() {},
+      async forceCreativePurge() {},
       async forceUpstreamUnavailable() {},
       async simulateDelivery() {},
       async simulateBudgetSpend() {},
+      async queryProvenanceAuditObservations() {
+        return { success: true, creative_id: 'cr-1', audit_observations: [] };
+      },
       async queryUpstreamTraffic() {
         return { success: true, recorded_calls: [], total_count: 0, truncated: false };
       },
@@ -1441,6 +1613,47 @@ describe('query_upstream_traffic params', () => {
       attestation_mode: 'digest',
       identifier_value_digests: [digest],
     });
+  });
+});
+
+describe('query_provenance_audit_observations params', () => {
+  it('forwards params to the store unchanged', async () => {
+    let seen;
+    const store = {
+      async queryProvenanceAuditObservations(params) {
+        seen = params;
+        return { success: true, creative_id: params.creative_id, audit_observations: [] };
+      },
+    };
+
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'query_provenance_audit_observations',
+      params: { creative_id: 'cr-1', include_non_blocking: true },
+    });
+
+    assert.equal(result.success, true);
+    assert.deepStrictEqual(seen, { creative_id: 'cr-1', include_non_blocking: true });
+    assert.equal(result.creative_id, 'cr-1');
+  });
+
+  it('returns INVALID_PARAMS without creative_id', async () => {
+    const store = { async queryProvenanceAuditObservations() {} };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'query_provenance_audit_observations',
+      params: { include_non_blocking: true },
+    });
+    assert.strictEqual(result.error, 'INVALID_PARAMS');
+    assert.match(result.error_detail, /requires params\.creative_id/);
+  });
+
+  it('returns INVALID_PARAMS for a non-string creative_id', async () => {
+    const store = { async queryProvenanceAuditObservations() {} };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'query_provenance_audit_observations',
+      params: { creative_id: 123 },
+    });
+    assert.strictEqual(result.error, 'INVALID_PARAMS');
+    assert.match(result.error_detail, /requires params\.creative_id/);
   });
 });
 

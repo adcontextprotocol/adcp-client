@@ -105,6 +105,7 @@ import type {
   ForcedDirectiveSuccess,
   ControllerError,
   ComplyTestControllerResponse,
+  ProvenanceAuditObservationsSuccess,
   ContextObject,
   ExtensionObject,
 } from '../types/tools.generated';
@@ -119,6 +120,7 @@ import {
   AccountStatusSchema,
   AudienceStatusSchema,
   CatalogItemStatusSchema,
+  CreativeEventReasonCodeSchema,
   MediaBuyStatusSchema,
   CreativeStatusSchema,
 } from '../types/schemas.generated';
@@ -129,12 +131,10 @@ import { toStructuredContent } from './responses';
 // Scenario names
 // ────────────────────────────────────────────────────────────
 
-/** Scenario names advertised via `list_scenarios` (force_* and simulate_*).
- * Seed scenarios are NOT advertised — the spec treats them as universal
- * request-time capabilities, not a discoverable subset. The upstream
- * `ListScenariosSuccess['scenarios']` union includes seeds (open-for-
- * extension), so we explicitly subtract them here. */
-export type ControllerScenario = Exclude<ListScenariosSuccess['scenarios'][number], SeedScenario>;
+/** Scenario names advertised via `list_scenarios`.
+ * `list_scenarios` itself is a discovery operation, not an advertised
+ * capability, so it is excluded from the generated scenario union. */
+export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
 
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
@@ -145,6 +145,7 @@ export type SeedScenario =
   | 'seed_plan'
   | 'seed_media_buy'
   | 'seed_creative_format'
+  | 'seed_measurement_catalog'
   | 'seed_buyer_agent';
 
 /**
@@ -163,8 +164,10 @@ export const CONTROLLER_SCENARIOS = {
   FORCE_SESSION_STATUS: 'force_session_status',
   FORCE_CREATE_MEDIA_BUY_ARM: 'force_create_media_buy_arm',
   FORCE_TASK_COMPLETION: 'force_task_completion',
+  FORCE_CREATIVE_PURGE: 'force_creative_purge',
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
+  QUERY_PROVENANCE_AUDIT_OBSERVATIONS: 'query_provenance_audit_observations',
   QUERY_UPSTREAM_TRAFFIC: 'query_upstream_traffic',
   FORCE_UPSTREAM_UNAVAILABLE: 'force_upstream_unavailable',
 } as const satisfies Record<string, ControllerScenario>;
@@ -181,6 +184,7 @@ export const SEED_SCENARIOS = {
   SEED_PLAN: 'seed_plan',
   SEED_MEDIA_BUY: 'seed_media_buy',
   SEED_CREATIVE_FORMAT: 'seed_creative_format',
+  SEED_MEASUREMENT_CATALOG: 'seed_measurement_catalog',
   SEED_BUYER_AGENT: 'seed_buyer_agent',
 } as const satisfies Record<string, SeedScenario>;
 
@@ -205,10 +209,6 @@ export const SEED_MESSAGES = {
  * this type goes non-`never`, TypeScript will reject the assignment below
  * and the build fails until the const is updated.
  */
-// `seed_*` scenarios are handled by `createComplyController` (adapter-based),
-// not by `registerTestController` (flat-store). Exclude them from the guard so
-// new seed_* scenarios added upstream don't break this file — `createComplyController`
-// has its own typed-adapter surface and enforces coverage there.
 type ExhaustiveScenarioCheck = Exclude<
   ControllerScenario,
   (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS] | SeedScenario
@@ -270,6 +270,17 @@ export interface TestControllerStore {
    * buyer's `push_notification_config.url` per the AdCP 3.0 completion path.
    */
   forceTaskCompletion?(taskId: string, result: Record<string, unknown>): Promise<StateTransitionSuccess>;
+
+  /** Destroy or tombstone a sandbox creative for account-level lifecycle webhook checks. */
+  forceCreativePurge?(
+    creativeId: string,
+    params: {
+      purge_kind?: 'soft' | 'hard';
+      reason_code?: string;
+      reason_detail?: string;
+      [key: string]: unknown;
+    }
+  ): Promise<StateTransitionSuccess>;
 
   /**
    * Transition a synced audience to the specified matching status. Backs
@@ -365,12 +376,30 @@ export interface TestControllerStore {
   seedCreativeFormat?(formatId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 
   /**
+   * Seed a measurement catalog fixture. The params mirror the protocol
+   * controller request (`vendor`, `metrics`, optional `fixture`) because the
+   * catalog is keyed by vendor plus metric ids rather than a single id field.
+   */
+  seedMeasurementCatalog?(params: {
+    vendor?: unknown;
+    metrics?: unknown;
+    fixture?: Record<string, unknown> | undefined;
+    [key: string]: unknown;
+  }): Promise<void>;
+
+  /**
    * Seed a buyer-agent commercial relationship. The seller SHOULD scope the
    * seeded record to the current compliance session / auth principal so
    * storyboards can exercise per-agent gates without requiring a bespoke
    * bearer-prefix convention.
    */
   seedBuyerAgent?(agentUrl: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /** Return sandbox audit observations recorded for a creative. */
+  queryProvenanceAuditObservations?(params: {
+    creative_id: string;
+    [key: string]: unknown;
+  }): Promise<ProvenanceAuditObservationsSuccess>;
 
   /**
    * Return outbound HTTP calls the agent has made since `since_timestamp`,
@@ -571,6 +600,7 @@ export function enforceMapCap<V>(
  */
 const FORCE_AUDIENCE_STATUS_SCENARIO = 'force_audience_status';
 const FORCE_CATALOG_ITEM_STATUS_SCENARIO = 'force_catalog_item_status';
+const CreativePurgeKindSchema = z.enum(['soft', 'hard']);
 
 /** Map store method presence to scenario names. */
 const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
@@ -580,8 +610,17 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceSessionStatus', CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS],
   ['forceCreateMediaBuyArm', CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM],
   ['forceTaskCompletion', CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION],
+  ['forceCreativePurge', CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE],
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
+  ['seedProduct', SEED_SCENARIOS.SEED_PRODUCT],
+  ['seedPricingOption', SEED_SCENARIOS.SEED_PRICING_OPTION],
+  ['seedCreative', SEED_SCENARIOS.SEED_CREATIVE],
+  ['seedPlan', SEED_SCENARIOS.SEED_PLAN],
+  ['seedMediaBuy', SEED_SCENARIOS.SEED_MEDIA_BUY],
+  ['seedCreativeFormat', SEED_SCENARIOS.SEED_CREATIVE_FORMAT],
+  ['seedMeasurementCatalog', SEED_SCENARIOS.SEED_MEASUREMENT_CATALOG],
+  ['queryProvenanceAuditObservations', CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS],
   ['queryUpstreamTraffic', CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC],
   ['forceUpstreamUnavailable', CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE],
 ];
@@ -597,6 +636,7 @@ function scenariosFromStore(store: TestControllerStore): ControllerScenario[] {
  */
 function allScenariosFromStore(store: TestControllerStore): string[] {
   const out: string[] = scenariosFromStore(store);
+  if (typeof store.seedBuyerAgent === 'function') out.push(SEED_SCENARIOS.SEED_BUYER_AGENT);
   if (typeof store.forceAudienceStatus === 'function') out.push(FORCE_AUDIENCE_STATUS_SCENARIO);
   if (typeof store.forceCatalogItemStatus === 'function') out.push(FORCE_CATALOG_ITEM_STATUS_SCENARIO);
   return out;
@@ -699,6 +739,20 @@ function fixturesEquivalent(a: Record<string, unknown>, b: Record<string, unknow
     // the caller gets a clear INVALID_PARAMS instead of an INTERNAL_ERROR.
     return false;
   }
+}
+
+function measurementCatalogMetricKey(metrics: unknown): string {
+  if (Array.isArray(metrics)) {
+    const metricIds = metrics.map(metric => {
+      if (metric === null || typeof metric !== 'object') return undefined;
+      const metricId = (metric as { metric_id?: unknown }).metric_id;
+      return typeof metricId === 'string' && metricId.length > 0 ? metricId : undefined;
+    });
+    if (metricIds.every((metricId): metricId is string => metricId !== undefined)) {
+      return canonicalJson([...new Set(metricIds)].sort());
+    }
+  }
+  return canonicalJson(metrics);
 }
 
 const BUYER_AGENT_ORDER_INSENSITIVE_FIELDS = new Set(['billing_capabilities', 'aliases', 'allowed_brands']);
@@ -885,6 +939,27 @@ async function dispatchSeed(
         key: makeSeedCacheKey(`seed_creative_format:${formatId}`, scope),
         fixture,
         invoke: () => store.seedCreativeFormat!(formatId, fixture),
+      };
+      break;
+    }
+    case SEED_SCENARIOS.SEED_MEASUREMENT_CATALOG: {
+      if (!params || !Object.hasOwn(params, 'vendor') || !Object.hasOwn(params, 'metrics')) {
+        missingParam = 'seed_measurement_catalog requires params.vendor and params.metrics';
+        break;
+      }
+      if (!store.seedMeasurementCatalog) {
+        return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      }
+      const measurementCatalogFixture = { ...params, fixture };
+      const measurementCatalogKey = [
+        'seed_measurement_catalog',
+        canonicalJson(params.vendor ?? 'default'),
+        measurementCatalogMetricKey(params.metrics),
+      ].join(':');
+      dispatch = {
+        key: makeSeedCacheKey(measurementCatalogKey, scope),
+        fixture: measurementCatalogFixture,
+        invoke: () => store.seedMeasurementCatalog!(measurementCatalogFixture),
       };
       break;
     }
@@ -1167,12 +1242,39 @@ async function handleTestControllerRequestImpl(
         );
       }
 
+      case CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE: {
+        if (!store.forceCreativePurge) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.creative_id) {
+          return controllerError('INVALID_PARAMS', 'force_creative_purge requires params.creative_id');
+        }
+        const { creative_id: creativeId, ...purgeParams } = params;
+        if (
+          purgeParams.purge_kind !== undefined &&
+          !CreativePurgeKindSchema.safeParse(purgeParams.purge_kind).success
+        ) {
+          return controllerError('INVALID_PARAMS', 'force_creative_purge params.purge_kind must be soft or hard');
+        }
+        if (
+          purgeParams.reason_code !== undefined &&
+          !CreativeEventReasonCodeSchema.safeParse(purgeParams.reason_code).success
+        ) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_creative_purge params.reason_code must be a CreativeEventReasonCode'
+          );
+        }
+        return wrapStoreSuccess(await store.forceCreativePurge(creativeId as string, purgeParams));
+      }
+
       case SEED_SCENARIOS.SEED_PRODUCT:
       case SEED_SCENARIOS.SEED_PRICING_OPTION:
       case SEED_SCENARIOS.SEED_CREATIVE:
       case SEED_SCENARIOS.SEED_PLAN:
       case SEED_SCENARIOS.SEED_MEDIA_BUY:
       case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
+      case SEED_SCENARIOS.SEED_MEASUREMENT_CATALOG:
       case SEED_SCENARIOS.SEED_BUYER_AGENT: {
         // Seed-cache scope (issue #1215). Two sandbox accounts or sessions on
         // one server can each seed the same fixture id with divergent fixtures;
@@ -1237,6 +1339,22 @@ async function handleTestControllerRequestImpl(
             itemStatus.data,
             (params.reason ?? params.rejection_reason) as string | undefined
           )
+        );
+      }
+
+      case CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS: {
+        if (!store.queryProvenanceAuditObservations) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const queryParams = (params ?? {}) as { creative_id?: unknown; [key: string]: unknown };
+        if (typeof queryParams.creative_id !== 'string' || queryParams.creative_id.length === 0) {
+          return controllerError('INVALID_PARAMS', 'query_provenance_audit_observations requires params.creative_id');
+        }
+        return wrapStoreSuccess(
+          await store.queryProvenanceAuditObservations({
+            ...queryParams,
+            creative_id: queryParams.creative_id,
+          })
         );
       }
 
