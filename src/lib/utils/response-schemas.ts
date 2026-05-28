@@ -59,6 +59,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Creative
   list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
   build_creative: schemas.BuildCreativeResponseSchema,
+  validate_input: schemas.ValidateInputResponseSchema,
   preview_creative: schemas.PreviewCreativeResponseSchema,
   // Override the generated schema — it degrades creatives[] to a bare
   // record because the JSON Schema inlines the item shape. The strict
