@@ -20,6 +20,9 @@ import type {
   ListPublishersResponse,
   ValidateAdagentsRequest,
   CreateAdagentsRequest,
+  CreateAdagentsResponse,
+  CommunityMirrorAdagentsConfig,
+  CommunityMirrorAdagentsCatalog,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -82,6 +85,16 @@ export type {
   ListPublishersResponse,
   ValidateAdagentsRequest,
   CreateAdagentsRequest,
+  CreateAdagentsResponse,
+  AdagentsAuthorizedAgent,
+  AdagentsCatalogFormat,
+  AdagentsPlacementDefinition,
+  AdagentsPlacementFormatReference,
+  AdagentsPlacementFormatOption,
+  AdagentsPlacementTag,
+  CreatedAdagentsJson,
+  CommunityMirrorAdagentsConfig,
+  CommunityMirrorAdagentsCatalog,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -159,6 +172,33 @@ const DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const ERROR_BODY_PREVIEW_CHARS = 200;
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
+
+/**
+ * Build a catalog-only community mirror adagents.json descriptor.
+ *
+ * Community mirrors are for format, placement, and property discovery when a
+ * platform has not published its own seller-authorized file yet. This helper
+ * always emits `authorized_agents: []` and rejects caller-supplied
+ * authorization claims so the resulting descriptor cannot accidentally imply
+ * platform adoption or seller authorization.
+ */
+export function buildCommunityMirrorAdagents(config: CommunityMirrorAdagentsConfig): CommunityMirrorAdagentsCatalog {
+  const maybeConfig = config as CommunityMirrorAdagentsConfig & { authorized_agents?: unknown };
+  if ('authorized_agents' in maybeConfig) {
+    throw new Error('authorized_agents is not accepted for community mirror adagents catalogs');
+  }
+  if (!config.catalog_etag?.trim()) {
+    throw new Error('catalog_etag is required');
+  }
+  if (!Array.isArray(config.formats) || config.formats.length === 0) {
+    throw new Error('formats must contain at least one catalog format');
+  }
+
+  return {
+    ...config,
+    authorized_agents: [],
+  };
+}
 
 /**
  * Client for the AdCP Registry API.
@@ -661,16 +701,33 @@ export class RegistryClient {
   }
 
   /**
-   * Generate a valid adagents.json from an agent configuration.
+   * Generate a valid adagents.json from an agent or catalog configuration.
    *
    * @remarks
+   * Treat this as a build-time, cache-fill, or write-through operation for
+   * public `.well-known/adagents.json` routes. Public routes should serve the
+   * generated JSON from static storage or an application cache instead of
+   * making a live registry dependency part of every request.
+   *
    * In community mirror catalog files, `v1_format_ref[].agent_url` is a
    * format-shape namespace. It is not a seller authorization claim and does
    * not imply platform adoption. Seller authorization is expressed only by
    * `authorized_agents`.
    */
-  async createAdagents(config: CreateAdagentsRequest): Promise<Record<string, unknown>> {
+  async createAdagents(config: CreateAdagentsRequest): Promise<CreateAdagentsResponse> {
     return this.post(`${this.baseUrl}/api/adagents/create`, config);
+  }
+
+  /**
+   * Build and submit a catalog-only community mirror adagents.json descriptor.
+   *
+   * This is the high-level helper for AAO/community mirror catalog publication.
+   * It emits `authorized_agents: []` and refuses caller-supplied authorization
+   * entries; use `createAdagents()` directly only for seller-authorized hosted
+   * publisher files.
+   */
+  async createCommunityMirrorAdagents(config: CommunityMirrorAdagentsConfig): Promise<CreateAdagentsResponse> {
+    return this.createAdagents(buildCommunityMirrorAdagents(config));
   }
 
   // ====== Search & Discovery ======

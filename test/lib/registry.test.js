@@ -1,7 +1,7 @@
 const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 
-const { RegistryClient } = require('../../dist/lib/registry/index.js');
+const { RegistryClient, buildCommunityMirrorAdagents } = require('../../dist/lib/registry/index.js');
 
 // Helper to mock global fetch
 function mockFetch(handler) {
@@ -1680,6 +1680,67 @@ describe('RegistryClient', () => {
       assert.strictEqual(body.formats[0].format_kind, 'display');
       assert.strictEqual(body.placements[0].format_option_ids[0], 'meta-feed-image');
       assert.strictEqual(body.placement_tags.feed.label, 'Feed');
+    });
+
+    test('builds community mirror catalogs without authorization claims', () => {
+      const catalog = buildCommunityMirrorAdagents({
+        catalog_etag: 'meta-creative-formats-2026-05',
+        formats: [
+          {
+            format_option_id: 'meta-feed-image',
+            format_kind: 'image',
+            params: { width: 1080, height: 1080 },
+            v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/translated/meta', id: 'feed_image' }],
+          },
+        ],
+        placements: [
+          {
+            placement_id: 'feed',
+            name: 'Feed',
+            property_tags: ['feed'],
+            format_options: [{ format_option_id: 'meta-feed-image' }],
+          },
+        ],
+        placement_tags: { feed: { name: 'Feed', description: 'Main feed placement' } },
+      });
+
+      assert.deepStrictEqual(catalog.authorized_agents, []);
+      assert.strictEqual(catalog.catalog_etag, 'meta-creative-formats-2026-05');
+      assert.strictEqual(catalog.formats[0].format_kind, 'image');
+      assert.strictEqual(catalog.placements[0].format_options[0].format_option_id, 'meta-feed-image');
+    });
+
+    test('rejects authorization claims in community mirror helper', () => {
+      assert.throws(
+        () =>
+          buildCommunityMirrorAdagents({
+            authorized_agents: [{ url: 'https://agent.example.com' }],
+            catalog_etag: 'meta-creative-formats-2026-05',
+            formats: [
+              { format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } },
+            ],
+          }),
+        /authorized_agents is not accepted/
+      );
+    });
+
+    test('creates community mirror catalogs via the high-level helper', async () => {
+      const created = { success: true, data: { success: true, adagents_json: {} } };
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedOpts = opts;
+        return new Response(JSON.stringify(created), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.createCommunityMirrorAdagents({
+        catalog_etag: 'meta-creative-formats-2026-05',
+        formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
+      });
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');
     });
   });
 

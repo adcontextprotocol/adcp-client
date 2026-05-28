@@ -2,7 +2,14 @@
 // A comprehensive type-safe client library for the AdContext Protocol
 
 // ====== REGISTRY LOOKUPS ======
-export { RegistryClient, RegistrySync, PropertyRegistry, InMemoryCursorStore, FileCursorStore } from './registry';
+export {
+  RegistryClient,
+  RegistrySync,
+  PropertyRegistry,
+  InMemoryCursorStore,
+  FileCursorStore,
+  buildCommunityMirrorAdagents,
+} from './registry';
 export type {
   RegistrySyncConfig,
   RegistrySyncState,
@@ -31,6 +38,18 @@ export type {
   ListAgentsOptions,
   ListAgentsResponse,
   ListPublishersResponse,
+  ValidateAdagentsRequest,
+  CreateAdagentsRequest,
+  CreateAdagentsResponse,
+  AdagentsAuthorizedAgent,
+  AdagentsCatalogFormat,
+  AdagentsPlacementDefinition,
+  AdagentsPlacementFormatReference,
+  AdagentsPlacementFormatOption,
+  AdagentsPlacementTag,
+  CreatedAdagentsJson,
+  CommunityMirrorAdagentsConfig,
+  CommunityMirrorAdagentsCatalog,
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,

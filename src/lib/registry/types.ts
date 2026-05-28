@@ -49,6 +49,7 @@ export type { paths, operations, components } from './types.generated';
 // Types extracted from inline OpenAPI operation schemas
 
 import type { operations } from './types.generated';
+import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
 
 /** Request body for POST /api/brands/save */
 export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody']>['content']['application/json'];
@@ -68,9 +69,114 @@ export type ValidateAdagentsRequest = NonNullable<
 >['content']['application/json'];
 
 /** Request body for POST /api/adagents/create */
-export type CreateAdagentsRequest = NonNullable<
+type RegistryCreateAdagentsRequest = NonNullable<
   operations['createAdagents']['requestBody']
 >['content']['application/json'];
+
+/** Response from POST /api/adagents/create (200) */
+type RegistryCreateAdagentsResponse = operations['createAdagents']['responses']['200']['content']['application/json'];
+
+/** Agent authorization entry accepted by the registry adagents.json generator. */
+export type AdagentsAuthorizedAgent = RegistryCreateAdagentsRequest['authorized_agents'][number] & {
+  [key: string]: unknown;
+};
+
+/**
+ * Top-level `adagents.json#/formats[]` declaration.
+ *
+ * This reuses the protocol `ProductFormatDeclaration` shape and adds the
+ * publisher-catalog scoping fields allowed in `adagents.json`.
+ */
+export type AdagentsCatalogFormat = ProductFormatDeclaration & {
+  /** Property IDs from this file that this format applies to. Omit for all properties. */
+  applies_to_property_ids?: string[];
+  /** Property tags from this file that this format applies to. Omit for all properties. */
+  applies_to_property_tags?: string[];
+};
+
+/** Reference to a top-level `formats[]` entry from a placement declaration. */
+export type AdagentsPlacementFormatReference = {
+  [key: string]: unknown;
+  format_option_id: string;
+  /** Use a full `AdagentsCatalogFormat` when declaring inline placement-specific format details. */
+  format_kind?: never;
+};
+
+/** Placement-level format declaration or same-file top-level format reference. */
+export type AdagentsPlacementFormatOption = AdagentsPlacementFormatReference | AdagentsCatalogFormat;
+
+type AdagentsPlacementBase = {
+  [key: string]: unknown;
+  /** Stable placement identifier unique within this adagents.json file. */
+  placement_id: string;
+  /** Human-readable placement name. */
+  name: string;
+  description?: string;
+  tags?: string[];
+  collection_ids?: string[];
+  channels?: MediaChannel[];
+  format_options?: AdagentsPlacementFormatOption[];
+  ext?: Record<string, unknown>;
+};
+
+/** Canonical placement declaration published in `adagents.json#/placements[]`. */
+export type AdagentsPlacementDefinition =
+  | (AdagentsPlacementBase & { property_ids: string[]; property_tags?: string[] })
+  | (AdagentsPlacementBase & { property_tags: string[]; property_ids?: string[] });
+
+/** Metadata for one `adagents.json#/placement_tags` entry. */
+export type AdagentsPlacementTag = {
+  [key: string]: unknown;
+  name: string;
+  description: string;
+};
+
+/** Request body for POST /api/adagents/create with typed catalog fields. */
+export type CreateAdagentsRequest = Omit<
+  RegistryCreateAdagentsRequest,
+  'authorized_agents' | 'formats' | 'placements' | 'placement_tags'
+> & {
+  authorized_agents: AdagentsAuthorizedAgent[];
+  formats?: AdagentsCatalogFormat[];
+  placements?: AdagentsPlacementDefinition[];
+  placement_tags?: Record<string, AdagentsPlacementTag>;
+};
+
+/** Generated adagents.json payload returned by the registry generator. */
+export type CreatedAdagentsJson = Record<string, unknown> & Partial<CreateAdagentsRequest>;
+
+/** Response from POST /api/adagents/create (200). */
+export type CreateAdagentsResponse = Omit<RegistryCreateAdagentsResponse, 'data'> & {
+  data: {
+    success: boolean;
+    adagents_json?: CreatedAdagentsJson;
+    validation?: unknown;
+    [key: string]: unknown;
+  };
+};
+
+/** Input for building a catalog-only community mirror adagents.json descriptor. */
+export type CommunityMirrorAdagentsConfig = Omit<
+  CreateAdagentsRequest,
+  'authorized_agents' | 'catalog_etag' | 'formats'
+> & {
+  /** Community mirror catalogs should be cacheable static artifacts with stable content identity. */
+  catalog_etag: string;
+  /** Community mirror catalogs exist to publish format-shape metadata. */
+  formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+  /** Seller authorization claims are intentionally not accepted by this helper. */
+  authorized_agents?: never;
+};
+
+/** Catalog-only community mirror adagents.json descriptor. */
+export type CommunityMirrorAdagentsCatalog = Omit<
+  CreateAdagentsRequest,
+  'authorized_agents' | 'catalog_etag' | 'formats'
+> & {
+  authorized_agents: [];
+  catalog_etag: string;
+  formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+};
 
 /** Request body for POST /api/registry/validate/product-authorization */
 export type ValidateProductAuthorizationRequest = NonNullable<
