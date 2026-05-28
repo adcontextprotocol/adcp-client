@@ -724,6 +724,22 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.current_state, 'completed');
     });
 
+    it('includes metadata when provided', async () => {
+      const store = {
+        async forceAccountStatus() {
+          throw new TestControllerError('INTERNAL_ERROR', 'JCS: non-finite number Infinity is not valid JSON', null, {
+            context: { error_kind: 'jcs_non_finite' },
+          });
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_account_status',
+        params: { account_id: 'acct-1', status: 'suspended' },
+      });
+      assert.strictEqual(result.success, false);
+      assert.deepStrictEqual(result.context, { error_kind: 'jcs_non_finite' });
+    });
+
     it('catches non-TestControllerError as INTERNAL_ERROR', async () => {
       const store = {
         async forceAccountStatus() {

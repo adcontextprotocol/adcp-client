@@ -105,6 +105,8 @@ import type {
   ForcedDirectiveSuccess,
   ControllerError,
   ComplyTestControllerResponse,
+  ContextObject,
+  ExtensionObject,
 } from '../types/tools.generated';
 import type {
   AccountStatus,
@@ -455,6 +457,10 @@ export interface TestControllerStoreFactory {
 
 /** Either a pre-built store (simple case) or a per-request factory (session-backed case). */
 export type TestControllerStoreOrFactory = TestControllerStore | TestControllerStoreFactory;
+export type TestControllerErrorMetadata = {
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
 
 function isFactory(x: TestControllerStoreOrFactory): x is TestControllerStoreFactory {
   return typeof (x as TestControllerStoreFactory).createStore === 'function';
@@ -471,13 +477,17 @@ function isFactory(x: TestControllerStoreOrFactory): x is TestControllerStoreFac
  * ```typescript
  * throw new TestControllerError('NOT_FOUND', `Account ${id} not found`);
  * throw new TestControllerError('INVALID_TRANSITION', 'Cannot pause a completed buy', 'completed');
+ * throw new TestControllerError('INTERNAL_ERROR', 'JCS failed', null, {
+ *   context: { error_kind: 'jcs_non_finite' },
+ * });
  * ```
  */
 export class TestControllerError extends Error {
   constructor(
     public readonly code: ControllerError['error'],
     message: string,
-    public readonly currentState?: string | null
+    public readonly currentState?: string | null,
+    public readonly metadata: TestControllerErrorMetadata = {}
   ) {
     super(message);
     this.name = 'TestControllerError';
@@ -595,7 +605,8 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
 function controllerError(
   code: ControllerError['error'],
   detail: string,
-  currentState?: string | null
+  currentState?: string | null,
+  metadata: TestControllerErrorMetadata = {}
 ): ComplyTestControllerResponse {
   // AdCP 3.1.0-beta.2+: envelope `status` is REQUIRED on every response,
   // including the error arms of a discriminated controller response.
@@ -605,6 +616,8 @@ function controllerError(
     error: code,
     error_detail: detail,
     ...(currentState !== undefined && { current_state: currentState }),
+    ...(metadata.context !== undefined && { context: metadata.context }),
+    ...(metadata.ext !== undefined && { ext: metadata.ext }),
   } as ComplyTestControllerResponse;
 }
 
@@ -966,7 +979,7 @@ async function handleTestControllerRequestImpl(
     store = isFactory(storeOrFactory) ? await storeOrFactory.createStore(input) : storeOrFactory;
   } catch (err) {
     if (err instanceof TestControllerError) {
-      return controllerError(err.code, err.message, err.currentState);
+      return controllerError(err.code, err.message, err.currentState, err.metadata);
     }
     return controllerError(
       'INTERNAL_ERROR',
@@ -1256,7 +1269,7 @@ async function handleTestControllerRequestImpl(
     }
   } catch (err) {
     if (err instanceof TestControllerError) {
-      return controllerError(err.code, err.message, err.currentState);
+      return controllerError(err.code, err.message, err.currentState, err.metadata);
     }
     return controllerError('INTERNAL_ERROR', 'An unexpected error occurred in the test controller store');
   }

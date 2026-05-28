@@ -260,7 +260,55 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     assert.equal(upstreamValidation.actual.invalid_identifier_paths[0].path, '$.audiences[*].add[*].hashed_email');
   });
 
-  test('grades digest canonicalization failure on non-finite numbers as not_applicable', async () => {
+  test('grades typed digest canonicalization failure on non-finite numbers as not_applicable', async () => {
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      () => ({
+        success: true,
+        data: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: 'INTERNAL_ERROR',
+                error_detail: 'JCS: non-finite number Infinity is not valid JSON',
+                context: { error_kind: 'jcs_non_finite' },
+              }),
+            },
+          ],
+        },
+      })
+    );
+    const digestOnlyStoryboard = JSON.parse(JSON.stringify(storyboard));
+    digestOnlyStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'hashed emails MUST be proven in digest mode',
+        min_count: 1,
+        identifier_paths: ['audiences[*].add[*].hashed_email'],
+      },
+    ];
+
+    const result = await runStoryboardStep('https://stub.example/mcp', digestOnlyStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.equal(upstreamValidation.not_applicable, true);
+    assert.match(upstreamValidation.note, /non-finite JSON number/);
+  });
+
+  test('does not downgrade untyped digest canonicalization error text', async () => {
     const { client } = buildStubClient(
       {
         sync_audiences: async () => ({
@@ -302,9 +350,9 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     });
 
     const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
-    assert.equal(upstreamValidation.passed, true);
-    assert.equal(upstreamValidation.not_applicable, true);
-    assert.match(upstreamValidation.note, /non-finite JSON number/);
+    assert.equal(upstreamValidation.passed, false);
+    assert.equal(upstreamValidation.not_applicable, undefined);
+    assert.match(upstreamValidation.error, /query_upstream_traffic failed/);
   });
 
   test('grades mixed raw payload and digest identifier proofs in one upstream batch', async () => {

@@ -215,7 +215,7 @@ export interface UpstreamTrafficQueryResult {
   request: RunnerRequestRecord;
   response: RunnerResponseRecord;
   /** Successful payload from the controller, or an error placeholder when the call failed. */
-  payload: UpstreamTrafficSuccess | { error: string };
+  payload: UpstreamTrafficSuccess | { error: string; error_kind?: string };
 }
 
 /**
@@ -2728,7 +2728,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   // `MAX_ERROR_LENGTH` posture on every other validation_result.error.
   if (!('success' in query.payload) || query.payload.success !== true) {
     const errMsg = 'error' in query.payload ? query.payload.error : 'controller returned a non-success response';
-    if (/JCS: non-finite number\b/.test(errMsg)) {
+    if ('error_kind' in query.payload && query.payload.error_kind === 'jcs_non_finite') {
       return {
         check: 'upstream_traffic',
         passed: true,

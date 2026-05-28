@@ -173,6 +173,13 @@ export const DestinationItem_DestinationTypeValues = ["beach", "mountain", "urba
 /** single | DiagnosticIssue.severity */
 export const DiagnosticIssue_SeverityValues = ["error", "warning", "info"] as const;
 
+// ====== DigestAttestation ======
+
+/** single | DigestAttestation.method */
+export const DigestAttestation_MethodValues = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+/** single | DigestAttestation.purpose */
+export const DigestAttestation_PurposeValues = ["platform_primary", "measurement", "attribution", "creative_serving", "identity", "other"] as const;
+
 // ====== Duration ======
 
 /** single | Duration.unit */
@@ -611,6 +618,11 @@ export const PackageSignalTargetingGroup1_OperatorValues = PackageSignalTargetin
 // --- ProductSignalTargetingOption ---
 /** @deprecated use `FeatureRequirement_IfNotCoveredValues` — same literal set, ProductSignalTargetingOption.allowed_targeting_modes duplicates the canonical export. */
 export const ProductSignalTargetingOption_AllowedTargetingModesValues = FeatureRequirement_IfNotCoveredValues;
+// --- RawAttestation ---
+/** @deprecated use `DigestAttestation_MethodValues` — same literal set, RawAttestation.method duplicates the canonical export. */
+export const RawAttestation_MethodValues = DigestAttestation_MethodValues;
+/** @deprecated use `DigestAttestation_PurposeValues` — same literal set, RawAttestation.purpose duplicates the canonical export. */
+export const RawAttestation_PurposeValues = DigestAttestation_PurposeValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;
