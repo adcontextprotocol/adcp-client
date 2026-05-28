@@ -77,17 +77,14 @@ describe('pemToAdcpJwk', () => {
     assert.strictEqual(jwk.adcp_use, 'governance-signing');
   });
 
-  test('retired response-signing adcp_use is rejected at runtime', () => {
+  test('response-signing adcp_use is preserved verbatim', () => {
     const kp = generateKeyPairSync('ed25519');
-    assert.throws(
-      () =>
-        pemToAdcpJwk(spkiPem(kp), {
-          kid: 'addie',
-          algorithm: 'ed25519',
-          adcp_use: 'response-signing',
-        }),
-      err => err instanceof TypeError && /unsupported adcp_use.*response-signing/i.test(err.message)
-    );
+    const jwk = pemToAdcpJwk(spkiPem(kp), {
+      kid: 'addie-response-2026-04',
+      algorithm: 'ed25519',
+      adcp_use: 'response-signing',
+    });
+    assert.strictEqual(jwk.adcp_use, 'response-signing');
   });
 
   test('unknown adcp_use is rejected at runtime', () => {

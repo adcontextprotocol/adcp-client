@@ -81,6 +81,19 @@ export class WebhookSignatureError extends ADCPError {
   }
 }
 
+export type ResponseSignatureErrorCode = 'response_signature_key_purpose_invalid';
+
+export class ResponseSignatureError extends ADCPError {
+  readonly code: ResponseSignatureErrorCode;
+  readonly failedStep: number;
+
+  constructor(code: ResponseSignatureErrorCode, failedStep: number, message: string, details?: unknown) {
+    super(message, details);
+    this.code = code;
+    this.failedStep = failedStep;
+  }
+}
+
 /**
  * SDK-side error codes for the `SigningProvider` integration path. Distinct
  * namespace from `RequestSignatureErrorCode` / `WebhookSignatureErrorCode`

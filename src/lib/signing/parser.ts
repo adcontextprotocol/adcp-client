@@ -50,9 +50,9 @@ export function parseSignatureInput(headerValue: string): ParsedSignatureInput {
     malformed('Signature-Input value must be a parenthesized component list');
   }
   const components: string[] = [];
-  for (const [bare] of entry[0]) {
+  for (const [bare, itemParams] of entry[0]) {
     if (typeof bare !== 'string') malformed('Signature-Input components must all be strings');
-    components.push(bare);
+    components.push(itemParams instanceof Map && itemParams.get('req') === true ? `${bare};req` : bare);
   }
   const params: Record<string, string | number> = {};
   for (const [key, value] of entry[1]) {
