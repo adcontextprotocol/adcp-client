@@ -36,11 +36,15 @@ import type {
 import type { ServerPayload } from '../../types/server-payload';
 import type { NotificationConfig } from '../../types/v3-1-beta';
 import type { CursorPage, CursorRequest } from './pagination';
+import type { AdcpStructuredError } from './async-outcome';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 
 type WireNotificationConfig = Omit<NotificationConfig, 'authentication'> & {
   authentication?: Omit<NonNullable<NotificationConfig['authentication']>, 'credentials'>;
 };
+
+type SyncAccountError = Pick<AdcpStructuredError, 'code' | 'message'> &
+  Partial<Omit<AdcpStructuredError, 'code' | 'message'>>;
 
 export type ListAccountsPayload = ServerPayload<ListAccountsResponse>;
 export type SyncAccountsPayload = ServerPayload<SyncAccountsResponse>;
@@ -771,7 +775,7 @@ export interface SyncAccountsResultRow {
   credit_limit?: WireAccount['credit_limit'];
   /** Applied account-level webhook subscriptions; credentials are stripped on emit. */
   notification_configs?: NotificationConfig[];
-  errors?: { code: string; message: string }[];
+  errors?: SyncAccountError[];
   warnings?: string[];
   sandbox?: boolean;
 }
