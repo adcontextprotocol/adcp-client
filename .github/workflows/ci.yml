@@ -9,11 +9,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: Test & Build
+  generated-checks:
+    name: Generated, Docs & Formatting
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -30,6 +34,9 @@ jobs:
 
       - name: Check code formatting
         run: npm run format:check
+
+      - name: Lint GitHub Actions workflows
+        run: npm run lint:workflows
 
       - name: Sync schemas from AdCP
         run: npm run sync-schemas:all
@@ -72,6 +79,24 @@ jobs:
       - name: Check SDK→docs URLs resolve (URL-rot guard)
         run: npm run ci:doc-links
 
+  typecheck-build:
+    name: Typecheck & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run TypeScript type checking
         run: npm run typecheck
 
@@ -91,16 +116,6 @@ jobs:
       - name: Typecheck skill code samples
         run: npm run typecheck:skill-examples
 
-      - name: Run unit tests
-        run: npm test
-        env:
-          CI: true
-
-      - name: Run example adapter integration tests
-        run: npm run test:examples
-        env:
-          CI: true
-
       - name: Validate package exports
         run: |
           node -e "
@@ -116,6 +131,73 @@ jobs:
             console.log('✅ Package exports are valid');
           "
 
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Run unit tests
+        run: npm test
+        env:
+          CI: true
+
+  example-integration-tests:
+    name: Example Adapter Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run example adapter integration tests
+        run: npm run test:examples
+        env:
+          CI: true
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Run security audit
         run: |
           npm audit || true
@@ -127,3 +209,35 @@ jobs:
             npm audit --audit-level=high
             exit 1
           fi
+
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    needs:
+      - generated-checks
+      - typecheck-build
+      - unit-tests
+      - example-integration-tests
+      - security-audit
+    if: ${{ always() }}
+    timeout-minutes: 2
+
+    steps:
+      - name: Verify CI lanes
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node - <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const failed = Object.entries(needs).filter(([, job]) => job.result !== 'success');
+
+          if (failed.length > 0) {
+            console.error('One or more CI lanes failed:');
+            for (const [name, job] of failed) {
+              console.error(`- ${name}: ${job.result}`);
+            }
+            process.exit(1);
+          }
+
+          console.log('All CI lanes passed.');
+          NODE
