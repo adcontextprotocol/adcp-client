@@ -1081,6 +1081,14 @@ export interface StoryboardValidation {
    */
   attestation_mode_required?: 'raw';
   /**
+   * Advisory request-mode preference for the runner's
+   * `query_upstream_traffic` prefetch. When omitted, the runner preserves
+   * its legacy inference: digest for identifier-only checks with digestable
+   * vectors, raw otherwise. Raw-required validations and payload
+   * introspection always take precedence over this preference.
+   */
+  preferred_attestation_mode?: 'raw' | 'digest';
+  /**
    * Paths into the effective request payload that name the load-bearing
    * identifiers the adapter MUST forward upstream. When the runner has the
    * actual request payload after context substitution, that payload is the

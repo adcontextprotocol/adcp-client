@@ -74,8 +74,27 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
+      validateUpstreamAttestationMode(storyboard.id, phase, step);
       validateUpstreamIdentifierPaths(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
+    }
+  }
+}
+
+function validateUpstreamAttestationMode(
+  storyboardId: string,
+  phase: { id?: string },
+  step: { id?: string; validations?: any[] }
+): void {
+  const validations = step.validations ?? [];
+  for (let validationIndex = 0; validationIndex < validations.length; validationIndex++) {
+    const validation = validations[validationIndex];
+    if (validation?.check !== 'upstream_traffic') continue;
+    const mode = validation.preferred_attestation_mode;
+    if (mode !== undefined && mode !== 'raw' && mode !== 'digest') {
+      throw new Error(
+        `[${storyboardId}] ${phase.id ?? '?'}.${step.id ?? '?'}.validations[${validationIndex}].preferred_attestation_mode: must be "raw" or "digest"`
+      );
     }
   }
 }
