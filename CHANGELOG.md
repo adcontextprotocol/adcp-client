@@ -1,5 +1,84 @@
 # Changelog
 
+## 8.1.0-beta.14
+
+### Minor Changes
+
+- 546f093: Document the AdCP 3.1 `AUTH_MISSING` / `AUTH_INVALID` split while keeping deprecated `AuthRequiredError` wire-compatible with `AUTH_REQUIRED`. The decisioning runtime also refreshes once on `AUTH_MISSING` when `AccountStore.refreshToken` is configured, attaching the refreshed upstream token to a request-local account clone before retrying.
+- fa8c1ba: Add framework-level `sync_accounts` commercial enforcement for AdCP 3.1 buyer-agent billing gates, including clamped per-agent billing errors, unmapped-bearer oracle protection, supported payment terms checks, and idempotency cache bypass for rejected account rows.
+- 799d5b6: Add storyboard `canonical_format_satisfaction` validation for canonical format create-time assertions.
+
+  The check compares actual `create_media_buy` package selectors against prior `get_products` product format declarations, including canonical `format_option_refs`, legacy `format_ids` normalized through `v1_format_ref` or catalog projection, richer param containment, under-specified selector rejection, and format-specific rejection diagnostics.
+
+- 6ffbdfa: Add `createCanonicalReferenceResolver` through the package root and `@adcp/sdk/canonical-references` for immutable `format_schema` and `platform_extensions` URI+SHA-256 references. The resolver applies SSRF-safe DNS-pinned fetching, redirect blocking, timeout and body caps, digest verification, caller-owned policy-scoped caching, structured non-throwing statuses, and JSON Schema validation plus pinned `$ref` sandboxing for `format_schema`.
+- 505c09c: Hide `comply_test_controller` and `compliance_testing` discovery from live principals while preserving sandbox/mock controller dispatch and live-target `PERMISSION_DENIED` handling.
+- 965fb43: Add shared mock-server scenario scaffolding for storyboard fixtures: token-protected `/_scenario/*` HTTP routes surfaced in mock-server summaries, programmatic `handle.scenario`, fixture reset/state snapshots, authenticated scripted fault responses, loopback-only webhook emit/capture stubs, and exact `idempotency_key` replay handling on state-creation mock routes.
+- 8ec6cbd: Expose a public schema-root override for hosted compliance runs via `schemaRoot` options and `registerExternalSchemaRoot` from `@adcp/sdk/testing`.
+- bc0c21f: Add the rate-limit trip/replay observer for the AdCP 3.1 `rate_limit_trip_runner` storyboard contract.
+
+  The storyboard runner now executes `expect_rate_limit_not_replayed` by bursting fresh idempotency keys until `RATE_LIMITED`, waiting the advertised `retry_after`, replaying the same key, and grading the new `replay_not_cached_rate_limit` check. If the burst exhausts `max_attempts` without a rate-limit response, the step emits `skip_reason: "rate_limit_not_triggered"` and canonical `skip.reason: "not_applicable"`. The public `RateLimitTripObserver` helper is exported from both `@adcp/sdk` and `@adcp/sdk/testing`.
+
+- 35947d7: Harden `RegistryClient` transport defaults with timeout, max body size, redirect policy, and injectable fetch options. The default registry host now uses the canonical upstream registry, and callers pinned to the legacy host can either update `baseUrl` or opt into `redirect: 'follow'`.
+
+  Regenerate registry OpenAPI types so `CreateAdagentsRequest` accepts catalog metadata fields for community mirror manifests, while preserving backward-compatible `listAgents()`/`listPublishers()` source summaries and the legacy `type: 'si'` list-agent filter. Add CI drift checks that regenerate registry types from the bundled upstream registry OpenAPI before validating generated files.
+
+- 748e5c9: breaking: remove the preview RFC 9421 transport response-signing surface from the beta line
+
+  AdCP 3.x does not authorize generic RFC 9421 §2.2.9 transport response signing. The SDK no longer exports `signResponse`, `signResponseAsync`, `verifyResponseSignature`, `createResponseVerifier`, `ResponseSignatureError`, `RESPONSE_SIGNING_TAG`, `RESPONSE_MANDATORY_COMPONENTS`, `buildResponseSignatureBase`, `ResponseLike`, `prepareResponseSignature`, `finalizeResponseSignature`, `SignResponseOptions`, `PreparedResponseSignature`, `SignedResponse`, the response-verifier option/result types, or the `'response-signing'` JWK purpose.
+
+  Runtime helpers also reject the retired purpose: `pemToAdcpJwk({ adcp_use: 'response-signing' })` and `mintEphemeralEd25519Key({ adcp_use: 'response-signing' })` now throw, and `InMemorySigningProvider` preserves retired or unknown raw purpose strings so `signRequestAsync()` and `signWebhookAsync()` still fail closed instead of silently treating the key as unscoped.
+
+  Request signing and webhook signing are unchanged. There is no conformant AdCP 3.x replacement for generic transport response signing; future designated-task payload JWS support should land under a fresh spec-defined purpose and helper surface.
+
+- 2764c56: Adopt several SDK-side follow-ups unblocked by the AdCP 3.1 schema cache.
+  - Preserve explicit `conversion_tracking.supported_targets` declarations without inventing a default; omitted values mean only target-less event goals are guaranteed.
+  - Allow `supported_optimization_metrics` to derive from a static `productCatalog`; empty derived or explicit metric arrays are omitted from the wire response instead of advertising an empty 3.1 metric-optimization declaration.
+  - Treat `sponsored-intelligence` as a first-class specialism in compile-time and runtime platform validation, and update the SI example/skill docs.
+  - Align upstream-recorder `RecordedCall` output with the cached 3.1 `query_upstream_traffic` schema, including raw/digest attestation metadata, payload length, and digest-mode identifier proofs.
+  - Honor storyboard `required_any_of_tools` gates with `requirement_unmet` skips and skip-cause aggregation.
+
+  **BREAKING**:
+  - `RecordedCall` is now a raw/digest discriminated union for the 3.1 `query_upstream_traffic` response. Raw calls carry `payload` and `payload_length`; digest calls carry `payload_digest_sha256`, `payload_length`, and optional `identifier_match_proofs`. Consumers that assumed `RecordedCall.payload` was always present, or that construct `RecordedCall` literals, need to handle the branch-specific fields.
+  - `validatePlatform` now rejects `specialisms: ['sponsored-intelligence']` unless the platform provides the `sponsoredIntelligence` implementation required by that specialism. Adapters that previously advertised the specialism without dispatch support must either add the platform field or stop advertising the specialism.
+
+- 9e5eeda: Surface the seller-served, release-precision response `adcp_version` echo as `result.metadata.adcpVersion`.
+- 363ddf5: Add `seed_buyer_agent` support for `comply_test_controller` and storyboard controller seeding.
+- 80f255b: Harden digest-mode upstream traffic attestations with JCS length alignment, bounded identifier proof scanning, clearer not-applicable grading, and stricter storyboard identifier path validation.
+
+  `computePayloadDigestSha256()` now applies the recorder's default payload normalization and secret-key redaction before hashing, and accepts a third `RegExp | false | PayloadDigestOptions` argument. Pass `createUpstreamRecorder({ redactPattern })` through as `{ redactPattern }`, and `createUpstreamRecorder({ maxPayloadBytes })` through as `{ maxPayloadBytes }`. Pass `{ prenormalized: true }` only when the payload has already been normalized/redacted exactly as the recorder would store it; prenormalized inputs with unredacted secret-shaped keys now throw `PayloadDigestError`, malformed prenormalized JSON strings and duplicate secret-shaped form keys are rejected, and `{ redactPattern: false }` is rejected unless paired with `{ prenormalized: true }`. Secret-shaped keys in prenormalized payloads are considered safe only when their value is the literal `"[redacted]"` marker or `null`. Legacy bare `RegExp` and `false` forms remain accepted for this major but are soft-deprecated in favor of `{ redactPattern }` and `{ prenormalized: true }`.
+
+  `RecordedCall.host` and `RecordedCall.path` are emitted as strings. The recorder populates both fields from `new URL(url)` when parsing succeeds and emits empty strings when parsing fails.
+
+  BEHAVIOR CHANGE: digest-mode `payload_length` now reports the canonical byte length covered by `payload_digest_sha256`; raw calls continue to report the redacted emitted payload length.
+
+  Manual `record()` calls with JSON-string payloads now parse and secret-redact the stored payload just like wrapped `fetch()` calls, so raw and digest attestations use the same redacted body view. Parsed JSON string payloads now fail closed beyond the recorder's 256-level JSON canonicalization cap, and malformed JSON strings get a best-effort key-based secret scrub before diagnostic storage and surface an `onError` event when configured and digest-mode identifier scanning cannot parse them. Digest-mode query projection now drops only the non-canonical recorded entry and surfaces `digest_canonicalization_failed` through configured `onError` instead of throwing the whole query. Redaction now walks to the recorder's 256-level JSON canonicalization cap with cycle protection, raw recording rejects structured payloads beyond that cap, invalid purpose classifier values are omitted instead of emitting off-spec strings, and disabled recorder queries without a caller-supplied bound return a schema-valid epoch `since_timestamp`. Purpose classifier values remain a preview surface until the `purpose` field is adopted by the spec; unknown values are omitted rather than emitted on the wire.
+
+  Storyboard `identifier_paths` are request-payload-relative. Loader validation now rejects request/response/context-prefixed forms including `request.*`, `$["request"].*`, and `$..request.*`; use paths such as `audiences[*].add[*].hashed_email`. `runStoryboardStep()` now runs the same shape validation as full storyboard runs for programmatic callers without rewriting caller-owned path strings.
+
+  Digest-mode `upstream_traffic` validations now grade controller-side non-finite-number canonicalization failures as `not_applicable`, matching the 3.1 runner contract for JSON values that cannot be portably canonicalized.
+
+  Compliance summary artifacts now expose `validations_not_applicable` when any validations were downgraded, so CI and badge consumers can tell a clean pass from a pass with coverage downgrades.
+
+- 80f255b: Add `dropped_count` to `UpstreamRecorderQueryResult` to surface the number of matched entries omitted from returned items after digest canonicalization failure; `digest_canonicalization_failed` is surfaced through `onError` when that hook is configured. The field is always `0` in raw mode and on the noop recorder. Wire projection onto `toQueryUpstreamTrafficResponse` / `UpstreamTrafficSuccess` is schema-gated and will be added when the spec adopts the field.
+
+### Patch Changes
+
+- ac57fee: Preserve generated branch fields for schemas that express mutual exclusion with `not.anyOf`, including upstream traffic attestation payload and digest fields plus stricter geo proximity and catchment union types. Require structured controller error metadata before downgrading non-finite JCS digest failures to not_applicable, and allow `TestControllerError` to carry controller `context`/`ext` metadata.
+- 9bf8fa1: Document and test the AdCP 3.1 creative-template audio storyboard path for audio-capable creative adapters.
+- 6e7dfa4: Dedupe core-authored shared schemas from generated tool types while preserving compatibility re-exports.
+- 21624ef: Re-export `MediaBuyValidAction` from the package root so callers can import it directly from `@adcp/sdk` without reaching into the internal `media-buy` submodule.
+- 80f255b: Harden type generation for conditional params by failing on conflicting promoted `params` keys instead of silently keeping the first branch.
+
+  Adopters maintaining forked schemas should expect codegen to hard-fail when multiple `allOf[].then.properties.params.properties.*` branches define incompatible shapes for the same promoted key.
+
+  Enum order differences are treated as equivalent during this conflict check so schema refactors do not fail only because two branches list the same values in a different order.
+
+- 2be3d08: Enforce the portable 3.1 `upstream_traffic.identifier_paths` grammar in storyboard runner resolution and digest prefetch.
+- 0938599: Add a proxy-seller Snap bridge example and let `bridgeFromSessionStore` loaders receive the resolved bridge context.
+- b6a3d89: Fix compliance storyboard negotiation for strict legacy AdCP 3.0 sellers by using a major-only version envelope and validating responses against the negotiated server version.
+- 2b9f021: Register the generated validate_input response schema for storyboard response validation.
+- 8502e9f: Preserve ZodObject JavaScript ergonomics for additional record/object schema intersections.
+
 ## 8.1.0-beta.13
 
 ### Minor Changes
