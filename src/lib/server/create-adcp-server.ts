@@ -2029,7 +2029,7 @@ function hasUncacheableSyncAccountRejection(response: McpToolResponse): boolean 
     const record = row as Record<string, unknown>;
     if (record.status !== 'rejected' && record.action !== 'failed') return false;
     const errors = record.errors;
-    if (!Array.isArray(errors)) return record.status === 'rejected';
+    if (!Array.isArray(errors)) return false;
     return errors.some(error => {
       if (!error || typeof error !== 'object') return false;
       return UNCACHEABLE_SYNC_ACCOUNT_ERROR_CODES.has(String((error as Record<string, unknown>).code));
