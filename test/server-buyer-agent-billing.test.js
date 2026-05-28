@@ -77,7 +77,7 @@ function createServer(platform, opts = {}) {
   });
 }
 
-function syncAccounts(server, account, extra = {}) {
+function syncAccountsBatch(server, accounts, extra = {}) {
   return server.dispatchTestRequest(
     {
       method: 'tools/call',
@@ -85,7 +85,7 @@ function syncAccounts(server, account, extra = {}) {
         name: 'sync_accounts',
         arguments: {
           idempotency_key: extra.idempotency_key ?? '11111111-1111-1111-1111-111111111111',
-          accounts: [account],
+          accounts,
         },
       },
     },
@@ -96,6 +96,10 @@ function syncAccounts(server, account, extra = {}) {
       },
     }
   );
+}
+
+function syncAccounts(server, account, extra = {}) {
+  return syncAccountsBatch(server, [account], extra);
 }
 
 describe('BuyerAgent billing suggestions', () => {
@@ -202,6 +206,82 @@ describe('sync_accounts billing enforcement', () => {
     });
 
     assert.equal(result.structuredContent.accounts[0].errors[0].code, 'PAYMENT_TERMS_NOT_SUPPORTED');
+  });
+
+  it('preserves original order when commercial policy filters a mixed batch', async () => {
+    const captures = {};
+    const server = createServer(
+      buildPlatform({ agent: sampleAgent({ billing_capabilities: new Set(['operator']) }), captures })
+    );
+
+    const result = await syncAccountsBatch(server, [
+      {
+        brand: { domain: 'ok-1.example' },
+        operator: 'agency.example',
+        billing: 'operator',
+      },
+      {
+        brand: { domain: 'blocked.example' },
+        operator: 'agency.example',
+        billing: 'agent',
+      },
+      {
+        brand: { domain: 'ok-2.example' },
+        operator: 'agency.example',
+        billing: 'operator',
+      },
+    ]);
+
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.equal(captures.upsertCalls, 1);
+    assert.deepEqual(
+      captures.lastUpsertRefs.map(ref => ref.brand.domain),
+      ['ok-1.example', 'ok-2.example']
+    );
+
+    const rows = result.structuredContent.accounts;
+    assert.equal(rows.length, 3);
+    assert.equal(rows[0].status, 'active');
+    assert.equal(rows[0].brand.domain, 'ok-1.example');
+    assert.equal(rows[1].status, 'rejected');
+    assert.equal(rows[1].brand.domain, 'blocked.example');
+    assert.equal(rows[1].errors[0].code, 'BILLING_NOT_PERMITTED_FOR_AGENT');
+    assert.equal(rows[2].status, 'active');
+    assert.equal(rows[2].brand.domain, 'ok-2.example');
+  });
+
+  it('returns a service diagnostic when accounts.upsert omits accepted batch rows', async () => {
+    const platform = buildPlatform({ agent: sampleAgent({ billing_capabilities: new Set(['operator']) }) });
+    platform.accounts.upsert = async refs =>
+      refs.slice(0, 1).map(ref => ({
+        account_id: 'acc_1',
+        brand: ref.brand,
+        operator: ref.operator,
+        action: 'created',
+        status: 'active',
+        billing: ref.billing,
+      }));
+    const server = createServer(platform, { exposeErrorDetails: true });
+
+    const result = await syncAccountsBatch(server, [
+      {
+        brand: { domain: 'ok-1.example' },
+        operator: 'agency.example',
+        billing: 'operator',
+      },
+      {
+        brand: { domain: 'ok-2.example' },
+        operator: 'agency.example',
+        billing: 'operator',
+      },
+    ]);
+
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.match(
+      result.structuredContent.adcp_error.message,
+      /sync_accounts accounts\.upsert returned 1 row for 2 accepted account entries/
+    );
   });
 
   it('emits BRAND_REQUIRED when a billable account sync entry has no brand or account_id', async () => {

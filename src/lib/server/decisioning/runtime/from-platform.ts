@@ -5045,6 +5045,15 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             ? accounts.upsert!(policy.acceptedEntries as AccountReference[], dispatchCtx)
             : Promise.resolve([]),
         rows => {
+          if (rows.length !== policy.acceptedEntries.length) {
+            throw new Error(
+              `sync_accounts accounts.upsert returned ${rows.length} ${
+                rows.length === 1 ? 'row' : 'rows'
+              } for ${policy.acceptedEntries.length} accepted account ${
+                policy.acceptedEntries.length === 1 ? 'entry' : 'entries'
+              }`
+            );
+          }
           if (policy.failedRows.size === 0) {
             return { accounts: rows.map(toWireSyncAccountRow) };
           }

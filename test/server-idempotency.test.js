@@ -48,6 +48,29 @@ function makeServer({ handler, resolveIdempotencyPrincipal } = {}) {
   return { server, idempotency, calls };
 }
 
+function makeSyncAccountsServer({ handler } = {}) {
+  const idempotency = createIdempotencyStore({
+    backend: memoryBackend({ sweepIntervalMs: 0 }),
+    ttlSeconds: 86400,
+  });
+  const calls = [];
+  const server = createAdcpServer({
+    name: 'Test',
+    version: '1.0.0',
+    idempotency,
+    resolveSessionKey: () => 'tenant_a',
+    accounts: {
+      syncAccounts: async (params, ctx) => {
+        calls.push({ params, ctx });
+        if (handler) return handler(params, ctx);
+        return { accounts: [] };
+      },
+    },
+  });
+
+  return { server, idempotency, calls };
+}
+
 const basePayload = {
   account: { brand: { domain: 'acme.example' }, operator: 'op.example' },
   brand: { domain: 'acme.example' },
@@ -425,6 +448,31 @@ describe('createAdcpServer with idempotency', () => {
       start_time: '2026-06-01T00:00:00Z',
     });
     assert.equal(conflict.adcp_error?.code, 'IDEMPOTENCY_CONFLICT');
+  });
+
+  it('caches sync_accounts rejected rows that do not carry commercial bypass errors', async () => {
+    const { server, calls } = makeSyncAccountsServer({
+      handler: params => ({
+        accounts: params.accounts.map(account => ({
+          brand: account.brand,
+          operator: account.operator,
+          action: 'failed',
+          status: 'rejected',
+        })),
+      }),
+    });
+    const req = {
+      idempotency_key: 'sync_rejected_cache_01',
+      accounts: [{ brand: { domain: 'acme.example' }, operator: 'op.example' }],
+    };
+
+    const first = await callTool(server, 'sync_accounts', req);
+    const second = await callTool(server, 'sync_accounts', req);
+
+    assert.equal(calls.length, 1, 'stable rejected rows without errors[] should be replay cached');
+    assert.equal(first.accounts[0].status, 'rejected');
+    assert.equal(second.replayed, true);
+    assert.equal(second.accounts[0].status, 'rejected');
   });
 
   it('strict-mode parallel retries of a drifted handler see in-flight, not re-execution', async () => {
