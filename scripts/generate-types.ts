@@ -146,6 +146,8 @@ interface ToolDefinition {
  *      `{required:[X,Y,Z]}` matches only when ALL three are present, while
  *      the authorial intent is "none of them may be present" (each field
  *      independently forbidden). The two forms aren't semantically equivalent.
+ *   3. `not: { anyOf: [{ required: [X] }, ...] }` — same independent-field
+ *      exclusion as (2), authored without an outer `allOf`.
  *
  * Each branch is rewritten to inline the parent's properties (minus those the
  * branch's forbidden-name set excludes), with the branch's own `required`
@@ -174,9 +176,21 @@ function tightenMutualExclusionOneOf(schema: any): any {
 
     if (branch.not !== undefined) {
       if (!branch.not || typeof branch.not !== 'object') return null;
-      if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
-      if (Object.keys(branch.not).some(k => k !== 'required')) return null;
-      for (const name of branch.not.required) forbidden.add(name);
+      const notKeys = Object.keys(branch.not);
+      if (notKeys.length === 1 && notKeys[0] === 'required') {
+        if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
+        for (const name of branch.not.required) forbidden.add(name);
+      } else if (notKeys.length === 1 && notKeys[0] === 'anyOf' && Array.isArray(branch.not.anyOf)) {
+        for (const entry of branch.not.anyOf) {
+          if (!entry || typeof entry !== 'object') return null;
+          const entryKeys = Object.keys(entry);
+          if (entryKeys.length !== 1 || entryKeys[0] !== 'required') return null;
+          if (!Array.isArray(entry.required) || entry.required.length === 0) return null;
+          for (const name of entry.required) forbidden.add(name);
+        }
+      } else {
+        return null;
+      }
       sawForbid = true;
     }
 
@@ -657,6 +671,8 @@ export function promoteConditionalParamProperties(strictSchema: any): void {
  *   1. `not: { required: [X, ...] }` — single not-required clause.
  *   2. `allOf: [{ not: { required: [X] } }, { not: { required: [Y] } }, ...]`
  *      — an allOf of single-key not-required clauses.
+ *   3. `not: { anyOf: [{ required: [X] }, ...] }` — same independent-field
+ *      exclusion as (2), authored without an outer `allOf`.
  *
  * Returns the union of forbidden names, or `null` if the branch carries any
  * other not/allOf shape we don't recognize (in which case the flattener bails
@@ -675,9 +691,21 @@ function extractBranchExcludedNames(branch: any): Set<string> | null {
   // Form 1: top-level `not: { required: [...] }`
   if (branch.not !== undefined) {
     if (!branch.not || typeof branch.not !== 'object') return null;
-    if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
-    if (Object.keys(branch.not).some(k => k !== 'required')) return null;
-    for (const name of branch.not.required) excluded.add(name);
+    const notKeys = Object.keys(branch.not);
+    if (notKeys.length === 1 && notKeys[0] === 'required') {
+      if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return null;
+      for (const name of branch.not.required) excluded.add(name);
+    } else if (notKeys.length === 1 && notKeys[0] === 'anyOf' && Array.isArray(branch.not.anyOf)) {
+      for (const entry of branch.not.anyOf) {
+        if (!entry || typeof entry !== 'object') return null;
+        const entryKeys = Object.keys(entry);
+        if (entryKeys.length !== 1 || entryKeys[0] !== 'required') return null;
+        if (!Array.isArray(entry.required) || entry.required.length === 0) return null;
+        for (const name of entry.required) excluded.add(name);
+      }
+    } else {
+      return null;
+    }
     sawForbid = true;
   }
 

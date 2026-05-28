@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.0-beta.5
-// Generated at: 2026-05-27T01:20:01.388Z
+// Generated at: 2026-05-28T07:38:03.962Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -286,6 +286,18 @@ export type DevicePlatform =
  * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
  */
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
+/**
+ * Time unit for isochrone (travel-time catchment) calculations.
+ */
+export type TravelTimeUnit = 'min' | 'hr';
+/**
+ * Transportation mode for isochrone calculation. Required when travel_time is provided.
+ */
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
+/**
+ * Distance unit.
+ */
+export type DistanceUnit = 'km' | 'mi' | 'm';
 /**
  * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
  */
@@ -1801,9 +1813,102 @@ export interface TargetingOverlay {
   /**
    * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
    */
-  geo_proximity?: {
-    [k: string]: unknown | undefined;
-  }[];
+  geo_proximity?: (
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        /**
+         * Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.
+         */
+        travel_time: {
+          /**
+           * Travel time limit.
+           * @minimum 1
+           */
+          value: number;
+          unit: TravelTimeUnit;
+        };
+        transport_mode: TransportMode;
+        ext?: ExtensionObject;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Simple radius from the point. The platform draws a circle of this distance around the coordinates.
+         */
+        radius: {
+          /**
+           * Radius distance.
+           */
+          value: number;
+          unit: DistanceUnit;
+        };
+        ext?: ExtensionObject;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat?: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng?: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.
+         */
+        geometry: {
+          /**
+           * GeoJSON geometry type.
+           */
+          type: 'Polygon' | 'MultiPolygon';
+          /**
+           * GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.
+           */
+          coordinates: unknown[];
+        };
+        ext?: ExtensionObject;
+      }
+  )[];
   /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
@@ -17658,9 +17763,99 @@ export interface ProductFilters {
   /**
    * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
    */
-  geo_proximity?: {
-    [k: string]: unknown | undefined;
-  }[];
+  geo_proximity?: (
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        /**
+         * Travel time limit for isochrone calculation
+         */
+        travel_time: {
+          /**
+           * Travel time limit
+           * @minimum 1
+           */
+          value: number;
+          unit: TravelTimeUnit;
+        };
+        transport_mode: TransportMode;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Simple radius from the point
+         */
+        radius: {
+          /**
+           * Radius distance
+           */
+          value: number;
+          unit: DistanceUnit;
+        };
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat?: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng?: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Pre-computed GeoJSON geometry defining the proximity boundary
+         */
+        geometry: {
+          /**
+           * GeoJSON geometry type
+           */
+          type: 'Polygon' | 'MultiPolygon';
+          /**
+           * GeoJSON coordinates array
+           */
+          coordinates: unknown[];
+        };
+      }
+  )[];
   /**
    * Filter to products that can meet the buyer's performance standard requirements. Each entry specifies a metric, minimum threshold, and optionally a required vendor and standard. Products that cannot meet these thresholds or do not support the specified vendors are excluded. Use this to tell the seller upfront: 'I need DoubleVerify for viewability at 70% MRC.'
    */
@@ -20580,10 +20775,6 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
   };
 };
 /**
- * Transportation modes for isochrone-based catchment area calculations. Determines how travel time translates to geographic reach.
- */
-export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
-/**
  * Specialized capability claims an agent can make. Each specialism maps to a compliance storyboard bundle published at /compliance/{version}/specialisms/{id}/. An agent asserts specialisms it supports in get_adcp_capabilities; the AAO compliance runner executes the matching storyboards to verify the claim.
  */
 export type AdCPSpecialism =
@@ -22423,18 +22614,78 @@ export type Catchment = {
     coordinates: unknown[];
   };
   ext?: ExtensionObject;
-} & {
-  [k: string]: unknown | undefined;
-};
-/**
- * Time unit for isochrone (travel-time catchment) calculations.
- */
-export type TravelTimeUnit = 'min' | 'hr';
-/**
- * Distance unit.
- */
-export type DistanceUnit = 'km' | 'mi' | 'm';
-
+} & (
+  | {
+      /**
+       * Identifier for this catchment, used to reference specific catchment areas in targeting (e.g., 'walk', 'drive', 'primary').
+       */
+      catchment_id: string;
+      /**
+       * Human-readable label for this catchment (e.g., '15-min drive', '1km walking radius').
+       */
+      label?: string;
+      /**
+       * Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks, accounting for road connectivity, transit schedules, and terrain.
+       */
+      travel_time: {
+        /**
+         * Travel time limit.
+         * @minimum 1
+         */
+        value: number;
+        unit: TravelTimeUnit;
+      };
+      transport_mode: TransportMode;
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Identifier for this catchment, used to reference specific catchment areas in targeting (e.g., 'walk', 'drive', 'primary').
+       */
+      catchment_id: string;
+      /**
+       * Human-readable label for this catchment (e.g., '15-min drive', '1km walking radius').
+       */
+      label?: string;
+      transport_mode?: TransportMode;
+      /**
+       * Simple radius from the store location. The platform draws a circle of this distance around the store's coordinates.
+       */
+      radius: {
+        /**
+         * Radius distance.
+         */
+        value: number;
+        unit: DistanceUnit;
+      };
+      ext?: ExtensionObject;
+    }
+  | {
+      /**
+       * Identifier for this catchment, used to reference specific catchment areas in targeting (e.g., 'walk', 'drive', 'primary').
+       */
+      catchment_id: string;
+      /**
+       * Human-readable label for this catchment (e.g., '15-min drive', '1km walking radius').
+       */
+      label?: string;
+      transport_mode?: TransportMode;
+      /**
+       * Pre-computed GeoJSON geometry defining the catchment boundary. Use this when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom trade area boundaries. Supports Polygon and MultiPolygon types.
+       */
+      geometry: {
+        /**
+         * GeoJSON geometry type.
+         */
+        type: 'Polygon' | 'MultiPolygon';
+        /**
+         * GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.
+         */
+        coordinates: unknown[];
+      };
+      ext?: ExtensionObject;
+    }
+);
 
 // core/collection-distribution.json
 /**

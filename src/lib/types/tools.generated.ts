@@ -374,6 +374,18 @@ export type PostalCodeSystem =
   | 'ch_plz'
   | 'at_plz';
 /**
+ * Time unit for isochrone (travel-time catchment) calculations.
+ */
+export type TravelTimeUnit = 'min' | 'hr';
+/**
+ * Transportation mode for isochrone calculation. Required when travel_time is provided.
+ */
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
+/**
+ * Distance unit
+ */
+export type DistanceUnit = 'km' | 'mi' | 'm';
+/**
  * The performance metric this standard applies to.
  */
 export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate' | 'brand_safety' | 'attention_score';
@@ -963,9 +975,99 @@ export interface ProductFilters {
   /**
    * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
    */
-  geo_proximity?: {
-    [k: string]: unknown | undefined;
-  }[];
+  geo_proximity?: (
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        /**
+         * Travel time limit for isochrone calculation
+         */
+        travel_time: {
+          /**
+           * Travel time limit
+           * @minimum 1
+           */
+          value: number;
+          unit: TravelTimeUnit;
+        };
+        transport_mode: TransportMode;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Simple radius from the point
+         */
+        radius: {
+          /**
+           * Radius distance
+           */
+          value: number;
+          unit: DistanceUnit;
+        };
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84)
+         * @minimum -90
+         * @maximum 90
+         */
+        lat?: number;
+        /**
+         * Longitude in decimal degrees (WGS 84)
+         * @minimum -180
+         * @maximum 180
+         */
+        lng?: number;
+        /**
+         * Human-readable label (e.g., 'Düsseldorf', 'Heathrow Airport')
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Pre-computed GeoJSON geometry defining the proximity boundary
+         */
+        geometry: {
+          /**
+           * GeoJSON geometry type
+           */
+          type: 'Polygon' | 'MultiPolygon';
+          /**
+           * GeoJSON coordinates array
+           */
+          coordinates: unknown[];
+        };
+      }
+  )[];
   /**
    * Filter to products that can meet the buyer's performance standard requirements. Each entry specifies a metric, minimum threshold, and optionally a required vendor and standard. Products that cannot meet these thresholds or do not support the specified vendors are excluded. Use this to tell the seller upfront: 'I need DoubleVerify for viewability at 70% MRC.'
    */
@@ -7588,9 +7690,102 @@ export interface TargetingOverlay {
   /**
    * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
    */
-  geo_proximity?: {
-    [k: string]: unknown | undefined;
-  }[];
+  geo_proximity?: (
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        /**
+         * Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.
+         */
+        travel_time: {
+          /**
+           * Travel time limit.
+           * @minimum 1
+           */
+          value: number;
+          unit: TravelTimeUnit;
+        };
+        transport_mode: TransportMode;
+        ext?: ExtensionObject;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Simple radius from the point. The platform draws a circle of this distance around the coordinates.
+         */
+        radius: {
+          /**
+           * Radius distance.
+           */
+          value: number;
+          unit: DistanceUnit;
+        };
+        ext?: ExtensionObject;
+      }
+    | {
+        /**
+         * Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -90
+         * @maximum 90
+         */
+        lat?: number;
+        /**
+         * Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.
+         * @minimum -180
+         * @maximum 180
+         */
+        lng?: number;
+        /**
+         * Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').
+         */
+        label?: string;
+        transport_mode?: TransportMode;
+        /**
+         * Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.
+         */
+        geometry: {
+          /**
+           * GeoJSON geometry type.
+           */
+          type: 'Polygon' | 'MultiPolygon';
+          /**
+           * GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.
+           */
+          coordinates: unknown[];
+        };
+        ext?: ExtensionObject;
+      }
+  )[];
   /**
    * Restrict to users with specific language preferences. ISO 639-1 codes (e.g., 'en', 'es', 'fr').
    */
@@ -20263,10 +20458,6 @@ export interface GetAdCPCapabilitiesRequest {
 
 // get_adcp_capabilities response
 /**
- * Transportation modes for isochrone-based catchment area calculations. Determines how travel time translates to geographic reach.
- */
-export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
-/**
  * Specialized capability claims an agent can make. Each specialism maps to a compliance storyboard bundle published at /compliance/{version}/specialisms/{id}/. An agent asserts specialisms it supports in get_adcp_capabilities; the AAO compliance runner executes the matching storyboards to verify the claim.
  */
 export type AdCPSpecialism =
@@ -22978,13 +23169,126 @@ export interface UpstreamTrafficSuccess {
  * attestation_mode raw — payload is required; payload_digest_sha256 and identifier_match_proofs are absent. attestation_mode is required at the item level so the discriminator always has a value to dispatch on (no implicit defaults inside oneOf branches).
  */
 export interface RawAttestation {
+  /**
+   * HTTP method of the outbound call.
+   */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  /**
+   * Composed `<METHOD> <URL>` string used for `endpoint_pattern` matching, e.g. 'POST https://api.tiktok.com/v2/audience/upload'. Convenience field — the runner can also reconstruct from `method` + URL components.
+   */
+  endpoint: string;
+  /**
+   * Full URL of the outbound call (scheme + host + path + query). Treated as untrusted agent-controlled input by report renderers — see runner-output-contract.yaml > security.rendered_output_fencing.
+   */
+  url: string;
+  /**
+   * Host portion of the URL, useful for grouping calls by upstream platform.
+   */
+  host?: string;
+  /**
+   * Path portion of the URL (without query string).
+   */
+  path?: string;
+  /**
+   * Media type of the outbound request body, mirroring the agent's outbound `Content-Type` header (e.g., `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`). In raw mode this describes the returned `payload`; in digest mode it describes the body the digest was computed over. Storyboard `payload_must_contain` JSONPath assertions are valid only when content_type is `application/json` or has a `+json` suffix AND attestation_mode is `raw` — digest mode and non-JSON content types grade `payload_must_contain` as not_applicable. Required so the runner can choose the right matcher deterministically.
+   */
+  content_type: string;
   attestation_mode: 'raw';
+  /**
+   * Optional adopter-supplied semantic tag for the call's role. Values: `platform_primary` for the primary upstream platform the adapter is integrating with (e.g., a TikTok audience-upload call from a sales-social adapter); `measurement` for ancillary calls to measurement vendors (DV, IAS, Nielsen, MOAT); `attribution` for server-side conversion APIs (TTD Trans-API, Meta CAPI, AppsFlyer/Branch postbacks) that flow alongside primary platform calls in a buy-step; `creative_serving` for ad-server / CDN / tag-build calls (GAM tag generation, VAST/CDN fetches, creative trafficking); `identity` for ID-graph / hashing-service calls (LiveRamp, ID5, UID2); `other` for everything else (config fetches, internal telemetry, consent signal exchange). Lets storyboards scope `upstream_traffic` assertions via `purpose_filter` so a buyer-agent adapter that legitimately calls measurement vendors during a single buy step doesn't muddy the platform-primary assertion. Calls without a `purpose` field are treated as `purpose: other` for `purpose_filter` matching — adopters who haven't classified are matched only by storyboards filtering on `other` (or by storyboards with no `purpose_filter`). Self-reported, not adversarially trustworthy — same trust model as the rest of recorded_calls; misclassification by a façade is bounded by the runner's reporting of unclassified-call counts in `actual` when filters match zero.
+   */
+  purpose?: 'platform_primary' | 'measurement' | 'attribution' | 'creative_serving' | 'identity' | 'other';
+  /**
+   * Request body the agent sent. Required when `attestation_mode` is `raw` (or omitted); MUST be absent when `attestation_mode` is `digest`. Object when content_type is JSON-shaped and the controller decoded it; string otherwise. Adopters MUST apply the recursive secret-key redaction described in this branch's top-level description before emission — secrets at any depth (Authorization values inlined into JSON bodies, embedded JWTs, presigned-URL tokens, OAuth refresh tokens) MUST be replaced with the literal string `[redacted]`. Storyboards that assert `payload_must_contain` or `identifier_paths` are matching against THIS field — secrets MUST be redacted but storyboard-supplied identifiers (hashed PII, request correlation values) MUST NOT be redacted. Adopters SHOULD cap individual payload size at 64 KiB; payloads exceeding that SHOULD be truncated with a trailing `[…truncated]` marker — large payloads bloat compliance reports and the LLM-rendered context windows that consume them.
+   */
+  payload: {
+    [k: string]: unknown | undefined;
+  };
+  /**
+   * Byte length of the post-redaction canonicalized body. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In raw mode this MUST equal the byte length of the `payload` value as serialized for transmission; in digest mode this is the length of the canonicalized body the digest covers. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
+   * @minimum 0
+   */
+  payload_length: number;
+  /**
+   * ISO 8601 timestamp the adopter recorded the outbound call. MUST reflect the adopter's wall clock at the moment the outbound request was sent (not log-flush time), and MUST be monotonically non-decreasing across recorded_calls of a single response. Used by runners to scope assertions to a specific storyboard step's window — see runner-output-contract.yaml > validation_result for the timestamp boundary semantics.
+   * @format date-time
+   */
+  timestamp: string;
+  /**
+   * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
+   * @minimum 100
+   * @maximum 599
+   */
+  status_code?: number;
 }
 /**
  * attestation_mode digest — payload_digest_sha256 required, payload absent. identifier_match_proofs present when the request supplied identifier_value_digests.
  */
 export interface DigestAttestation {
+  /**
+   * HTTP method of the outbound call.
+   */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  /**
+   * Composed `<METHOD> <URL>` string used for `endpoint_pattern` matching, e.g. 'POST https://api.tiktok.com/v2/audience/upload'. Convenience field — the runner can also reconstruct from `method` + URL components.
+   */
+  endpoint: string;
+  /**
+   * Full URL of the outbound call (scheme + host + path + query). Treated as untrusted agent-controlled input by report renderers — see runner-output-contract.yaml > security.rendered_output_fencing.
+   */
+  url: string;
+  /**
+   * Host portion of the URL, useful for grouping calls by upstream platform.
+   */
+  host?: string;
+  /**
+   * Path portion of the URL (without query string).
+   */
+  path?: string;
+  /**
+   * Media type of the outbound request body, mirroring the agent's outbound `Content-Type` header (e.g., `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`). In raw mode this describes the returned `payload`; in digest mode it describes the body the digest was computed over. Storyboard `payload_must_contain` JSONPath assertions are valid only when content_type is `application/json` or has a `+json` suffix AND attestation_mode is `raw` — digest mode and non-JSON content types grade `payload_must_contain` as not_applicable. Required so the runner can choose the right matcher deterministically.
+   */
+  content_type: string;
   attestation_mode: 'digest';
+  /**
+   * Optional adopter-supplied semantic tag for the call's role. Values: `platform_primary` for the primary upstream platform the adapter is integrating with (e.g., a TikTok audience-upload call from a sales-social adapter); `measurement` for ancillary calls to measurement vendors (DV, IAS, Nielsen, MOAT); `attribution` for server-side conversion APIs (TTD Trans-API, Meta CAPI, AppsFlyer/Branch postbacks) that flow alongside primary platform calls in a buy-step; `creative_serving` for ad-server / CDN / tag-build calls (GAM tag generation, VAST/CDN fetches, creative trafficking); `identity` for ID-graph / hashing-service calls (LiveRamp, ID5, UID2); `other` for everything else (config fetches, internal telemetry, consent signal exchange). Lets storyboards scope `upstream_traffic` assertions via `purpose_filter` so a buyer-agent adapter that legitimately calls measurement vendors during a single buy step doesn't muddy the platform-primary assertion. Calls without a `purpose` field are treated as `purpose: other` for `purpose_filter` matching — adopters who haven't classified are matched only by storyboards filtering on `other` (or by storyboards with no `purpose_filter`). Self-reported, not adversarially trustworthy — same trust model as the rest of recorded_calls; misclassification by a façade is bounded by the runner's reporting of unclassified-call counts in `actual` when filters match zero.
+   */
+  purpose?: 'platform_primary' | 'measurement' | 'attribution' | 'creative_serving' | 'identity' | 'other';
+  /**
+   * SHA-256 digest of the canonicalized outbound request body, lowercase hex (64 chars). Required when `attestation_mode` is `digest`; MUST be absent when `attestation_mode` is `raw`. Canonicalization order is normative: (1) controllers MUST apply the recursive secret-key redaction (same pattern as the raw-mode payload field) BEFORE computing the digest; (2) for `application/json` and `*+json` content types, controllers MUST then serialize the redacted body to RFC 8785 (JCS) canonical form — sorted keys, no extraneous whitespace — and digest the resulting bytes. Storyboard-supplied identifiers (hashed PII, request correlation values) MUST NOT be redacted before digest computation; they are the load-bearing match target for `identifier_match_proofs` and digesting them away makes echo verification impossible. Both `payload_digest_sha256` AND `identifier_match_proofs` MUST be computed against the same post-redaction canonical bytes — diverging the two surfaces breaks coherence between digest replay and identifier echo. JCS edge cases: payloads containing `NaN` or `Infinity` numbers MUST grade `not_applicable` for digest mode (RFC 8785 forbids them); payloads carrying numeric identifiers MUST serialize them as JSON strings before digest computation (adtech bid payloads regularly carry IDs outside ±2^53 where I-JSON / RFC 7493 number round-tripping diverges across implementations). For non-JSON content types the digest is computed over the post-redaction raw body bytes.
+   * @pattern ^[a-f0-9]{64}$
+   */
+  payload_digest_sha256: string;
+  /**
+   * Byte length of the post-redaction canonicalized body. Required in both `raw` and `digest` modes — symmetric across modes so runners can detect adopter-side truncation regardless of attestation choice. In raw mode this MUST equal the byte length of the `payload` value as serialized for transmission; in digest mode this is the length of the canonicalized body the digest covers. Mismatch between observed payload length and reported `payload_length` is a controller-side bug worth surfacing in the report.
+   * @minimum 0
+   */
+  payload_length: number;
+  /**
+   * Per-identifier echo proofs for digest-mode calls. Required when `attestation_mode` is `digest` AND the request supplied `params.identifier_value_digests`; MUST be absent or empty otherwise. Each entry corresponds to one digest from the request. Capped at 64 to match the request-side `params.identifier_value_digests` cap. Lets storyboards verify `identifier_paths` echo in digest mode without ever transmitting plaintext identifiers to the controller. SHA-256 is a privacy mechanism here, not a trust mechanism — controllers self-report `found` and a determined façade can return any boolean; consumers MUST NOT treat digest-mode passing as cryptographically more trustworthy than raw mode. Tokenization is normative: for `application/json` and `*+json` content types, controllers MUST scan exactly the JSON string-typed leaf values of the post-redaction canonicalized body — no substring matching, no word splitting, no case folding, no Unicode normalization. A token matches when its SHA-256 hash equals one of the requested digests byte-for-byte. For non-JSON content types (form-urlencoded, multipart, plain text), `identifier_match_proofs` MUST be empty and runner-side `identifier_paths` assertions targeting those calls grade `not_applicable` — token boundaries are not portably defined across non-JSON shapes.
+   */
+  identifier_match_proofs?: {
+    /**
+     * Echo of one digest from `params.identifier_value_digests` so the runner can pair this proof with the identifier it queried.
+     * @pattern ^[a-f0-9]{64}$
+     */
+    identifier_value_sha256: string;
+    /**
+     * True if any string token in the recorded payload hashes to the queried digest. False otherwise.
+     */
+    found: boolean;
+  }[];
+  /**
+   * ISO 8601 timestamp the adopter recorded the outbound call. MUST reflect the adopter's wall clock at the moment the outbound request was sent (not log-flush time), and MUST be monotonically non-decreasing across recorded_calls of a single response. Used by runners to scope assertions to a specific storyboard step's window — see runner-output-contract.yaml > validation_result for the timestamp boundary semantics.
+   * @format date-time
+   */
+  timestamp: string;
+  /**
+   * HTTP status code returned by the upstream. Optional — adopters MAY omit when the call was instrumented before the response arrived.
+   * @minimum 100
+   * @maximum 599
+   */
+  status_code?: number;
 }
 /**
  * The scenario failed — invalid transition, unknown entity, unsupported scenario, or invalid params

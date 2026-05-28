@@ -123,8 +123,9 @@ export function injectJsdocConstraints(schema: any): any {
 
     if (typeof out.minimum === 'number') addTag('minimum', out.minimum);
     if (typeof out.maximum === 'number') addTag('maximum', out.maximum);
-    if (typeof out.minLength === 'number') addTag('minLength', out.minLength);
-    if (typeof out.maxLength === 'number') addTag('maxLength', out.maxLength);
+    const hasStringType = out.type === 'string' || (Array.isArray(out.type) && out.type.includes('string'));
+    if (hasStringType && typeof out.minLength === 'number') addTag('minLength', out.minLength);
+    if (hasStringType && typeof out.maxLength === 'number') addTag('maxLength', out.maxLength);
     if (typeof out.pattern === 'string' && !/[\n\r]/.test(out.pattern)) {
       // ts-to-zod wraps the JSDoc `@pattern` value as `/PATTERN/`, so we
       // need to escape any unescaped `/` to keep the regex literal valid.
