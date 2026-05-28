@@ -16,6 +16,7 @@ import type { ZodSchema } from 'zod';
 import type {
   AdCPSpecialism,
   MediaChannel,
+  PaymentTerms,
   PricingModel,
   GetAdCPCapabilitiesResponse,
 } from '../../types/tools.generated';
@@ -231,6 +232,15 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * `BrandReference` to `'advertiser'` on the wire).
    */
   supportedBillings?: ReadonlyArray<'operator' | 'agent' | 'advertiser'>;
+
+  /**
+   * Payment terms this platform accepts on `sync_accounts.payment_terms`.
+   * Omit to leave terms validation to `accounts.upsert` (or to accept any
+   * schema-valid value). When present, the framework rejects unsupported
+   * requested terms with `PAYMENT_TERMS_NOT_SUPPORTED` before dispatching
+   * the account entry to the adopter.
+   */
+  supportedPaymentTerms?: ReadonlyArray<PaymentTerms>;
 
   /**
    * If true, this platform refuses transactions without an authenticated

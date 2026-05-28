@@ -528,6 +528,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     specialisms: ['sales-guaranteed'] as const,
     channels: ['olv', 'ctv', 'display'] as const,
     pricingModels: ['cpm'] as const,
+    // Storyboard account setup uses operator-billed settlement. Declare it
+    // explicitly so the framework-level sync_accounts commercial gate admits
+    // rows before this adapter resolves them to upstream network codes.
+    supportedBillings: ['operator', 'agent'] as const,
     supportsProposals: false,
     config: {},
     // Declares the comply_test_controller surface so the conformance

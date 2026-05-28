@@ -1368,7 +1368,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
   resolveAccountFromAuth?: (ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
   /**
-   * Buyer-agent identity registry — Phase 1 of #1269. Optional. When
+   * Buyer-agent identity registry. Optional. When
    * configured, framework calls `agentRegistry.resolve(authInfo)` once per
    * request after `authInfo` is populated and before `resolveAccount`. The
    * resolved {@link BuyerAgent} is threaded through `ctx.agent` to
@@ -1384,14 +1384,14 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * - Registry returns a `BuyerAgent` → framework freezes the record (and
    *   its `billing_capabilities` Set) and sets `ctx.agent`.
    * - Registry returns `null` → `ctx.agent` stays undefined; dispatch
-   *   continues. Status enforcement (`suspended`/`blocked`) and per-agent
-   *   billing rejection are Stage 4 / Phase 2 work.
+   *   continues. For `sync_accounts.billing`, an unresolved agent under a
+   *   configured registry gets the oracle-safe `BILLING_NOT_SUPPORTED`
+   *   surface rather than `BILLING_NOT_PERMITTED_FOR_AGENT`.
    * - Registry throws → framework returns `SERVICE_UNAVAILABLE`. Inner
    *   error logged server-side.
    *
-   * Phase 1 ships the seam; the framework consumes the resolved record but
-   * does not yet enforce billing capabilities or status. Phase 2 (#1292)
-   * wires those once the SDK pin moves to AdCP 3.1.
+   * Resolved records drive status/sandbox enforcement and
+   * `sync_accounts.billing` capability gates.
    */
   agentRegistry?: BuyerAgentRegistry;
 
@@ -2011,6 +2011,34 @@ function isErrorResponse(response: McpToolResponse): boolean {
     if (status === 'failed' || status === 'canceled' || status === 'rejected') return true;
   }
   return false;
+}
+
+const UNCACHEABLE_SYNC_ACCOUNT_ERROR_CODES = new Set([
+  'BILLING_NOT_SUPPORTED',
+  'BILLING_NOT_PERMITTED_FOR_AGENT',
+  'PAYMENT_TERMS_NOT_SUPPORTED',
+]);
+
+function hasUncacheableSyncAccountRejection(response: McpToolResponse): boolean {
+  const sc = response.structuredContent;
+  if (!sc || typeof sc !== 'object') return false;
+  const accounts = (sc as Record<string, unknown>).accounts;
+  if (!Array.isArray(accounts)) return false;
+  return accounts.some(row => {
+    if (!row || typeof row !== 'object') return false;
+    const record = row as Record<string, unknown>;
+    if (record.status !== 'rejected' && record.action !== 'failed') return false;
+    const errors = record.errors;
+    if (!Array.isArray(errors)) return record.status === 'rejected';
+    return errors.some(error => {
+      if (!error || typeof error !== 'object') return false;
+      return UNCACHEABLE_SYNC_ACCOUNT_ERROR_CODES.has(String((error as Record<string, unknown>).code));
+    });
+  });
+}
+
+function shouldCacheIdempotencyResponse(response: McpToolResponse): boolean {
+  return !isErrorResponse(response) && !hasUncacheableSyncAccountRejection(response);
 }
 
 /**
@@ -3563,7 +3591,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return response;
         };
 
-        // --- Buyer-agent registry resolution (Phase 1 of #1269) ---
+        // --- Buyer-agent registry resolution (#1269 / #1292) ---
         // Runs after `authInfo` is populated and before account resolution
         // so adopters' `resolveAccount` callbacks see `ctx.agent`. The
         // registry receives the kind-discriminated `credential` (Stage 3)
@@ -3571,9 +3599,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // `serve.ts:attachAuthInfo`; factories route on `credential.kind`
         // and return null when no credential was stamped (custom adopter
         // auth callbacks that haven't migrated).
-        //
-        // Phase 1 does NOT enforce status (suspended/blocked → 403) or
-        // billing capability — those land in Stage 4 and Phase 2 (#1292).
         if (agentRegistry !== undefined) {
           try {
             // Stage 3 of #1269: pass the kind-discriminated `credential`
@@ -3596,7 +3621,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // `.delete()` / `.clear()` still mutate. `ReadonlySet` is a
               // TypeScript-only contract; adopters constructing a Set MUST
               // NOT rely on freeze preventing membership changes at runtime.
-              // Phase 2's billing-capability check only reads via `.has()`,
+              // The billing-capability check only reads via `.has()`,
               // so adopter mis-mutation would only affect the same request's
               // own logic — no cross-request leak.
               if (!Object.isFrozen(resolved)) {
@@ -4845,10 +4870,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               }
             }
           }
-          // Cache successful mutations for replay. Errors re-execute on
-          // retry, not replayed — only cache when the wrapped response is
-          // not an error shape. Release the in-flight claim on error so a
-          // retry can re-execute rather than replay the transient failure.
+          // Cache successful mutations for replay. Errors and commercial
+          // rejection rows re-execute on retry, not replayed — capability /
+          // status changes in the seller's ledger must take effect without
+          // waiting for an idempotency TTL to expire. Release the in-flight
+          // claim on uncacheable responses so a retry can re-execute.
           //
           // Cache the FORMATTED envelope, not the raw handler return:
           // some wrap functions inject non-deterministic fields
@@ -4858,7 +4884,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // replay" contract. Caching the formatted envelope pins those
           // fields to their first-execution values.
           if (idempotencyCheck && idempotency) {
-            if (!isErrorResponse(formatted)) {
+            if (shouldCacheIdempotencyResponse(formatted)) {
               try {
                 // Strip `context` before caching — it's a per-request echo
                 // field (buyer's correlation_id), not part of the cached
