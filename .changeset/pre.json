@@ -78,6 +78,7 @@
     "remove-rfc9421-response-signing",
     "request-signing-conformance-cache",
     "resolve-3-1-blocked-issues",
+    "restore-response-signing",
     "schema-loader-strip-nested-ids",
     "server-handler-payload-types",
     "signed-requests-specialism-notice",

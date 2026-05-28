@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.1.0-beta.16
+
+### Patch Changes
+
+- cbaebbc: Restore signing-only response helpers under `@adcp/sdk/signing` for adopters that sign JSON transport responses and publish
+  `response-signing` JWKs.
+
 ## 8.1.0-beta.15
 
 ### Minor Changes
