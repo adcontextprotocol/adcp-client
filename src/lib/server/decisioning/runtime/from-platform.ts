@@ -1097,6 +1097,29 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }),
   };
 
+  const autoSeedStore: Map<string, Map<string, unknown>> | undefined =
+    opts.complyTest != null &&
+    platform.sales?.getProducts != null &&
+    !opts.testController &&
+    !opts.complyTest.seed?.product &&
+    !opts.complyTest.seed?.pricing_option
+      ? new Map<string, Map<string, unknown>>()
+      : undefined;
+
+  const complyTestForProjection: ComplyControllerConfig | undefined =
+    opts.complyTest != null && autoSeedStore != null
+      ? {
+          ...opts.complyTest,
+          seed: {
+            ...opts.complyTest.seed,
+            // Projection advertises auto-seed scenarios through the normal
+            // complyTest surface; makeAutoSeedBridge handles the real writes.
+            product: opts.complyTest.seed?.product ?? (() => undefined),
+            pricing_option: opts.complyTest.seed?.pricing_option ?? (() => undefined),
+          },
+        }
+      : opts.complyTest;
+
   // Compliance-testing scenarios projection. Adopters who claim the
   // `compliance_testing` capability AND wire `complyTest` adapters
   // expect buyers to discover which scenarios they implement via
@@ -1109,7 +1132,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // `capabilities.compliance_testing.scenarios` override the
   // auto-derivation when adopters want to advertise a subset.
   const declaredCT = platform.capabilities.compliance_testing;
-  const wiredComplyTest = opts.complyTest;
+  const wiredComplyTest = complyTestForProjection;
   const hasComplianceTestingProjection = declaredCT != null && wiredComplyTest != null;
   const complianceTestingOverrides: NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']> | undefined =
     hasComplianceTestingProjection
@@ -1188,41 +1211,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   }
 
   // Auto-seed: when the platform has a `getProducts` catalog and the adopter
-  // wired `complyTest` without ANY explicit seed adapters and without a
-  // `testController` bridge, the framework provides default in-memory seed
-  // adapters so storyboards can call `seed_product` / `seed_pricing_option`
-  // without the adopter writing any adapter code. The bridge makes seeded
-  // products visible in `get_products` responses on sandbox requests.
-  //
-  // **Multi-tenant isolation.** The store is keyed by `account_id` so two
-  // sandbox accounts on the same server (e.g. multiple tenants under one
-  // TenantRegistry-fronted server, or distinct sandbox accounts on a
-  // single-tenant server) never see each other's seeded products in
-  // `get_products`. Adopters who need tighter scoping (per-session,
-  // per-brand, per-storyboard-run) wire `bridgeFromSessionStore` explicitly
-  // — auto-seed is the floor, not the ceiling.
-  //
-  // **Caveat.** The comply-controller's process-wide `SeedFixtureCache`
-  // (`test-controller.ts createSeedFixtureCache`) keys by
-  // `seed_product:${product_id}` and rejects divergent fixtures replayed
-  // under the same id with `INVALID_PARAMS`. So two sandbox accounts can
-  // freely seed *different* product_ids without leakage, but cannot seed
-  // the same product_id with different fixtures on one server. That's a
-  // pre-existing SDK limitation independent of auto-seed; lifting it
-  // requires per-account seedCache scoping — tracked as a follow-up.
-  //
-  // The entire auto-seed path is skipped when EITHER `seed.product` OR
-  // `seed.pricing_option` is explicitly wired — mixing explicit and auto-seed
-  // adapters against the same bridge would yield inconsistent `get_products`
-  // responses. In that case the adopter owns the full seed + bridge wiring.
-  const autoSeedStore: Map<string, Map<string, unknown>> | undefined =
-    opts.complyTest != null &&
-    platform.sales?.getProducts != null &&
-    !opts.testController &&
-    !opts.complyTest.seed?.product &&
-    !opts.complyTest.seed?.pricing_option
-      ? new Map<string, Map<string, unknown>>()
-      : undefined;
+  // wired `complyTest` without explicit product/pricing seed adapters and
+  // without a `testController` bridge, the framework provides default
+  // in-memory seed adapters. The bridge makes seeded products visible in
+  // sandbox `get_products` responses. `autoSeedStore` is computed before
+  // capability projection so `seed_product` / `seed_pricing_option` are also
+  // advertised when the framework wires them on the adopter's behalf.
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
@@ -2212,12 +2206,7 @@ function mergeHandlers<T extends object>(
  * `get_adcp_capabilities.compliance_testing.scenarios` when the adopter
  * doesn't supply an explicit subset.
  *
- * Seed scenarios (`seed_product`, `seed_creative`, etc.) are
- * deliberately NOT advertised on the wire — the spec scopes the
- * `compliance_testing.scenarios` enum to forces + simulates, and the
- * controller's own `list_scenarios` response follows the same rule.
- * Adopters who wire seed adapters get them dispatched correctly at
- * runtime; they just don't appear in capability discovery.
+ * `list_scenarios` itself is implicit and is not advertised.
  */
 function deriveScenariosFromAdapters(
   cfg: ComplyControllerConfig
@@ -2228,8 +2217,21 @@ function deriveScenariosFromAdapters(
   if (cfg.force?.account_status) out.push('force_account_status');
   if (cfg.force?.media_buy_status) out.push('force_media_buy_status');
   if (cfg.force?.session_status) out.push('force_session_status');
+  if (cfg.force?.create_media_buy_arm) out.push('force_create_media_buy_arm');
+  if (cfg.force?.task_completion) out.push('force_task_completion');
+  if (cfg.force?.creative_purge) out.push('force_creative_purge');
   if (cfg.simulate?.delivery) out.push('simulate_delivery');
   if (cfg.simulate?.budget_spend) out.push('simulate_budget_spend');
+  if (cfg.seed?.product) out.push('seed_product');
+  if (cfg.seed?.pricing_option) out.push('seed_pricing_option');
+  if (cfg.seed?.creative) out.push('seed_creative');
+  if (cfg.seed?.plan) out.push('seed_plan');
+  if (cfg.seed?.media_buy) out.push('seed_media_buy');
+  if (cfg.seed?.creative_format) out.push('seed_creative_format');
+  if (cfg.seed?.measurement_catalog) out.push('seed_measurement_catalog');
+  if (cfg.queryUpstreamTraffic) out.push('query_upstream_traffic');
+  if (cfg.queryProvenanceAuditObservations) out.push('query_provenance_audit_observations');
+  if (cfg.force?.upstream_unavailable) out.push('force_upstream_unavailable');
   return out;
 }
 

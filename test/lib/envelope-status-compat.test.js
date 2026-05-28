@@ -89,6 +89,8 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
       adcp_major_version: 3,
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
+      confirmed_at: '2026-01-15T10:00:00Z',
+      revision: 1,
       packages: [],
       context: { correlation_id: 'corr_1' },
     };
@@ -162,6 +164,8 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
       adcp_major_version: 3,
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
+      confirmed_at: '2026-01-15T10:00:00Z',
+      revision: 1,
       packages: [],
       context: { correlation_id: 'corr_1' },
     });
@@ -175,6 +179,7 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
       adcp_major_version: 3,
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
+      revision: 2,
       affected_packages: [],
     });
     assert.strictEqual(result.valid, true);
@@ -187,6 +192,8 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
       adcp_version: '3.1',
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
+      confirmed_at: '2026-01-15T10:00:00Z',
+      revision: 1,
       packages: [],
       context: { correlation_id: 'corr_1' },
     });
@@ -201,6 +208,7 @@ describe('injectLegacyEnvelopeStatus — 3.0.x back-compat shim', () => {
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
       media_buy_status: 'active',
+      revision: 2,
       affected_packages: [],
     });
     assert.strictEqual(result.valid, false);

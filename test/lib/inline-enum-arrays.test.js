@@ -117,6 +117,42 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     assert.deepEqual(mismatches, [], 'every Values element must validate against the parent schema property');
   });
 
+  it('compliance controller scenario arrays exactly match the Zod schema', async () => {
+    if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+
+    function unwrap(schema) {
+      let cursor = schema;
+      for (let i = 0; i < 20; i++) {
+        const def = cursor?._def;
+        if (!def || !['optional', 'nullable', 'nullish', 'default', 'readonly', 'catch'].includes(def.type)) {
+          return cursor;
+        }
+        cursor = def.innerType ?? def.in;
+      }
+      throw new Error('unwrap depth exceeded');
+    }
+
+    function literalValues(schema) {
+      const core = unwrap(schema);
+      const def = core?._def;
+      if (!def) throw new Error('missing zod definition');
+      if (def.type === 'array') return literalValues(def.element);
+      if (def.type === 'union') return def.options.flatMap(literalValues);
+      if (def.type === 'literal') return def.values.filter(v => typeof v === 'string');
+      throw new Error(`unsupported schema type ${def.type}`);
+    }
+
+    assert.deepEqual(
+      [...inlineEnums.ComplyTestControllerRequest_ScenarioValues].sort(),
+      literalValues(schemas.ComplyTestControllerRequestSchema.shape.scenario).sort()
+    );
+    assert.deepEqual(
+      [...inlineEnums.ListScenariosSuccess_ScenariosValues].sort(),
+      literalValues(schemas.ListScenariosSuccessSchema.shape.scenarios).sort()
+    );
+  });
+
   it('extractor skips mixed-type unions (string + number) — defensive against future spec', () => {
     // The extractor returns `null` for any union whose options contain
     // a non-string literal, ensuring a future spec change that adds

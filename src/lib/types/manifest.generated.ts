@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-beta.5/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-beta.7/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-beta.5.
+ * Manifest-derived constants for AdCP 3.1.0-beta.7.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-beta.5/manifest.json` (adcp_version: 3.1.0-beta.5, generated_at:
- * 2026-05-26T09:44:17.428Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-beta.7/manifest.json` (adcp_version: 3.1.0-beta.7, generated_at:
+ * 2026-05-28T10:02:56.264Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -434,9 +434,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "pick a granularity from the product's reporting_capabilities.windowed_pull_granularities (via get_adcp_capabilities) and resubmit, or omit time_granularity to fall back to cumulative date-range pulls"
   },
   UNSUPPORTED_PROVISIONING: {
-    description: "The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for explicit-account platforms where accounts are pre-provisioned out of band and discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found.",
+    description: "The seller does not support the `sync_accounts` mode the entry requested. Returned per-entry in the `sync_accounts` response when (a) an entry keyed by the natural-key trio (`brand` + `operator` + `billing`) is sent to a seller that does not provision accounts via AdCP — typical for account-id namespaces where accounts are pre-provisioned out of band or discovered via `list_accounts`; or (b) an entry keyed by `account` (AccountRef) is sent to a seller that has not implemented the settings-update mode. Distinct from `UNSUPPORTED_FEATURE` (generic capability mismatch) by being narrowly about which of the two `sync_accounts` modes the seller implements. The two modes are mutually exclusive per-entry — the seller MUST NOT silently downgrade or upgrade between them. Sellers MAY declare which modes they implement via `get_adcp_capabilities` (forward-looking — capability declaration shape is open). The `error.field` SHOULD point at the entry index where the unsupported shape was found.",
     recovery: "correctable",
-    suggestion: "re-issue with the entry shape the seller supports — `account: {account_id: ...}` for settings-update sellers (explicit-account platforms), or `brand+operator+billing` for provisioning sellers; check seller documentation or capability declaration for which modes are implemented"
+    suggestion: "re-issue with the entry shape the seller supports — `account: {account_id: ...}` for settings-update sellers with account-id namespaces, or `brand+operator+billing` for provisioning sellers; check seller documentation or capability declaration for which modes are implemented"
   },
   VALIDATION_ERROR: {
     description: "Request contains invalid field values or violates business rules beyond schema validation.",

@@ -82,11 +82,13 @@ const platform = {
       media_buy_id: `mb_${Date.now()}`,
       status: 'pending_creatives',
       confirmed_at: new Date().toISOString(),
+      revision: 1,
       packages: [],
     }),
     updateMediaBuy: async (mediaBuyId, patch, ctx) => ({
       media_buy_id: mediaBuyId,
       status: patch.paused === true ? 'paused' : 'active',
+      revision: 2,
     }),
     syncCreatives: async (creatives, ctx) => creatives.map(c => ({ creative_id: c.creative_id, action: 'created' })),
     getMediaBuyDelivery: async (filter, ctx) => ({

@@ -1,4 +1,4 @@
-// AdCP 3.1.0-beta.5 type surface — re-export the generated request/response
+// AdCP 3.1.0-beta.7 type surface — re-export the generated request/response
 // interfaces so consumers can import them as a namespace:
 //
 //   import * as V31Beta from '@adcp/sdk/types/v3-1-beta';

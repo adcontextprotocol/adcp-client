@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const CURRENT_BETA_VERSION = '3.1.0-beta.7';
+const CURRENT_BETA_RELEASE_PRECISION = '3.1-beta.7';
+
 function writeComplianceIndex(complianceDir, version = '3.0.12') {
   fs.mkdirSync(complianceDir, { recursive: true });
   fs.writeFileSync(
@@ -39,9 +42,9 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('derives explicit opt-in envelope for 3.1 storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 
-    const options = applyStoryboardVersionOptions({ adcp_version: '3.1.0-beta.5' }, {});
+    const options = applyStoryboardVersionOptions({ adcp_version: CURRENT_BETA_VERSION }, {});
 
-    assert.strictEqual(options.adcpVersion, '3.1.0-beta.5');
+    assert.strictEqual(options.adcpVersion, CURRENT_BETA_VERSION);
     assert.strictEqual(options.versionEnvelope, 'auto');
   });
 
@@ -70,14 +73,14 @@ describe('storyboard runner AdCP version negotiation', () => {
     const { createTestClient, getOrCreateClient } = require('../../dist/lib/testing/client.js');
 
     const shared = createTestClient('https://example.com/mcp', 'mcp', {
-      adcpVersion: '3.1.0-beta.5',
+      adcpVersion: CURRENT_BETA_VERSION,
       versionEnvelope: 'auto',
     });
 
     assert.strictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: '3.1.0-beta.5',
+        adcpVersion: CURRENT_BETA_VERSION,
         versionEnvelope: 'auto',
       }),
       shared
@@ -85,7 +88,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.notStrictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: '3.1.0-beta.5',
+        adcpVersion: CURRENT_BETA_VERSION,
         versionEnvelope: 'none',
       }),
       shared
@@ -135,7 +138,7 @@ describe('storyboard runner AdCP version negotiation', () => {
       },
       'get_adcp_capabilities',
       {},
-      { adcpVersion: '3.1.0-beta.5', versionEnvelope: 'major-only' }
+      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'major-only' }
     );
 
     assert.strictEqual(captured.adcp_major_version, 3);
@@ -198,14 +201,14 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('exact seller supported_versions are matched against cache version aliases', () => {
     const { isComplianceVersionSupported } = require('../../dist/lib/testing/storyboard/index.js');
 
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1.0-beta.5']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta.5']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1-beta.2']), false);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.1.0-beta.2']), false);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, [CURRENT_BETA_VERSION]), true);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, [CURRENT_BETA_RELEASE_PRECISION]), true);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1-beta']), true);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1-beta.2']), false);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1.0-beta.2']), false);
     assert.strictEqual(isComplianceVersionSupported('3.0.12', ['3.0.0']), true);
     assert.strictEqual(isComplianceVersionSupported('3.1.1', ['3.1.0']), true);
-    assert.strictEqual(isComplianceVersionSupported('3.1.0-beta.5', ['3.0']), false);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.0']), false);
   });
 
   test('compliance negotiation uses major-only envelope for strict 3.0 capability profiles', () => {
@@ -220,8 +223,8 @@ describe('storyboard runner AdCP version negotiation', () => {
         supported_protocols: ['media_buy'],
         library_version: '@adcp/client@5.22.0',
       },
-      { adcpVersion: '3.1.0-beta.5', versionEnvelope: 'auto' },
-      { complianceVersion: '3.1.0-beta.5' }
+      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_BETA_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'major-only');
@@ -239,12 +242,12 @@ describe('storyboard runner AdCP version negotiation', () => {
         adcp_major_versions: [3],
         supported_protocols: ['media_buy'],
       },
-      { adcpVersion: '3.1.0-beta.5', versionEnvelope: 'auto' },
-      { complianceVersion: '3.1.0-beta.5' }
+      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_BETA_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'auto');
-    assert.strictEqual(options._serverAdcpVersion, '3.1.0-beta.5');
+    assert.strictEqual(options._serverAdcpVersion, CURRENT_BETA_VERSION);
   });
 
   test('pre-3.1 build_version is positive downgrade evidence', () => {
@@ -259,8 +262,8 @@ describe('storyboard runner AdCP version negotiation', () => {
         adcp_build_version: '3.0.12',
         supported_protocols: ['media_buy'],
       },
-      { adcpVersion: '3.1.0-beta.5', versionEnvelope: 'auto' },
-      { complianceVersion: '3.1.0-beta.5' }
+      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_BETA_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'major-only');
@@ -359,10 +362,10 @@ describe('storyboard runner AdCP version negotiation', () => {
         /External AdCP schema root for version "3\.0\.12" not found or empty/
       );
 
-      writeGetProductsRequestSchema(wrongSchemaRoot, '3.1.0-beta.5');
+      writeGetProductsRequestSchema(wrongSchemaRoot, CURRENT_BETA_VERSION);
       assert.throws(
         () => loadComplianceIndex({ complianceDir, schemaRoot: wrongSchemaRoot }),
-        /does not match the requested version.*3\.1\.0-beta\.5/
+        /does not match the requested version.*3\.1\.0-beta\.7/
       );
     } finally {
       unregisterExternalSchemaRoot('3.0.12');

@@ -130,10 +130,15 @@ export type SeededCreativeFeature = CreativeFeatureResult;
 export type SeededCreative = ListCreativesResponse['creatives'][number];
 
 /**
- * Seeded media-buy entry — the inline element type of `GetMediaBuysResponse.media_buys`.
- * Derived via lookup so it stays in lockstep with the generated wire schema.
+ * Seeded media-buy entry — the inline element type of
+ * `GetMediaBuysResponse.media_buys`, but partial so existing fixture stores
+ * can keep seeding the minimal `{ media_buy_id }` marker and let the seller
+ * bridge fill or validate the final response shape.
  */
-export type SeededMediaBuy = GetMediaBuysResponse['media_buys'][number];
+type GetMediaBuysResponseMediaBuy = GetMediaBuysResponse['media_buys'][number];
+export type SeededMediaBuy = Pick<GetMediaBuysResponseMediaBuy, 'media_buy_id'> &
+  Partial<GetMediaBuysResponseMediaBuy> &
+  Record<string, unknown>;
 
 /**
  * Seeded account-financials entry. The `get_account_financials` response is a
@@ -881,17 +886,28 @@ export function mergeSeededMediaBuysIntoResponse(
   if (!seeded.length) return response;
   const seededIds = new Set<string>();
   for (const mb of seeded) seededIds.add(mb.media_buy_id);
-  const existing = Array.isArray(response.media_buys) ? response.media_buys : [];
+  const existing: GetMediaBuysResponse['media_buys'] = Array.isArray(response.media_buys) ? response.media_buys : [];
   const existingIds = new Set<string>();
   for (const mb of existing) {
-    if (mb && typeof mb.media_buy_id === 'string') existingIds.add(mb.media_buy_id);
+    const mediaBuyId = mb && typeof mb === 'object' ? (mb as { media_buy_id?: unknown }).media_buy_id : undefined;
+    if (typeof mediaBuyId === 'string') existingIds.add(mediaBuyId);
   }
-  const retained = existing.filter(mb => !seededIds.has(mb?.media_buy_id));
+  const retained = existing.filter(mb => {
+    const mediaBuyId = mb && typeof mb === 'object' ? (mb as { media_buy_id?: unknown }).media_buy_id : undefined;
+    return typeof mediaBuyId !== 'string' || !seededIds.has(mediaBuyId);
+  });
   let newCount = 0;
   for (const mb of seeded) if (!existingIds.has(mb.media_buy_id)) newCount += 1;
+  // Backfill beta.7 lifecycle fields so pre-beta seed fixtures that already
+  // satisfied the older media-buy shape remain valid after merge.
+  const normalizedSeeded = seeded.map(mb => ({
+    confirmed_at: null,
+    revision: 1,
+    ...mb,
+  })) as GetMediaBuysResponseMediaBuy[];
   const merged: GetMediaBuysResponse = {
     ...response,
-    media_buys: [...retained, ...seeded],
+    media_buys: [...retained, ...normalizedSeeded],
   };
   if ((response as { sandbox?: unknown }).sandbox !== false) {
     (merged as { sandbox?: boolean }).sandbox = true;

@@ -61,6 +61,7 @@ import type {
   ComplyTestControllerResponse,
   ControllerError,
   ForcedDirectiveSuccess,
+  ProvenanceAuditObservationsSuccess,
   SimulationSuccess,
   StateTransitionSuccess,
 } from '../types/tools.generated';
@@ -119,6 +120,13 @@ export interface SeedCreativeFormatParams {
   fixture: Record<string, unknown>;
 }
 
+export interface SeedMeasurementCatalogParams {
+  vendor: unknown;
+  metrics: unknown;
+  fixture: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface SeedBuyerAgentParams {
   agent_url: string;
   display_name?: string;
@@ -163,6 +171,19 @@ export interface ForceCreateMediaBuyArmParams {
 export interface ForceTaskCompletionParams {
   task_id: string;
   result: Record<string, unknown>;
+}
+
+export interface ForceCreativePurgeParams {
+  creative_id: string;
+  purge_kind?: 'soft' | 'hard';
+  reason_code?: string;
+  reason_detail?: string;
+  [key: string]: unknown;
+}
+
+export interface ForceUpstreamUnavailableParams {
+  tool: string;
+  upstream_name?: string;
 }
 
 /**
@@ -277,6 +298,18 @@ export type QueryUpstreamTrafficAdapter = (
   ctx: ComplyControllerContext
 ) => Promise<UpstreamTrafficSuccessResponse> | UpstreamTrafficSuccessResponse;
 
+export interface QueryProvenanceAuditObservationsParams {
+  creative_id: string;
+  [key: string]: unknown;
+}
+
+/** Adapter for `query_provenance_audit_observations`. Returns sandbox-only
+ * audit observations recorded for the creative under test. */
+export type QueryProvenanceAuditObservationsAdapter = (
+  params: QueryProvenanceAuditObservationsParams,
+  ctx: ComplyControllerContext
+) => Promise<ProvenanceAuditObservationsSuccess> | ProvenanceAuditObservationsSuccess;
+
 // ────────────────────────────────────────────────────────────
 // Controller config
 // ────────────────────────────────────────────────────────────
@@ -309,6 +342,7 @@ export interface ComplyControllerConfig {
     plan?: SeedAdapter<SeedPlanParams>;
     media_buy?: SeedAdapter<SeedMediaBuyParams>;
     creative_format?: SeedAdapter<SeedCreativeFormatParams>;
+    measurement_catalog?: SeedAdapter<SeedMeasurementCatalogParams>;
     buyer_agent?: SeedAdapter<SeedBuyerAgentParams>;
   };
 
@@ -325,6 +359,10 @@ export interface ComplyControllerConfig {
      * payload. The seller delivers `result` to the buyer's push-notification
      * URL per the AdCP 3.0 async completion path. */
     task_completion?: ForceAdapter<ForceTaskCompletionParams>;
+    /** Destroy or tombstone a sandbox creative so lifecycle webhooks can be tested. */
+    creative_purge?: ForceAdapter<ForceCreativePurgeParams>;
+    /** Mark a named upstream dependency unreachable for stale-cache testing. */
+    upstream_unavailable?: ForceAdapter<ForceUpstreamUnavailableParams>;
     /** Transition a synced audience to a matching status. Backs the
      * `impairment.coherence` audience inverse-rule traversal (issue #1819).
      * Advertised as `force_audience_status`. */
@@ -350,6 +388,13 @@ export interface ComplyControllerConfig {
    * `not_applicable` per the runner's normal capability discovery.
    */
   queryUpstreamTraffic?: QueryUpstreamTrafficAdapter;
+
+  /**
+   * `query_provenance_audit_observations` adapter. When omitted, provenance
+   * audit-observation storyboards grade as not applicable after scenario
+   * discovery.
+   */
+  queryProvenanceAuditObservations?: QueryProvenanceAuditObservationsAdapter;
 
   /** Override the seed idempotency cache (e.g., to scope by tenant or
    * persist across restarts). Defaults to an unbounded in-memory cache. */
@@ -440,7 +485,7 @@ function controllerError(code: ControllerError['error'], detail: string): Comply
  * `handleTestControllerRequest` returns `UNKNOWN_SCENARIO` for the rest. */
 function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext): TestControllerStore {
   const store: TestControllerStore = {};
-  const { seed, force, simulate, queryUpstreamTraffic } = config;
+  const { seed, force, simulate, queryUpstreamTraffic, queryProvenanceAuditObservations } = config;
 
   if (seed?.product) {
     store.seedProduct = async (productId, fixture) => {
@@ -475,6 +520,19 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
       await seed.creative_format!({ format_id: formatId, fixture: fixture ?? {} }, ctx);
     };
   }
+  if (seed?.measurement_catalog) {
+    store.seedMeasurementCatalog = async params => {
+      await seed.measurement_catalog!(
+        {
+          ...params,
+          vendor: params.vendor,
+          metrics: params.metrics,
+          fixture: params.fixture ?? {},
+        },
+        ctx
+      );
+    };
+  }
   if (seed?.buyer_agent) {
     store.seedBuyerAgent = async (agentUrl, fixture) => {
       const { agent_url: _ignored, ...safeFixture } = fixture ?? {};
@@ -506,6 +564,13 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
     store.forceTaskCompletion = (taskId, result) =>
       Promise.resolve(force.task_completion!({ task_id: taskId, result }, ctx));
   }
+  if (force?.creative_purge) {
+    store.forceCreativePurge = (creativeId, params) =>
+      Promise.resolve(force.creative_purge!({ creative_id: creativeId, ...params }, ctx));
+  }
+  if (force?.upstream_unavailable) {
+    store.forceUpstreamUnavailable = params => Promise.resolve(force.upstream_unavailable!(params, ctx));
+  }
   if (force?.audience_status) {
     store.forceAudienceStatus = (audienceId, status, reason) =>
       Promise.resolve(force.audience_status!({ audience_id: audienceId, status, reason }, ctx));
@@ -526,12 +591,15 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (queryUpstreamTraffic) {
     store.queryUpstreamTraffic = params => Promise.resolve(queryUpstreamTraffic(params, ctx));
   }
+  if (queryProvenanceAuditObservations) {
+    store.queryProvenanceAuditObservations = params => Promise.resolve(queryProvenanceAuditObservations(params, ctx));
+  }
 
   return store;
 }
 
-/** The set of force_* / simulate_* scenarios a config advertises via
- * `list_scenarios`. Seeds are intentionally NOT advertised per the spec. */
+/** The set of canonical scenarios a config advertises via `list_scenarios`.
+ * `list_scenarios` itself is implicit and excluded. */
 function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario[] {
   const out: ControllerScenario[] = [];
   if (config.force?.creative_status) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS);
@@ -540,14 +608,27 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.session_status) out.push(CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS);
   if (config.force?.create_media_buy_arm) out.push(CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM);
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
+  if (config.force?.creative_purge) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
+  if (config.seed?.product) out.push('seed_product');
+  if (config.seed?.pricing_option) out.push('seed_pricing_option');
+  if (config.seed?.creative) out.push('seed_creative');
+  if (config.seed?.plan) out.push('seed_plan');
+  if (config.seed?.media_buy) out.push('seed_media_buy');
+  if (config.seed?.creative_format) out.push('seed_creative_format');
+  if (config.seed?.measurement_catalog) out.push('seed_measurement_catalog');
   // Extension scenarios not yet in the schema cache's `ControllerScenario`
   // enum are still accepted by the dispatcher under the open-extension
   // `TOOL_INPUT_SHAPE.scenario: z.string()` pattern.
+  if (config.seed?.buyer_agent) out.push('seed_buyer_agent' as unknown as ControllerScenario);
   if (config.force?.audience_status) out.push('force_audience_status' as unknown as ControllerScenario);
   if (config.force?.catalog_item_status) out.push('force_catalog_item_status' as unknown as ControllerScenario);
   if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
+  if (config.queryProvenanceAuditObservations) {
+    out.push(CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS);
+  }
+  if (config.force?.upstream_unavailable) out.push(CONTROLLER_SCENARIOS.FORCE_UPSTREAM_UNAVAILABLE);
   return out;
 }
 

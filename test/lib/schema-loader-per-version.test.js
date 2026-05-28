@@ -26,6 +26,7 @@ const {
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
+const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
 
 // Synthetic fixture under a different MAJOR.MINOR so the loader's state map
 // keeps it separate from the real bundle.
@@ -72,9 +73,9 @@ describe('schema-loader per-version state', () => {
   });
 
   test('stable patch pins share a compiled validator (1.0.0 ≡ 1.0.1 ≡ 1.0 via fixture)', () => {
-    // 3.1.0-beta.5 is the only currently-shipped bundle (prerelease, kept exact)
+    // ADCP_VERSION is a prerelease bundle (kept exact)
     // so the stable-patch-collapse invariant is exercised against the synthetic
-    // 1.0 fixture this suite creates in before(). Pre-3.1.0-beta.5 this test
+    // 1.0 fixture this suite creates in before(). Pre-3.1 beta this test
     // used the (then-shipped) 3.0.x bundle directly.
     _resetValidationLoader();
     const v100 = getValidator('get_products', 'request', '1.0.0');
@@ -136,7 +137,7 @@ describe('schema-loader per-version state', () => {
 
   test('reset by stable patch pin clears the same bundle as the minor pin', () => {
     // Uses the synthetic 1.0 fixture (see top of file) because no stable 3.x
-    // bundle ships on 3.1.0-beta.5; the invariant under test is generic.
+    // bundle ships on the current 3.1 beta; the invariant under test is generic.
     _resetValidationLoader();
     const beforeReset = getValidator('get_products', 'request', '1.0');
     _resetValidationLoader('1.0.1'); // patch-pinned reset must clear the '1.0' bundle
@@ -145,7 +146,7 @@ describe('schema-loader per-version state', () => {
   });
 
   test('hasSchemaBundle returns true for shipped versions', () => {
-    // 3.1.0-beta.5 is a prerelease bundle (kept exact, no patch-collapse).
+    // ADCP_VERSION is a prerelease bundle (kept exact, no patch-collapse).
     // The stable-bundle-collapse behavior is covered against the synthetic
     // 1.0 fixture in the patch-pin-share test above; no stable 3.x bundle
     // ships today, so we assert directly against the shipped prerelease key.
@@ -186,7 +187,7 @@ describe('schema-loader per-version state', () => {
     );
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
     // Valid SemVer prereleases still pass through.
-    assert.strictEqual(resolveBundleKey('3.1.0-beta.5'), '3.1.0-beta.5');
+    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION);
     assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
@@ -208,17 +209,17 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 
-  test('3.1.0-beta.5 opt-in bundle compiles and accepts wholesale-feed request fields', () => {
+  test(`${ADCP_VERSION} opt-in bundle compiles and accepts wholesale-feed request fields`, () => {
     // Runtime guard for the 3.1-beta opt-in: a consumer pinning the beta
     // version gets a compiled validator that accepts the new wholesale-feed
     // request fields (if_wholesale_feed_version / if_pricing_version) the type
     // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
     // type-side worked but the wire-side could regress silently.
-    _resetValidationLoader('3.1.0-beta.5');
-    const v = getValidator('get_products', 'request', '3.1.0-beta.5');
+    _resetValidationLoader(ADCP_VERSION);
+    const v = getValidator('get_products', 'request', ADCP_VERSION);
     assert.ok(v, '3.1-beta get_products::request must compile from the opt-in bundle');
     const ok = v({
-      adcp_version: '3.1-beta.5',
+      adcp_version: ADCP_RELEASE_PRECISION,
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
       if_wholesale_feed_version: 'v2026-05-18T08:00:00Z-acme-rev412',
@@ -231,7 +232,7 @@ describe('schema-loader per-version state', () => {
     // The dependencies constraint (if_pricing_version requires if_wholesale_feed_version)
     // must still be enforced at runtime by Ajv after stripIfThenElse in codegen.
     const dependenciesViolation = v({
-      adcp_version: '3.1-beta.5',
+      adcp_version: ADCP_RELEASE_PRECISION,
       brief: 'wholesale catalog mirror probe',
       buying_mode: 'wholesale',
       if_pricing_version: 'v-pricing-only',
@@ -248,20 +249,20 @@ describe('schema-loader per-version state', () => {
     assert.ok(vRP, "release-precision '3.1-beta' must compile from the cached prerelease bundle");
     assert.strictEqual(
       vRP({
-        adcp_version: '3.1-beta.5',
+        adcp_version: ADCP_RELEASE_PRECISION,
         brief: 'wholesale catalog mirror probe',
         buying_mode: 'wholesale',
         if_wholesale_feed_version: 'v2026-05-18T08:00:00Z-acme-rev412',
       }),
       true,
-      "'3.1-beta' validator must accept the same wholesale-feed payload as '3.1.0-beta.5'"
+      `'3.1-beta' validator must accept the same wholesale-feed payload as ${ADCP_VERSION}`
     );
 
-    const syncAccounts = getValidator('sync_accounts', 'request', '3.1.0-beta.5');
+    const syncAccounts = getValidator('sync_accounts', 'request', ADCP_VERSION);
     assert.ok(syncAccounts, '3.1-beta sync_accounts::request must compile from the opt-in bundle');
     assert.strictEqual(
       syncAccounts({
-        adcp_version: '3.1-beta.5',
+        adcp_version: ADCP_RELEASE_PRECISION,
         idempotency_key: 'settings-notification-config',
         accounts: [
           {
@@ -300,7 +301,7 @@ describe('schema-loader per-version state', () => {
     // and flat-tree request schemas have distinct $ids (bundled has
     // `/schemas/<v>/bundled/...` vs flat `/schemas/<v>/...`), so no
     // AJV-side collision; this test pins that invariant. Targets the
-    // currently-shipped bundle (3.1.0-beta.5); on 3.0.x it pinned '3.0.1'.
+    // currently-shipped bundle (ADCP_VERSION); on 3.0.x it pinned '3.0.1'.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('create_media_buy', 'request', ADCP_VERSION);
     assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');

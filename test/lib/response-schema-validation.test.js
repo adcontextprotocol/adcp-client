@@ -47,6 +47,8 @@ const validMediaBuy = {
   status: 'active',
   currency: 'USD',
   total_budget: 1000,
+  confirmed_at: '2026-01-15T10:00:00Z',
+  revision: 1,
   packages: [{ package_id: 'pkg1' }],
 };
 
@@ -458,6 +460,7 @@ describe('validateResponseSchema', () => {
       'PreviewCreativeSingleResponseSchema',
       'PreviewCreativeVariantResponseSchema',
       'ProtocolResponseSchema',
+      'RegistryFeedResponseSchema',
       'TasksGetResponseSchema',
       'TasksListResponseSchema',
       'WebhookChallengeResponseSchema',
@@ -525,6 +528,8 @@ describe('validateResponseSchema', () => {
             status: 'totally_bogus_status',
             currency: 'USD',
             total_budget: 1000,
+            confirmed_at: '2026-01-15T10:00:00Z',
+            revision: 1,
             packages: [{ package_id: 'pkg1' }],
           },
         ],
@@ -581,6 +586,8 @@ describe('validateResponseSchema', () => {
             media_buy_id: 'mb1',
             status: 'totally_bogus_status',
             total_budget: 1000,
+            confirmed_at: '2026-01-15T10:00:00Z',
+            revision: 1,
             packages: [{ package_id: 'pkg1' }],
           },
         ],
@@ -648,6 +655,8 @@ describe('validateResponseSchema', () => {
   describe('union schema error reporting', () => {
     it('reports specific field errors for create_media_buy instead of (root): Invalid input', () => {
       const result = validateResponseSchema('create_media_buy', {
+        confirmed_at: '2026-01-15T10:00:00Z',
+        revision: 1,
         packages: [{ package_id: 'pkg1', budget: 1000 }],
       });
       assert.strictEqual(result.passed, false);

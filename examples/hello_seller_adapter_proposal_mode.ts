@@ -73,6 +73,8 @@ type Product = NonNullable<GetProductsResponse['products']>[number];
 type Proposal = NonNullable<GetProductsResponse['proposals']>[number];
 type Package = CreateMediaBuySuccess['packages'][number];
 
+const localBuyRevisions = new Map<string, number>();
+
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3007);
@@ -511,10 +513,13 @@ const sales: SalesCorePlatform<NetworkMeta> = {
         budget: perPackageBudget,
       });
     }
+    localBuyRevisions.set(order.order_id, 1);
     return {
       media_buy_id: order.order_id,
       status: 'completed',
       media_buy_status: 'pending_creatives',
+      confirmed_at: '2026-01-01T00:00:00Z',
+      revision: 1,
       packages,
     };
   },
@@ -524,9 +529,12 @@ const sales: SalesCorePlatform<NetworkMeta> = {
     // Production adapters branch on the patch shape and PATCH the
     // upstream order, returning `affected_packages[]` for the modified
     // package set.
+    const nextRevision = (localBuyRevisions.get(buyId) ?? 1) + 1;
+    localBuyRevisions.set(buyId, nextRevision);
     return {
       media_buy_id: buyId,
       status: 'active',
+      revision: nextRevision,
     };
   },
 

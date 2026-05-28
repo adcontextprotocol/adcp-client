@@ -346,6 +346,14 @@ function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPl
 // dispatcher. Two patterns work; both are exercised below as
 // regression locks.
 
+const _createBuyPayload = () => ({
+  media_buy_id: 'x',
+  confirmed_at: '2026-01-01T00:00:00Z',
+  revision: 1,
+  packages: [],
+});
+const _updateBuyPayload = () => ({ media_buy_id: 'x', revision: 1 });
+
 // Pattern A — explicit field annotation. The contextual type from the
 // `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>` annotation
 // flows into the literal; the closed shape is enforced at the
@@ -353,8 +361,8 @@ function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPl
 function _sales_guaranteed_field_annotation_pattern() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
-    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
-    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    createMediaBuy: async () => _createBuyPayload(),
+    updateMediaBuy: async () => _updateBuyPayload(),
     getMediaBuyDelivery: async () => ({
       status: 'completed' as const,
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -378,8 +386,8 @@ function _sales_guaranteed_spread_helpers_pattern() {
   const sales = {
     ...defineSalesCorePlatform<_SocialMeta>({
       getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
-      createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
-      updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+      createMediaBuy: async () => _createBuyPayload(),
+      updateMediaBuy: async () => _updateBuyPayload(),
       getMediaBuyDelivery: async () => ({
         status: 'completed' as const,
         reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -404,8 +412,8 @@ function _sales_guaranteed_spread_helpers_pattern() {
 function _sales_platform_payload_returns_do_not_require_protocol_status() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async () => ({ products: [], cache_scope: 'account' }),
-    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
-    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    createMediaBuy: async () => _createBuyPayload(),
+    updateMediaBuy: async () => _updateBuyPayload(),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
@@ -420,8 +428,8 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
 function _sales_platform_handler_results_accept_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async () => ({ products: [], cache_scope: 'account' }),
-    createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'x', packages: [] })),
-    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => _createBuyPayload()),
+    updateMediaBuy: async () => _updateBuyPayload(),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
@@ -430,7 +438,7 @@ function _sales_platform_handler_results_accept_task_handoff() {
     syncCreatives: async (_creatives, ctx) => ctx.handoffToTask(async () => []),
   };
 
-  const createResult: CreateMediaBuyHandlerResult = { media_buy_id: 'x', packages: [] };
+  const createResult: CreateMediaBuyHandlerResult = _createBuyPayload();
   const syncResult: SyncCreativesHandlerResult = [];
   void createResult;
   void syncResult;
@@ -470,8 +478,8 @@ function _adopter_result_payload_aliases_do_not_require_protocol_status(): _Adop
   const payloads: _AdopterResultPayloadAliases = [
     _ok({ products: [], cache_scope: 'account' }),
     _ok({ formats: [] }),
-    _ok({ media_buy_id: 'x', packages: [] }),
-    _ok({ media_buy_id: 'x' }),
+    _ok(_createBuyPayload()),
+    _ok(_updateBuyPayload()),
     _ok({ creatives: [] }),
     _ok({ event_sources: [] }),
     _ok({ accounts: [] }),
@@ -488,7 +496,7 @@ function _adopter_result_payload_aliases_do_not_require_protocol_status(): _Adop
     _ok({ rights: [] }),
     _ok({ rights_id: 'rights_1', terms: rightsTerms }),
     _ok({ approval_status: 'approved', rights_id: 'rights_1' }),
-    _ok({ media_buy_id: 'x', packages: [] }),
+    _ok(_createBuyPayload()),
     _ok([]),
   ];
   return payloads;
@@ -509,6 +517,8 @@ function _server_payload_preserves_domain_status_fields(): void {
   type CreateMediaBuySuccess = import('../../types/tools.generated').CreateMediaBuySuccess;
   const payload: ServerPayload<CreateMediaBuySuccess> = {
     media_buy_id: 'x',
+    confirmed_at: '2026-01-01T00:00:00Z',
+    revision: 1,
     packages: [],
     status: 'active',
   };
@@ -554,6 +564,8 @@ function _server_payload_strips_write_only_notification_credentials(): void {
 
   const createBuy: CreateMediaBuyPayload = {
     media_buy_id: 'mb_1',
+    confirmed_at: '2026-01-01T00:00:00Z',
+    revision: 1,
     packages: [],
     invoice_recipient: { legal_name: 'Acme Inc.' },
     account: {
@@ -619,7 +631,7 @@ function _operational_platform_payload_returns_do_not_require_protocol_status():
   return {
     platformId: 'test',
     extractContext: async () => ({ accessToken: undefined, advertiserId: 'adv_1' }),
-    updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb_1', revision: 1 }),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
@@ -637,8 +649,8 @@ function _operational_platform_payload_returns_do_not_require_protocol_status():
 function _define_sales_platform_widens_post_1341() {
   const sales = defineSalesPlatform<_SocialMeta>({
     getProducts: async () => ({ status: 'completed' as const, products: [], cache_scope: 'public' as const }),
-    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
-    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    createMediaBuy: async () => _createBuyPayload(),
+    updateMediaBuy: async () => _updateBuyPayload(),
     getMediaBuyDelivery: async () => ({
       status: 'completed' as const,
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },

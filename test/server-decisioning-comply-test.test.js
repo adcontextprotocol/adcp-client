@@ -145,8 +145,9 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.ok(scenarios.includes('force_creative_status'));
     assert.ok(scenarios.includes('force_media_buy_status'));
     assert.ok(scenarios.includes('simulate_delivery'));
+    assert.ok(scenarios.includes('seed_product'), 'auto-seed product adapter should be advertised');
+    assert.ok(scenarios.includes('seed_pricing_option'), 'auto-seed pricing adapter should be advertised');
     assert.ok(!scenarios.includes('force_account_status'), 'force_account_status was not declared');
-    assert.ok(!scenarios.includes('seed_product'), 'seeds are intentionally not advertised per spec');
   });
 
   it('does not register comply_test_controller when complyTest is omitted', async () => {
@@ -264,6 +265,8 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.ok(ct.scenarios.includes('force_creative_status'));
     assert.ok(ct.scenarios.includes('force_media_buy_status'));
     assert.ok(ct.scenarios.includes('simulate_delivery'));
+    assert.ok(ct.scenarios.includes('seed_product'), 'auto-seed product adapter should be projected');
+    assert.ok(ct.scenarios.includes('seed_pricing_option'), 'auto-seed pricing adapter should be projected');
     assert.ok(!ct.scenarios.includes('force_account_status'), 'unwired scenario must not appear');
 
     const listed = await listTools(server);

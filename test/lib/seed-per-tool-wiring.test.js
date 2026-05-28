@@ -178,6 +178,9 @@ describe('createAdcpServer — getSeededMediaBuys wiring (get_media_buys)', () =
       res.structuredContent.media_buys.map(b => b.media_buy_id),
       ['h-1', 's-1', 's-2']
     );
+    const seeded = res.structuredContent.media_buys.find(b => b.media_buy_id === 's-1');
+    assert.equal(seeded.confirmed_at, null);
+    assert.equal(seeded.revision, 1);
   });
 
   it('seeded wins on media_buy_id collision', async () => {

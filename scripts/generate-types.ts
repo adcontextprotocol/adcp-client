@@ -95,6 +95,8 @@ function loadCachedSchema(schemaRef: string): any {
       schema = makeFieldsOptional(schema, BACKWARD_COMPAT_OPTIONAL_FIELDS[schemaName]);
     }
 
+    schema = applyCodegenSchemaWorkarounds(schema, schemaName);
+
     return schema;
   } catch (error) {
     console.warn(`⚠️  Failed to load cached schema ${schemaRef}:`, error.message);
@@ -886,6 +888,10 @@ const DEPRECATED_SCHEMA_FIELDS: Record<string, string[]> = {
 //   2. Field did not exist in the corresponding v2 TypeScript type
 //   3. Real agents running v2 implementations will not send the field
 const BACKWARD_COMPAT_OPTIONAL_FIELDS: Record<string, string[]> = {
+  // create_media_buy/update_media_buy: confirmed_at/revision are beta.7
+  // additions. Older v3 sellers may still emit the legacy success shape.
+  CreateMediaBuyResponse: ['confirmed_at', 'revision'],
+  UpdateMediaBuyResponse: ['revision'],
   // get_media_buy_delivery: by_package items
   // v2 by_package only had {package_id, buyer_ref?, pacing_index?} + DeliveryMetrics.
   // pricing_model, rate, currency, and all breakdown ID fields are v3 additions.
@@ -909,6 +915,9 @@ const BACKWARD_COMPAT_OPTIONAL_FIELDS: Record<string, string[]> = {
   ],
   // get_media_buys: media_buy items
   // total_budget and approval_status are new required fields in v3.
+  // beta.7 confirmed_at/revision are handled by applyCodegenSchemaWorkarounds
+  // because they are only compat-optional on the media_buys[] item itself;
+  // history[].revision must remain required.
   GetMediaBuysResponse: [
     'total_budget', // media_buys[].total_budget - new in v3
     'approval_status', // media_buys[].packages[].creative_approvals[].approval_status - new in v3
@@ -992,6 +1001,62 @@ function makeFieldsOptional(schema: any, fieldsToMakeOptional: string[]): any {
   }
 
   return cleaned;
+}
+
+function removeRequiredFields(schema: any, fieldsToMakeOptional: string[]): any {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const cleaned = { ...schema };
+  if (Array.isArray(cleaned.required)) {
+    cleaned.required = cleaned.required.filter((r: string) => !fieldsToMakeOptional.includes(r));
+  }
+  return cleaned;
+}
+
+/**
+ * Targeted schema normalizations for the TypeScript/Zod emit path.
+ *
+ * These do not edit the cached JSON schemas and should only remove constraints
+ * the TS emitter cannot model. Runtime validators still load the original
+ * schemas, so conditional invariants remain enforced outside generated types.
+ */
+export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): any {
+  if (!schema || typeof schema !== 'object') return schema;
+
+  if (schemaName === 'GetMediaBuysResponse') {
+    const item = schema.properties?.media_buys?.items;
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const cleanedItem = {
+        ...removeRequiredFields(item, ['confirmed_at', 'revision']),
+        title: item.title || 'GetMediaBuysResponseMediaBuy',
+      };
+      // beta.7 adds an item-level if/then guard for provisional buys. jsts
+      // collapses the entire inline item to `{[k: string]: unknown}` when that
+      // conditional remains in `allOf`; dropping it keeps the structural fields
+      // visible to generated TS/Zod while Ajv still enforces the real schema.
+      if (
+        Array.isArray(cleanedItem.allOf) &&
+        cleanedItem.allOf.every((member: any) => {
+          if (!member || typeof member !== 'object' || Array.isArray(member)) return false;
+          const keys = Object.keys(member);
+          return keys.length > 0 && keys.every(k => k === '$comment' || k === 'if' || k === 'then' || k === 'else');
+        })
+      ) {
+        delete cleanedItem.allOf;
+      }
+      return {
+        ...schema,
+        properties: {
+          ...schema.properties,
+          media_buys: {
+            ...schema.properties.media_buys,
+            items: cleanedItem,
+          },
+        },
+      };
+    }
+  }
+
+  return schema;
 }
 
 // Load official AdCP tools from cached schema index
@@ -1789,6 +1854,7 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'ManifestCanonicalFormatKind1', base: 'ManifestCanonicalFormatKind' },
   { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
   { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
+  { numbered: 'CreateMediaBuySubmitted1', base: 'CreateMediaBuySubmitted' },
   ...Array.from({ length: 6 }, (_, index) => index + 2).flatMap(suffix => [
     { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
     { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },
@@ -2383,6 +2449,7 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
       if (BACKWARD_COMPAT_OPTIONAL_FIELDS[pascalName]) {
         schema = makeFieldsOptional(schema, BACKWARD_COMPAT_OPTIONAL_FIELDS[pascalName]);
       }
+      schema = applyCodegenSchemaWorkarounds(schema, pascalName);
 
       const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
       const types = await compile(strictSchema, typeName, {

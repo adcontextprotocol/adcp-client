@@ -253,14 +253,17 @@ const controller = createComplyController({
     product:  (params) => productRepo.upsert(params.product_id, params.fixture),
     creative: (params) => creativeRepo.upsert(params.creative_id, params.fixture),
     media_buy: (params) => mediaBuyRepo.upsert(params.media_buy_id, params.fixture),
+    measurement_catalog: (params) => measurementRepo.seed(params.vendor, params.metrics, params.fixture),
   },
   force: {
     creative_status:  (params) => creativeRepo.transition(params.creative_id, params.status),
+    creative_purge:   (params) => creativeRepo.purge(params.creative_id, params),
     media_buy_status: (params) => mediaBuyRepo.transition(params.media_buy_id, params.status),
   },
   simulate: {
     delivery: (params) => deliveryRepo.simulate(params),   // needed for delivery_reporting
   },
+  queryProvenanceAuditObservations: (params) => auditRepo.observationsForCreative(params.creative_id),
 });
 
 controller.register(server);

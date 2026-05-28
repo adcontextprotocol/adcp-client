@@ -197,7 +197,7 @@ const upstream = {
   // walled-garden custom-audience two-step flow.
   async createAudience(
     advertiserId: string,
-    a: { audience_id: string; name: string; description?: string }
+    a: { audience_id: string; name: string; description?: string; source_type: string }
   ): Promise<{ audience_id: string; status: string }> {
     const r = await http.post<{ audience_id: string; status: string }>(
       `/v1.3/advertiser/${encodeURIComponent(advertiserId)}/custom_audience/create`,
@@ -210,7 +210,7 @@ const upstream = {
   },
   async uploadAudienceMembers(
     advertiserId: string,
-    body: { audience_id: string; member_count: number }
+    body: { audience_id: string; identifier_type: string; members: string[] }
   ): Promise<void> {
     await http.post(`/v1.3/advertiser/${encodeURIComponent(advertiserId)}/custom_audience/upload`, body);
   },
@@ -607,14 +607,38 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
           const created = await upstream.createAudience(advertiserId, {
             audience_id: a.audience_id ?? '',
             name: a.name ?? a.audience_id ?? 'audience',
+            source_type: 'customer_file',
             ...(a.description !== undefined && { description: a.description }),
           });
           // Two-step pattern — create then upload. Mock's body shape is
-          // contrived (member_count int instead of hashed members); production
-          // sends actual hashed identifiers.
+          // simplified but still sends the buyer-provided hashed identifiers.
+          const addRows = ((a as unknown as { add?: Array<Record<string, unknown>> }).add ?? []) as Array<
+            Record<string, unknown>
+          >;
+          const members: string[] = [];
+          let identifierType = 'hashed_email_sha256';
+          for (const row of addRows) {
+            if (typeof row['hashed_email'] === 'string') {
+              members.push(row['hashed_email']);
+              identifierType = 'hashed_email_sha256';
+            } else if (typeof row['hashed_phone'] === 'string') {
+              members.push(row['hashed_phone']);
+              identifierType = 'hashed_phone_sha256';
+            } else if (typeof row['mobile_advertising_id'] === 'string') {
+              members.push(row['mobile_advertising_id']);
+              identifierType = 'mobile_advertising_id';
+            }
+          }
+          if (members.length === 0) {
+            throw new AdcpError('INVALID_REQUEST', {
+              message: 'sync_audiences requires at least one supported identifier in add[]',
+              field: 'audiences.add',
+            });
+          }
           await upstream.uploadAudienceMembers(advertiserId, {
             audience_id: created.audience_id,
-            member_count: 0,
+            identifier_type: identifierType,
+            members,
           });
           // Pull a reach estimate so the buyer-facing row can surface
           // `matched_count` / `effective_match_rate` per the spec. Real

@@ -115,12 +115,20 @@ void extractAdcpErrorFromMcp;
 void extractAdcpErrorFromTransport;
 void createAdcpServerFromPlatform;
 
+const _createMediaBuyPayload: CreateMediaBuyPayload = {
+  media_buy_id: 'mb_1',
+  confirmed_at: '2026-01-01T00:00:00Z',
+  revision: 1,
+  packages: [],
+};
+const _updateMediaBuyPayload: UpdateMediaBuyPayload = { media_buy_id: 'mb_1', revision: 1 };
+
 const _legacyServer = createLegacyAdcpServer({
   name: 'packed-adopter',
   version: '1.0.0',
   mediaBuy: {
     getProducts: async () => ({ products: [], cache_scope: 'account' }),
-    createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
+    createMediaBuy: async () => _createMediaBuyPayload,
     getMediaBuys: async () => ({ media_buys: [] }),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -132,8 +140,8 @@ void _legacyServer;
 
 const _sales: SalesCorePlatform & SalesIngestionPlatform = {
   getProducts: async () => ({ products: [], cache_scope: 'account' }),
-  createMediaBuy: async () => ({ media_buy_id: 'mb_1', packages: [] }),
-  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+  createMediaBuy: async () => _createMediaBuyPayload,
+  updateMediaBuy: async () => _updateMediaBuyPayload,
   getMediaBuys: async () => ({ media_buys: [] }),
   getMediaBuyDelivery: async () => ({
     reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -146,8 +154,8 @@ void _sales;
 const _salesWithHandoff: SalesCorePlatform & SalesIngestionPlatform = {
   getProducts: async () => ({ products: [], cache_scope: 'account' }),
   createMediaBuy: async (_req, ctx) =>
-    ctx.handoffToTask(async () => ({ media_buy_id: 'mb_1', packages: [] })),
-  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+    ctx.handoffToTask(async () => _createMediaBuyPayload),
+  updateMediaBuy: async () => _updateMediaBuyPayload,
   getMediaBuys: async () => ({ media_buys: [] }),
   getMediaBuyDelivery: async () => ({
     reporting_period: { start: '2026-01-01', end: '2026-01-31' },
@@ -190,8 +198,8 @@ const _payloadResults: [
 ] = [
   ok({ products: [], cache_scope: 'account' }),
   ok({ formats: [] }),
-  ok({ media_buy_id: 'mb_1', packages: [] }),
-  ok({ media_buy_id: 'mb_1' }),
+  ok(_createMediaBuyPayload),
+  ok(_updateMediaBuyPayload),
   ok({ creatives: [] }),
   ok({ event_sources: [] }),
   ok({ accounts: [] }),
@@ -208,7 +216,7 @@ const _payloadResults: [
   ok({ rights: [] }),
   ok({ rights_id: 'rights_1', terms: rightsTerms }),
   ok({ approval_status: 'approved', rights_id: 'rights_1' }),
-  ok({ media_buy_id: 'mb_1', packages: [] }),
+  ok(_createMediaBuyPayload),
   ok([]),
 ];
 void _payloadResults;
@@ -258,7 +266,7 @@ interface OpsCtx extends OperationalContext {
 const _ops: OperationalPlatform<OpsCtx> = defineOperationalPlatform<OpsCtx>({
   platformId: 'packed-adopter',
   extractContext: async () => ({ accessToken: undefined, advertiserId: 'adv_1' }),
-  updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+  updateMediaBuy: async () => _updateMediaBuyPayload,
   getMediaBuyDelivery: async () => ({
     reporting_period: { start: '2026-01-01', end: '2026-01-31' },
     media_buy_deliveries: [],
@@ -287,6 +295,8 @@ void _siPayload;
 
 const _serverPayload: ServerPayload<CreateMediaBuySuccess> = {
   media_buy_id: 'mb_1',
+  confirmed_at: '2026-01-01T00:00:00Z',
+  revision: 1,
   packages: [],
   status: 'active',
 };
@@ -296,7 +306,7 @@ const _rootPayloadAlias: RootCreateMediaBuyPayload = _serverPayload;
 const _typesPayloadAlias: TypesCreateMediaBuyPayload = _rootPayloadAlias;
 const _rootGetProductsPayload: RootGetProductsPayload = { products: [], cache_scope: 'account' };
 const _typesGetProductsPayload: TypesGetProductsPayload = _rootGetProductsPayload;
-const _rootUpdatePayload: RootUpdateMediaBuyPayload = { media_buy_id: 'mb_1' };
+const _rootUpdatePayload: RootUpdateMediaBuyPayload = _updateMediaBuyPayload;
 const _typesUpdatePayload: TypesUpdateMediaBuyPayload = _rootUpdatePayload;
 const _slaWindow: SLAWindow = { response_max: 'PT1H', completion_max: 'P1D' };
 const _legacySlaWindow: SlaWindow = _slaWindow;

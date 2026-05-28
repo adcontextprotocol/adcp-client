@@ -257,6 +257,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
           media_buy_id: buyId,
           status: 'pending_creatives',
           confirmed_at: new Date().toISOString(),
+          revision: 1,
           packages: [],
         };
         this.mediaBuys.set(buyId, buy);
@@ -275,6 +276,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
             media_buy_id: buyId,
             status: 'active',
             confirmed_at: new Date().toISOString(),
+            revision: 1,
             packages: [],
           };
           this.mediaBuys.set(buyId, buy);
@@ -294,7 +296,8 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
       }
       if (patch.paused === true) existing.status = 'paused';
       if (patch.paused === false && existing.status === 'paused') existing.status = 'active';
-      return { media_buy_id: existing.media_buy_id, status: existing.status };
+      existing.revision = (existing.revision ?? 0) + 1;
+      return { media_buy_id: existing.media_buy_id, status: existing.status, revision: existing.revision };
     },
 
     syncCreatives: SHARED_SYNC_CREATIVES,

@@ -117,5 +117,72 @@ runHelloAdapterGates({
         assert.equal(recoveredRow?.billing, 'operator');
       },
     },
+    {
+      label: 'directly exercises social ingestion upstream routes',
+      run: async ({ callTool }) => {
+        const account = {
+          brand: { domain: 'acmeoutdoor.example' },
+          operator: 'pinnacle-agency.example',
+          sandbox: true,
+        };
+
+        const audience = await callTool('sync_audiences', {
+          idempotency_key: 'hello-social-sync-audience',
+          account,
+          audiences: [
+            {
+              audience_id: 'hello_social_audience_001',
+              name: 'Hello Social Audience',
+              add: [
+                {
+                  external_id: 'hello-social-user-001',
+                  hashed_email: 'a000000000000000000000000000000000000000000000000000000000000000',
+                },
+              ],
+            },
+          ],
+        });
+        assert.equal(audience?.structuredContent?.audiences?.[0]?.action, 'created', JSON.stringify(audience));
+
+        const creative = await callTool('sync_creatives', {
+          idempotency_key: 'hello-social-sync-creative',
+          account,
+          creatives: [
+            {
+              creative_id: 'hello_social_creative_001',
+              name: 'Hello Social Creative',
+              format_id: { agent_url: 'https://social-ads.example.com', id: 'native_feed' },
+              assets: {
+                headline: { asset_type: 'text', content: 'Trail Pro 3000' },
+                image: {
+                  asset_type: 'image',
+                  url: 'https://cdn.example.com/trail-pro.png',
+                  width: 1200,
+                  height: 628,
+                  mime_type: 'image/png',
+                },
+                click_url: { asset_type: 'url', url: 'https://acmeoutdoor.example/trail-pro' },
+              },
+            },
+          ],
+        });
+        assert.equal(creative?.structuredContent?.creatives?.[0]?.action, 'created', JSON.stringify(creative));
+
+        const catalog = await callTool('sync_catalogs', {
+          idempotency_key: 'hello-social-sync-catalog',
+          account,
+          catalogs: [
+            {
+              catalog_id: 'hello_social_catalog_001',
+              type: 'product',
+              feed_format: 'custom',
+              name: 'Hello Social Catalog',
+              items: [{ item_id: 'sku-001', title: 'Trail Pro 3000' }],
+            },
+          ],
+        });
+        assert.equal(catalog?.structuredContent?.catalogs?.[0]?.action, 'created', JSON.stringify(catalog));
+      },
+    },
   ],
 });

@@ -215,7 +215,7 @@ ProtocolClient.callTool(
     brief: 'Return a small representative sample of available advertising products',
     context: { correlation_id: 'strict-adcp-3-0--sdk-probe-get-products' },
   },
-  { adcpVersion: '3.1.0-beta.5', versionEnvelope: 'major-only' }
+  { adcpVersion: '3.1.0-beta.7', versionEnvelope: 'major-only' }
 )
   .then(response => {
     const serialized = JSON.stringify(response);
@@ -260,9 +260,9 @@ async function assertRejected(tool, field, value) {
 }
 
 Promise.all([
-  assertRejected('get_adcp_capabilities', 'adcp_version', '3.1.0-beta.5'),
+  assertRejected('get_adcp_capabilities', 'adcp_version', '3.1.0-beta.7'),
   assertRejected('get_adcp_capabilities', 'definitely_not_adcp_3_0', true),
-  assertRejected('get_products', 'adcp_version', '3.1.0-beta.5'),
+  assertRejected('get_products', 'adcp_version', '3.1.0-beta.7'),
   assertRejected('get_products', 'get_products_extra_field', true),
 ]).catch(err => {
   console.error(`[strict-3-0-reference-seller] strict proxy probe failed: ${err.message}`);
