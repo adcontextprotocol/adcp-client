@@ -97,6 +97,7 @@ import type {
 } from '@adcp/sdk/types';
 import type {
   AccountReference,
+  FormatSchemaReferenceResult,
   CreateMediaBuyPayload as RootCreateMediaBuyPayload,
   GetProductsPayload as RootGetProductsPayload,
   MediaBuyAvailableAction,
@@ -104,6 +105,7 @@ import type {
   SlaWindow,
   UpdateMediaBuyPayload as RootUpdateMediaBuyPayload,
 } from '@adcp/sdk';
+import { createCanonicalReferenceResolver as createSubpathCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';
 import { customToolFor, customToolForSchema, TOOL_INPUT_SCHEMAS, TOOL_INPUT_SHAPES, TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
 
 declare const _server: AdcpServer;
@@ -309,6 +311,20 @@ void _typesUpdatePayload;
 void _availableAction;
 // @ts-expect-error named payload aliases must not expose SDK-owned protocol envelope fields
 void _rootPayloadAlias.task_id;
+
+const _canonicalResolver = createSubpathCanonicalReferenceResolver();
+const _formatSchemaResult = null as unknown as FormatSchemaReferenceResult;
+if (_formatSchemaResult.ok) {
+  const schemaDraft: 'draft-07' | '2020-12' = _formatSchemaResult.schemaMeta.draft;
+  void schemaDraft;
+} else {
+  const retryable: boolean = _formatSchemaResult.error.retryable;
+  void retryable;
+}
+void _canonicalResolver.resolvePlatformExtensions({
+  uri: 'https://publisher.example-ad.com/extensions.json',
+  digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+});
 
 // @ts-expect-error ServerPayload must preserve required domain fields.
 const _missingRequiredDomainField: ServerPayload<CreateMediaBuySuccess> = { packages: [] };
