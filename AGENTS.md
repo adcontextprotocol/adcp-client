@@ -206,6 +206,31 @@ npm run changeset          # Create changeset for changes
 - `package.json` version = **Library version** (managed by changesets)
 - `src/lib/version.ts` ADCP_VERSION = **AdCP schema version** (can differ from library version)
 
+### Commit and PR Titles
+
+**🚨 Commitlint is CI-gated on every PR**. Before opening or updating a PR, make sure both the PR title and every commit message use Conventional Commits.
+
+- Use one of the allowed types from `commitlint.config.js`: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
+- Format commit messages and PR titles as `type(scope): subject` or `type: subject`
+- Do **NOT** prefix PR titles with agent/tool labels like `[Codex]`, `[Claude]`, `Codex:`, or `Claude:`
+- Keep the header at 120 characters or less
+
+Good examples:
+
+```bash
+fix: handle MCP connection timeouts gracefully
+docs(agents): clarify commitlint requirements
+test: add media buy lifecycle regression coverage
+```
+
+Validate before submitting:
+
+```bash
+node .github/scripts/check-pr-title.cjs "fix: concise PR title"
+echo "fix: concise PR title" | npx commitlint --config commitlint.config.js
+npx commitlint --from origin/main --to HEAD --verbose
+```
+
 ### Schema Generation Workflow
 
 Library types auto-generated from AdCP schemas:
