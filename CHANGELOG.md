@@ -1,5 +1,39 @@
 # Changelog
 
+## 8.1.0-beta.15
+
+### Minor Changes
+
+- 476e452: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-beta.7.
+
+  Regenerates TypeScript/Zod schemas, docs, manifest-derived constants, wire
+  field allowlists, and the 3.1 beta opt-in type surface from the beta.7
+  protocol bundle. The test-controller and `createComplyController` helpers now
+  recognize and advertise the new beta.7 compliance controller scenarios
+  (`force_creative_purge`, `seed_measurement_catalog`,
+  `query_provenance_audit_observations`), auto-seeded product/pricing fixtures
+  are projected through `compliance_testing.scenarios`, and the beta sync wrapper
+  preserves protocol-managed artifacts when the beta is also the primary pin.
+
+- dceec03: Add brand JSON asset mapping helpers for validating PDF/model extraction output, applying approved logo mappings, selecting logos by slot, checking slot coverage, and saving updated brand manifests through the registry client.
+- 743946b: Add typed registry helpers for community mirror adagents catalogs. `buildCommunityMirrorAdagents()` and `RegistryClient.createCommunityMirrorAdagents()` emit catalog-only descriptors with `authorized_agents: []`, while `CreateAdagentsRequest` now exposes typed `formats`, `placements`, and `placement_tags` shapes for local adopter code.
+- a06542b: Emit the canonical `signed_requests_specialism_deprecated` runner notice when
+  agents still advertise the deprecated `signed-requests` specialism on the
+  signed-requests storyboard.
+
+  The notice is a counter-neutral deprecation advisory with
+  `capability_path: "specialisms"` and `effective_version: "4.0"`. This widens
+  the public `NoticeCode` union so dashboards and CI gates can handle the new
+  canonical code explicitly.
+
+### Patch Changes
+
+- 8353d64: Reject catastrophic `format_schema` regex patterns in canonical reference resolution with `invalid_schema` / `budget_exceeded`.
+- 766cf27: Add a storyboard-level `preferred_attestation_mode` hint for upstream traffic
+  controller prefetches.
+- 2ed0dd1: Tighten sync_accounts commercial filtering diagnostics and replay caching for
+  stable rejected rows.
+
 ## 8.1.0-beta.14
 
 ### Minor Changes
