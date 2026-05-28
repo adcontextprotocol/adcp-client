@@ -45,13 +45,13 @@ The API is structured and non-throwing. Branch on `result.ok` first, then `resul
 
 Successful results include `document`, `body`, `text`, `httpStatus`, `contentType`, `cacheKey`, and `fromCache`. `resolveFormatSchema()` additionally returns `schemaMeta` with draft, `$ref` count, max `$ref` depth observed, keyword count, and compile time.
 
-Failure statuses are coarse buckets: `unresolvable`, `invalid_document`, `invalid_schema`, `digest_mismatch`, `blocked_unsafe_url`, and `invalid_ref`. The more precise field is `error.code`, including `http_error`, `network_error`, `invalid_json`, `external_ref_unpinned`, `ref_sandbox_violation`, `keyword_limit_exceeded`, and `digest_mismatch`.
+Failure statuses are coarse buckets: `unresolvable`, `invalid_document`, `invalid_schema`, `digest_mismatch`, `blocked_unsafe_url`, and `invalid_ref`. The more precise field is `error.code`, including `http_error`, `network_error`, `invalid_json`, `external_ref_unpinned`, `ref_sandbox_violation`, `keyword_limit_exceeded`, `budget_exceeded`, and `digest_mismatch`.
 
 Transient network and 5xx failures return `unresolvable` with `error.retryable: true`. Digest mismatch returns `digest_mismatch` with `error.securitySignal: 'substitution_attack'`.
 
 ## Format Schemas
 
-`resolveFormatSchema()` requires an explicit `$schema` and validates the fetched document as Draft-07 or Draft 2020-12 JSON Schema. It sandboxes `$ref` to intra-document, same-origin, or trusted Agentic Advertising mirror refs, rejects `file://`, `http://`, private-network and metadata refs by default, and enforces `$ref` depth/count plus keyword and compile-time bounds.
+`resolveFormatSchema()` requires an explicit `$schema` and validates the fetched document as Draft-07 or Draft 2020-12 JSON Schema. It sandboxes `$ref` to intra-document, same-origin, or trusted Agentic Advertising mirror refs, rejects `file://`, `http://`, private-network and metadata refs by default, and enforces `$ref` depth/count plus keyword, regex-safety, and compile-time bounds. Regexes with known catastrophic shapes, such as nested unbounded quantifiers in a repeated group, fail as `invalid_schema` with `error.code: 'budget_exceeded'`.
 
 External `$ref` bodies are mutable unless pinned. The canonical resolver therefore requires `externalRefDigests` for every external `$ref` URI. Missing pins return `invalid_schema` with `error.code: 'external_ref_unpinned'`; mismatched pins return `digest_mismatch`. Successful external refs share the same policy-scoped cache as root canonical references.
 

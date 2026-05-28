@@ -263,6 +263,100 @@ describe('canonical reference resolver', () => {
     assert.strictEqual(result.error.code, 'invalid_json_schema');
   });
 
+  test('rejects the catastrophic-regex fetch-contract fixture as budget_exceeded', async () => {
+    const fixture = {
+      test_id: 'fetch-contract-neg-09-catastrophic-regex',
+      category: 'compile_budget',
+      expected_outcome: 'fail:budget_exceeded',
+      setup: {
+        response_body: {
+          $schema: 'http://json-schema.org/draft-07/schema#',
+          $id: '/schemas/test/bad-regex.json',
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              pattern: '^(a+)+$',
+            },
+          },
+        },
+      },
+    };
+    const body = jsonBody(fixture.setup.response_body);
+    routes.set('/catastrophic-regex.json', (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/schema+json' });
+      res.end(body);
+    });
+
+    const result = await resolveFormatSchemaReference(ref(baseUrl, '/catastrophic-regex.json', body), unsafeLocal);
+
+    assert.strictEqual(fixture.expected_outcome, 'fail:budget_exceeded');
+    assert.strictEqual(result.status, 'invalid_schema');
+    assert.strictEqual(result.error.code, 'budget_exceeded');
+    assert.strictEqual(result.error.retryable, false);
+    assert.strictEqual(result.error.details.location, '/properties/input/pattern');
+    assert.strictEqual(result.error.details.reason, 'nested_unbounded_quantifier');
+    assert.strictEqual(result.error.details.patternPreview, '^(a+)+$');
+    assert.strictEqual(result.error.details.patternLength, '^(a+)+$'.length);
+    assert.strictEqual(result.error.details.patternSha256, createHash('sha256').update('^(a+)+$').digest('hex'));
+    assert.strictEqual(result.error.details.pattern, undefined);
+  });
+
+  test('rejects ambiguous repeated character-class and bounded-repeat regexes', async () => {
+    const cases = [
+      { route: '/ambiguous-alternation-regex.json', pattern: '^(?:[0-9]|[0-9][0-9])+$' },
+      { route: '/bounded-repeat-regex.json', pattern: '^(?:[0-9]{1,2})+$' },
+    ];
+
+    for (const item of cases) {
+      const body = jsonBody({
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        type: 'object',
+        properties: {
+          input: {
+            type: 'string',
+            pattern: item.pattern,
+          },
+        },
+      });
+      routes.set(item.route, (_req, res) => {
+        res.writeHead(200, { 'content-type': 'application/schema+json' });
+        res.end(body);
+      });
+
+      const result = await resolveFormatSchemaReference(ref(baseUrl, item.route, body), unsafeLocal);
+
+      assert.strictEqual(result.status, 'invalid_schema');
+      assert.strictEqual(result.error.code, 'budget_exceeded');
+      assert.strictEqual(result.error.details.location, '/properties/input/pattern');
+      assert.strictEqual(result.error.details.patternPreview, item.pattern);
+      assert.strictEqual(result.error.details.pattern, undefined);
+    }
+  });
+
+  test('ignores annotation examples and accepts delimiter-separated regex patterns', async () => {
+    const body = jsonBody({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      examples: [{ pattern: '^(a+)+$' }],
+      default: { pattern: '^(a+)+$' },
+      properties: {
+        csv: {
+          type: 'string',
+          pattern: '^(?:[^,]+,)*[^,]+$',
+        },
+      },
+    });
+    routes.set('/safe-regex.json', (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/schema+json' });
+      res.end(body);
+    });
+
+    const result = await resolveFormatSchemaReference(ref(baseUrl, '/safe-regex.json', body), unsafeLocal);
+
+    assert.strictEqual(result.status, 'resolved');
+  });
+
   test('off-origin and file:// $refs are rejected by the format_schema sandbox', async () => {
     const offOriginBody = jsonBody({
       $schema: 'http://json-schema.org/draft-07/schema#',

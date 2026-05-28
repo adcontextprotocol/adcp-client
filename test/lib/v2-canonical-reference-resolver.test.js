@@ -225,6 +225,78 @@ describe('createCanonicalReferenceResolver', () => {
     assert.strictEqual(result.code, 'schema_compile_failed');
   });
 
+  test('returns invalid_schema budget_exceeded for catastrophic format_schema regexes', async () => {
+    const bad = serve('/bad-regex.json', {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: {
+        input: {
+          type: 'string',
+          pattern: '^(a+)+$',
+        },
+      },
+    });
+
+    const result = await resolveFormatSchema({ uri: bad.uri, digest: bad.digest });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 'invalid_schema');
+    assert.strictEqual(result.code, 'budget_exceeded');
+    assert.strictEqual(result.retryable, false);
+    assert.strictEqual(result.details.location, '/properties/input/pattern');
+    assert.strictEqual(result.details.patternPreview, '^(a+)+$');
+    assert.strictEqual(result.details.patternSha256, createHash('sha256').update('^(a+)+$').digest('hex'));
+    assert.strictEqual(result.details.pattern, undefined);
+  });
+
+  test('returns invalid_schema budget_exceeded for ambiguous repeated regexes', async () => {
+    const cases = [
+      { path: '/ambiguous-alternation-regex.json', pattern: '^(?:[0-9]|[0-9][0-9])+$' },
+      { path: '/bounded-repeat-regex.json', pattern: '^(?:[0-9]{1,2})+$' },
+    ];
+
+    for (const item of cases) {
+      const schema = serve(item.path, {
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        type: 'object',
+        properties: {
+          input: {
+            type: 'string',
+            pattern: item.pattern,
+          },
+        },
+      });
+
+      const result = await resolveFormatSchema({ uri: schema.uri, digest: schema.digest });
+
+      assert.strictEqual(result.ok, false);
+      assert.strictEqual(result.status, 'invalid_schema');
+      assert.strictEqual(result.code, 'budget_exceeded');
+      assert.strictEqual(result.details.location, '/properties/input/pattern');
+      assert.strictEqual(result.details.patternPreview, item.pattern);
+      assert.strictEqual(result.details.pattern, undefined);
+    }
+  });
+
+  test('accepts safe delimiter-separated regexes and ignores annotation examples', async () => {
+    const schema = serve('/safe-regex.json', {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      examples: [{ pattern: '^(a+)+$' }],
+      default: { pattern: '^(a+)+$' },
+      properties: {
+        csv: {
+          type: 'string',
+          pattern: '^(?:[^,]+,)*[^,]+$',
+        },
+      },
+    });
+
+    const result = await resolveFormatSchema({ uri: schema.uri, digest: schema.digest });
+
+    assert.strictEqual(result.status, 'resolved');
+  });
+
   test('returns blocked_unsafe_url for unsafe format_schema refs', async () => {
     const schema = serve('/file-ref.json', {
       $schema: 'http://json-schema.org/draft-07/schema#',
