@@ -263,6 +263,42 @@ describe('canonical reference resolver', () => {
     assert.strictEqual(result.error.code, 'invalid_json_schema');
   });
 
+  test('rejects the catastrophic-regex fetch-contract fixture as budget_exceeded', async () => {
+    const fixture = {
+      test_id: 'fetch-contract-neg-09-catastrophic-regex',
+      category: 'compile_budget',
+      expected_outcome: 'fail:budget_exceeded',
+      setup: {
+        response_body: {
+          $schema: 'http://json-schema.org/draft-07/schema#',
+          $id: '/schemas/test/bad-regex.json',
+          type: 'object',
+          properties: {
+            input: {
+              type: 'string',
+              pattern: '^(a+)+$',
+            },
+          },
+        },
+      },
+    };
+    const body = jsonBody(fixture.setup.response_body);
+    routes.set('/catastrophic-regex.json', (_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/schema+json' });
+      res.end(body);
+    });
+
+    const result = await resolveFormatSchemaReference(ref(baseUrl, '/catastrophic-regex.json', body), unsafeLocal);
+
+    assert.strictEqual(fixture.expected_outcome, 'fail:budget_exceeded');
+    assert.strictEqual(result.status, 'invalid_schema');
+    assert.strictEqual(result.error.code, 'budget_exceeded');
+    assert.strictEqual(result.error.retryable, false);
+    assert.strictEqual(result.error.details.pattern, '^(a+)+$');
+    assert.strictEqual(result.error.details.location, '/properties/input/pattern');
+    assert.strictEqual(result.error.details.reason, 'nested_unbounded_quantifier');
+  });
+
   test('off-origin and file:// $refs are rejected by the format_schema sandbox', async () => {
     const offOriginBody = jsonBody({
       $schema: 'http://json-schema.org/draft-07/schema#',

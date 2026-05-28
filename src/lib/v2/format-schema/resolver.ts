@@ -19,6 +19,7 @@ import {
   type ResolveSchemaRefsOptions,
   type SchemaRefSandboxErrorCode,
 } from './sandbox-refs';
+import { findUnsafeRegexPattern } from './regex-safety';
 
 export type CanonicalReferenceKind = 'format_schema' | 'platform_extensions';
 export type CanonicalRef = FormatSchemaRef;
@@ -36,7 +37,8 @@ export type CanonicalReferenceResolutionCode =
   | SchemaRefSandboxErrorCode
   | 'schema_dialect_unsupported'
   | 'schema_compile_failed'
-  | 'schema_keyword_limit_exceeded';
+  | 'schema_keyword_limit_exceeded'
+  | 'budget_exceeded';
 
 export interface CanonicalReferenceResolvedResult {
   ok: true;
@@ -306,6 +308,16 @@ function validateJsonSchema(
       code: 'schema_keyword_limit_exceeded',
       message: `JSON Schema keyword count ${keywordCount} exceeds limit ${maxKeywords}`,
       details: { keywordCount, maxKeywords },
+    };
+  }
+
+  const unsafeRegex = findUnsafeRegexPattern(schema);
+  if (unsafeRegex) {
+    return {
+      ok: false,
+      code: 'budget_exceeded',
+      message: 'JSON Schema regex safety budget exceeded',
+      details: { ...unsafeRegex },
     };
   }
 

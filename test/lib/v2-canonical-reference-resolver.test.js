@@ -225,6 +225,28 @@ describe('createCanonicalReferenceResolver', () => {
     assert.strictEqual(result.code, 'schema_compile_failed');
   });
 
+  test('returns invalid_schema budget_exceeded for catastrophic format_schema regexes', async () => {
+    const bad = serve('/bad-regex.json', {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      type: 'object',
+      properties: {
+        input: {
+          type: 'string',
+          pattern: '^(a+)+$',
+        },
+      },
+    });
+
+    const result = await resolveFormatSchema({ uri: bad.uri, digest: bad.digest });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 'invalid_schema');
+    assert.strictEqual(result.code, 'budget_exceeded');
+    assert.strictEqual(result.retryable, false);
+    assert.strictEqual(result.details.pattern, '^(a+)+$');
+    assert.strictEqual(result.details.location, '/properties/input/pattern');
+  });
+
   test('returns blocked_unsafe_url for unsafe format_schema refs', async () => {
     const schema = serve('/file-ref.json', {
       $schema: 'http://json-schema.org/draft-07/schema#',

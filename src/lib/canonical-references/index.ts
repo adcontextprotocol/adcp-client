@@ -22,6 +22,7 @@ import {
   SchemaRefSandboxError,
   type ResolveSchemaRefsOptions,
 } from '../v2/format-schema/sandbox-refs';
+import { findUnsafeRegexPattern } from '../v2/format-schema/regex-safety';
 
 export interface CanonicalReference {
   uri: string;
@@ -54,6 +55,7 @@ export type CanonicalReferenceErrorCode =
   | 'ref_sandbox_violation'
   | 'external_ref_unpinned'
   | 'keyword_limit_exceeded'
+  | 'budget_exceeded'
   | 'digest_mismatch';
 
 export interface CanonicalReferenceError {
@@ -635,6 +637,19 @@ async function validateFormatSchema(
         message: `format_schema keyword count exceeded ${maxKeywords}`,
         retryable: false,
         details: { keywordCount, maxKeywords },
+      },
+    };
+  }
+
+  const unsafeRegex = findUnsafeRegexPattern(resolved.schema);
+  if (unsafeRegex) {
+    return {
+      ok: false,
+      error: {
+        code: 'budget_exceeded',
+        message: 'format_schema regex safety budget exceeded',
+        retryable: false,
+        details: { ...unsafeRegex },
       },
     };
   }

@@ -66,3 +66,5 @@ export {
   type CanonicalReferenceResolverOptions,
   type ResolveCanonicalReferenceOptions,
 } from './resolver';
+
+export { findUnsafeRegexPattern, type UnsafeRegexPattern } from './regex-safety';
