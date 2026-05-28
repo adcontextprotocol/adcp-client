@@ -5309,8 +5309,14 @@ async function prefetchUpstreamTraffic(
   const requiresRawAttestation = upstreamChecks.some(
     check => check.attestation_mode_required === 'raw' || (check.payload_must_contain?.length ?? 0) > 0
   );
+  const prefersRawAttestation = upstreamChecks.some(check => check.preferred_attestation_mode === 'raw');
+  const prefersDigestAttestation = upstreamChecks.some(check => check.preferred_attestation_mode === 'digest');
   const requestedAttestationMode: 'raw' | 'digest' =
-    !requiresRawAttestation && identifier_value_digests.length > 0 ? 'digest' : 'raw';
+    requiresRawAttestation || prefersRawAttestation
+      ? 'raw'
+      : prefersDigestAttestation || identifier_value_digests.length > 0
+        ? 'digest'
+        : 'raw';
   for (const sinceTs of sinceTimestamps) {
     // Per spec PR adcp#3816: runners SHOULD subtract a clock-skew tolerance
     // (50ms minimum, 250ms recommended) before sending the bound to the

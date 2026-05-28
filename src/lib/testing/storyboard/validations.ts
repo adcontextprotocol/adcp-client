@@ -2957,6 +2957,9 @@ function buildUpstreamTrafficExpected(validation: StoryboardValidation): Record<
   if (validation.attestation_mode_required !== undefined) {
     expected.attestation_mode_required = validation.attestation_mode_required;
   }
+  if (validation.preferred_attestation_mode !== undefined) {
+    expected.preferred_attestation_mode = validation.preferred_attestation_mode;
+  }
   if (validation.identifier_paths !== undefined) expected.identifier_paths = validation.identifier_paths;
   return expected;
 }

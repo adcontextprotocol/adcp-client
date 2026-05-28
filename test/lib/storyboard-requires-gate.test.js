@@ -251,6 +251,14 @@ phases:
     );
   });
 
+  test('rejects invalid preferred_attestation_mode values', () => {
+    const yaml = storyboardWithIdentifierPath('audiences[*].add[*].hashed_email').replace(
+      'identifier_paths:',
+      'preferred_attestation_mode: compact\n            identifier_paths:'
+    );
+    assert.throws(() => parseStoryboard(yaml), /preferred_attestation_mode.*must be "raw" or "digest"/);
+  });
+
   test('runStoryboardStep invokes identifier_paths authoring validation', async () => {
     const storyboard = buildStoryboard();
     storyboard.phases[0].steps[0].validations = [

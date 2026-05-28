@@ -222,6 +222,136 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
   });
 
+  test('honors preferred_attestation_mode raw over identifier-only digest inference', async () => {
+    let receivedMode;
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      params => {
+        receivedMode = params.params?.attestation_mode;
+        return {
+          success: true,
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  recorded_calls: [
+                    {
+                      method: 'POST',
+                      endpoint: 'POST https://api.example.test/v1/audience/upload',
+                      url: 'https://api.example.test/v1/audience/upload',
+                      content_type: 'application/json',
+                      attestation_mode: 'raw',
+                      payload: {
+                        users: [{ hashed_email: 'vec-real-1' }, { hashed_email: 'vec-real-2' }],
+                      },
+                      payload_length: 68,
+                      timestamp: '2026-05-02T14:30:01.000Z',
+                    },
+                  ],
+                  total_count: 1,
+                  since_timestamp: params.params?.since_timestamp,
+                }),
+              },
+            ],
+          },
+        };
+      }
+    );
+    const rawPreferredStoryboard = JSON.parse(JSON.stringify(storyboard));
+    rawPreferredStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'hashed emails MUST be proven with raw attestations',
+        min_count: 1,
+        preferred_attestation_mode: 'raw',
+        identifier_paths: ['audiences[*].add[*].hashed_email'],
+      },
+    ];
+
+    const result = await runStoryboardStep('https://stub.example/mcp', rawPreferredStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    assert.equal(receivedMode, 'raw');
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.deepEqual(upstreamValidation.actual.missing_identifier_values, []);
+  });
+
+  test('honors preferred_attestation_mode digest for count-only upstream checks', async () => {
+    let receivedMode;
+    const { client } = buildStubClient(
+      {
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
+      },
+      params => {
+        receivedMode = params.params?.attestation_mode;
+        return {
+          success: true,
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  success: true,
+                  recorded_calls: [
+                    {
+                      method: 'POST',
+                      endpoint: 'POST https://api.example.test/v1/audience/upload',
+                      url: 'https://api.example.test/v1/audience/upload',
+                      content_type: 'application/json',
+                      attestation_mode: 'digest',
+                      payload_digest_sha256: sha256Hex('canonical-body'),
+                      payload_length: 68,
+                      timestamp: '2026-05-02T14:30:01.000Z',
+                    },
+                  ],
+                  total_count: 1,
+                  since_timestamp: params.params?.since_timestamp,
+                }),
+              },
+            ],
+          },
+        };
+      }
+    );
+    const digestPreferredStoryboard = JSON.parse(JSON.stringify(storyboard));
+    digestPreferredStoryboard.phases[0].steps[0].validations = [
+      {
+        check: 'upstream_traffic',
+        description: 'count-only upstream traffic can prefer digest attestations',
+        min_count: 1,
+        preferred_attestation_mode: 'digest',
+      },
+    ];
+
+    const result = await runStoryboardStep('https://stub.example/mcp', digestPreferredStoryboard, 'sync', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _controllerCapabilities: { detected: true, scenarios: ['query_upstream_traffic'] },
+    });
+
+    assert.equal(receivedMode, 'digest');
+    const upstreamValidation = result.validations.find(v => v.check === 'upstream_traffic');
+    assert.equal(upstreamValidation.passed, true);
+    assert.equal(upstreamValidation.expected.preferred_attestation_mode, 'digest');
+    assert.equal(upstreamValidation.actual.matched_count, 1);
+  });
+
   test('invalid identifier_paths fail as authoring errors without querying controller', async () => {
     const invalidStoryboard = JSON.parse(JSON.stringify(storyboard));
     invalidStoryboard.phases[0].steps[0].validations = [
