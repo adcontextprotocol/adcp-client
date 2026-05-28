@@ -67,4 +67,4 @@ export {
   type ResolveCanonicalReferenceOptions,
 } from './resolver';
 
-export { findUnsafeRegexPattern, type UnsafeRegexPattern } from './regex-safety';
+export { findUnsafeRegexPattern, unsafeRegexDetails, type UnsafeRegexPattern } from './regex-safety';

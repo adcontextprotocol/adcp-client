@@ -19,7 +19,7 @@ import {
   type ResolveSchemaRefsOptions,
   type SchemaRefSandboxErrorCode,
 } from './sandbox-refs';
-import { findUnsafeRegexPattern } from './regex-safety';
+import { findUnsafeRegexPattern, unsafeRegexDetails } from './regex-safety';
 
 export type CanonicalReferenceKind = 'format_schema' | 'platform_extensions';
 export type CanonicalRef = FormatSchemaRef;
@@ -317,7 +317,7 @@ function validateJsonSchema(
       ok: false,
       code: 'budget_exceeded',
       message: 'JSON Schema regex safety budget exceeded',
-      details: { ...unsafeRegex },
+      details: unsafeRegexDetails(unsafeRegex),
     };
   }
 

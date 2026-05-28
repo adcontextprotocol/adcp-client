@@ -22,7 +22,7 @@ import {
   SchemaRefSandboxError,
   type ResolveSchemaRefsOptions,
 } from '../v2/format-schema/sandbox-refs';
-import { findUnsafeRegexPattern } from '../v2/format-schema/regex-safety';
+import { findUnsafeRegexPattern, unsafeRegexDetails } from '../v2/format-schema/regex-safety';
 
 export interface CanonicalReference {
   uri: string;
@@ -649,7 +649,7 @@ async function validateFormatSchema(
         code: 'budget_exceeded',
         message: 'format_schema regex safety budget exceeded',
         retryable: false,
-        details: { ...unsafeRegex },
+        details: unsafeRegexDetails(unsafeRegex),
       },
     };
   }

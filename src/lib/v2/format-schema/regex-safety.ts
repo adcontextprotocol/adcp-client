@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 export interface UnsafeRegexPattern {
   location: string;
   pattern: string;
@@ -9,53 +11,135 @@ interface RegexGroup {
   end: number;
 }
 
+type QuantifierInfo = {
+  min: number;
+  max: number | null;
+  end: number;
+  unbounded: boolean;
+  variable: boolean;
+};
+
+const SCHEMA_VALUE_KEYWORDS = new Set([
+  'additionalItems',
+  'additionalProperties',
+  'contains',
+  'contentSchema',
+  'else',
+  'if',
+  'items',
+  'not',
+  'propertyNames',
+  'then',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+]);
+
+const SCHEMA_ARRAY_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems']);
+const SCHEMA_MAP_KEYWORDS = new Set(['$defs', 'definitions', 'dependentSchemas', 'properties']);
+
+export function unsafeRegexDetails(pattern: UnsafeRegexPattern): Record<string, unknown> {
+  return {
+    location: pattern.location,
+    reason: pattern.reason,
+    patternLength: pattern.pattern.length,
+    patternPreview: pattern.pattern.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?').slice(0, 120),
+    patternSha256: createHash('sha256').update(pattern.pattern).digest('hex'),
+  };
+}
+
 export function findUnsafeRegexPattern(root: unknown): UnsafeRegexPattern | undefined {
   const seen = new Set<unknown>();
 
-  function walk(node: unknown, pointer: string): UnsafeRegexPattern | undefined {
+  function walkSchema(node: unknown, pointer: string): UnsafeRegexPattern | undefined {
     if (!node || typeof node !== 'object') return undefined;
     if (seen.has(node)) return undefined;
     seen.add(node);
 
-    if (Array.isArray(node)) {
-      for (let index = 0; index < node.length; index += 1) {
-        const unsafe = walk(node[index], `${pointer}/${index}`);
-        if (unsafe) return unsafe;
-      }
-      return undefined;
-    }
+    if (Array.isArray(node)) return walkSchemaArray(node, pointer);
 
     const obj = node as Record<string, unknown>;
-    for (const [key, value] of Object.entries(obj)) {
-      const keyPointer = `${pointer}/${escapeJsonPointer(key)}`;
-      if (key === 'pattern' && typeof value === 'string') {
-        const unsafe = analyzeRegexPattern(value, keyPointer);
+
+    if (typeof obj.pattern === 'string') {
+      const unsafe = analyzeRegexPattern(obj.pattern, `${pointer}/pattern`);
+      if (unsafe) return unsafe;
+    }
+
+    const patternProperties = obj.patternProperties;
+    if (patternProperties && typeof patternProperties === 'object' && !Array.isArray(patternProperties)) {
+      const basePointer = `${pointer}/patternProperties`;
+      for (const [pattern, subschema] of Object.entries(patternProperties as Record<string, unknown>)) {
+        const patternPointer = `${basePointer}/${escapeJsonPointer(pattern)}`;
+        const unsafe = analyzeRegexPattern(pattern, patternPointer) ?? walkSchema(subschema, patternPointer);
         if (unsafe) return unsafe;
       }
-      if (key === 'patternProperties' && value && typeof value === 'object' && !Array.isArray(value)) {
-        for (const pattern of Object.keys(value as Record<string, unknown>)) {
-          const unsafe = analyzeRegexPattern(pattern, `${keyPointer}/${escapeJsonPointer(pattern)}`);
-          if (unsafe) return unsafe;
-        }
+    }
+
+    for (const keyword of SCHEMA_VALUE_KEYWORDS) {
+      const unsafe = walkSchemaValue(obj[keyword], `${pointer}/${keyword}`);
+      if (unsafe) return unsafe;
+    }
+
+    for (const keyword of SCHEMA_ARRAY_KEYWORDS) {
+      const unsafe = walkSchemaArrayValue(obj[keyword], `${pointer}/${keyword}`);
+      if (unsafe) return unsafe;
+    }
+
+    for (const keyword of SCHEMA_MAP_KEYWORDS) {
+      const unsafe = walkSchemaMap(obj[keyword], `${pointer}/${keyword}`);
+      if (unsafe) return unsafe;
+    }
+
+    const dependencies = obj.dependencies;
+    if (dependencies && typeof dependencies === 'object' && !Array.isArray(dependencies)) {
+      for (const [key, value] of Object.entries(dependencies as Record<string, unknown>)) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const unsafe = walkSchema(value, `${pointer}/dependencies/${escapeJsonPointer(key)}`);
+        if (unsafe) return unsafe;
       }
-      const unsafe = walk(value, keyPointer);
+    }
+
+    return undefined;
+  }
+
+  function walkSchemaValue(value: unknown, pointer: string): UnsafeRegexPattern | undefined {
+    if (Array.isArray(value)) return walkSchemaArray(value, pointer);
+    return walkSchema(value, pointer);
+  }
+
+  function walkSchemaArrayValue(value: unknown, pointer: string): UnsafeRegexPattern | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return walkSchemaArray(value, pointer);
+  }
+
+  function walkSchemaArray(value: readonly unknown[], pointer: string): UnsafeRegexPattern | undefined {
+    for (let index = 0; index < value.length; index += 1) {
+      const unsafe = walkSchema(value[index], `${pointer}/${index}`);
       if (unsafe) return unsafe;
     }
     return undefined;
   }
 
-  return walk(root, '');
+  function walkSchemaMap(value: unknown, pointer: string): UnsafeRegexPattern | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    for (const [key, subschema] of Object.entries(value as Record<string, unknown>)) {
+      const unsafe = walkSchema(subschema, `${pointer}/${escapeJsonPointer(key)}`);
+      if (unsafe) return unsafe;
+    }
+    return undefined;
+  }
+
+  return walkSchema(root, '');
 }
 
 function analyzeRegexPattern(pattern: string, location: string): UnsafeRegexPattern | undefined {
   for (const group of collectGroups(pattern)) {
     const quantifier = readQuantifier(pattern, group.end + 1);
-    if (!quantifier.unbounded) continue;
+    if (!quantifier?.unbounded) continue;
 
-    if (containsUnboundedQuantifier(group.body)) {
+    if (isSingleVariableRepeat(group.body)) {
       return { location, pattern, reason: 'nested_unbounded_quantifier' };
     }
-    if (hasAmbiguousAlternation(group.body)) {
+    if (hasAmbiguousAlternationByTokenPrefix(group.body)) {
       return { location, pattern, reason: 'ambiguous_repeated_alternation' };
     }
   }
@@ -102,12 +186,60 @@ function collectGroups(pattern: string): RegexGroup[] {
   return groups;
 }
 
-function containsUnboundedQuantifier(source: string): boolean {
+function isSingleVariableRepeat(source: string): boolean {
+  const normalized = stripGroupPrefix(source);
+  const first = readRegexAtom(normalized, 0);
+  if (!first) return false;
+
+  const quantifier = readQuantifier(normalized, first.end);
+  if (!quantifier?.variable) return false;
+
+  return quantifier.end === normalized.length;
+}
+
+function readRegexAtom(source: string, index: number): { end: number } | undefined {
+  const char = source[index];
+  if (!char) return undefined;
+
+  if (char === '\\') {
+    return index + 1 < source.length ? { end: index + 2 } : undefined;
+  }
+  if (char === '[') {
+    return readCharacterClass(source, index);
+  }
+  if (char === '(') {
+    return readGroup(source, index);
+  }
+  if ('^$|?*+{}'.includes(char)) return undefined;
+  return { end: index + 1 };
+}
+
+function readCharacterClass(source: string, index: number): { end: number } | undefined {
+  let escaped = false;
+
+  for (let cursor = index + 1; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === ']') return { end: cursor + 1 };
+  }
+
+  return undefined;
+}
+
+function readGroup(source: string, index: number): { end: number } | undefined {
   let escaped = false;
   let inClass = false;
+  let depth = 0;
 
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
+  for (let cursor = index; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
     if (escaped) {
       escaped = false;
       continue;
@@ -125,36 +257,77 @@ function containsUnboundedQuantifier(source: string): boolean {
       continue;
     }
     if (inClass) continue;
-    if (char === '*' || char === '+') return true;
-    if (char === '{' && readQuantifier(source, index).unbounded) return true;
+    if (char === '(') {
+      depth += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return { end: cursor + 1 };
+    }
   }
 
-  return false;
+  return undefined;
 }
 
-function readQuantifier(source: string, index: number): { unbounded: boolean } {
+function readQuantifier(source: string, index: number): QuantifierInfo | undefined {
   const char = source[index];
-  if (char === '*' || char === '+') return { unbounded: true };
-  if (char !== '{') return { unbounded: false };
+  if (char === '?') return { min: 0, max: 1, end: index + 1, unbounded: false, variable: true };
+  if (char === '*') return { min: 0, max: null, end: index + 1, unbounded: true, variable: true };
+  if (char === '+') return { min: 1, max: null, end: index + 1, unbounded: true, variable: true };
+  if (char !== '{') return undefined;
 
   const match = /^\{(\d+)(?:,(\d*))?\}/.exec(source.slice(index));
-  if (!match) return { unbounded: false };
-  return { unbounded: match[2] === '' };
+  if (!match) return undefined;
+
+  const min = Number(match[1]);
+  const max = match[2] === '' ? null : Number(match[2] ?? match[1]);
+  return {
+    min,
+    max,
+    end: index + match[0].length,
+    unbounded: max === null,
+    variable: max === null || min !== max,
+  };
 }
 
-function hasAmbiguousAlternation(source: string): boolean {
+function hasAmbiguousAlternationByTokenPrefix(source: string): boolean {
   const alternatives = splitTopLevelAlternatives(stripGroupPrefix(source));
   if (alternatives.length < 2) return false;
 
-  const prefixes = alternatives.map(literalPrefix).filter(prefix => prefix.length > 0);
-  for (let left = 0; left < prefixes.length; left += 1) {
-    for (let right = 0; right < prefixes.length; right += 1) {
-      const leftPrefix = prefixes[left];
-      const rightPrefix = prefixes[right];
-      if (leftPrefix && rightPrefix && left !== right && rightPrefix.startsWith(leftPrefix)) return true;
+  const tokenized = alternatives.map(tokenizeRegexAtoms).filter(tokens => tokens.length > 0);
+  for (let left = 0; left < tokenized.length; left += 1) {
+    for (let right = 0; right < tokenized.length; right += 1) {
+      const leftTokens = tokenized[left];
+      const rightTokens = tokenized[right];
+      if (leftTokens && rightTokens && left !== right && tokensStartWith(rightTokens, leftTokens)) return true;
     }
   }
   return false;
+}
+
+function tokenizeRegexAtoms(source: string): string[] {
+  const tokens: string[] = [];
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const atom = readRegexAtom(source, cursor);
+    if (!atom) break;
+    const raw = source.slice(cursor, atom.end);
+    const quantifier = readQuantifier(source, atom.end);
+    tokens.push(`${raw}${quantifier ? source.slice(atom.end, quantifier.end) : ''}`);
+    cursor = quantifier?.end ?? atom.end;
+  }
+
+  return tokens;
+}
+
+function tokensStartWith(tokens: readonly string[], prefix: readonly string[]): boolean {
+  if (prefix.length >= tokens.length) return false;
+  for (let index = 0; index < prefix.length; index += 1) {
+    if (tokens[index] !== prefix[index]) return false;
+  }
+  return true;
 }
 
 function splitTopLevelAlternatives(source: string): string[] {
@@ -198,27 +371,6 @@ function splitTopLevelAlternatives(source: string): string[] {
   }
   alternatives.push(source.slice(start));
   return alternatives;
-}
-
-function literalPrefix(source: string): string {
-  let prefix = '';
-  let escaped = false;
-
-  for (const char of source) {
-    if (escaped) {
-      prefix += `\\${char}`;
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if ('^$.*+?()[]{}|'.includes(char)) break;
-    prefix += char;
-  }
-
-  return prefix;
 }
 
 function stripGroupPrefix(source: string): string {

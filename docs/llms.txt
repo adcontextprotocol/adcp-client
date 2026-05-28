@@ -122,7 +122,7 @@ if (!result.ok) {
 }
 ```
 
-For `format_schema`, the resolver requires an explicit `$schema`, validates Draft-07 / Draft 2020-12 JSON Schema, inlines only pinned safe `$ref` targets, and returns `schemaMeta` on success. Failure statuses are coarse (`unresolvable`, `invalid_document`, `invalid_schema`, `digest_mismatch`, `blocked_unsafe_url`, `invalid_ref`); branch on `error.code` for precise handling. See `docs/guides/CANONICAL-REFERENCE-RESOLVER.md`.
+For `format_schema`, the resolver requires an explicit `$schema`, validates Draft-07 / Draft 2020-12 JSON Schema, inlines only pinned safe `$ref` targets, rejects known catastrophic regex patterns with `error.code: 'budget_exceeded'`, and returns `schemaMeta` on success. Failure statuses are coarse (`unresolvable`, `invalid_document`, `invalid_schema`, `digest_mismatch`, `blocked_unsafe_url`, `invalid_ref`); branch on `error.code` for precise handling. See `docs/guides/CANONICAL-REFERENCE-RESOLVER.md`.
 
 ## Transport auth
 
