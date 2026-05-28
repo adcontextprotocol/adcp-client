@@ -410,7 +410,7 @@ function resolveLogoUrl(
   if (mapping.proposed_logo?.url) return mapping.proposed_logo.url;
   if (candidate?.url) return candidate.url;
 
-  const baseUrl = options.assetsBaseUrl?.replace(/\/+$/, '');
+  const baseUrl = removeTrailingSlashes(options.assetsBaseUrl);
   if (!baseUrl || !candidate) return undefined;
 
   const path = candidate.file ?? candidate.asset_id;
@@ -419,6 +419,16 @@ function resolveLogoUrl(
     .filter(Boolean)
     .map(segment => encodeURIComponent(segment))
     .join('/')}`;
+}
+
+function removeTrailingSlashes(value: string | undefined): string | undefined {
+  if (!value) return value;
+
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
 }
 
 function buildLogoRecord(

@@ -162,7 +162,7 @@ describe('brand asset mapping helpers', () => {
       },
       {
         brandId: 'spark',
-        assetsBaseUrl: 'https://assets.example/brand-assets',
+        assetsBaseUrl: 'https://assets.example/brand-assets///',
         candidates: [{ asset_id: 'candidate_logo_0002', file: 'spark/logo.png' }],
         mappings: [
           {
