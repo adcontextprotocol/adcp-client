@@ -177,7 +177,7 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   onInstructionsError?: OnInstructionsError;
 
   /**
-   * Buyer-agent identity registry — Phase 1 of #1269. Optional. When
+   * Buyer-agent identity registry. Optional. When
    * configured, framework calls `agentRegistry.resolve(authInfo)` once per
    * request before `accounts.resolve` and threads the resolved record
    * through `ctx.agent` to specialism handlers.
@@ -187,9 +187,9 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * depending on their authentication posture. When omitted, `ctx.agent`
    * is always undefined and the framework's request flow is unchanged.
    *
-   * Phase 2 (#1292) wires framework-level billing-capability enforcement
-   * against `BuyerAgent.billing_capabilities` and emits the AdCP-3.1
-   * billing error codes. Phase 1 ships the surface and resolution only.
+   * The resolved record drives framework status/sandbox gates and
+   * `sync_accounts.billing` enforcement against
+   * `BuyerAgent.billing_capabilities`.
    */
   agentRegistry?: BuyerAgentRegistry;
 

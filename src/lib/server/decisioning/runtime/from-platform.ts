@@ -74,8 +74,10 @@ import {
   toWireAccount,
   toWireSyncAccountRow,
   toWireSyncGovernanceRow,
+  type SyncAccountsResultRow,
 } from '../account';
-import type { BuyerAgent, BuyerAgentRegistry } from '../buyer-agent';
+import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentRegistry } from '../buyer-agent';
+import { suggestBilling } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
@@ -93,10 +95,13 @@ import {
 } from '../proposal';
 import type {
   AccountReference,
+  BillingParty,
+  BrandReference,
   BuildCreativeMultiSuccess,
   BuildCreativeSuccess,
   CreativeManifest,
   GetAdCPCapabilitiesResponse,
+  PaymentTerms,
   SyncGovernanceRequest,
 } from '../../../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
@@ -4838,6 +4843,178 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
   return handlers;
 }
 
+type SyncAccountsEntry = AccountReference & {
+  account?: AccountReference;
+  brand?: BrandReference;
+  operator?: string;
+  billing?: BillingParty;
+  payment_terms?: PaymentTerms;
+  billing_entity?: unknown;
+};
+
+type SyncAccountsPolicyResult = {
+  acceptedEntries: SyncAccountsEntry[];
+  acceptedParams: Record<string, unknown>;
+  failedRows: Map<number, SyncAccountsResultRow>;
+};
+
+const BILLING_VALUES: readonly BillingParty[] = ['operator', 'agent', 'advertiser'];
+
+function isBillingParty(value: unknown): value is BillingParty {
+  return typeof value === 'string' && (BILLING_VALUES as readonly string[]).includes(value);
+}
+
+function isPaymentTerms(value: unknown): value is PaymentTerms {
+  return typeof value === 'string';
+}
+
+function supportedBillingsFor(platform: DecisioningPlatform<any, any>): readonly BillingParty[] {
+  const configured = platform.capabilities.supportedBillings;
+  return configured?.length ? configured : ['agent'];
+}
+
+function entryBrandOperator(entry: SyncAccountsEntry): { brand: BrandReference; operator: string } | undefined {
+  if (entry.brand !== undefined && typeof entry.operator === 'string') {
+    return { brand: entry.brand, operator: entry.operator };
+  }
+  const account = entry.account;
+  if (
+    account !== undefined &&
+    'brand' in account &&
+    account.brand !== undefined &&
+    'operator' in account &&
+    typeof account.operator === 'string'
+  ) {
+    return { brand: account.brand as BrandReference, operator: account.operator };
+  }
+  return undefined;
+}
+
+function entryHasAccountId(entry: SyncAccountsEntry): boolean {
+  if (refAccountId(entry) !== undefined) return true;
+  return entry.account !== undefined && refAccountId(entry.account) !== undefined;
+}
+
+function failedSyncAccountRow(entry: SyncAccountsEntry, error: AdcpStructuredError): SyncAccountsResultRow {
+  const key = entryBrandOperator(entry);
+  if (key === undefined) {
+    throw new AdcpError(error.code, {
+      message: error.message,
+      recovery: error.recovery,
+      ...(error.field !== undefined && { field: error.field }),
+      ...(error.suggestion !== undefined && { suggestion: error.suggestion }),
+      ...(error.retry_after !== undefined && { retry_after: error.retry_after }),
+      ...(error.details !== undefined && { details: error.details }),
+    });
+  }
+  return {
+    brand: key.brand,
+    operator: key.operator,
+    action: 'failed',
+    status: 'rejected',
+    errors: [error],
+  };
+}
+
+function buildBillingNotSupportedError(opts: {
+  requestedBilling: BillingParty;
+  supportedBillings?: readonly BillingParty[];
+  exposeCapabilityScope: boolean;
+}): AdcpStructuredError {
+  return new AdcpError('BILLING_NOT_SUPPORTED', {
+    message: `Billing value "${opts.requestedBilling}" is not supported for this account sync request.`,
+    recovery: 'correctable',
+    field: 'accounts[].billing',
+    ...(opts.exposeCapabilityScope && opts.supportedBillings !== undefined
+      ? { details: { scope: 'capability', supported_billing: [...opts.supportedBillings] } }
+      : {}),
+  }).toStructuredError();
+}
+
+function buildBillingNotPermittedError(
+  agent: BuyerAgent,
+  requestedBilling: BuyerAgentBillingMode
+): AdcpStructuredError {
+  const fallback = suggestBilling(agent.billing_capabilities, requestedBilling);
+  return new AdcpError('BILLING_NOT_PERMITTED_FOR_AGENT', {
+    message: `Billing value "${requestedBilling}" is not permitted for this buyer agent.`,
+    recovery: 'correctable',
+    field: 'accounts[].billing',
+    details: {
+      rejected_billing: requestedBilling,
+      ...(fallback !== undefined && { suggested_billing: fallback }),
+    },
+  }).toStructuredError();
+}
+
+function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, any>>(
+  platform: P,
+  params: Record<string, unknown>,
+  resolveCtx: ResolveContext
+): SyncAccountsPolicyResult {
+  const entries = ((params.accounts as unknown[]) ?? []) as SyncAccountsEntry[];
+  const supportedBillings = supportedBillingsFor(platform);
+  const supportedPaymentTerms = platform.capabilities.supportedPaymentTerms;
+  const failedRows = new Map<number, SyncAccountsResultRow>();
+  const acceptedEntries: SyncAccountsEntry[] = [];
+
+  entries.forEach((entry, index) => {
+    const hasBillableFields =
+      entry.billing !== undefined || entry.payment_terms !== undefined || entry.billing_entity !== undefined;
+    if (hasBillableFields && entryBrandOperator(entry) === undefined && !entryHasAccountId(entry)) {
+      throw new AdcpError('BRAND_REQUIRED', {
+        message: 'Billable account sync entries require a brand reference or account_id.',
+        recovery: 'correctable',
+        field: `accounts[${index}].brand`,
+      });
+    }
+
+    let failure: AdcpStructuredError | undefined;
+    if (isBillingParty(entry.billing)) {
+      if (!supportedBillings.includes(entry.billing)) {
+        failure = buildBillingNotSupportedError({
+          requestedBilling: entry.billing,
+          supportedBillings,
+          exposeCapabilityScope: true,
+        });
+      } else if (platform.agentRegistry !== undefined && resolveCtx.agent === undefined) {
+        failure = buildBillingNotSupportedError({
+          requestedBilling: entry.billing,
+          exposeCapabilityScope: false,
+        });
+      } else if (resolveCtx.agent !== undefined && !resolveCtx.agent.billing_capabilities.has(entry.billing)) {
+        failure = buildBillingNotPermittedError(resolveCtx.agent, entry.billing);
+      }
+    }
+
+    if (
+      failure === undefined &&
+      supportedPaymentTerms !== undefined &&
+      supportedPaymentTerms.length > 0 &&
+      isPaymentTerms(entry.payment_terms) &&
+      !supportedPaymentTerms.includes(entry.payment_terms)
+    ) {
+      failure = new AdcpError('PAYMENT_TERMS_NOT_SUPPORTED', {
+        message: `Payment terms "${entry.payment_terms}" are not supported for this account sync request.`,
+        recovery: 'correctable',
+        field: `accounts[${index}].payment_terms`,
+      }).toStructuredError();
+    }
+
+    if (failure !== undefined) {
+      failedRows.set(index, failedSyncAccountRow(entry, failure));
+    } else {
+      acceptedEntries.push(entry);
+    }
+  });
+
+  return {
+    acceptedEntries,
+    acceptedParams: { ...params, accounts: acceptedEntries },
+    failedRows,
+  };
+}
+
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   ctxFor: CtxForFn
@@ -4858,11 +5035,33 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.upsert) {
     handlers.syncAccounts = async (params, ctx) => {
-      const refs = (params.accounts ?? []) as AccountReference[];
       const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
+      const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
+      const dispatchCtx =
+        policy.failedRows.size === 0 ? resolveCtx : toResolveCtx(ctx, 'sync_accounts', policy.acceptedParams);
       return projectSync(
-        () => accounts.upsert!(refs, resolveCtx),
-        rows => ({ accounts: rows.map(toWireSyncAccountRow) })
+        () =>
+          policy.acceptedEntries.length > 0
+            ? accounts.upsert!(policy.acceptedEntries as AccountReference[], dispatchCtx)
+            : Promise.resolve([]),
+        rows => {
+          if (policy.failedRows.size === 0) {
+            return { accounts: rows.map(toWireSyncAccountRow) };
+          }
+          const combined: SyncAccountsResultRow[] = [];
+          let acceptedIndex = 0;
+          const originalCount = ((params.accounts as unknown[]) ?? []).length;
+          for (let index = 0; index < originalCount; index += 1) {
+            const failed = policy.failedRows.get(index);
+            if (failed !== undefined) {
+              combined.push(failed);
+            } else {
+              combined.push(rows[acceptedIndex] as SyncAccountsResultRow);
+              acceptedIndex += 1;
+            }
+          }
+          return { accounts: combined.map(toWireSyncAccountRow) };
+        }
       );
     };
   }

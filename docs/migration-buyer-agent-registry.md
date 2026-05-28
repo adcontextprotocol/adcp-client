@@ -1,4 +1,4 @@
-# Migrating to `BuyerAgentRegistry` (Phase 1 of #1269)
+# Migrating to `BuyerAgentRegistry`
 
 > **Status: GA in 6.x.** Everything below is additive — adopters running
 > on `@adcp/sdk` 6.x today see no behavior change unless they opt in.
@@ -17,9 +17,9 @@ If you want the durable identity surface — opt in via three additions:
 2. Wrap a `BuyerAgentRegistry.signingOnly` / `bearerOnly` / `mixed` factory in `BuyerAgentRegistry.cached(...)`.
 3. Set `agentRegistry` on your `DecisioningPlatform`.
 
-The framework picks up the registry, runs `resolve()` once per request, threads the resolved record through `ctx.agent`, and gates `suspended`/`blocked` agents at 403. See [the worked reference adapter](../examples/hello_signals_adapter_marketplace.ts) for the full wiring.
+The framework picks up the registry, runs `resolve()` once per request, threads the resolved record through `ctx.agent`, gates `suspended`/`blocked` agents at 403, and enforces `sync_accounts.billing` against `BuyerAgent.billing_capabilities`. See [the worked reference adapter](../examples/hello_signals_adapter_marketplace.ts) for the full wiring.
 
-## What's new in Phase 1
+## What's included
 
 | Feature | Purpose | Adopter-visible? |
 |---|---|---|
@@ -29,7 +29,21 @@ The framework picks up the registry, runs `resolve()` once per request, threads 
 | Verifier-attested `http_sig.agent_url` | Cryptographic proof of buyer-agent identity (per adcp#3831) | Active when `verifySignatureAsAuthenticator` is wired |
 | `BuyerAgentRegistry.cached` decorator | TTL + LRU + concurrent-resolve coalescing + `invalidate()` / `clear()` API | Decorator pattern — wrap your registry |
 | `BuyerAgent.sandbox_only` (Phase 1.5) | Defense-in-depth for test agents | Set on the agent record; framework gates after `accounts.resolve` |
+| `sync_accounts` billing gate | Reject billing values outside the resolved agent's commercial relationship | Active when `platform.agentRegistry` returns a record |
 | Credential pattern redactor | Scrub bearer tokens / labeled creds / URL basic-auth / long token-shaped strings from `error.details.reason` | Active for all 6 dispatcher error-projection sites |
+
+## Billing Enforcement
+
+When `sync_accounts.accounts[]` carries a provisioning `billing` value, the framework now applies the AdCP 3.1 commercial gates before calling `accounts.upsert`:
+
+- Values outside `capabilities.supportedBillings` return a per-account `BILLING_NOT_SUPPORTED` row with `details.scope: "capability"` and a `supported_billing` echo.
+- Values allowed by the seller but not by `ctx.agent.billing_capabilities` return `BILLING_NOT_PERMITTED_FOR_AGENT` with clamped details: `rejected_billing` plus one optional `suggested_billing`.
+- If an `agentRegistry` is configured but the bearer/API-key/OAuth credential does not map to a `BuyerAgent`, the framework returns `BILLING_NOT_SUPPORTED` and omits `details.scope` to avoid an onboarding oracle.
+- If `capabilities.supportedPaymentTerms` is set, unsupported `payment_terms` return `PAYMENT_TERMS_NOT_SUPPORTED`.
+
+Rejected rows are filtered out before `accounts.upsert`; accepted rows still reach your handler and are merged back into the original response order. Billing and payment-term rejection rows are intentionally not cached by the idempotency replay layer, so an onboarding or capability change can take effect on the buyer's next retry with the same key.
+
+Use `BuyerAgentRegistry.suggestBilling(ctx.agent.billing_capabilities, rejected)` when you need to mirror the framework's single-suggestion policy in adopter code.
 
 ## Decision tree: do I need to change anything?
 
@@ -162,7 +176,7 @@ class MyPlatform implements DecisioningPlatform<MyConfig, MyMeta> {
 }
 ```
 
-That's it. The framework runs `agentRegistry.resolve(authInfo)` on every request after auth and before `accounts.resolve`. The resolved `BuyerAgent` is on `ctx.agent`; status enforcement (`suspended`/`blocked` → 403) fires automatically.
+That's it. The framework runs `agentRegistry.resolve(authInfo)` on every request after auth and before `accounts.resolve`. The resolved `BuyerAgent` is on `ctx.agent`; status enforcement (`suspended`/`blocked` → 403) and `sync_accounts.billing` enforcement fire automatically.
 
 ### Three implementer postures, summarized
 
@@ -340,9 +354,9 @@ The cache is serving the stale `status: 'suspended'` for up to `ttlSeconds`. Cal
 - **Framework gate behavior**: [`test/server-buyer-agent-status-and-redaction.test.js`](../test/server-buyer-agent-status-and-redaction.test.js), [`test/server-buyer-agent-sandbox-only.test.js`](../test/server-buyer-agent-sandbox-only.test.js).
 - **Cache decorator behavior**: [`test/lib/buyer-agent-cache.test.js`](../test/lib/buyer-agent-cache.test.js).
 - **Phase 1 design issue**: [#1269](https://github.com/adcontextprotocol/adcp-client/issues/1269).
-- **Phase 2 (gated on AdCP 3.1)**: [#1292](https://github.com/adcontextprotocol/adcp-client/issues/1292).
-- **Spec PR for Phase 2's error codes**: [adcontextprotocol/adcp#3831](https://github.com/adcontextprotocol/adcp/pull/3831).
+- **Billing enforcement issue**: [#1292](https://github.com/adcontextprotocol/adcp-client/issues/1292).
+- **Spec PR for billing error codes**: [adcontextprotocol/adcp#3831](https://github.com/adcontextprotocol/adcp/pull/3831).
 
 ---
 
-_Last updated: 2026-05-02. Questions: open an issue against [`adcontextprotocol/adcp-client`](https://github.com/adcontextprotocol/adcp-client/issues)._
+_Last updated: 2026-05-28. Questions: open an issue against [`adcontextprotocol/adcp-client`](https://github.com/adcontextprotocol/adcp-client/issues)._
