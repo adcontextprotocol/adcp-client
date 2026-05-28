@@ -238,7 +238,11 @@ describe('RunnerNotice: signed_requests_specialism_deprecated (#2082)', () => {
     const deprecation = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
     const required = result.notices.find(n => n.code === 'request_signing.required');
     assert.equal(deprecation, undefined, 'deprecated-specialism notice is scoped to the signed_requests storyboard id');
-    assert.equal(required, undefined, 'request signing is declared, so the probe-only storyboard has no required notice');
+    assert.equal(
+      required,
+      undefined,
+      'request signing is declared, so the probe-only storyboard has no required notice'
+    );
   });
 
   test('dedupes notice code across multi-pass runs', async () => {
