@@ -41,6 +41,32 @@ interface TaskResult<T = any> {
 
 type InputHandler = (context: ConversationContext) => InputHandlerResponse;
 
+interface CanonicalReference {
+  uri: string;
+  digest: string; // sha256:<64 lowercase hex chars>
+}
+
+type CanonicalReferenceStatus =
+  | 'resolved'
+  | 'unresolvable'
+  | 'invalid_document'
+  | 'invalid_schema'
+  | 'digest_mismatch'
+  | 'blocked_unsafe_url'
+  | 'invalid_ref';
+
+interface CanonicalReferenceResult<T = unknown> {
+  ok: boolean;
+  status: CanonicalReferenceStatus;
+  fromCache: boolean;
+  document?: T;
+  schemaMeta?: { draft: 'draft-07' | '2020-12'; refCount: number };
+  error?: { code: string; retryable: boolean; securitySignal?: 'substitution_attack' };
+}
+
+// import { createCanonicalReferenceResolver } from '@adcp/sdk/canonical-references'
+// resolver.resolveFormatSchema(ref, { externalRefDigests }) validates pinned JSON Schema refs.
+
 interface ConversationContext {
   messages: Message[];
   inputRequest: {
