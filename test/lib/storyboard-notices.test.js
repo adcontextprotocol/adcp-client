@@ -3,7 +3,8 @@
  * and ComplianceResult (adcp-client#1704).
  *
  * Uses `_profile` injection so tests run without the schema cache or a live agent.
- * The two day-one notices tested here are both spec-grounded:
+ * These notices are spec-grounded:
+ *   - signed_requests_specialism_deprecated: universal/signed-requests.yaml
  *   - request_signing.required: get-adcp-capabilities-response.json:892
  *   - webhook_signing.legacy_hmac_fallback.removed: get-adcp-capabilities-response.json:966
  */
@@ -103,6 +104,23 @@ const profileWithSigning = {
   },
 };
 
+const profileWithSignedRequestsSpecialism = {
+  name: 'Test Agent (deprecated specialism)',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: {
+    request_signing: { supported: true, required_for: [], supported_for: [] },
+    specialisms: ['signed-requests'],
+  },
+};
+
+const profileWithSignedRequestsSpecialismOnly = {
+  name: 'Test Agent (deprecated specialism only)',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: {
+    specialisms: ['signed-requests'],
+  },
+};
+
 const profileWithLegacyHmac = {
   name: 'Test Agent (legacy hmac)',
   tools: ['get_adcp_capabilities', 'get_products'],
@@ -170,6 +188,84 @@ describe('RunnerNotice — notices field always present (#1704)', () => {
     assert.ok(result.overall_passed, 'capability-unsupported is a skip, not a failure');
     assert.ok(Array.isArray(result.notices), 'notices must be an array on early-return paths');
     assert.equal(result.notices.length, 0, 'no notices on a non-webhook, non-signing storyboard');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: signed_requests_specialism_deprecated
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('RunnerNotice: signed_requests_specialism_deprecated (#2082)', () => {
+  test('emits notice on signed_requests storyboard when specialisms includes signed-requests', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runWith(sb, profileWithSignedRequestsSpecialism);
+    const notice = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
+    assert.ok(notice, 'notice should be present');
+    assert.equal(notice.severity, 'deprecation');
+    assert.equal(notice.effective_version, '4.0');
+    assert.equal(notice.capability_path, 'specialisms');
+    assert.equal(typeof notice.docs_url, 'string', 'docs_url populated for click-through');
+    assert.deepEqual(notice.storyboard_ids, ['signed_requests'], 'storyboard_ids carries the source');
+    assert.ok(notice.message.length > 0, 'message non-empty for human consumption');
+  });
+
+  test('does NOT emit notice when request_signing.supported is true without deprecated specialism', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runWith(sb, profileWithSigning);
+    const notice = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
+    assert.equal(notice, undefined, 'request_signing.supported alone is the desired capability shape');
+  });
+
+  test('does NOT emit notice when deprecated specialism is declared without request_signing.supported', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runWith(sb, profileWithSignedRequestsSpecialismOnly);
+    const deprecation = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
+    const required = result.notices.find(n => n.code === 'request_signing.required');
+    assert.equal(deprecation, undefined, 'deprecated specialism is only redundant once request_signing is declared');
+    assert.ok(required, 'missing request_signing.supported still emits the future-required notice');
+  });
+
+  test('does NOT emit notice on unrelated storyboard even when deprecated specialism is declared', async () => {
+    const sb = buildMinimalStoryboard({ id: 'some_other_storyboard' });
+    const result = await runWith(sb, profileWithSignedRequestsSpecialism);
+    const notice = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
+    assert.equal(notice, undefined, 'notice is scoped to signed_requests storyboards only');
+  });
+
+  test('does NOT emit notice on probe-only storyboard even when deprecated specialism is declared', async () => {
+    const sb = buildSigningProbeStoryboard();
+    const result = await runWith(sb, profileWithSignedRequestsSpecialism);
+    const deprecation = result.notices.find(n => n.code === 'signed_requests_specialism_deprecated');
+    const required = result.notices.find(n => n.code === 'request_signing.required');
+    assert.equal(deprecation, undefined, 'deprecated-specialism notice is scoped to the signed_requests storyboard id');
+    assert.equal(
+      required,
+      undefined,
+      'request signing is declared, so the probe-only storyboard has no required notice'
+    );
+  });
+
+  test('dedupes notice code across multi-pass runs', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runStoryboard(['http://fake-local-99999', 'http://fake-local-99998'], sb, {
+      _profile: profileWithSignedRequestsSpecialism,
+      agentTools: profileWithSignedRequestsSpecialism.tools,
+      multi_instance_strategy: 'multi-pass',
+    });
+    const notices = result.notices.filter(n => n.code === 'signed_requests_specialism_deprecated');
+    assert.equal(notices.length, 1, 'multi-pass result should dedupe by notice code');
+    assert.deepEqual(notices[0].storyboard_ids, ['signed_requests']);
+  });
+
+  test('notice does not affect pass/fail/skipped counters', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const baseline = await runWith(sb, profileWithSigning);
+    const withNotice = await runWith(sb, profileWithSignedRequestsSpecialism);
+
+    assert.equal(withNotice.passed_count, baseline.passed_count, 'passed counter unchanged');
+    assert.equal(withNotice.failed_count, baseline.failed_count, 'failed counter unchanged');
+    assert.equal(withNotice.skipped_count, baseline.skipped_count, 'skipped counter unchanged');
+    assert.equal(withNotice.overall_passed, baseline.overall_passed, 'overall pass/fail unchanged');
   });
 });
 

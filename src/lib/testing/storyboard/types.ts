@@ -1768,11 +1768,12 @@ export interface SchemaValidationError {
  * a deprecation or future-required advisory is the kind of thing a CI
  * gate or dashboard SHOULD have explicit handling for.
  *
- * Code naming follows the dot-namespaced convention `<topic>.<event>`
- * (e.g. `request_signing.required`, `webhook_signing.legacy_hmac_fallback.removed`).
- * The *when* lives in the `effective_version` field, never in the code.
- * This keeps the surface stable across spec versions — codes don't proliferate
- * `_in_4_0` / `_in_5_0` siblings as the spec evolves.
+ * Code naming generally follows the dot-namespaced convention `<topic>.<event>`
+ * (e.g. `request_signing.required`, `webhook_signing.legacy_hmac_fallback.removed`);
+ * prefer the upstream runner-output contract's canonical code when it
+ * registers a different spelling. The *when* lives in the `effective_version`
+ * field, never in the code. This keeps the surface stable across spec versions
+ * — codes don't proliferate `_in_4_0` / `_in_5_0` siblings as the spec evolves.
  *
  * Adding a new code is a wire-surface change AND a TypeScript breaking
  * change for adopters who narrowed on `code`. Coordinate with the upstream
@@ -1781,6 +1782,9 @@ export interface SchemaValidationError {
  * Spec: adcp-client#1704.
  */
 export type NoticeCode =
+  /** Agent advertises deprecated `specialisms: ['signed-requests']`. Removed in
+   *  AdCP 4.0 per `effective_version`. */
+  | 'signed_requests_specialism_deprecated'
   /** Agent lacks `request_signing.supported: true`. Required for spend-committing
    *  operations in AdCP 4.0 per `effective_version`. */
   | 'request_signing.required'
