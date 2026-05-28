@@ -24,6 +24,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check for agent/tool PR title prefix
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node .github/scripts/check-pr-title.cjs "$PR_TITLE"
+
       - name: Validate PR title follows conventional commits
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
