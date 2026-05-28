@@ -636,6 +636,49 @@ Build a registry service that:
 
 Library provides discovery logic - you add persistence layer.
 
+### Community Mirror `adagents.json` Catalogs
+
+Use `buildCommunityMirrorAdagents()` when publishing catalog-only AAO/community mirrors for platforms that have not adopted AdCP or published seller-authorized files yet. The helper emits `authorized_agents: []` and refuses caller-supplied authorization entries, so format and placement metadata cannot be mistaken for a seller authorization claim.
+
+```ts
+import { RegistryClient, buildCommunityMirrorAdagents } from '@adcp/sdk';
+
+const catalog = buildCommunityMirrorAdagents({
+  catalog_etag: 'meta-creative-formats-2026-05',
+  formats: [
+    {
+      format_option_id: 'meta-feed-image',
+      format_kind: 'image',
+      params: {
+        width: 1080,
+        height: 1080,
+      },
+      v1_format_ref: [
+        {
+          agent_url: 'https://creative.adcontextprotocol.org/translated/meta',
+          id: 'feed_image',
+        },
+      ],
+    },
+  ],
+  placements: [
+    {
+      placement_id: 'feed',
+      name: 'Feed',
+      property_tags: ['feed'],
+      format_options: [{ format_option_id: 'meta-feed-image' }],
+    },
+  ],
+  placement_tags: {
+    feed: { name: 'Feed', description: 'Main feed placement' },
+  },
+});
+
+await new RegistryClient().createAdagents(catalog);
+```
+
+`RegistryClient.createAdagents()` and `createCommunityMirrorAdagents()` are intended for build-time generation, cache fills, or write-through publishing. Public `/.well-known/adagents.json` routes should serve generated JSON from static storage or an application cache rather than calling the registry on every request.
+
 ## Database Schema
 
 Simple unified event log for all operations:
