@@ -131,8 +131,39 @@ jobs:
             console.log('✅ Package exports are valid');
           "
 
-  unit-tests:
-    name: Unit Tests
+  unit-tests-fast:
+    name: Unit Tests Fast (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/3', '2/3', '3/3']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Run fast unit test shard
+        run: node scripts/run-test-with-summary.js --title "Unit Tests Fast $TEST_SHARD" -- npm run test:node:fast:shard
+        env:
+          CI: true
+          TEST_SHARD: ${{ matrix.shard }}
+
+  unit-tests-slow:
+    name: Unit Tests Slow
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -152,10 +183,66 @@ jobs:
       - name: Build library
         run: npm run build:lib
 
-      - name: Run unit tests
-        run: npm test
+      - name: Run slow unit tests
+        run: node scripts/run-test-with-summary.js --title "Unit Tests Slow" -- npm run test:node:slow
         env:
           CI: true
+
+  eslint-plugin-tests:
+    name: ESLint Plugin Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Run ESLint plugin tests
+        run: node scripts/run-test-with-summary.js --title "ESLint Plugin Tests" -- npm test --workspace=packages/eslint-plugin --if-present
+        env:
+          CI: true
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs:
+      - unit-tests-fast
+      - unit-tests-slow
+      - eslint-plugin-tests
+    if: ${{ always() }}
+    timeout-minutes: 2
+
+    steps:
+      - name: Verify unit test lanes
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node - <<'NODE'
+          const needs = JSON.parse(process.env.NEEDS_JSON);
+          const failed = Object.entries(needs).filter(([, job]) => job.result !== 'success');
+
+          if (failed.length > 0) {
+            console.error('One or more unit test lanes failed:');
+            for (const [name, job] of failed) {
+              console.error(`- ${name}: ${job.result}`);
+            }
+            process.exit(1);
+          }
+
+          console.log('All unit test lanes passed.');
+          NODE
 
   example-integration-tests:
     name: Example Adapter Integration Tests
