@@ -651,6 +651,37 @@ function generateLlmsTxt(
   ln('```');
   ln();
 
+  ln(`## Canonical Reference Resolver`);
+  ln();
+  ln(
+    `\`format_schema\` and \`platform_extensions\` references use immutable \`{ uri, digest }\` pointers. Use \`createCanonicalReferenceResolver\` from \`@adcp/sdk/canonical-references\` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and caller-owned policy-scoped caching.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`import { createCanonicalReferenceResolver } from '@adcp/sdk/canonical-references';`);
+  ln();
+  ln(`const resolver = createCanonicalReferenceResolver();`);
+  ln(`const formatSchemaRef = {`);
+  ln(`  uri: 'https://publisher.example-ad.com/schemas/slot.json',`);
+  ln(`  digest: 'sha256:<64 lowercase hex chars>',`);
+  ln(`};`);
+  ln(`const result = await resolver.resolveFormatSchema(formatSchemaRef, {`);
+  ln(`  externalRefDigests: {`);
+  ln(`    'https://publisher.example-ad.com/shared-slot.json': 'sha256:<64 lowercase hex chars>',`);
+  ln(`  },`);
+  ln(`});`);
+  ln();
+  ln(`if (!result.ok) {`);
+  ln(`  if (result.error.code === 'digest_mismatch') throw new Error('Reference substitution detected');`);
+  ln(`  if (result.error.retryable) /* retry later */;`);
+  ln(`}`);
+  ln('```');
+  ln();
+  ln(
+    `For \`format_schema\`, the resolver requires an explicit \`$schema\`, validates Draft-07 / Draft 2020-12 JSON Schema, inlines only pinned safe \`$ref\` targets, and returns \`schemaMeta\` on success. Failure statuses are coarse (\`unresolvable\`, \`invalid_document\`, \`invalid_schema\`, \`digest_mismatch\`, \`blocked_unsafe_url\`, \`invalid_ref\`); branch on \`error.code\` for precise handling. See \`docs/guides/CANONICAL-REFERENCE-RESOLVER.md\`.`
+  );
+  ln();
+
   // --- Transport auth ---
   // Clarifies the operator-private posture and points at the right discovery
   // vector (WWW-Authenticate / PRM) so future "should we add auth_methods to
@@ -1180,6 +1211,32 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`type InputHandler = (context: ConversationContext) => InputHandlerResponse;`);
+  ln();
+  ln(`interface CanonicalReference {`);
+  ln(`  uri: string;`);
+  ln(`  digest: string; // sha256:<64 lowercase hex chars>`);
+  ln(`}`);
+  ln();
+  ln(`type CanonicalReferenceStatus =`);
+  ln(`  | 'resolved'`);
+  ln(`  | 'unresolvable'`);
+  ln(`  | 'invalid_document'`);
+  ln(`  | 'invalid_schema'`);
+  ln(`  | 'digest_mismatch'`);
+  ln(`  | 'blocked_unsafe_url'`);
+  ln(`  | 'invalid_ref';`);
+  ln();
+  ln(`interface CanonicalReferenceResult<T = unknown> {`);
+  ln(`  ok: boolean;`);
+  ln(`  status: CanonicalReferenceStatus;`);
+  ln(`  fromCache: boolean;`);
+  ln(`  document?: T;`);
+  ln(`  schemaMeta?: { draft: 'draft-07' | '2020-12'; refCount: number };`);
+  ln(`  error?: { code: string; retryable: boolean; securitySignal?: 'substitution_attack' };`);
+  ln(`}`);
+  ln();
+  ln(`// import { createCanonicalReferenceResolver } from '@adcp/sdk/canonical-references'`);
+  ln(`// resolver.resolveFormatSchema(ref, { externalRefDigests }) validates pinned JSON Schema refs.`);
   ln();
   ln(`interface ConversationContext {`);
   ln(`  messages: Message[];`);

@@ -93,6 +93,11 @@
       "require": "./dist/lib/net/index.js",
       "types": "./dist/lib/net/index.d.ts"
     },
+    "./canonical-references": {
+      "import": "./dist/lib/canonical-references/index.js",
+      "require": "./dist/lib/canonical-references/index.js",
+      "types": "./dist/lib/canonical-references/index.d.ts"
+    },
     "./server": {
       "import": "./dist/lib/server/index.js",
       "require": "./dist/lib/server/index.js",
@@ -204,6 +209,9 @@
       "net": [
         "dist/lib/net/index.d.ts"
       ],
+      "canonical-references": [
+        "dist/lib/canonical-references/index.d.ts"
+      ],
       "server": [
         "dist/lib/server/index.d.ts"
       ],
@@ -257,6 +265,7 @@
     "ADCP_VERSION",
     "docs/llms.txt",
     "docs/guides/BUILD-AN-AGENT.md",
+    "docs/guides/CANONICAL-REFERENCE-RESOLVER.md",
     "examples/**/*",
     "AGENTS.md",
     "README.md",

@@ -239,6 +239,34 @@ export {
   type SsrfFetchOptions,
   type SsrfFetchResult,
 } from './net';
+
+// ====== CANONICAL REFERENCE RESOLUTION ======
+// Safe, structured resolver for AdCP 3.1 `format_schema` and
+// `platform_extensions` URI+SHA-256 references.
+export {
+  createCanonicalReferenceCache,
+  createCanonicalReferenceResolver,
+  canonicalReferenceCacheKey,
+  resolveCanonicalReference,
+  resolveFormatSchemaReference,
+  resolvePlatformExtensionsReference,
+  type CanonicalReference,
+  type CanonicalReferenceCache,
+  type CanonicalReferenceError,
+  type CanonicalReferenceErrorCode,
+  type CanonicalReferenceFailureResult,
+  type CanonicalReferenceKind,
+  type CanonicalReferenceResolveOptions,
+  type CanonicalReferenceResolvedResult,
+  type CanonicalReferenceResolver,
+  type CanonicalReferenceResolverOptions,
+  type CanonicalReferenceResult,
+  type CanonicalReferenceStatus,
+  type ExternalRefDigestMap,
+  type FormatSchemaReferenceResolvedResult,
+  type FormatSchemaReferenceResult,
+  type PlatformExtensionsReferenceResult,
+} from './canonical-references';
 export type {
   BuildHumanReviewPlanInput,
   BuildHumanOverrideInput,
