@@ -7,6 +7,23 @@ export interface RequestLike {
   body?: string;
 }
 
+/**
+ * RFC 9421 response-signing context. Carries the response status and
+ * headers/body, plus the originating request method + URL so derived
+ * components that bind back to the request context (`@method`,
+ * `@target-uri`, `@authority`) resolve correctly.
+ */
+export interface ResponseLike {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body?: string;
+  /**
+   * Originating request context. `url` must be absolute because
+   * `@target-uri` and `@authority` are parsed with `new URL(...)`.
+   */
+  request: { method: string; url: string };
+}
+
 export interface SignatureParams {
   created: number;
   expires: number;
@@ -27,7 +44,7 @@ const DEFAULT_PARAM_ORDER: ReadonlyArray<keyof SignatureParams> = [
 
 const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', 'tag']);
 
-const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority']);
+const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority', '@status']);
 
 export function canonicalTargetUri(rawUrl: string): string {
   rejectNonAsciiHost(rawUrl);
@@ -102,7 +119,51 @@ export function buildSignatureBase(
         `Covered component "${component}" not present in request`
       );
     }
-    lines.push(`"${component}": ${value}`);
+    lines.push(`${formatComponentIdentifier(component)}: ${value}`);
+  }
+  const paramsString = signatureParamsValue ?? formatSignatureParams(components, params);
+  lines.push(`"@signature-params": ${paramsString}`);
+  return lines.join('\n');
+}
+
+/**
+ * Build the RFC 9421 §2.5 signature base for a response.
+ *
+ * Resolves `@status` from `response.status`; request-qualified components
+ * such as `@method;req`, `@target-uri;req`, and `@authority;req` bind to
+ * `response.request`, and header components resolve against
+ * `response.headers`. `signatureParamsValue` has the same verifier-path
+ * meaning as in {@link buildSignatureBase}.
+ */
+export function buildResponseSignatureBase(
+  components: ReadonlyArray<string>,
+  response: ResponseLike,
+  params: SignatureParams,
+  signatureParamsValue?: string
+): string {
+  const requestView: RequestLike = {
+    method: response.request.method,
+    url: response.request.url,
+    headers: response.headers,
+    body: response.body,
+  };
+  const lines: string[] = [];
+  for (const component of components) {
+    const { bare, requestBound } = parseComponentIdentifier(component);
+    const value =
+      bare === '@status'
+        ? String(response.status)
+        : requestBound || bare.startsWith('@')
+          ? resolveComponentValue(bare, requestView)
+          : getHeaderValue(response.headers, bare);
+    if (value === undefined) {
+      throw new RequestSignatureError(
+        'request_signature_components_incomplete',
+        6,
+        `Covered component "${component}" not present in response`
+      );
+    }
+    lines.push(`${formatComponentIdentifier(component)}: ${value}`);
   }
   const paramsString = signatureParamsValue ?? formatSignatureParams(components, params);
   lines.push(`"@signature-params": ${paramsString}`);
@@ -110,7 +171,7 @@ export function buildSignatureBase(
 }
 
 export function formatSignatureParams(components: ReadonlyArray<string>, params: SignatureParams): string {
-  const componentList = components.map(c => `"${c}"`).join(' ');
+  const componentList = components.map(formatComponentIdentifier).join(' ');
   const paramPairs: string[] = [];
   for (const key of DEFAULT_PARAM_ORDER) {
     const raw = params[key];
@@ -118,6 +179,20 @@ export function formatSignatureParams(components: ReadonlyArray<string>, params:
     paramPairs.push(STRING_PARAMS.has(key) ? `${key}="${raw}"` : `${key}=${raw}`);
   }
   return `(${componentList});${paramPairs.join(';')}`;
+}
+
+function parseComponentIdentifier(component: string): { bare: string; requestBound: boolean } {
+  if (!component.includes(';')) return { bare: component, requestBound: false };
+  const [bare, ...params] = component.split(';');
+  return {
+    bare: bare ?? component,
+    requestBound: params.includes('req'),
+  };
+}
+
+function formatComponentIdentifier(component: string): string {
+  const { bare, requestBound } = parseComponentIdentifier(component);
+  return `"${bare}"${requestBound ? ';req' : ''}`;
 }
 
 function resolveComponentValue(component: string, request: RequestLike): string | undefined {
@@ -136,6 +211,12 @@ function resolveComponentValue(component: string, request: RequestLike): string 
         return canonicalTargetUri(request.url);
       case '@authority':
         return canonicalAuthority(request.url);
+      case '@status':
+        throw new RequestSignatureError(
+          'request_signature_components_unexpected',
+          6,
+          '"@status" is only valid in response-signing context; use buildResponseSignatureBase'
+        );
     }
   }
   return getHeaderValue(request.headers, component);

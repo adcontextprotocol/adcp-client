@@ -24,8 +24,9 @@
 - For webhook receivers, move to RFC 9421 verification and a shared replay
   store before running more than one replica. See
   [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.md).
-- Remove any use of the preview RFC 9421 transport response-signing helpers.
-  AdCP 3.x does not support generic transport response signing.
+- Generic response verification remains unsupported in AdCP 3.x. The SDK
+  keeps signing-only response helpers for compatibility with adopters that
+  publish signed JSON responses.
 - If your code extends `ProductSchema`, upgrade to 8.1. `ProductSchema` is
   intentionally a `ZodObject` again, so `.extend()`, `.omit()`, `.pick()`, and
   `.shape` work.
@@ -39,38 +40,39 @@
 
 ## Signing Surface Changes
 
-### RFC 9421 transport response signing was removed
+### RFC 9421 transport response verification remains unsupported
 
-8.1 removes the preview-only generic response-signing API because AdCP 3.x does
-not authorize RFC 9421 §2.2.9 transport response signing as a protocol surface.
-Request signing and webhook signing are unchanged.
+8.1 does not support generic transport response verification because AdCP 3.x
+does not authorize RFC 9421 §2.2.9 transport response signing as a protocol
+surface. Request signing and webhook signing are unchanged.
 
-Removed from `@adcp/sdk/signing`, `@adcp/sdk/signing/client`, and
-`@adcp/sdk/signing/server`:
+The SDK keeps the signing-only compatibility surface for agents that already
+sign JSON transport responses and publish `adcp_use: 'response-signing'` JWKs:
+`signResponse`, `signResponseAsync`, `buildResponseSignatureBase`,
+`ResponseLike`, `ResponseSignatureError`, `RESPONSE_SIGNING_TAG`,
+`RESPONSE_MANDATORY_COMPONENTS`, `prepareResponseSignature`,
+`finalizeResponseSignature`, `SignResponseOptions`,
+`PreparedResponseSignature`, and `SignedResponse`.
 
-| Removed API | Replacement |
+Still unsupported:
+
+| Unsupported API | Replacement |
 |---|---|
-| `signResponse`, `signResponseAsync` | None for generic transport responses |
 | `verifyResponseSignature`, `createResponseVerifier` | None for generic transport responses |
-| `ResponseSignatureError`, `ResponseSignatureErrorCode` | None |
-| `RESPONSE_SIGNING_TAG`, `RESPONSE_MANDATORY_COMPONENTS` | None |
-| `buildResponseSignatureBase`, `ResponseLike` | None |
-| `prepareResponseSignature`, `finalizeResponseSignature` | None |
-| `SignResponseOptions`, `PreparedResponseSignature`, `SignedResponse` | None |
 | `VerifyResponseOptions`, `VerifyResponseResult`, `CreateResponseVerifierOptions` | None |
-| `AdcpUse` value `'response-signing'` | None |
 
-Runtime helpers also reject the retired purpose. `pemToAdcpJwk({ adcp_use:
-'response-signing' })` and `mintEphemeralEd25519Key({ adcp_use:
-'response-signing' })` now throw, and `InMemorySigningProvider` preserves
-retired or unknown raw purpose strings so `signRequestAsync()` and
-`signWebhookAsync()` still fail closed instead of silently treating the key as
-unscoped.
+`pemToAdcpJwk({ adcp_use: 'response-signing' })` and
+`mintEphemeralEd25519Key({ adcp_use: 'response-signing' })` are accepted for
+this compatibility signing path. `signRequestAsync()` and `signWebhookAsync()`
+still fail closed when given response-signing keys. `signResponseAsync()` also
+requires providers to declare `adcpUse: 'response-signing'`; legacy providers
+that omit `adcpUse` remain accepted by request/webhook helpers but are refused
+for response signing.
 
 There is no conformant AdCP 3.x replacement for generic transport response
-signing. Future designated-task payload JWS support should be added under a
-fresh spec-defined purpose and helper surface, not by reusing the removed
-response-signing purpose or tag.
+verification. Future designated-task payload JWS support should be added under a
+fresh spec-defined purpose and helper surface rather than expanding this
+compatibility signing path.
 
 ## Wire Shape Tightening
 
