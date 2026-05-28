@@ -58,6 +58,41 @@ export type {
   GetAgentStoryboardStatusBulkResponse,
 } from './registry';
 
+// ====== BRAND JSON HELPERS ======
+export {
+  COMMON_LOGO_SLOTS,
+  applyBrandAssetMappings,
+  checkLogoSlotCoverage,
+  selectLogoForSlot,
+  updateBrandJsonFromMappings,
+  validateBrandAssetMappings,
+} from './brand';
+export type {
+  AppliedBrandAssetMapping,
+  ApplyBrandAssetMappingsOptions,
+  ApplyBrandAssetMappingsResult,
+  BrandAssetCandidate,
+  BrandAssetCropBox,
+  BrandAssetExtractionMethod,
+  BrandAssetMapping,
+  BrandAssetMappingIssue,
+  BrandAssetMappingTarget,
+  BrandAssetMappingValidationResult,
+  BrandAssetReviewStatus,
+  BrandJsonRecord,
+  BrandLogoBackground,
+  BrandLogoOrientation,
+  BrandLogoProposal,
+  BrandLogoVariant,
+  LogoSelectionOptions,
+  LogoSlotCoverage,
+  LogoSlotCoverageOptions,
+  ResolveBrandAssetUrl,
+  SkippedBrandAssetMapping,
+  UpdateBrandJsonFromMappingsOptions,
+  UpdateBrandJsonFromMappingsResult,
+} from './brand';
+
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======
 export {
   PropertyIndex,
