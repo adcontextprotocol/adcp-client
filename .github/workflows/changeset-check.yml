@@ -23,17 +23,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Detect release metadata-only change
         if: github.head_ref != 'changeset-release/main'
+        id: release-metadata
+        run: |
+          changed_files="$(git diff --name-only origin/main...HEAD)"
+          package_changes="$(
+            printf '%s\n' "$changed_files" |
+              grep -Ev '^(\.changeset/pre\.json|src/lib/version\.ts|docs/(llms\.txt|TYPE-SUMMARY\.md)|\.github/workflows/(changeset-check|release)\.yml)$' ||
+              true
+          )"
+
+          if [ -z "$package_changes" ]; then
+            if printf '%s\n' "$changed_files" | grep -qx 'src/lib/version.ts'; then
+              node -e '
+                const fs = require("node:fs");
+                const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+                const source = fs.readFileSync("src/lib/version.ts", "utf8");
+                const quote = String.fromCharCode(39);
+                const hasLibraryVersion = source.includes(`LIBRARY_VERSION = ${quote}${pkg.version}${quote}`);
+                const hasVersionInfoLibrary = source.includes(`library: ${quote}${pkg.version}${quote}`);
+
+                if (!hasLibraryVersion || !hasVersionInfoLibrary) {
+                  console.error(
+                    `src/lib/version.ts is not synced with package.json version ${pkg.version}.`
+                  );
+                  process.exit(1);
+                }
+              '
+            fi
+
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Only release metadata changed; changeset not required."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
         uses: actions/setup-node@v5
         with:
           node-version: '20.x'
           cache: 'npm'
 
       - name: Install dependencies
-        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
         run: npm ci
 
       - name: Check for changeset
-        if: github.head_ref != 'changeset-release/main'
+        if: github.head_ref != 'changeset-release/main' && steps.release-metadata.outputs.skip != 'true'
         run: npx changeset status --since=origin/main

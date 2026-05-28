@@ -53,6 +53,7 @@
     "media-buy-3-1-types",
     "migration-v8-guide",
     "mock-server-scenario-controller",
+    "node24-artifact-actions",
     "object-schema-intersections",
     "outcome-measurement-rename",
     "parallel-ci-workflow",
