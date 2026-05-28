@@ -48,7 +48,7 @@ Keep three axes separate when forking a Hello agent:
 - `BuyerAgentRegistry` is the per-caller commercial relationship. `hello_signals_adapter_marketplace.ts`, `hello_seller_adapter_social.ts`, and `hello_seller_adapter_multi_tenant.ts` show the durable buyer-agent identity seam; `ctx.agent` is the trusted record for status, sandbox-only reach, tenant routing, and billing gates.
 - `fixtures.buyer_agents[]` plus `seed_buyer_agent` is the compliance setup path. The signals Hello agent wires a test-only overlay so a 3.1 storyboard can vary Addie's `status`, `sandbox_only`, or `billing_capabilities` without inventing a special bearer-token prefix. Production agents should back this with their onboarding ledger and invalidate the registry cache after mutation.
 
-The framework resolves and status-gates buyer agents. Until automatic `sync_accounts.billing` enforcement moves into the framework, media-buy adapters that accept account sync should enforce billing from the same `ctx.agent` record they use for onboarding. The social Hello agent includes this representative gate because it has a buyer-agent ledger; do not fork a separate bearer-token prefix or unscoped test-only shortcut.
+The framework resolves buyer agents, status-gates them, and enforces `sync_accounts.billing` against both seller-wide `supportedBillings` and the resolved `ctx.agent.billing_capabilities`. The social Hello agent includes a buyer-agent ledger so the framework can exercise the per-agent billing gate; do not fork a separate bearer-token prefix or unscoped test-only shortcut.
 
 ## Examples
 

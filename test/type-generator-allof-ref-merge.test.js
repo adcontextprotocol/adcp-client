@@ -520,3 +520,40 @@ main().catch((err) => { console.error(err); process.exit(1); });
   assert.match(result.ts, /property_ids/, 'variant property_ids must surface in emitted TS');
   assert.match(result.ts, /catalog_ids/, 'variant catalog_ids must surface in emitted TS');
 });
+
+test('compiled oneOf with not.anyOf exclusions preserves attestation branch fields', () => {
+  const result = runHarness(`
+import { writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { compile } from 'json-schema-to-typescript';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const schemaPath = join(process.cwd(), 'schemas/cache/3.1.0-beta.5/compliance/comply-test-controller-response.json');
+const root = JSON.parse(readFileSync(schemaPath, 'utf8'));
+const recordedCallSchema = root.oneOf
+  .find((branch) => branch.title === 'UpstreamTrafficSuccess')
+  .properties.recorded_calls.items;
+
+async function main() {
+  const strict = enforceStrictSchema(JSON.parse(JSON.stringify(recordedCallSchema)));
+  const ts = await compile(strict, 'RecordedCall', {
+    bannerComment: '',
+    additionalProperties: false,
+    strictIndexSignatures: true,
+  });
+  writeFileSync(__OUT_PATH__, JSON.stringify({ ts, strict }));
+}
+main().catch((err) => { console.error(err); process.exit(1); });
+`);
+
+  assert.match(result.ts, /export interface RawAttestation/, 'raw branch interface must be emitted');
+  assert.match(result.ts, /payload\s*:/, 'raw branch payload field must surface');
+  assert.match(result.ts, /payload_length\s*:/, 'shared payload_length field must surface');
+  assert.match(result.ts, /export interface DigestAttestation/, 'digest branch interface must be emitted');
+  assert.match(result.ts, /payload_digest_sha256\s*:/, 'digest branch payload_digest_sha256 field must surface');
+  assert.match(result.ts, /identifier_match_proofs\??\s*:/, 'digest branch optional proofs field must surface');
+  assert.ok(
+    result.strict.oneOf.every(branch => branch.type === 'object' && branch.properties?.payload_length),
+    'parent properties must be inlined into every attestation branch'
+  );
+});

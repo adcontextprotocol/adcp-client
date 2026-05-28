@@ -1,5 +1,5 @@
 /**
- * Buyer-agent identity surface — Phase 1 of #1269.
+ * Buyer-agent identity surface from #1269 / #1292.
  *
  * Models a buyer agent (the buying entity calling a seller) as a durable
  * commercial relationship in the seller's records, distinct from the
@@ -13,10 +13,8 @@
  * the DSP authenticates via OAuth, signed requests, or a pre-shared API
  * key. Token proves identity; row drives commercial behavior.
  *
- * **Phase 1 scope.** This module ships in 3.0.x with the durable identity
- * shape. Framework-level billing-capability enforcement and the new error
- * codes from adcontextprotocol/adcp#3831 land in Phase 2 (#1292), gated on
- * the SDK's 3.1 cutover.
+ * AdCP 3.1 framework paths consume the resolved record for status,
+ * sandbox-only, and `sync_accounts.billing` enforcement.
  *
  * @public
  */
@@ -121,10 +119,9 @@ export interface BuyerAgent {
    * - `passthrough_only` ↔ `new Set(['operator'])`
    * - `agent_billable` ↔ `new Set(['agent', 'operator', 'advertiser'])`
    *
-   * Phase 1 does not enforce — adopters who want enforcement implement it
-   * adopter-side. Phase 2 (#1292) wires framework-level enforcement to the
-   * `BILLING_NOT_PERMITTED_FOR_AGENT` code from adcp#3831 once the SDK
-   * pin moves to AdCP 3.1.
+   * The framework enforces this set on `sync_accounts` in AdCP 3.1
+   * deployments and returns `BILLING_NOT_PERMITTED_FOR_AGENT` with a
+   * clamped details shape when the requested billing value is outside it.
    */
   readonly billing_capabilities: ReadonlySet<BuyerAgentBillingMode>;
 
@@ -200,6 +197,28 @@ export interface BuyerAgent {
    * Default `false` (or undefined) — production-allowed.
    */
   readonly sandbox_only?: boolean;
+}
+
+const BILLING_SUGGESTION_ORDER: readonly BuyerAgentBillingMode[] = ['operator', 'advertiser', 'agent'];
+
+/**
+ * Pick the single autonomous-retry billing value exposed on
+ * `BILLING_NOT_PERMITTED_FOR_AGENT.details.suggested_billing`.
+ *
+ * The details schema intentionally allows only one suggestion, not the
+ * agent's full permitted set. Preference is the spec-discussed commercial
+ * fallback order: operator > advertiser > agent.
+ *
+ * @public
+ */
+export function suggestBilling(
+  billingCapabilities: ReadonlySet<BuyerAgentBillingMode>,
+  rejected: BuyerAgentBillingMode
+): BuyerAgentBillingMode | undefined {
+  for (const mode of BILLING_SUGGESTION_ORDER) {
+    if (mode !== rejected && billingCapabilities.has(mode)) return mode;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -795,4 +814,5 @@ export const BuyerAgentRegistry = {
   bearerOnly,
   mixed,
   cached,
+  suggestBilling,
 };

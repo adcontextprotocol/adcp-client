@@ -69,6 +69,13 @@ runHelloAdapterGates({
   ],
   extraMcpAssertions: [
     {
+      label: 'advertises operator billing for storyboard account setup',
+      run: async ({ callTool }) => {
+        const caps = await callTool('get_adcp_capabilities', {});
+        assert.deepEqual(caps?.structuredContent?.account?.supported_billing, ['operator', 'agent']);
+      },
+    },
+    {
       label: 'hides comply_test_controller from live-mode principals over MCP (adcp#4028)',
       run: async ({ agentUrl, authToken }) => {
         const sandboxList = await withMcpClient(agentUrl, authToken, client => client.listTools());

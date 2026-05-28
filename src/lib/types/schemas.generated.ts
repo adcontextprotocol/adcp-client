@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-27T02:12:50.072Z
+// Generated at: 2026-05-28T07:38:17.486Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -95,6 +95,12 @@ export const AgeVerificationMethodSchema = z.union([z.literal("facial_age_estima
 export const DevicePlatformSchema = z.union([z.literal("ios"), z.literal("android"), z.literal("windows"), z.literal("macos"), z.literal("linux"), z.literal("chromeos"), z.literal("tvos"), z.literal("tizen"), z.literal("webos"), z.literal("fire_os"), z.literal("roku_os"), z.literal("unknown")]);
 
 export const DeviceTypeSchema = z.union([z.literal("desktop"), z.literal("mobile"), z.literal("tablet"), z.literal("ctv"), z.literal("dooh"), z.literal("unknown")]);
+
+export const TravelTimeUnitSchema = z.union([z.literal("min"), z.literal("hr")]);
+
+export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cycling"), z.literal("driving"), z.literal("public_transport")]);
+
+export const DistanceUnitSchema = z.union([z.literal("km"), z.literal("mi"), z.literal("m")]);
 
 export const MatchTypeSchema = z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]);
 
@@ -3795,8 +3801,6 @@ export const IdempotencyUnsupportedSchema = z.object({
     supported: z.literal(false)
 }).passthrough();
 
-export const TransportModeSchema = z.union([z.literal("walking"), z.literal("cycling"), z.literal("driving"), z.literal("public_transport")]);
-
 export const SICapabilitiesSchema = z.object({
     modalities: z.object({
         conversational: z.boolean().optional(),
@@ -4244,9 +4248,51 @@ export const CanonicalProjectionReferenceSchema = z.object({
     }).passthrough()).optional()
 }).passthrough();
 
-export const TravelTimeUnitSchema = z.union([z.literal("min"), z.literal("hr")]);
-
-export const DistanceUnitSchema = z.union([z.literal("km"), z.literal("mi"), z.literal("m")]);
+export const CatchmentSchema = z.object({
+    catchment_id: z.string(),
+    label: z.string().optional(),
+    travel_time: z.object({
+        value: z.number().min(1),
+        unit: TravelTimeUnitSchema
+    }).passthrough().optional(),
+    transport_mode: TransportModeSchema.optional(),
+    radius: z.object({
+        value: z.number(),
+        unit: DistanceUnitSchema
+    }).passthrough().optional(),
+    geometry: z.object({
+        type: z.union([z.literal("Polygon"), z.literal("MultiPolygon")]),
+        coordinates: z.array(z.unknown())
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([z.object({
+        catchment_id: z.string(),
+        label: z.string().optional(),
+        travel_time: z.object({
+            value: z.number().min(1),
+            unit: TravelTimeUnitSchema
+        }).passthrough(),
+        transport_mode: TransportModeSchema,
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough(), z.object({
+        catchment_id: z.string(),
+        label: z.string().optional(),
+        transport_mode: TransportModeSchema.optional(),
+        radius: z.object({
+            value: z.number(),
+            unit: DistanceUnitSchema
+        }).passthrough(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough(), z.object({
+        catchment_id: z.string(),
+        label: z.string().optional(),
+        transport_mode: TransportModeSchema.optional(),
+        geometry: z.object({
+            type: z.union([z.literal("Polygon"), z.literal("MultiPolygon")]),
+            coordinates: z.array(z.unknown())
+        }).passthrough(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()]));
 
 export const CollectionDistributionSchema = z.object({
     publisher_domain: z.string(),
@@ -4791,22 +4837,25 @@ export const SignalDefinitionSchema = z.object({
 
 export const VendorPricingSchema = z.union([CpmPricingSchema, PercentOfMediaPricingSchema, FlatFeePricingSchema, PerUnitPricingSchema, CustomPricingSchema]);
 
-export const CatchmentSchema = z.object({
-    catchment_id: z.string(),
-    label: z.string().optional(),
-    travel_time: z.object({
-        value: z.number().min(1),
-        unit: TravelTimeUnitSchema
+export const StoreItemSchema = z.object({
+    store_id: z.string(),
+    name: z.string(),
+    location: z.object({
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180)
+    }).passthrough(),
+    address: z.object({
+        street: z.string().optional(),
+        city: z.string().optional(),
+        region: z.string().optional(),
+        postal_code: z.string().optional(),
+        country: z.string().regex(/^[A-Z]{2}$/).optional()
     }).passthrough().optional(),
-    transport_mode: TransportModeSchema.optional(),
-    radius: z.object({
-        value: z.number(),
-        unit: DistanceUnitSchema
-    }).passthrough().optional(),
-    geometry: z.object({
-        type: z.union([z.literal("Polygon"), z.literal("MultiPolygon")]),
-        coordinates: z.array(z.unknown())
-    }).passthrough().optional(),
+    catchments: z.array(CatchmentSchema).optional(),
+    phone: z.string().optional(),
+    url: z.string().optional(),
+    hours: z.record(z.string(), z.string()).optional(),
+    tags: z.array(z.string()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -5368,7 +5417,34 @@ export const ProductFiltersSchema = z.object({
         system: PostalCodeSystemSchema,
         values: z.array(z.string())
     }).passthrough()).optional(),
-    geo_proximity: z.array(z.record(z.string(), z.unknown())).optional(),
+    geo_proximity: z.array(z.union([z.object({
+            lat: z.number().min(-90).max(90),
+            lng: z.number().min(-180).max(180),
+            label: z.string().optional(),
+            travel_time: z.object({
+                value: z.number().min(1),
+                unit: TravelTimeUnitSchema
+            }).passthrough(),
+            transport_mode: TransportModeSchema
+        }).passthrough(), z.object({
+            lat: z.number().min(-90).max(90),
+            lng: z.number().min(-180).max(180),
+            label: z.string().optional(),
+            transport_mode: TransportModeSchema.optional(),
+            radius: z.object({
+                value: z.number(),
+                unit: DistanceUnitSchema
+            }).passthrough()
+        }).passthrough(), z.object({
+            lat: z.number().min(-90).max(90).optional(),
+            lng: z.number().min(-180).max(180).optional(),
+            label: z.string().optional(),
+            transport_mode: TransportModeSchema.optional(),
+            geometry: z.object({
+                type: z.union([z.literal("Polygon"), z.literal("MultiPolygon")]),
+                coordinates: z.array(z.unknown())
+            }).passthrough()
+        }).passthrough()])).optional(),
     required_performance_standards: z.array(PerformanceStandardSchema).optional(),
     required_metrics: z.array(AvailableMetricSchema).optional(),
     required_vendor_metrics: z.array(z.object({
@@ -5751,7 +5827,37 @@ export const TargetingOverlaySchema = z.object({
         store_ids: z.array(z.string()).optional(),
         catchment_ids: z.array(z.string()).optional()
     }).passthrough()).optional(),
-    geo_proximity: z.array(z.record(z.string(), z.unknown())).optional(),
+    geo_proximity: z.array(z.union([z.object({
+            lat: z.number().min(-90).max(90),
+            lng: z.number().min(-180).max(180),
+            label: z.string().optional(),
+            travel_time: z.object({
+                value: z.number().min(1),
+                unit: TravelTimeUnitSchema
+            }).passthrough(),
+            transport_mode: TransportModeSchema,
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough(), z.object({
+            lat: z.number().min(-90).max(90),
+            lng: z.number().min(-180).max(180),
+            label: z.string().optional(),
+            transport_mode: TransportModeSchema.optional(),
+            radius: z.object({
+                value: z.number(),
+                unit: DistanceUnitSchema
+            }).passthrough(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough(), z.object({
+            lat: z.number().min(-90).max(90).optional(),
+            lng: z.number().min(-180).max(180).optional(),
+            label: z.string().optional(),
+            transport_mode: TransportModeSchema.optional(),
+            geometry: z.object({
+                type: z.union([z.literal("Polygon"), z.literal("MultiPolygon")]),
+                coordinates: z.array(z.unknown())
+            }).passthrough(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough()])).optional(),
     language: z.array(z.string()).optional(),
     keyword_targets: z.array(z.object({
         keyword: z.string().min(1),
@@ -7959,11 +8065,37 @@ export const ControllerErrorSchema = z.object({
 }).passthrough();
 
 export const RawAttestationSchema = z.object({
-    attestation_mode: z.literal("raw")
+    method: z.union([z.literal("GET"), z.literal("POST"), z.literal("PUT"), z.literal("PATCH"), z.literal("DELETE"), z.literal("HEAD"), z.literal("OPTIONS")]),
+    endpoint: z.string(),
+    url: z.string(),
+    host: z.string().optional(),
+    path: z.string().optional(),
+    content_type: z.string(),
+    attestation_mode: z.literal("raw"),
+    purpose: z.union([z.literal("platform_primary"), z.literal("measurement"), z.literal("attribution"), z.literal("creative_serving"), z.literal("identity"), z.literal("other")]).optional(),
+    payload: z.record(z.string(), z.unknown()),
+    payload_length: z.number().min(0),
+    timestamp: z.iso.datetime(),
+    status_code: z.number().min(100).max(599).optional()
 }).passthrough();
 
 export const DigestAttestationSchema = z.object({
-    attestation_mode: z.literal("digest")
+    method: z.union([z.literal("GET"), z.literal("POST"), z.literal("PUT"), z.literal("PATCH"), z.literal("DELETE"), z.literal("HEAD"), z.literal("OPTIONS")]),
+    endpoint: z.string(),
+    url: z.string(),
+    host: z.string().optional(),
+    path: z.string().optional(),
+    content_type: z.string(),
+    attestation_mode: z.literal("digest"),
+    purpose: z.union([z.literal("platform_primary"), z.literal("measurement"), z.literal("attribution"), z.literal("creative_serving"), z.literal("identity"), z.literal("other")]).optional(),
+    payload_digest_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    payload_length: z.number().min(0),
+    identifier_match_proofs: z.array(z.object({
+        identifier_value_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        found: z.boolean()
+    }).passthrough()).optional(),
+    timestamp: z.iso.datetime(),
+    status_code: z.number().min(100).max(599).optional()
 }).passthrough();
 
 export const IndividualImageAssetSchema = BaseIndividualAssetSchema.merge(z.object({
@@ -8824,28 +8956,6 @@ export const CatalogRequirementsSchema = z.object({
 export const SignalPricingOptionSchema = z.object({
     pricing_option_id: z.string()
 }).passthrough().and(VendorPricingSchema);
-
-export const StoreItemSchema = z.object({
-    store_id: z.string(),
-    name: z.string(),
-    location: z.object({
-        lat: z.number().min(-90).max(90),
-        lng: z.number().min(-180).max(180)
-    }).passthrough(),
-    address: z.object({
-        street: z.string().optional(),
-        city: z.string().optional(),
-        region: z.string().optional(),
-        postal_code: z.string().optional(),
-        country: z.string().regex(/^[A-Z]{2}$/).optional()
-    }).passthrough().optional(),
-    catchments: z.array(CatchmentSchema).optional(),
-    phone: z.string().optional(),
-    url: z.string().optional(),
-    hours: z.record(z.string(), z.string()).optional(),
-    tags: z.array(z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
 
 export const WholesaleFeedEventSchema = z.object({
     event_id: z.uuid(),

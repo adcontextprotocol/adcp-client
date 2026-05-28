@@ -5331,17 +5331,18 @@ async function prefetchUpstreamTraffic(
       ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
     };
     const startMs = Date.now();
-    let payload: UpstreamTrafficSuccess | { error: string };
+    let payload: UpstreamTrafficSuccess | { error: string; error_kind?: string };
     try {
       const result = await queryUpstreamTraffic(client as TestClient, params, options);
       if ('success' in result && result.success === true) {
         payload = result;
       } else {
-        const errResult = result as { error?: string; error_detail?: string };
+        const errResult = result as { error?: string; error_detail?: string; context?: unknown; ext?: unknown };
         const message = errResult.error_detail
           ? `${errResult.error ?? 'controller_error'}: ${errResult.error_detail}`
           : (errResult.error ?? 'controller returned a non-success response');
-        payload = { error: message };
+        const errorKind = extractControllerErrorKind(errResult);
+        payload = { error: message, ...(errorKind ? { error_kind: errorKind } : {}) };
       }
     } catch (err) {
       payload = { error: err instanceof Error ? err.message : String(err) };
@@ -5370,6 +5371,18 @@ async function prefetchUpstreamTraffic(
     ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
     ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
+}
+
+function extractControllerErrorKind(result: { context?: unknown; ext?: unknown }): string | undefined {
+  return readErrorKind(result.context) ?? readErrorKind(result.ext);
+}
+
+function readErrorKind(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.error_kind === 'string' && record.error_kind.length > 0) return record.error_kind;
+  if (typeof record.kind === 'string' && record.kind.length > 0) return record.kind;
+  return undefined;
 }
 
 function collectUpstreamIdentifierDigests(
