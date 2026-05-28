@@ -11,6 +11,7 @@ This is **@adcp/sdk** - the official TypeScript client library for the Ad Contex
 - ✅ Always use official `@a2a-js/sdk` and `@modelcontextprotocol/sdk` clients
 - ❌ Never use mock data - return exactly what agents provide
 - ✅ Use changesets for version management (never edit package.json version manually)
+- ✅ Use Conventional Commits for commit messages and PR titles; do not prefix PR titles with agent/tool labels like `[Codex]` or `[Claude]`
 
 ## Project Components
 
