@@ -306,7 +306,9 @@ export interface SignResponseOptions {
   /**
    * Additional derived/header components to cover beyond
    * {@link RESPONSE_MANDATORY_COMPONENTS}. The defaults include `@status`,
-   * `@method;req`, `@authority;req`, and `@target-uri;req`.
+   * `@method;req`, `@authority;req`, and `@target-uri;req`. Only the
+   * RFC 9421 `;req` component parameter is supported; other component
+   * parameters are rejected rather than silently round-tripped.
    */
   additionalComponents?: ReadonlyArray<string>;
   label?: string;

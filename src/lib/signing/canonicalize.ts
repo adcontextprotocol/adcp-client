@@ -19,9 +19,11 @@ export interface ResponseLike {
   body?: string;
   /**
    * Originating request context. `url` must be absolute because
-   * `@target-uri` and `@authority` are parsed with `new URL(...)`.
+   * `@target-uri` and `@authority` are parsed with `new URL(...)`. Supply
+   * `headers` when signing request-qualified header components such as
+   * `authorization;req`.
    */
-  request: { method: string; url: string };
+  request: { method: string; url: string; headers?: Record<string, string | string[] | undefined> };
 }
 
 export interface SignatureParams {
@@ -131,7 +133,8 @@ export function buildSignatureBase(
  *
  * Resolves `@status` from `response.status`; request-qualified components
  * such as `@method;req`, `@target-uri;req`, and `@authority;req` bind to
- * `response.request`, and header components resolve against
+ * `response.request`, request-qualified headers bind to
+ * `response.request.headers`, and response header components resolve against
  * `response.headers`. `signatureParamsValue` has the same verifier-path
  * meaning as in {@link buildSignatureBase}.
  */
@@ -144,18 +147,12 @@ export function buildResponseSignatureBase(
   const requestView: RequestLike = {
     method: response.request.method,
     url: response.request.url,
-    headers: response.headers,
-    body: response.body,
+    headers: response.request.headers ?? {},
   };
   const lines: string[] = [];
   for (const component of components) {
     const { bare, requestBound } = parseComponentIdentifier(component);
-    const value =
-      bare === '@status'
-        ? String(response.status)
-        : requestBound || bare.startsWith('@')
-          ? resolveComponentValue(bare, requestView)
-          : getHeaderValue(response.headers, bare);
+    const value = resolveResponseComponentValue(bare, requestBound, response, requestView);
     if (value === undefined) {
       throw new RequestSignatureError(
         'request_signature_components_incomplete',
@@ -184,6 +181,14 @@ export function formatSignatureParams(components: ReadonlyArray<string>, params:
 function parseComponentIdentifier(component: string): { bare: string; requestBound: boolean } {
   if (!component.includes(';')) return { bare: component, requestBound: false };
   const [bare, ...params] = component.split(';');
+  const unsupported = params.filter(param => param !== 'req');
+  if (unsupported.length > 0) {
+    throw new RequestSignatureError(
+      'request_signature_components_unexpected',
+      6,
+      `Covered component "${component}" uses unsupported component parameters`
+    );
+  }
   return {
     bare: bare ?? component,
     requestBound: params.includes('req'),
@@ -193,6 +198,35 @@ function parseComponentIdentifier(component: string): { bare: string; requestBou
 function formatComponentIdentifier(component: string): string {
   const { bare, requestBound } = parseComponentIdentifier(component);
   return `"${bare}"${requestBound ? ';req' : ''}`;
+}
+
+function resolveResponseComponentValue(
+  bare: string,
+  requestBound: boolean,
+  response: ResponseLike,
+  requestView: RequestLike
+): string | undefined {
+  if (bare === '@status') {
+    if (requestBound) {
+      throw new RequestSignatureError(
+        'request_signature_components_unexpected',
+        6,
+        '"@status" cannot use the request-bound ;req parameter'
+      );
+    }
+    return String(response.status);
+  }
+  if (bare.startsWith('@')) {
+    if (!requestBound) {
+      throw new RequestSignatureError(
+        'request_signature_components_unexpected',
+        6,
+        `Response derived component "${bare}" must use the request-bound ;req parameter`
+      );
+    }
+    return resolveComponentValue(bare, requestView);
+  }
+  return getHeaderValue(requestBound ? requestView.headers : response.headers, bare);
 }
 
 function resolveComponentValue(component: string, request: RequestLike): string | undefined {

@@ -61,6 +61,10 @@ function publicJwkFor(kid) {
 const ORIGINATING_REQUEST = {
   method: 'POST',
   url: 'https://seller.example.com/adcp/get_products',
+  headers: {
+    Authorization: 'Bearer request-token',
+    'X-Request-Scope': 'request-scope',
+  },
 };
 
 const SAMPLE_RESPONSE = {
@@ -188,6 +192,66 @@ describe('response-signing compatibility exports', () => {
     assert.notStrictEqual(postSigned.signatureBase, getSigned.signatureBase);
     assert.match(postSigned.signatureBase, /"@method";req: POST/);
     assert.match(getSigned.signatureBase, /"@method";req: GET/);
+  });
+
+  test('request-qualified header components resolve against request headers', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    const signed = signResponse(
+      {
+        ...SAMPLE_RESPONSE,
+        headers: {
+          ...SAMPLE_RESPONSE.headers,
+          Authorization: 'Bearer response-token',
+        },
+      },
+      key,
+      { ...FIXED_OPTIONS, additionalComponents: ['authorization;req'] }
+    );
+
+    assert.match(signed.signatureBase, /"authorization";req: Bearer request-token/);
+    assert.doesNotMatch(signed.signatureBase, /Bearer response-token/);
+  });
+
+  test('request-qualified header components require request headers', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    assert.throws(
+      () =>
+        signResponse(
+          { ...SAMPLE_RESPONSE, request: { method: ORIGINATING_REQUEST.method, url: ORIGINATING_REQUEST.url } },
+          key,
+          { ...FIXED_OPTIONS, additionalComponents: ['authorization;req'] }
+        ),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_components_incomplete' &&
+        /authorization;req/.test(err.message)
+    );
+  });
+
+  test('unsupported response component parameters are rejected', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    assert.throws(
+      () => signResponse(SAMPLE_RESPONSE, key, { ...FIXED_OPTIONS, additionalComponents: ['content-type;sf'] }),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_components_unexpected' &&
+        /unsupported component parameters/.test(err.message)
+    );
+  });
+
+  test('bare request-derived components are rejected in response signatures', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    assert.throws(
+      () => signResponse(SAMPLE_RESPONSE, key, { ...FIXED_OPTIONS, additionalComponents: ['@method'] }),
+      err =>
+        err instanceof RequestSignatureError &&
+        err.code === 'request_signature_components_unexpected' &&
+        /must use the request-bound ;req parameter/.test(err.message)
+    );
   });
 
   test('omits content components when body is empty', () => {
