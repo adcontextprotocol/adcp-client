@@ -1639,7 +1639,12 @@ function buildRequiredToolsMissingResult(
  * agent's declared capabilities. Returns an empty array when rawCaps is
  * absent (standalone runner without pre-fetched profile).
  *
- * Currently emits two spec-grounded notices (adcp-client#1704):
+ * Currently emits three spec-grounded notices (adcp-client#1704, #2082):
+ *
+ * - `signed_requests_specialism_deprecated`: agent claims deprecated
+ *   `specialisms: ['signed-requests']` alongside `request_signing.supported:
+ *   true` on the signed_requests storyboard. The enum value is removed in
+ *   `effective_version: '4.0'`.
  *
  * - `request_signing.required`: `request_signing.supported` is absent or
  *   false on the signed_requests storyboard. Signing becomes required for
@@ -1648,10 +1653,6 @@ function buildRequiredToolsMissingResult(
  * - `webhook_signing.legacy_hmac_fallback.removed`: agent claims
  *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
  *   `effective_version: '4.0'`.
- *
- * Note: a third notice (`signed_requests_specialism_deprecated`) is deferred
- * pending upstream deprecation of the `'signed-requests'` specialism value in
- * adcontextprotocol/adcp#4418 — the value is still active in the spec.
  */
 function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): RunnerNotice[] {
   const notices: RunnerNotice[] = [];
@@ -1663,11 +1664,33 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
   // declared request_signing support. The storyboard is identified by id OR
   // by the presence of a request_signing_probe step (mirrors the implicit-
   // require detection in detectImplicitRequires for PR #1703's gate).
-  const isSignedRequestsStoryboard =
-    storyboard.id === 'signed_requests' ||
+  const isSignedRequestsNoticeStoryboard = storyboard.id === 'signed_requests';
+  const isRequestSigningStoryboard =
+    isSignedRequestsNoticeStoryboard ||
     storyboard.phases.some(p => p.steps.some(s => s.task === 'request_signing_probe'));
-  if (isSignedRequestsStoryboard) {
+  if (isRequestSigningStoryboard) {
     const requestSigning = caps['request_signing'] as Record<string, unknown> | undefined;
+    const specialisms = caps['specialisms'];
+    // Canonical deprecation notice standardized by adcontextprotocol/adcp#4796.
+    if (
+      isSignedRequestsNoticeStoryboard &&
+      requestSigning?.['supported'] === true &&
+      Array.isArray(specialisms) &&
+      specialisms.includes('signed-requests')
+    ) {
+      notices.push({
+        severity: 'deprecation',
+        code: 'signed_requests_specialism_deprecated',
+        message:
+          'The `signed-requests` specialism claim is deprecated and removed in AdCP 4.0. ' +
+          'Drop it and rely on `request_signing.supported: true` instead.',
+        effective_version: '4.0',
+        capability_path: 'specialisms',
+        docs_url: 'https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer',
+        storyboard_ids: [storyboard.id],
+      });
+    }
+
     if (requestSigning?.['supported'] !== true) {
       notices.push({
         severity: 'future_required',
