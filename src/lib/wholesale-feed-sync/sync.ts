@@ -18,10 +18,23 @@ type Product = V31Beta.Product;
 // Signal export in the generated bundle). Extract the element type so
 // the index map and search helpers stay strongly-typed.
 type Signal = NonNullable<V31Beta.GetSignalsResponse['signals']>[number];
+type FeedMetadata = {
+  wholesaleFeedVersion: string | undefined;
+  pricingVersion: string | undefined;
+  cacheScope: 'public' | 'account';
+};
+type BootstrapFeedResult<T> = {
+  cancelled: boolean;
+  unchanged: boolean;
+  items: Map<string, T>;
+  metadata: FeedMetadata;
+};
 
 const DEFAULT_PROBE_INTERVAL_MS = 600_000;
 const DEFAULT_CAPABILITY_REFRESH_INTERVAL_MS = 86_400_000;
 const DEFAULT_BOOTSTRAP_PAGE_LIMIT = 100;
+const VERSION_MISMATCH_RECOVERY_ATTEMPTS = 3;
+const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
 
 /**
  * In-memory mirror of an AdCP agent's wholesale product and signal feeds.
@@ -85,6 +98,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
   private probeTimer: ReturnType<typeof setTimeout> | null = null;
   private capabilityTimer: ReturnType<typeof setTimeout> | null = null;
+  private lifecycleEpoch = 0;
 
   /**
    * Read-only view of the in-memory product index. The `mode` reflects the
@@ -189,23 +203,25 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
   private async startInner(): Promise<void> {
     this.stop();
-    await this.resolveMode();
-    await this.bootstrap();
+    const epoch = this.lifecycleEpoch;
+    if (!(await this.resolveMode(epoch))) return;
+    if (!(await this.bootstrap({ epoch }))) return;
     if (this._mode === 'auto-poll') {
-      this.scheduleProbe();
+      this.scheduleProbe(epoch);
     }
     if (this.capabilityRefreshIntervalMs > 0) {
-      this.scheduleCapabilityRefresh();
+      this.scheduleCapabilityRefresh(epoch);
     }
   }
 
   /** Stop all background activity. Preserves in-memory state and version tokens. */
   stop(): void {
+    this.lifecycleEpoch++;
     if (this.probeTimer) clearTimeout(this.probeTimer);
     if (this.capabilityTimer) clearTimeout(this.capabilityTimer);
     this.probeTimer = null;
     this.capabilityTimer = null;
-    if (this._state === 'syncing') this.setState('idle');
+    if (this._state === 'syncing' || this._state === 'bootstrapping') this.setState('idle');
   }
 
   /**
@@ -233,8 +249,9 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
    * fetched wholesale feed.
    */
   async refresh(): Promise<void> {
+    const epoch = this.lifecycleEpoch;
     this.emit('resyncing', { reason: 'manual' });
-    await this.bootstrap({ emitDiffs: true });
+    await this.bootstrap({ emitDiffs: true, epoch });
   }
 
   /**
@@ -244,6 +261,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
    * reads instead of applying a suspect delta.
    */
   async applyWebhook(webhook: V31Beta.WholesaleFeedWebhook): Promise<void> {
+    const epoch = this.lifecycleEpoch;
     const event = webhook.event;
     if (!event || webhook.notification_type !== event.event_type) {
       throw new Error('WholesaleFeedSync: wholesale feed webhook notification_type does not match event.event_type.');
@@ -274,9 +292,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     const dedupeKey = this.webhookDedupeKey(webhook);
     const eventDedupeKey = this.webhookEventDedupeKey(webhook);
     if (await this.hasProcessedWebhook(dedupeKey, eventDedupeKey)) return;
+    if (!this.isLifecycleCurrent(epoch)) return;
 
     if (this.lastWebhookEventId && compareUuidV7(event.event_id, this.lastWebhookEventId) <= 0) {
-      await this.recoverFromVersionMismatch();
+      if (!(await this.recoverFromVersionMismatch(event, epoch))) return;
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       return;
     }
@@ -294,7 +313,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       currentVersion &&
       webhook.previous_wholesale_feed_version !== currentVersion
     ) {
-      await this.recoverFromVersionMismatch();
+      if (!(await this.recoverFromVersionMismatch(event, epoch))) return;
       await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
       return;
     }
@@ -302,7 +321,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     if (event.event_type === 'wholesale_feed.bulk_change') {
       this.emit('wholesale_feed.bulk_change', { event });
       try {
-        await this.recoverFromBulkChange(event);
+        if (!(await this.recoverFromBulkChange(event, epoch))) return;
       } catch (err) {
         await this.markWebhookProcessed(dedupeKey, eventDedupeKey);
         this.rememberLastWebhookEventId(event.event_id);
@@ -348,8 +367,9 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
   // ====== Private: capability resolution ======
 
-  private async resolveMode(): Promise<void> {
+  private async resolveMode(epoch = this.lifecycleEpoch): Promise<boolean> {
     const caps = await this.client.getAdcpCapabilities({});
+    if (!this.isLifecycleCurrent(epoch)) return false;
     // TaskResult union — only `success` carries a typed `data` field.
     // Other task-arms (`deferred`, `input-required`, `error`) leave us
     // without enough info to pick a mode confidently. Spec says we MAY
@@ -396,13 +416,16 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.signals._mode = mode;
     this.signals.queryable = wholesaleSignals;
     this.emit('mode_resolved', { mode, capabilities: resolved });
+    return true;
   }
 
   // ====== Private: bootstrap (wholesale enumeration) ======
 
   private async bootstrap(
-    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all' } = {}
-  ): Promise<void> {
+    options: { emitDiffs?: boolean; entities?: 'products' | 'signals' | 'all'; epoch?: number } = {}
+  ): Promise<boolean> {
+    const epoch = options.epoch ?? this.lifecycleEpoch;
+    if (!this.isLifecycleCurrent(epoch)) return false;
     this.setState('bootstrapping');
     try {
       // Build into local maps and atomically swap on success. The previous
@@ -414,29 +437,34 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       // mutated on a successful, fresh fetch.
       const previousProducts = new Map(this.productIndex);
       const previousSignals = new Map(this.signalIndex);
-      const incomingProducts = new Map<string, Product>();
-      const incomingSignals = new Map<string, Signal>();
-      let productsUnchanged = false;
-      let signalsUnchanged = false;
+      let productResult: BootstrapFeedResult<Product> | undefined;
+      let signalResult: BootstrapFeedResult<Signal> | undefined;
       const entities = options.entities ?? 'all';
       const refreshProducts = entities !== 'signals';
       const refreshSignals = entities !== 'products' && this.signals.queryable;
 
       if (refreshProducts) {
-        productsUnchanged = await this.bootstrapProducts(incomingProducts);
+        productResult = await this.bootstrapProducts(epoch);
+        if (productResult.cancelled) return false;
       }
       if (refreshSignals) {
-        signalsUnchanged = await this.bootstrapSignals(incomingSignals);
+        signalResult = await this.bootstrapSignals(epoch);
+        if (signalResult.cancelled) return false;
       }
 
-      if (refreshProducts && productsUnchanged) {
-        // Seller confirmed our cached version is current. Keep the
-        // existing index intact; don't swap with the empty incoming.
-      } else if (refreshProducts) {
-        this.productIndex = incomingProducts;
+      if (!this.isLifecycleCurrent(epoch)) return false;
+
+      if (refreshProducts && productResult) {
+        this.commitProductMetadata(productResult.metadata);
+        if (!productResult.unchanged) {
+          this.productIndex = productResult.items;
+        }
       }
-      if (refreshSignals && !signalsUnchanged) {
-        this.signalIndex = incomingSignals;
+      if (refreshSignals && signalResult) {
+        this.commitSignalMetadata(signalResult.metadata);
+        if (!signalResult.unchanged) {
+          this.signalIndex = signalResult.items;
+        }
       }
 
       if (options.emitDiffs) {
@@ -450,7 +478,9 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         signalCount: this.signalIndex.size,
         mode: this._mode,
       });
+      return true;
     } catch (err) {
+      if (!this.isLifecycleCurrent(epoch)) return false;
       this.setState('error');
       const error = err instanceof Error ? err : new Error(String(err));
       this.errorHandler?.(error);
@@ -460,8 +490,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   }
 
   /** Returns `true` when the seller short-circuited with `unchanged: true`. */
-  private async bootstrapProducts(into: Map<string, Product>): Promise<boolean> {
+  private async bootstrapProducts(epoch: number): Promise<BootstrapFeedResult<Product>> {
     let cursor: string | undefined;
+    const into = new Map<string, Product>();
+    let metadata = this.currentProductMetadata();
     do {
       const params: Record<string, unknown> = {
         buying_mode: 'wholesale',
@@ -471,80 +503,73 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       // Conditional fetch on the page-0 call when we already have a cached
       // version. Per the spec, the seller short-circuits with
       // `unchanged: true` and no payload — caller keeps the previous index.
-      if (!cursor && this.productWholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
-        params.if_wholesale_feed_version = this.productWholesaleFeedVersion;
-        if (this.productPricingVersion) params.if_pricing_version = this.productPricingVersion;
+      if (!cursor && metadata.wholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
+        params.if_wholesale_feed_version = metadata.wholesaleFeedVersion;
+        if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getProducts(params as never)) as {
         data?: V31Beta.GetProductsResponse;
       };
+      if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
       const body = result.data;
-      if (!body) return false;
+      if (!body) return { cancelled: false, unchanged: false, items: into, metadata };
       if (body.unchanged) {
         // Echo any newer pricing_version / cache_scope the seller
         // returned alongside the unchanged signal, then tell the caller
         // to keep the existing index.
-        if (typeof body.wholesale_feed_version === 'string') {
-          this.productWholesaleFeedVersion = body.wholesale_feed_version;
-        }
-        if (typeof body.pricing_version === 'string') this.productPricingVersion = body.pricing_version;
-        if (body.cache_scope === 'public' || body.cache_scope === 'account') this.productCacheScope = body.cache_scope;
-        return true;
+        metadata = mergeFeedMetadata(metadata, body);
+        return { cancelled: false, unchanged: true, items: into, metadata };
       }
       const products = Array.isArray(body.products) ? body.products : [];
       for (const product of products) {
         const id = (product as { product_id?: string }).product_id;
         if (typeof id === 'string') into.set(id, product as Product);
       }
-      if (typeof body.wholesale_feed_version === 'string')
-        this.productWholesaleFeedVersion = body.wholesale_feed_version;
-      if (typeof body.pricing_version === 'string') this.productPricingVersion = body.pricing_version;
-      if (body.cache_scope === 'public' || body.cache_scope === 'account') this.productCacheScope = body.cache_scope;
+      metadata = mergeFeedMetadata(metadata, body);
       cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
     } while (cursor);
-    return false;
+    return { cancelled: false, unchanged: false, items: into, metadata };
   }
 
-  private async bootstrapSignals(into: Map<string, Signal>): Promise<boolean> {
+  private async bootstrapSignals(epoch: number): Promise<BootstrapFeedResult<Signal>> {
     let cursor: string | undefined;
+    const into = new Map<string, Signal>();
+    let metadata = this.currentSignalMetadata();
     do {
       const params: Record<string, unknown> = {
         discovery_mode: 'wholesale',
         pagination: { max_results: DEFAULT_BOOTSTRAP_PAGE_LIMIT, ...(cursor && { cursor }) },
         ...(this.account && { account: this.account }),
       };
-      if (!cursor && this.signalWholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
-        params.if_wholesale_feed_version = this.signalWholesaleFeedVersion;
-        if (this.signalPricingVersion) params.if_pricing_version = this.signalPricingVersion;
+      if (!cursor && metadata.wholesaleFeedVersion && this._capabilities.wholesaleFeedVersioning) {
+        params.if_wholesale_feed_version = metadata.wholesaleFeedVersion;
+        if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getSignals(params as never)) as {
         data?: V31Beta.GetSignalsResponse;
       };
+      if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
       const body = result.data;
-      if (!body) return false;
+      if (!body) return { cancelled: false, unchanged: false, items: into, metadata };
       if (body.unchanged) {
-        if (typeof body.wholesale_feed_version === 'string') {
-          this.signalWholesaleFeedVersion = body.wholesale_feed_version;
-        }
-        if (typeof body.pricing_version === 'string') this.signalPricingVersion = body.pricing_version;
-        if (body.cache_scope === 'public' || body.cache_scope === 'account') this.signalCacheScope = body.cache_scope;
-        return true;
+        metadata = mergeFeedMetadata(metadata, body);
+        return { cancelled: false, unchanged: true, items: into, metadata };
       }
       const signals = Array.isArray(body.signals) ? body.signals : [];
       for (const signal of signals) {
         const id = (signal as { signal_agent_segment_id?: string }).signal_agent_segment_id;
         if (typeof id === 'string') into.set(id, signal as Signal);
       }
-      if (typeof body.wholesale_feed_version === 'string')
-        this.signalWholesaleFeedVersion = body.wholesale_feed_version;
-      if (typeof body.pricing_version === 'string') this.signalPricingVersion = body.pricing_version;
-      if (body.cache_scope === 'public' || body.cache_scope === 'account') this.signalCacheScope = body.cache_scope;
+      metadata = mergeFeedMetadata(metadata, body);
       cursor = body.pagination?.has_more ? body.pagination?.cursor : undefined;
     } while (cursor);
-    return false;
+    return { cancelled: false, unchanged: false, items: into, metadata };
   }
 
-  private async recoverFromBulkChange(event: V31Beta.WholesaleFeedEvent): Promise<void> {
+  private async recoverFromBulkChange(
+    event: V31Beta.WholesaleFeedEvent,
+    epoch = this.lifecycleEpoch
+  ): Promise<boolean> {
     this.emit('resyncing', { reason: 'bulk_change' });
     const affected = this.bulkChangeAffectedEntityType(event);
     if (affected === 'signal' && !this.signals.queryable) {
@@ -553,60 +578,82 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
       );
     }
     const entities = affected === 'product' ? 'products' : 'signals';
-    await this.bootstrap({ emitDiffs: true, entities });
+    return this.bootstrap({ emitDiffs: true, entities, epoch });
   }
 
-  private async recoverFromVersionMismatch(): Promise<void> {
+  private async recoverFromVersionMismatch(
+    event: V31Beta.WholesaleFeedEvent,
+    epoch = this.lifecycleEpoch
+  ): Promise<boolean> {
     this.emit('resyncing', { reason: 'version_mismatch' });
-    await this.bootstrap({ emitDiffs: true });
+    const feed = this.feedLabelForEvent(event);
+    const beforeVersion = this.currentWholesaleFeedVersionForEvent(event);
+    for (let attempt = 1; attempt <= VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
+      const recovered = await this.bootstrap({ emitDiffs: true, epoch });
+      if (!recovered) return false;
+      const afterVersion = this.currentWholesaleFeedVersionForEvent(event);
+      if (afterVersion !== beforeVersion) return true;
+      if (attempt < VERSION_MISMATCH_RECOVERY_ATTEMPTS) {
+        await sleep(VERSION_MISMATCH_RECOVERY_BACKOFF_MS * attempt);
+        if (!this.isLifecycleCurrent(epoch)) return false;
+      }
+    }
+    throw new Error(
+      `WholesaleFeedSync: version mismatch recovery did not advance ${feed} wholesale_feed_version after ${VERSION_MISMATCH_RECOVERY_ATTEMPTS} attempts.`
+    );
   }
 
   // ====== Private: auto-poll mode version probe ======
 
-  private scheduleProbe(): void {
-    this.probeTimer = setTimeout(() => this.probeLoop(), this.probeIntervalMs);
+  private scheduleProbe(epoch = this.lifecycleEpoch): void {
+    if (!this.isLifecycleCurrent(epoch)) return;
+    this.probeTimer = setTimeout(() => this.probeLoop(epoch), this.probeIntervalMs);
   }
 
-  private async probeLoop(): Promise<void> {
+  private async probeLoop(epoch: number): Promise<void> {
+    if (!this.isLifecycleCurrent(epoch)) return;
     try {
-      await this.probeVersion();
+      await this.probeVersion(epoch);
     } catch (err) {
+      if (!this.isLifecycleCurrent(epoch)) return;
       const error = err instanceof Error ? err : new Error(String(err));
       this.emit('error', { error });
       this.errorHandler?.(error);
     }
-    if (this._state === 'syncing' && this._mode === 'auto-poll') {
-      this.scheduleProbe();
+    if (this.isLifecycleCurrent(epoch) && this._state === 'syncing' && this._mode === 'auto-poll') {
+      this.scheduleProbe(epoch);
     }
   }
 
-  private async probeVersion(): Promise<void> {
-    await this.bootstrap({ emitDiffs: true });
+  private async probeVersion(epoch: number): Promise<void> {
+    await this.bootstrap({ emitDiffs: true, epoch });
   }
 
   // ====== Private: capability refresh ======
 
-  private scheduleCapabilityRefresh(): void {
-    this.capabilityTimer = setTimeout(() => this.capabilityRefreshLoop(), this.capabilityRefreshIntervalMs);
+  private scheduleCapabilityRefresh(epoch = this.lifecycleEpoch): void {
+    if (!this.isLifecycleCurrent(epoch)) return;
+    this.capabilityTimer = setTimeout(() => this.capabilityRefreshLoop(epoch), this.capabilityRefreshIntervalMs);
   }
 
-  private async capabilityRefreshLoop(): Promise<void> {
+  private async capabilityRefreshLoop(epoch: number): Promise<void> {
+    if (!this.isLifecycleCurrent(epoch)) return;
     try {
       const previousMode = this._mode;
-      await this.resolveMode();
+      if (!(await this.resolveMode(epoch))) return;
       if (this._mode !== previousMode) {
         // Capability upgrade or downgrade — re-establish background sync.
-        this.stop();
-        await this.start();
+        await this.startInner();
         return;
       }
     } catch (err) {
+      if (!this.isLifecycleCurrent(epoch)) return;
       const error = err instanceof Error ? err : new Error(String(err));
       this.emit('error', { error });
       this.errorHandler?.(error);
     }
-    if (this._state === 'syncing' && this.capabilityRefreshIntervalMs > 0) {
-      this.scheduleCapabilityRefresh();
+    if (this.isLifecycleCurrent(epoch) && this._state === 'syncing' && this.capabilityRefreshIntervalMs > 0) {
+      this.scheduleCapabilityRefresh(epoch);
     }
   }
 
@@ -625,6 +672,40 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     throw new Error(
       'WholesaleFeedSync: wholesale_feed.bulk_change payload missing or invalid required affected_entity_type.'
     );
+  }
+
+  private feedLabelForEvent(event: V31Beta.WholesaleFeedEvent): 'product' | 'signal' {
+    if (event.event_type.startsWith('product.')) return 'product';
+    if (event.event_type.startsWith('signal.')) return 'signal';
+    return this.bulkChangeAffectedEntityType(event);
+  }
+
+  private currentProductMetadata(): FeedMetadata {
+    return {
+      wholesaleFeedVersion: this.productWholesaleFeedVersion,
+      pricingVersion: this.productPricingVersion,
+      cacheScope: this.productCacheScope,
+    };
+  }
+
+  private currentSignalMetadata(): FeedMetadata {
+    return {
+      wholesaleFeedVersion: this.signalWholesaleFeedVersion,
+      pricingVersion: this.signalPricingVersion,
+      cacheScope: this.signalCacheScope,
+    };
+  }
+
+  private commitProductMetadata(metadata: FeedMetadata): void {
+    this.productWholesaleFeedVersion = metadata.wholesaleFeedVersion;
+    this.productPricingVersion = metadata.pricingVersion;
+    this.productCacheScope = metadata.cacheScope;
+  }
+
+  private commitSignalMetadata(metadata: FeedMetadata): void {
+    this.signalWholesaleFeedVersion = metadata.wholesaleFeedVersion;
+    this.signalPricingVersion = metadata.pricingVersion;
+    this.signalCacheScope = metadata.cacheScope;
   }
 
   private rememberWebhookVersion(webhook: V31Beta.WholesaleFeedWebhook): void {
@@ -987,6 +1068,10 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this._state = next;
     this.emit('stateChange', { from, to: next });
   }
+
+  private isLifecycleCurrent(epoch: number): boolean {
+    return epoch === this.lifecycleEpoch;
+  }
 }
 
 // ====== Diff helpers ======
@@ -1012,4 +1097,24 @@ function compareUuidV7(a: string, b: string): number {
   const normalizedA = a.toLowerCase();
   const normalizedB = b.toLowerCase();
   return normalizedA === normalizedB ? 0 : normalizedA > normalizedB ? 1 : -1;
+}
+
+function mergeFeedMetadata(
+  current: FeedMetadata,
+  body: {
+    wholesale_feed_version?: unknown;
+    pricing_version?: unknown;
+    cache_scope?: unknown;
+  }
+): FeedMetadata {
+  return {
+    wholesaleFeedVersion:
+      typeof body.wholesale_feed_version === 'string' ? body.wholesale_feed_version : current.wholesaleFeedVersion,
+    pricingVersion: typeof body.pricing_version === 'string' ? body.pricing_version : current.pricingVersion,
+    cacheScope: body.cache_scope === 'public' || body.cache_scope === 'account' ? body.cache_scope : current.cacheScope,
+  };
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
 }
