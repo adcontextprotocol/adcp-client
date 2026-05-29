@@ -302,7 +302,11 @@ export class ProtocolClient {
     // `ProtocolClient.callTool` directly (test harnesses, the in-process
     // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
     // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
-    const versionEnvelope = buildVersionEnvelopeForMode(versionEnvelopeMode, wireAdcpVersion ?? adcpVersion, serverVersion);
+    const versionEnvelope = buildVersionEnvelopeForMode(
+      versionEnvelopeMode,
+      wireAdcpVersion ?? adcpVersion,
+      serverVersion
+    );
     // Enter the response-size-limit ALS slot once for this call. The slot is
     // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
     // cap applies regardless of which path (MCP / A2A / OAuth refresh) the

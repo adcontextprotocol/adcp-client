@@ -2471,9 +2471,8 @@ async function handleStoryboardRun(args) {
     return;
   }
 
-  const { loadStoryboardFile, runStoryboard, loadComplianceIndex, getExternalSchemaRootForCompliance } = await import(
-    '../dist/lib/testing/storyboard/index.js'
-  );
+  const { loadStoryboardFile, runStoryboard, loadComplianceIndex, getExternalSchemaRootForCompliance } =
+    await import('../dist/lib/testing/storyboard/index.js');
   let storyboard;
   try {
     storyboard = loadStoryboardFile(filePath);

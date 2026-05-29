@@ -404,8 +404,10 @@ describe('storyboard runner AdCP version negotiation', () => {
   });
 
   test('external compliance dir resolves its sibling schema bundle for scoped validation', () => {
-    const { getExternalSchemaRootForCompliance, loadComplianceIndex } =
-      require('../../dist/lib/testing/storyboard/index.js');
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
     const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
     const { withExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
     const { resolveAdcpVersion } = require('../../dist/lib/utils/adcp-version-config.js');
@@ -439,8 +441,10 @@ describe('storyboard runner AdCP version negotiation', () => {
   });
 
   test('explicit schemaRoot registers a non-sibling external schema bundle', () => {
-    const { getExternalSchemaRootForCompliance, loadComplianceIndex } =
-      require('../../dist/lib/testing/storyboard/index.js');
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
     const { withExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
     const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
 
