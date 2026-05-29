@@ -4438,7 +4438,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, authScheme, protocolFlag, jsonOutput, debug, positionalArgs, complianceVersion, schemaRoot } =
+  const { authToken, authScheme, protocolFlag, jsonOutput, positionalArgs, complianceVersion, schemaRoot } =
     parseAgentOptions(args);
   const { resolveOptions } = parseComplianceSelection(args);
 
