@@ -26,6 +26,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SRC_DIST = path.join(REPO_ROOT, 'dist');
 const SRC_SCHEMAS_DATA = path.join(SRC_DIST, 'lib', 'schemas-data');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
+const { BETA_VERSIONS_TO_TRY } = require('../../dist/lib/v2/projection/cache-versions.js');
 
 let tmpRoot;
 
@@ -67,6 +68,10 @@ function runInFakeInstall(snippet) {
 }
 
 describe('v1↔v2 projection loaders resolve from published-tarball paths', () => {
+  test('projection cache preference starts with the current prerelease pin', () => {
+    assert.strictEqual(BETA_VERSIONS_TO_TRY[0], ADCP_VERSION);
+  });
+
   test('registry.ts loadRegistry() finds v1-canonical-mapping.json in dist/lib/schemas-data', () => {
     const registryPath = path.join(tmpRoot, 'dist', 'lib', 'v2', 'projection', 'registry.js').replace(/\\/g, '/');
     const { code, stdout, stderr } = runInFakeInstall(

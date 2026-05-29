@@ -123,6 +123,7 @@ export type GetProductsRequest = {
     | 'description'
     | 'publisher_properties'
     | 'channels'
+    | 'video_placement_types'
     | 'format_ids'
     | 'format_options'
     | 'placements'
@@ -350,6 +351,10 @@ export type MediaChannel =
   | 'affiliate'
   | 'product_placement'
   | 'sponsored_intelligence';
+/**
+ * Declared video placement classification for OLV and other video inventory, using the IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native value names. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+ */
+export type VideoPlacementType = 'instream' | 'accompanying_content' | 'interstitial' | 'standalone';
 /**
  * What the publisher wants back from a TMP context match. Determines the richness level of the buyer's offer response.
  */
@@ -912,6 +917,10 @@ export interface ProductFilters {
    */
   channels?: MediaChannel[];
   /**
+   * Filter video products by acceptable declared video placement types, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested video placement types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
+   */
+  video_placement_types?: VideoPlacementType[];
+  /**
    * @deprecated
    * Deprecated: Use trusted_match filter instead. Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
    */
@@ -954,7 +963,7 @@ export interface ProductFilters {
     system?: string;
   }[];
   /**
-   * Filter to products where the requested signals are buyer-selectable and jointly composable: the signals are available through inline signal_targeting_options and/or through get_signals for wholesale signal discovery, signal_targeting_allowed is true, and the requested set can coexist under the product's signal_targeting_rules. Each filter entry uses signal_ref, with deprecated signal_id accepted during the SignalRef migration window, and may include targeting_mode='include' or 'exclude' to require the product option or product rules to support that use. When targeting_mode is omitted, include is assumed. SignalRef scope 'product' is seller-local exact option matching only, not a portable semantic identifier across products or sellers; buyers wanting portable discovery should use scope 'data_provider' or get_signals. included_signals and deprecated bundled/non-selectable data_provider_signals do not satisfy this filter because they cannot be selected on create_media_buy.
+   * Filter to products where the requested signals are buyer-selectable and jointly composable: the signals are available through inline signal_targeting_options and/or through get_signals for wholesale products that allow signal targeting but omit inline options, signal_targeting_allowed is true, and the requested set can coexist under the product's signal_targeting_rules. Each filter entry uses signal_ref, with deprecated signal_id accepted during the SignalRef migration window, and may include targeting_mode='include' or 'exclude' to require the product option or product rules to support that use. When targeting_mode is omitted, include is assumed. SignalRef scope 'product' is seller-local exact option matching only, not a portable semantic identifier across products or sellers; buyers wanting portable discovery should use scope 'data_provider' or get_signals. included_signals and deprecated bundled/non-selectable data_provider_signals do not satisfy this filter because they cannot be selected on create_media_buy.
    */
   signal_targeting?: {
     /**
@@ -1094,6 +1103,7 @@ export interface ProductFilters {
     keyword: string;
     match_type?: MatchType;
   }[];
+  ext?: ExtensionObject;
 }
 /**
  * A JSON object — never a plain string — that identifies a creative format by its declaring agent and local slug. Required properties: agent_url (URI of the agent that owns the format) and id (slug matching [a-zA-Z0-9_-]+). Example: {"agent_url": "https://creative.adcontextprotocol.org", "id": "display_300x250"}. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants. Using a plain string here is a schema violation.
@@ -1275,6 +1285,10 @@ export type Product = {
      * Optional array of specific public placements within this product. Placement IDs are scoped by publisher domain. Product placements declare `kind` to distinguish publisher-referenced placements (`publisher_ref`) from seller-defined inline placements (`seller_inline`). Publisher-referenced placements carry `publisher_domain` plus `placement_id` and may omit `name` because buyers resolve the name from the publisher's adagents.json placement declarations. Seller-inline placements carry buyer-facing `name` directly; when `publisher_domain` is omitted, buyers MAY interpret the placement ID relative to the seller agent's own publisher domain only during the legacy single-publisher transition. Community-maintained fallback files are resolver/source metadata, not a distinct placement kind. Each placement MUST declare `mode: 'targetable'` (buyer may select the placement by PlacementRef, for example in creative assignments) or `mode: 'included'` (part of the public product composition but not buyer-selectable). Placement-level format declarations narrow the product-level creative contract and MUST NOT broaden it. Seller-private delivery objects, source/origin details, and ad-server mappings MUST NOT be exposed here.
      */
     placements?: Placement[];
+    /**
+     * Declared video placement types that may be included in this product, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Use on OLV, CTV, and other video products when buyers need to distinguish instream, accompanying-content, interstitial, and standalone/no-content inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `video_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+     */
+    video_placement_types?: VideoPlacementType[];
     delivery_type: DeliveryType;
     exclusivity?: Exclusivity;
     /**
@@ -1322,7 +1336,7 @@ export type Product = {
     property_targeting_allowed?: boolean;
     /**
      * @deprecated
-     * Deprecated. Legacy/non-selectable metadata for data-provider catalog signals already bundled into or associated with this product. This field does not provide buyer-selectable options, prices, or seller activation handles. Use included_signals for non-selectable product signal metadata, or signal_targeting_options for selectable package-level signal groups.
+     * Deprecated. Legacy/non-selectable metadata for data-provider signals already bundled into or associated with this product. This field does not provide buyer-selectable options, prices, or seller activation handles. Use included_signals for non-selectable product signal metadata, or signal_targeting_options for selectable package-level signal groups.
      */
     data_provider_signals?: DataProviderSignalSelector[];
     /**
@@ -1330,7 +1344,7 @@ export type Product = {
      */
     included_signals?: SignalListing[];
     /**
-     * Inline seller-offered signals that may be applied to packages for this product at create_media_buy time. Each entry references a named signal definition with signal_ref scope 'product' for a product-local signal option, scope 'data_provider' for an external published adagents.json signal catalog the seller is authorized to apply, or scope 'signal_source' for a source-native signal. Product-local options define name and value_type inline; data-provider and signal-source options may omit those fields when the referenced catalog or source is authoritative. Use this field when the selectable menu is product-specific, has product-specific pricing or activation handles, is the relevant subset for a brief/refine result, or should be rendered without an additional get_signals call. Wholesale products may omit this field and rely on get_signals for the selectable signal feed. Buyers select eligible signals through packages[].targeting_overlay.signal_targeting_groups when signal_targeting_rules allow; fixed/default entries are applied by the seller and echoed on the package state. Sellers MUST set signal_targeting_allowed to true whenever this field is present. Bundled, non-selectable signal metadata belongs in included_signals; legacy data_provider_signals may appear only for backwards compatibility.
+     * Inline seller-offered signals that may be applied to packages for this product at create_media_buy time. Each entry references a named signal definition with signal_ref scope 'product' for a product-local signal option, scope 'data_provider' for an external signal definition published in adagents.json signals[] that the seller is authorized to apply, or scope 'signal_source' for a source-native signal. Product-local options define name and value_type inline; data-provider and signal-source options may omit those fields when the referenced definition or source is authoritative. Use this field when the selectable menu is product-specific, has product-specific pricing or activation handles, is the relevant subset for a brief/refine result, or should be rendered without an additional get_signals call. Wholesale products may omit this field and rely on get_signals for the selectable signal feed. Buyers select eligible signals through packages[].targeting_overlay.signal_targeting_groups when signal_targeting_rules allow; fixed/default entries are applied by the seller and echoed on the package state. Sellers MUST set signal_targeting_allowed to true whenever this field is present. Bundled, non-selectable signal metadata belongs in included_signals; legacy data_provider_signals may appear only for backwards compatibility.
      */
     signal_targeting_options?: ProductSignalTargetingOption[];
     signal_targeting_rules?: SignalTargetingRules;
@@ -1745,7 +1759,7 @@ export type CanonicalFormatImage = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -1899,7 +1913,7 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -2055,7 +2069,7 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -2221,6 +2235,10 @@ export type Placement = {
    * 3.1+ canonical format-option declarations supported by this specific product placement. When present, this field narrows the product-level `format_options` contract for this placement and MUST NOT introduce formats the product does not accept. Buyers compute the effective accepted formats for a placement as the intersection of product-level and placement-level declarations; placements without a format declaration inherit the product-level formats.
    */
   format_options?: ProductFormatDeclaration[];
+  /**
+   * Declared video placement types for this product placement, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  video_placement_types?: VideoPlacementType[];
 };
 /**
  * A pricing model option offered by a publisher for a product. Discriminated by pricing_model field. If fixed_price is present, it's fixed pricing. If absent, it's auction-based (floor_price and price_guidance optional). Bid-based auction models may also include max_bid as a boolean signal to interpret bid_price as a buyer ceiling instead of an exact honored price.
@@ -2284,16 +2302,16 @@ export type SignalRef =
     }
   | {
       /**
-       * Discriminator indicating the signal resolves through a data provider's published adagents.json signal catalog.
+       * Discriminator indicating the signal resolves through a data provider's published adagents.json signals[].
        */
       scope: 'data_provider';
       /**
-       * Domain that publishes the signal definition in its adagents.json signal catalog.
+       * Domain that publishes the signal definition in its adagents.json signals[].
        * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
-       * Signal identifier within the data provider's published signal catalog.
+       * Signal identifier within the data provider's published adagents.json signals[].
        * @pattern ^[a-zA-Z0-9_-]+$
        */
       signal_id: string;
@@ -2401,7 +2419,7 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 /**
- * Selects signals from a data provider's adagents.json catalog. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
+ * Selects signals from a data provider's adagents.json signals[]. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
  */
 export type DataProviderSignalSelector =
   | {
@@ -2426,7 +2444,7 @@ export type DataProviderSignalSelector =
        */
       selection_type: 'by_id';
       /**
-       * Specific signal IDs from the data provider's catalog
+       * Specific signal IDs from the data provider's published signal definitions
        */
       signal_ids: string[];
     }
@@ -2441,12 +2459,12 @@ export type DataProviderSignalSelector =
        */
       selection_type: 'by_tag';
       /**
-       * Signal tags from the data provider's catalog. Selector covers all signals with these tags
+       * Signal tags from the data provider's published signal definitions. Selector covers all signals with these tags
        */
       signal_tags: string[];
     };
 /**
- * Shared signal identity and definition metadata used when a signal is listed outside its authoritative catalog. New listings carry signal_ref; legacy listings may carry deprecated signal_id during the SignalRef migration window. Product-local signals use the listing as the definition boundary and MUST include name and value_type. Data-provider and signal-source refs MAY omit definition metadata when the buyer can resolve it from the referenced catalog or source; any supplied name, description, value_type, categories, range, methodology_url, or last_updated is product/account/source context and does not replace the authoritative definition.
+ * Shared signal identity and definition metadata used when a signal is listed outside its authoritative definition. New listings carry signal_ref; legacy listings may carry deprecated signal_id during the SignalRef migration window. Product-local signals use the listing as the definition boundary and MUST include name and value_type. Data-provider and signal-source refs MAY omit definition metadata when the buyer can resolve it from the referenced provider-published definition or source; any supplied name, description, value_type, categories, range, methodology_url, or last_updated is product/account/source context and does not replace the authoritative definition.
  */
 export type SignalListing = {
   [k: string]: unknown | undefined;
@@ -2454,7 +2472,7 @@ export type SignalListing = {
   signal_ref?: SignalRef;
   signal_id?: SignalID;
   /**
-   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced catalog or source remains authoritative.
+   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced definition or source remains authoritative.
    */
   name?: string;
   /**
@@ -2495,7 +2513,7 @@ export type SignalListing = {
 export type SignalID =
   | {
       /**
-       * Discriminator indicating this signal is from a data provider's published catalog
+       * Discriminator indicating this signal is from a data provider's published adagents.json signals[]
        */
       source: 'catalog';
       /**
@@ -2511,7 +2529,7 @@ export type SignalID =
     }
   | {
       /**
-       * Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider catalog.
+       * Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions.
        */
       source: 'agent';
       /**
@@ -2529,7 +2547,7 @@ export type SignalID =
  */
 export type SignalValueType = 'binary' | 'categorical' | 'numeric';
 /**
- * A signal the seller makes available inline for package-level signal composition on this product. Product.signal_targeting_options is used when the product needs product-scoped pricing, activation handles, defaults, grouping hints, a brief/refine-selected subset, or a curated inline menu. Wholesale products can instead omit inline options when the selectable menu is the broader get_signals feed. Product-local signals define their name and value_type inline through the shared signal-listing fields; data-provider and signal-source refs may omit those definition fields when the referenced catalog or source is authoritative.
+ * A signal the seller makes available inline for package-level signal composition on this product. Product.signal_targeting_options is used when the product needs product-scoped pricing, activation handles, defaults, grouping hints, a brief/refine-selected subset, or a curated inline menu. Wholesale products can instead omit inline options when the selectable menu is the broader get_signals feed. Product-local signals define their name and value_type inline through the shared signal-listing fields; data-provider and signal-source refs may omit those definition fields when the referenced definition or source is authoritative.
  */
 export type ProductSignalTargetingOption = {
   [k: string]: unknown | undefined;
@@ -2537,7 +2555,7 @@ export type ProductSignalTargetingOption = {
   signal_ref: SignalRef;
   signal_id?: SignalID;
   /**
-   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced catalog or source remains authoritative.
+   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced definition or source remains authoritative.
    */
   name?: string;
   /**
@@ -3148,7 +3166,7 @@ export interface CanonicalFormatImageCarousel {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -3258,7 +3276,7 @@ export interface CanonicalFormatHostedVideo {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -3407,7 +3425,7 @@ export interface CanonicalFormatVASTVideo {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -3531,7 +3549,7 @@ export interface CanonicalFormatHostedAudio {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -3653,7 +3671,7 @@ export interface CanonicalFormatDAASTAudio {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -4141,7 +4159,7 @@ export interface AgentPlacementFormatDeclaration {
   params: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
 }
 /**
- * **3.2-track canonical.** The structural shape (algorithmic composition + brand-context input + optional offering/landing_page) is captured here so adopters can declare against it in 3.1 catalogs, but the **mention-level tracking contract is intentionally underspecified for 3.1**: no normative macro vocabulary, no postback shape, no cross-surface dedup model. Adopters claiming `agent_placement` in 3.1 ship private tracking integrations and SHOULD set `runtime_status: 'preview'` or `'declared_only'` on the declaration; buyer agents MUST treat agent_placement attribution as adapter-defined until the 3.2 tracking-macro spec lands. The canonical promotes to a normatively-buyer-callable surface in 3.2 (or later) once the tracking contract is specified.
+ * **3.2-track canonical.** The structural shape (algorithmic composition + brand-context input + optional offering/landing_page) is captured here so adopters can declare against it in 3.1 catalogs, but the **mention-level tracking contract is intentionally underspecified for 3.1**: no normative macro vocabulary, no postback shape, no cross-surface dedup model. Adopters claiming `agent_placement` in 3.1 ship private tracking integrations and SHOULD leave `experimental: true` on the product declaration that references this canonical; buyer agents MUST treat agent_placement attribution as adapter-defined until the 3.2 tracking-macro spec lands. The canonical promotes to a normatively-buyer-callable surface in 3.2 (or later) once the tracking contract is specified.
  *
  * Sponsored placement integrated into an AI-surface's response to a user. Buyer supplies a `BrandRef` (resolving brand.json for context), an optional `offering_ref` to focus the mention on a specific offering, and an optional `landing_page_url` the surface MAY attach as a citation. The surface (LLM, voice assistant, sponsored-search ranker) composes a natural-language mention, sponsored card, or audio snippet within its response to a user query. **Composition is algorithmic** — the agent chooses phrasing and presentation. Output asset_type varies by surface: `text` for chat UIs and sponsored search snippets; `audio` (synthesized) for voice assistants; `card` for structured AI-surface result cards. Tracking model: mention-level impression + attribution events; per-mention id keys back to brand and offering — but see the 3.2-track note above; the wire shape of these events is not yet specified. Distinct from `si_chat` (which is the user-converses-with-brand's-agent pattern — brand owns the conversational surface) and from `sponsored_placement` (retail-media catalog-driven). Parallels `sponsored_placement` structurally: both are surface-composed placements; agent_placement is for AI/agentic surfaces, sponsored_placement is for retail media.
  */
@@ -6940,10 +6958,6 @@ export type ActivationKey =
       value: string;
     };
 /**
- * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
- */
-export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
-/**
  * Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.
  */
 export type SignalTargeting =
@@ -6987,6 +7001,10 @@ export type SignalTargeting =
        */
       max_value?: number;
     };
+/**
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
+ */
+export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
 /**
  * Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and `metric_aggregates` to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.
  */
@@ -7557,23 +7575,24 @@ export interface PackageRequest {
    */
   adcp_major_version?: number;
   /**
-   * Product ID for this package
+   * Product ID for this package. Sellers MUST echo this value on every response package object that represents this requested package.
    */
   product_id: string;
   /**
-   * Legacy named-format selector. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and no 3.1+ format-option selector is present), defaults to all formats supported by the product.
+   * Legacy named-format selector. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and no 3.1+ format-option selector or direct canonical selector is present), defaults to all formats supported by the product.
    *
    * Sellers comparing this selector to a product's `format_options[]` MUST first normalize each legacy `format_id` through the canonical mapping path (`canonical`, `v1_format_ref`, or registry projection). Exact `(agent_url, id)` comparison after projection is insufficient: a legacy fixed-size display ID can satisfy a canonical `image` product declaration with matching `width`/`height`. Product gating remains directional: if the product declares fixed dimensions or duration, the selected format must declare and match those constraints; an under-specified canonical request is not a wildcard for a fixed-size or fixed-duration product. Range constraints use containment, not overlap: a range-based request satisfies the product only when every value it permits falls within the product's accepted range.
    */
   format_ids?: FormatReferenceStructuredObject[];
   /**
-   * 3.1+ format-option selector. Array of structured format option references, each matching one of the target product's `format_options[]` entries. Publisher-catalog-backed options match by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match by `{ scope: "product", format_option_id }`. If omitted along with `format_ids`, all product formats are active.
+   * 3.1+ format-option selector. Array of structured format option references, each matching one of the target product's `format_options[]` entries. Publisher-catalog-backed options match by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match by `{ scope: "product", format_option_id }`. If omitted along with `format_ids` and direct `format_kind`, all product formats are active.
    *
    * **Resolution rules (normative).**
    * - **Both `format_option_refs` and `format_ids` present.** `format_option_refs` wins; the seller routes by structured references and MUST NOT validate `format_ids` for consistency with the resolved declarations. The `format_ids` value is a legacy-compat hint for intermediaries on the wire path; the resolving seller ignores it.
    * - **`format_option_refs` only.** Seller looks up each entry against the package's target product `format_options[]` and uses the matching declaration (and that declaration's `v1_format_ref[]` when projecting to legacy named-format surfaces). This is the 3.1+ format-option authoring path. `scope: "product"` is scoped only by this target product; it is not a seller-wide identifier.
    * - **`format_ids` only.** Existing named-format behavior; unchanged.
-   * - **Neither.** Default — all formats supported by the product are active.
+   * - **`format_kind` only.** Direct canonical selector behavior; seller compares `{ format_kind, params }` against the product's `format_options[]` declarations using directional product satisfaction.
+   * - **None of `format_option_refs`, `format_ids`, or `format_kind`.** Default — all formats supported by the product are active.
    *
    * **Failure modes (normative).** Sellers MUST reject with `UNSUPPORTED_FEATURE` (with `field` pointing at the failing package and entry, e.g. `packages[0].format_option_refs[1]`) when:
    * - Any entry references a format option not present in the target product's `format_options[]`, OR
@@ -7587,6 +7606,11 @@ export interface PackageRequest {
    * **Dual emission.** Format-option-aware buyer SDKs targeting a heterogeneous seller population SHOULD emit `format_ids` alongside `format_option_refs` so legacy-format-only sellers — which ignore unknown fields per `additionalProperties: true` — still receive an explicit format set rather than silently defaulting to all formats supported by the product.
    */
   format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Omit when selecting by `format_option_refs` or `format_ids`; those selectors resolve their parameters from the product declaration or legacy catalog projection.
+   */
+  params?: {};
   /**
    * Budget allocation for this package in the media buy's currency
    * @minimum 0
@@ -7810,6 +7834,11 @@ export interface TargetingOverlay {
    */
   audience_exclude?: string[];
   signal_targeting_groups?: PackageSignalTargetingGroups;
+  /**
+   * @deprecated
+   * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
+   */
+  signal_targeting?: SignalTargeting[];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
   collection_list?: CollectionListReference;
@@ -7992,14 +8021,9 @@ export interface TargetingOverlay {
     keyword: string;
     match_type: MatchType;
   }[];
-  /**
-   * @deprecated
-   * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
-   */
-  signal_targeting?: SignalTargeting[];
 }
 /**
- * Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external published adagents.json signal catalogs. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. On update_media_buy, sellers MAY reject changes that require repricing with REQUOTE_REQUIRED.
+ * Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external signals published in adagents.json signals[]. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. On update_media_buy, sellers MAY reject changes that require repricing with REQUOTE_REQUIRED.
  */
 export interface PackageSignalTargetingGroups {
   /**
@@ -8025,7 +8049,7 @@ export interface PackageSignalTargetingGroup {
   signals: PackageSignalTargeting[];
 }
 /**
- * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined by a data provider's published adagents.json signal catalog, or scope 'signal_source' for a source-native signal that is not catalog-published. The selected product's inline Product.signal_targeting_options, get_signals feed, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
+ * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
 export interface PackageSignalTargeting {
   /**
@@ -9163,7 +9187,6 @@ export interface ReportingWebhook {
   requested_metrics?: AvailableMetric[];
 }
 
-
 // create_media_buy response
 /**
  * Response payload for create_media_buy. Exactly one of three shapes: (1) synchronous success — media_buy_id and packages are issued in-line, media_buy_status MAY carry the lifecycle value (pending_creatives / pending_start / active), deprecated top-level status MAY carry the same MediaBuyStatus during the 3.1 migration window, and confirmed_at is either the seller commitment timestamp or null for a provisional buy that already exists; provisional buys with confirmed_at: null cannot be active and cannot carry packages[].committed_metrics; (2) terminal failure — an errors array with no media-buy artifact and status != 'submitted'; (3) submitted task envelope — status 'submitted' with task_id when no media_buy_id is being returned to the buyer and the media buy is queued or awaiting a human decision (e.g., IO signing). In the submitted branch, media_buy_id / packages land on the task's completion artifact, not this response. The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
@@ -9573,7 +9596,7 @@ export interface Package {
    */
   package_id: string;
   /**
-   * ID of the product this package is based on
+   * ID of the product this package is based on. For packages created from an explicit create_media_buy package request, sellers MUST echo the request package's product_id on every response package object that represents that requested package.
    */
   product_id?: string;
   /**
@@ -9602,13 +9625,18 @@ export interface Package {
    */
   catalogs?: Catalog[];
   /**
-   * Legacy named-format IDs active for this package. Echoed from the create_media_buy request; omitted means all formats for the product are active unless `format_option_refs` narrows the 3.1+ format-option set.
+   * Legacy named-format IDs supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it, including dual-emission cases where `format_option_refs` was the winning selector, so read surfaces preserve the original wire contract. Omitted means the request did not carry legacy format_ids unless the seller cannot reconstruct legacy requests created before this field was persisted.
    */
   format_ids?: FormatReferenceStructuredObject[];
   /**
-   * Structured 3.1+ format option references active for this package, echoed from the create_media_buy request. Publisher-catalog-backed options are identified by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options are identified by `{ scope: "product", format_option_id }` and resolve only against this package's target product. Omitted means all 3.1+ format options for the product are active unless `format_ids` narrows the set.
+   * Structured 3.1+ format option references supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it. Publisher-catalog-backed options are identified by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options are identified by `{ scope: "product", format_option_id }` and resolve only against this package's target product. Omitted means the request did not carry format_option_refs unless the seller cannot reconstruct legacy requests created before this field was persisted.
    */
   format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`, echoed from the create_media_buy request whenever the request included it. Requires `format_kind`; omitted only when the request did not carry direct canonical params or when the seller cannot reconstruct legacy requests created before this field was persisted.
+   */
+  params?: {};
   targeting_overlay?: TargetingOverlay;
   measurement_terms?: MeasurementTerms;
   /**
@@ -9811,7 +9839,6 @@ export interface CreateMediaBuySubmitted {
   ext?: ExtensionObject;
 }
 
-
 // update_media_buy parameters
 /**
  * Request parameters for updating campaign and package settings
@@ -9876,7 +9903,7 @@ export interface UpdateMediaBuyRequest {
   ext?: ExtensionObject;
 }
 /**
- * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Fully-immutable fields (product_id, format_ids, format_option_refs, pricing_option_id) cannot appear in update payloads — schema-enforced via the `not` constraint at the root of this object. Pre-GA `capability_ids` is also rejected rather than accepted as an extension. The reporting contract field `committed_metrics` is append-only (sellers MUST accept new entries on update but reject attempts to modify or remove existing entries with validation_error per its own description).
+ * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Fully-immutable fields (product_id, format_ids, format_option_refs, format_kind, params, pricing_option_id) cannot appear in update payloads — schema-enforced via the `not` constraint at the root of this object. Pre-GA `capability_ids` is also rejected rather than accepted as an extension. The reporting contract field `committed_metrics` is append-only (sellers MUST accept new entries on update but reject attempts to modify or remove existing entries with validation_error per its own description).
  */
 export interface PackageUpdate {
   /**
@@ -10126,7 +10153,6 @@ export interface UpdateMediaBuySubmitted {
   ext?: ExtensionObject;
 }
 
-
 // get_media_buys parameters
 /**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
@@ -10351,6 +10377,7 @@ export interface GetMediaBuysResponseMediaBuy {
    * @format date-time
    */
   updated_at?: string;
+  context?: ContextObject;
   /**
    * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_proposal / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
@@ -10523,7 +10550,7 @@ export interface PackageStatus {
    */
   package_id: string;
   /**
-   * Product identifier this package is purchased from
+   * Product identifier this package is purchased from. For packages created from an explicit create_media_buy package request, sellers MUST echo the request package's product_id on every response package object that represents that requested package.
    */
   product_id?: string;
   /**
@@ -10541,6 +10568,19 @@ export interface PackageStatus {
    * @minimum 0
    */
   bid_price?: number;
+  /**
+   * Legacy named-format IDs supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it, including dual-emission cases where another selector won precedence.
+   */
+  format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Structured 3.1+ format option references supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it.
+   */
+  format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`, echoed from the create_media_buy request whenever the request included it. Requires `format_kind`.
+   */
+  params?: {};
   /**
    * Goal impression count for impression-based packages
    * @minimum 0
@@ -10586,6 +10626,7 @@ export interface PackageStatus {
    * @format date-time
    */
   creative_deadline?: string;
+  context?: ContextObject;
   /**
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */
@@ -14394,6 +14435,7 @@ export interface CreativeFilters {
    * When true, return only creatives with dynamic variables (DCO). When false, return only static creatives.
    */
   has_variables?: boolean;
+  ext?: ExtensionObject;
 }
 
 // list_creatives response
@@ -15150,6 +15192,41 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
+   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, and small custom-signal result sets when available. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as taxonomy.etag.
+   */
+  fields?: (
+    | 'signal_ref'
+    | 'signal_id'
+    | 'signal_agent_segment_id'
+    | 'name'
+    | 'description'
+    | 'value_type'
+    | 'categories'
+    | 'range'
+    | 'signal_type'
+    | 'data_provider'
+    | 'coverage_percentage'
+    | 'deployments'
+    | 'pricing_options'
+    | 'taxonomy'
+    | 'data_sources'
+    | 'methodology'
+    | 'segmentation_criteria'
+    | 'criteria_url'
+    | 'refresh_cadence'
+    | 'lookback_window'
+    | 'onboarder'
+    | 'modeling'
+    | 'audience_expansion'
+    | 'device_expansion'
+    | 'countries'
+    | 'consent_basis'
+    | 'restricted_attributes'
+    | 'policy_categories'
+    | 'art9_basis'
+    | 'data_subject_rights'
+  )[];
+  /**
    * @deprecated
    * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
    * @minimum 1
@@ -15200,9 +15277,11 @@ export type Destination =
       account?: string;
     };
 /**
- * Types of signal catalogs available for audience targeting
+ * Commercial/provenance types for signals available for audience targeting
  */
-export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
+export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export type SignalCatalogType = SignalAvailabilityType;
 
 /**
  * Filters to refine signal discovery results
@@ -15211,7 +15290,7 @@ export interface SignalFilters {
   /**
    * Filter by catalog type
    */
-  catalog_types?: SignalCatalogType[];
+  catalog_types?: SignalAvailabilityType[];
   /**
    * Filter by specific data providers
    */
@@ -15233,6 +15312,7 @@ export interface SignalFilters {
    * @maximum 100
    */
   min_coverage_percentage?: number;
+  ext?: ExtensionObject;
 }
 
 // get_signals response
@@ -15390,7 +15470,7 @@ export interface GetSignalsResponse {
      * Opaque signal handle issued by this signal source. Pass this string verbatim to activate_signal.signal_agent_segment_id. For media-buy package signal targeting, signal_ref is the buy-time identity; echo this handle only when the selected product option exposes it as a separate execution handle. Do not pass the signal_id object as this handle.
      */
     signal_agent_segment_id: string;
-    signal_type: SignalCatalogType;
+    signal_type: SignalAvailabilityType;
     /**
      * Human-readable source name for the signal, when applicable. For data_provider-scoped signals this is the data provider name; for signal_source-scoped signals it may identify the signal source or proprietary origin.
      */
@@ -18885,7 +18965,7 @@ export interface SyncPlansRequest {
      */
     restricted_attributes_custom?: string[];
     /**
-     * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying signal catalog metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
+     * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying published signal metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
      * @minimum 1
      */
     min_audience_size?: number;
@@ -21258,7 +21338,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   signals?: {
     /**
-     * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for signal catalog definitions and to verify authorization.
+     * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for published signal definitions and to verify authorization.
      */
     data_provider_domains?: string[];
     /**
@@ -21270,7 +21350,8 @@ export interface GetAdCPCapabilitiesResponse {
      */
     features?: {
       /**
-       * Supports signals from data provider catalogs with structured signal_ref references
+       * @deprecated
+       * DEPRECATED. Legacy wire flag for structured signal_ref references to provider-published signal definitions. New agents SHOULD omit this flag; callers MUST NOT require it before using signal_ref with the Signals protocol.
        */
       catalog_signals?: boolean;
       [k: string]: boolean | undefined;
@@ -21739,7 +21820,7 @@ export interface IdempotencySupported {
   account_id_is_opaque?: boolean;
 }
 /**
- * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds and in_flight_max_seconds MUST be absent — they have no meaning without replay support.
+ * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys plus request context such as context.internal_campaign_id or package context such as context.buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds and in_flight_max_seconds MUST be absent — they have no meaning without replay support.
  */
 export interface IdempotencyUnsupported {
   /**
