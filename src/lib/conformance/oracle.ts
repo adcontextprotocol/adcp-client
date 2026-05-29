@@ -2,7 +2,7 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import type { TaskResult } from '../core/ConversationTypes';
 import type { ConformanceToolName, OracleVerdict } from './types';
-import { loadResponseSchema } from './schemaLoader';
+import { loadResponseSchema, type ConformanceSchemaOptions } from './schemaLoader';
 
 export interface OracleInput {
   tool: ConformanceToolName;
@@ -11,6 +11,8 @@ export interface OracleInput {
   result: TaskResult<unknown>;
   /** Auth token that was used to make the request — checked for leaks. */
   authToken?: string;
+  /** Schema bundle override for same-PR / external conformance runs. */
+  schemas?: ConformanceSchemaOptions;
 }
 
 export interface OracleOutput {
@@ -62,13 +64,19 @@ function getAjv(): Ajv {
   return ajv;
 }
 
-const compiledValidators = new Map<ConformanceToolName, ReturnType<Ajv['compile']>>();
-function responseValidator(tool: ConformanceToolName): ReturnType<Ajv['compile']> {
-  const cached = compiledValidators.get(tool);
+const compiledValidators = new Map<string, ReturnType<Ajv['compile']>>();
+
+function schemaCacheKey(tool: ConformanceToolName, options: ConformanceSchemaOptions | undefined): string {
+  return `${tool}\0${options?.schemaRoot ?? ''}\0${options?.version ?? ''}`;
+}
+
+function responseValidator(tool: ConformanceToolName, options?: ConformanceSchemaOptions): ReturnType<Ajv['compile']> {
+  const cacheKey = schemaCacheKey(tool, options);
+  const cached = compiledValidators.get(cacheKey);
   if (cached) return cached;
-  const schema = loadResponseSchema(tool);
+  const schema = loadResponseSchema(tool, options);
   const validator = getAjv().compile(schema);
-  compiledValidators.set(tool, validator);
+  compiledValidators.set(cacheKey, validator);
   return validator;
 }
 
@@ -78,18 +86,19 @@ function responseValidator(tool: ConformanceToolName): ReturnType<Ajv['compile']
  * request-context that's not echoed is an invariant violation; when it
  * doesn't, a missing context field is silent tolerance.
  */
-const responseSchemaHasContext = new Map<ConformanceToolName, boolean>();
-function responseEchoesContext(tool: ConformanceToolName): boolean {
-  const cached = responseSchemaHasContext.get(tool);
+const responseSchemaHasContext = new Map<string, boolean>();
+function responseEchoesContext(tool: ConformanceToolName, options?: ConformanceSchemaOptions): boolean {
+  const cacheKey = schemaCacheKey(tool, options);
+  const cached = responseSchemaHasContext.get(cacheKey);
   if (cached !== undefined) return cached;
-  const schema = loadResponseSchema(tool) as {
+  const schema = loadResponseSchema(tool, options) as {
     properties?: Record<string, unknown>;
     oneOf?: Array<{ properties?: Record<string, unknown> }>;
   };
   const direct = !!schema.properties && 'context' in schema.properties;
   const branched = Array.isArray(schema.oneOf) && schema.oneOf.some(b => !!b.properties && 'context' in b.properties);
   const answer = direct || branched;
-  responseSchemaHasContext.set(tool, answer);
+  responseSchemaHasContext.set(cacheKey, answer);
   return answer;
 }
 
@@ -99,8 +108,8 @@ function responseEchoesContext(tool: ConformanceToolName): boolean {
  * than fail every iteration. Separated from `evaluate()` so the failure
  * surfaces once per tool, not once per sample.
  */
-export function prepareResponseValidator(tool: ConformanceToolName): void {
-  responseValidator(tool);
+export function prepareResponseValidator(tool: ConformanceToolName, options?: ConformanceSchemaOptions): void {
+  responseValidator(tool, options);
 }
 
 /**
@@ -117,13 +126,13 @@ export function prepareResponseValidator(tool: ConformanceToolName): void {
  * echoed unchanged when the caller supplied one.
  */
 export function evaluate(input: OracleInput): OracleOutput {
-  const { tool, request, result, authToken } = input;
+  const { tool, request, result, authToken, schemas } = input;
   const invariantFailures: string[] = [];
 
   checkNoAuthLeak(result, authToken, invariantFailures);
   checkNoStackLeak(result, invariantFailures);
   checkNoFilesystemLeak(result, invariantFailures);
-  checkContextEchoed(tool, request, result, invariantFailures);
+  checkContextEchoed(tool, request, result, invariantFailures, schemas);
 
   if (result.success === false) {
     checkErrorEnvelope(result, invariantFailures);
@@ -139,7 +148,7 @@ export function evaluate(input: OracleInput): OracleOutput {
     return { verdict: 'rejected', invariantFailures };
   }
 
-  const validate = responseValidator(tool);
+  const validate = responseValidator(tool, schemas);
   const payloadForValidation = responsePayloadForValidation(result);
   if (!validate(payloadForValidation)) {
     const errors = (validate.errors ?? []).slice(0, 3).map(formatAjvError);
@@ -215,7 +224,8 @@ function checkContextEchoed(
   tool: ConformanceToolName,
   request: unknown,
   result: TaskResult<unknown>,
-  failures: string[]
+  failures: string[],
+  schemas?: ConformanceSchemaOptions
 ): void {
   const reqContext = (request as { context?: unknown } | undefined)?.context;
   if (reqContext === undefined) return;
@@ -225,7 +235,7 @@ function checkContextEchoed(
     // echo IS a violation — the spec requires unchanged pass-through.
     // When the schema omits `context` (some discovery-only responses do),
     // silent tolerance stands.
-    if (responseEchoesContext(tool)) {
+    if (responseEchoesContext(tool, schemas)) {
       failures.push('request.context not echoed on response (schema declares context but response omitted it)');
     }
     return;

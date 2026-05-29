@@ -15,6 +15,7 @@
 
 import Ajv, { type ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
+import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
@@ -232,6 +233,9 @@ export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
  */
 function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
+  const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
+  if (scopedRoot && existsSync(scopedRoot)) return scopedRoot;
+
   const externalRoot = externalSchemaRoots.get(key);
   if (externalRoot && existsSync(externalRoot)) return externalRoot;
 
@@ -316,6 +320,17 @@ interface LoaderState {
 
 const states: Map<string, LoaderState> = new Map();
 const externalSchemaRoots: Map<string, string> = new Map();
+const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
+
+function stateCacheKey(bundleKey: string, root: string): string {
+  return `${bundleKey}\0${root}`;
+}
+
+function clearStatesForBundle(bundleKey: string): void {
+  for (const [stateKey, state] of states) {
+    if (state.version === bundleKey) states.delete(stateKey);
+  }
+}
 
 function hasSchemaRootShape(root: string): boolean {
   if (!existsSync(root)) return false;
@@ -361,10 +376,11 @@ function collectSchemaRootVersionKeys(root: string): Set<string> {
 function assertSchemaRootMatchesVersion(version: string, root: string): void {
   const expectedKey = resolveBundleKey(version);
   const keys = collectSchemaRootVersionKeys(root);
-  if (keys.size === 0 || keys.has(expectedKey)) return;
+  if (keys.size === 1 && keys.has(expectedKey)) return;
+  const found = keys.size === 0 ? 'no AdCP schema ids' : Array.from(keys).sort().join(', ');
   throw new Error(
-    `External AdCP schema root for version "${version}" at ${root} does not match the requested version. ` +
-      `Expected schema ids for bundle "${expectedKey}", found ${Array.from(keys).sort().join(', ')}.`
+    `External AdCP schema root for version "${version}" at ${root} must contain only bundle "${expectedKey}", ` +
+      `found ${found}.`
   );
 }
 
@@ -384,14 +400,33 @@ export function registerExternalSchemaRoot(version: string, root: string): void 
   assertSchemaRootMatchesVersion(version, root);
   const previous = externalSchemaRoots.get(key);
   externalSchemaRoots.set(key, root);
-  if (previous !== root) states.delete(key);
+  if (previous !== root) clearStatesForBundle(key);
 }
 
 /** Test/helper hook for unregistering an external schema bundle. */
 export function unregisterExternalSchemaRoot(version: string): void {
   const key = resolveBundleKey(version);
   externalSchemaRoots.delete(key);
-  states.delete(key);
+  clearStatesForBundle(key);
+}
+
+/**
+ * Run a callback with an external schema root scoped to the current async
+ * execution chain. Unlike `registerExternalSchemaRoot`, this does not poison
+ * process-global validation state for later hosted/compliance runs.
+ */
+export function withExternalSchemaRoot<T>(version: string, root: string | undefined, fn: () => T): T {
+  if (root === undefined) return fn();
+  const key = resolveBundleKey(version);
+  if (!hasSchemaRootShape(root)) {
+    throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
+  }
+  assertSchemaRootMatchesVersion(version, root);
+  const parent = scopedExternalSchemaRoots.getStore();
+  const next = new Map(parent);
+  next.set(key, root);
+  states.delete(stateCacheKey(key, root));
+  return scopedExternalSchemaRoots.run(next, fn);
 }
 
 function walkJsonFiles(dir: string): string[] {
@@ -519,10 +554,10 @@ function ensureInit(version: string): LoaderState {
   // `'3.0.1'` share state — both resolve to bundle key `'3.0'` and the
   // same compiled AJV instance.
   const key = resolveBundleKey(version);
-  const cached = states.get(key);
-  if (cached) return cached;
-
   const root = resolveSchemaRoot(version);
+  const cacheKey = stateCacheKey(key, root);
+  const cached = states.get(cacheKey);
+  if (cached) return cached;
   const ajv = new Ajv({
     strict: false,
     allErrors: true,
@@ -539,7 +574,7 @@ function ensureInit(version: string): LoaderState {
     coreLoaded: false,
     version: key,
   };
-  states.set(key, state);
+  states.set(cacheKey, state);
   return state;
 }
 
@@ -567,11 +602,13 @@ function ensureInit(version: string): LoaderState {
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
-  // Tool RESPONSE files only — those need lazy compile through `getValidator`
-  // so `relaxResponseRoot` can apply. Tool REQUEST files and unclassified
-  // fragments are safe to pre-register: requests don't need root-level
-  // relaxation, and fragments registered here are exactly what cross-tool
-  // `$ref`s expect to find by `$id`.
+  // Tool SYNC RESPONSE files need lazy compile through `getValidator` so
+  // `relaxResponseRoot` can apply. Tool REQUEST files, async response
+  // variants, and unclassified fragments are safe to pre-register: requests
+  // don't need root-level relaxation, async variants are registered with the
+  // same response-root relaxation `getValidator` would apply, and fragments
+  // registered here are exactly what cross-tool `$ref`s expect to find by
+  // `$id`.
   //
   // Why this matters: bundles whose source tree doesn't include a `bundled/`
   // pre-resolved subtree (e.g. v2.5, where the spec ships flat schemas with
@@ -580,20 +617,29 @@ function ensureCoreLoaded(s: LoaderState): void {
   // `buildFileIndex`. Skipping all tool files would leave that fragment
   // unregistered, so a later compile of `create_media_buy` fails on
   // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
-  const responseToolFiles = new Set<string>();
+  //
+  // `core/async-response-data.json` references tool async response variants.
+  // Request schemas such as `comply_test_controller` can reference that core
+  // schema, so those async variants must be registered before the request
+  // validator compiles. Otherwise callers have to prewarm response validators
+  // manually, which leaks loader internals.
+  const responseToolFiles = new Map<string, Direction>();
   for (const [key, file] of s.fileIndex) {
     if (key.endsWith('::request')) continue;
-    responseToolFiles.add(file);
+    const direction = key.slice(key.indexOf('::') + 2) as Direction;
+    responseToolFiles.set(file, direction);
   }
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (entry.name === 'bundled') continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      if (responseToolFiles.has(file)) continue;
+      const responseDirection = responseToolFiles.get(file);
+      if (responseDirection === 'sync') continue;
       const schema = loadJson(file);
-      if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
-        s.ajv.addSchema(schema);
+      const schemaToRegister = responseDirection === undefined ? schema : relaxResponseRoot(schema);
+      if (typeof schemaToRegister.$id === 'string' && !s.ajv.getSchema(schemaToRegister.$id)) {
+        s.ajv.addSchema(schemaToRegister);
       }
     }
   }
@@ -628,7 +674,7 @@ export function getValidator(
   // schemas (anything outside `bundled/`) do too — their $refs weren't
   // pre-resolved at spec-publish time.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  if (!fromBundled) ensureCoreLoaded(s);
+  if (direction === 'request' || !fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
   // Bundled files inline every referenced subschema with the original
@@ -735,7 +781,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
   } else {
-    states.delete(resolveBundleKey(version));
+    clearStatesForBundle(resolveBundleKey(version));
   }
 }
 

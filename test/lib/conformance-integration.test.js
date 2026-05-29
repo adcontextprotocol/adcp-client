@@ -3,6 +3,9 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { runConformance } = require('../../dist/lib/conformance/index.js');
 const { serve, adcpError } = require('../../dist/lib/index.js');
@@ -90,6 +93,67 @@ describe('conformance: integration', { concurrency: false }, () => {
     );
     assert.equal(typeof report.schemaVersion, 'string', 'schemaVersion should be populated');
     assert.ok(report.schemaVersion.length > 0);
+  });
+
+  test('runConformance can validate against an external schema root', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-conformance-schema-root-'));
+    try {
+      const signalsDir = path.join(tmp, 'bundled', 'signals');
+      fs.mkdirSync(signalsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(signalsDir, 'get-signals-request.json'),
+        JSON.stringify({
+          type: 'object',
+          required: ['signal_ids'],
+          properties: {
+            signal_ids: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 1,
+              items: {
+                type: 'object',
+                required: ['source', 'data_provider_domain', 'id'],
+                properties: {
+                  source: { const: 'catalog' },
+                  data_provider_domain: { const: 'dataco.com' },
+                  id: { const: 'auto_intenders_30d' },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        })
+      );
+      fs.writeFileSync(
+        path.join(signalsDir, 'get-signals-response.json'),
+        JSON.stringify({
+          type: 'object',
+          required: ['status', 'external_marker'],
+          properties: {
+            status: { const: 'completed' },
+            external_marker: { const: true },
+          },
+          additionalProperties: true,
+        })
+      );
+
+      const report = await runConformance(`http://localhost:${port}/mcp`, {
+        seed: 123,
+        tools: ['get_signals'],
+        turnBudget: 1,
+        protocol: 'mcp',
+        schemaRoot: tmp,
+        version: 'external-test',
+      });
+
+      assert.equal(report.schemaRoot, tmp);
+      assert.equal(report.schemaVersion, 'external-test');
+      assert.equal(report.totalFailures, 1);
+      assert.match(report.failures[0].invariantFailures.join('\n'), /external_marker/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test('same seed → identical report (determinism)', async () => {

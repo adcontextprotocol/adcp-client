@@ -82,6 +82,12 @@ export interface TestOptions {
    */
   adcpVersion?: AdcpVersion | (string & {});
   /**
+   * Optional wire-only AdCP version envelope override. Validation and schema
+   * selection continue to use `adcpVersion`; request envelopes use this value.
+   * Intended for hosted stable-line badges backed by prerelease caches.
+   */
+  wireAdcpVersion?: AdcpVersion | (string & {});
+  /**
    * Version-envelope emission mode. Defaults to `auto`; 3.0 storyboards emit
    * the legacy major marker only, while 3.1 storyboards also emit the exact
    * `adcp_version` marker. Compliance discovery may negotiate `major-only`

@@ -10,6 +10,7 @@ import type {
 } from './types';
 import { DEFAULT_TOOLS, DEFAULT_TOOLS_WITH_UPDATES } from './types';
 import { detectSchemaVersion, hasSchemas } from './schemaLoader';
+import type { ConformanceSchemaOptions } from './schemaLoader';
 import { runToolFuzz } from './runners';
 import { seedFixtures, type SeedWarning } from './seeder';
 import {
@@ -47,6 +48,7 @@ export async function runConformance(
     MIN_FAILURE_PAYLOAD_BYTES,
     options.maxFailurePayloadBytes ?? DEFAULT_MAX_FAILURE_PAYLOAD_BYTES
   );
+  const schemaOptions = buildSchemaOptions(options);
 
   // Auto-seed BEFORE building the fuzzing client so the seeder's warnings
   // reach the report. Explicit caller fixtures win against any seeder
@@ -80,7 +82,7 @@ export async function runConformance(
   let droppedFailures = 0;
 
   for (const [i, tool] of tools.entries()) {
-    if (!hasSchemas(tool)) {
+    if (!hasSchemas(tool, schemaOptions)) {
       perTool[tool] = {
         runs: 0,
         accepted: 0,
@@ -100,6 +102,7 @@ export async function runConformance(
       authToken: options.authToken,
       maxFailurePayloadBytes,
       fixtures: mergedFixtures,
+      schemas: schemaOptions,
     });
     perTool[tool] = stats;
     totalRuns += stats.runs;
@@ -124,7 +127,7 @@ export async function runConformance(
     : agent;
   for (const tool of toolsEligibleForUniformError()) {
     if (options.tools && !options.tools.includes(tool)) continue;
-    if (!hasSchemas(tool)) continue;
+    if (!hasSchemas(tool, schemaOptions)) continue;
     const report = await runUniformErrorInvariant(tool, {
       prober: proberAgent,
       fixtures: mergedFixtures,
@@ -138,7 +141,8 @@ export async function runConformance(
   return {
     agentUrl,
     seed,
-    schemaVersion: detectSchemaVersion(),
+    schemaVersion: detectSchemaVersion(schemaOptions),
+    ...(options.schemaRoot ? { schemaRoot: options.schemaRoot } : {}),
     protocol: options.protocol ?? options.agentConfig?.protocol ?? 'mcp',
     turnBudget,
     fixturesUsed: mergedFixtures,
@@ -195,6 +199,14 @@ function buildAgentClient(agentUrl: string, options: RunConformanceOptions): Age
     auth_token: options.authToken ?? options.agentConfig?.auth_token,
   };
   return new AgentClient(config);
+}
+
+function buildSchemaOptions(options: RunConformanceOptions): ConformanceSchemaOptions | undefined {
+  if (!options.version && !options.schemaRoot) return undefined;
+  return {
+    ...(options.version ? { version: options.version } : {}),
+    ...(options.schemaRoot ? { schemaRoot: options.schemaRoot } : {}),
+  };
 }
 
 // Re-export the tool-name type so consumers don't have to dual-import.

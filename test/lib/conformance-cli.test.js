@@ -64,6 +64,8 @@ describe('adcp fuzz CLI', () => {
     assert.equal(code, 0);
     assert.match(stdout, /Usage: adcp fuzz/);
     assert.match(stdout, /--fixture/);
+    assert.match(stdout, /--schema-version/);
+    assert.match(stdout, /--schema-root/);
     assert.match(stdout, /--auth-token-cross-tenant/);
     assert.match(stdout, /uniform-error/);
     assert.match(stdout, /ADCP_AUTH_TOKEN_CROSS_TENANT/);
