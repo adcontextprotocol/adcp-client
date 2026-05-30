@@ -1,5 +1,5 @@
 ---
-"@adcp/sdk": patch
+'@adcp/sdk': minor
 ---
 
 fix(storyboard): add regex-backed field pattern validations

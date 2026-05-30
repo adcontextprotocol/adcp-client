@@ -250,21 +250,21 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'field_absent':
       return validateFieldAbsent(validation, resolveTarget(ctx));
     case 'envelope_field_present':
-    case 'envelope_field_absent':
-    case 'envelope_field_value':
-    case 'envelope_field_value_or_absent':
-    case 'envelope_field_pattern':
       // Envelope-scoped variants — runtime semantics identical to the
       // un-prefixed checks (TaskResult exposes envelope fields like
       // `status`, `task_id` and version-envelope fields like `adcp_version`
       // at the surface level). The distinct check types exist primarily so
       // static drift detection can walk the envelope schemas instead of the
       // per-tool response. See adcp#3429 and adcp#5195.
-      if (validation.check === 'envelope_field_present') return validateFieldPresent(validation, resolveTarget(ctx));
-      if (validation.check === 'envelope_field_absent') return validateFieldAbsent(validation, resolveTarget(ctx));
-      if (validation.check === 'envelope_field_value') return validateFieldValue(validation, resolveTarget(ctx));
-      if (validation.check === 'envelope_field_pattern') return validateFieldPattern(validation, resolveTarget(ctx));
+      return validateFieldPresent(validation, resolveTarget(ctx));
+    case 'envelope_field_absent':
+      return validateFieldAbsent(validation, resolveTarget(ctx));
+    case 'envelope_field_value':
+      return validateFieldValue(validation, resolveTarget(ctx));
+    case 'envelope_field_value_or_absent':
       return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
+    case 'envelope_field_pattern':
+      return validateFieldPattern(validation, resolveTarget(ctx));
     case 'field_value':
       return validateFieldValue(validation, resolveTarget(ctx));
     case 'field_value_or_absent':
@@ -1062,7 +1062,7 @@ function validateFieldPattern(validation: StoryboardValidation, taskResult: Task
       }`,
       json_pointer: pointer,
       expected,
-      actual: validation.pattern,
+      actual: validation.pattern ?? null,
     };
   }
 

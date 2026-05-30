@@ -267,7 +267,7 @@ describe('storyboard schema drift', () => {
   it('found field validations to check', () => {
     assert.ok(
       fieldValidations.length > 0,
-      'Expected at least one field_present, field_value, or field_value_or_absent validation'
+      'Expected at least one field_present, field_value, field_value_or_absent, or field_pattern validation'
     );
   });
 
@@ -364,8 +364,8 @@ describe('storyboard schema drift', () => {
     // `task_id`, `message`, `replayed`, `governance_context`, `timestamp`,
     // `context_id`, `push_notification_config`) using the envelope-scoped
     // checks so the drift detector knows to walk `protocol-envelope.json`
-    // rather than the per-tool response schema. `errors` and `adcp_version`
-    // are NOT envelope fields — keep them on the un-prefixed checks.
+    // and `version-envelope.json` rather than the per-tool response schema.
+    // `errors` lives inside `payload`, not on either envelope.
     // `envelope_field_absent` is excluded here — absence checks have no schema
     // target (see the `field_absent / envelope_field_absent` block above).
     const envelopeValidations = fieldValidations.filter(
@@ -399,6 +399,27 @@ describe('storyboard schema drift', () => {
     const valueValidations = fieldValidations.filter(v => v.check === 'field_value');
 
     for (const entry of valueValidations) {
+      const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
+      if (!schema) continue;
+
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} exists in ${entry.task} schema`, { skip }, () => {
+        const segments = parsePath(entry.path);
+        const reachable = isPathReachable(schema, segments);
+        assert.ok(
+          reachable,
+          `Path "${entry.path}" is not reachable in ${entry.task} response schema. ` +
+            `Segments: ${JSON.stringify(segments)}`
+        );
+      });
+    }
+  });
+
+  describe('field_pattern paths are reachable in response schemas', () => {
+    const patternValidations = fieldValidations.filter(v => v.check === 'field_pattern');
+
+    for (const entry of patternValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 
