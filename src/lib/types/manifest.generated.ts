@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.3/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.4/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-rc.3.
+ * Manifest-derived constants for AdCP 3.1.0-rc.4.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-rc.3/manifest.json` (adcp_version: 3.1.0-rc.3, generated_at:
- * 2026-05-30T09:57:43.437Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-rc.4/manifest.json` (adcp_version: 3.1.0-rc.4, generated_at:
+ * 2026-05-30T16:39:33.313Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -71,7 +71,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   ACTION_NOT_ALLOWED: {
     description: "The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, or `mode_mismatch`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip).",
     recovery: "correctable",
-    suggestion: "branch on error.details.reason: for wrong_status, wait for or transition to a status listed under the action's allowed_statuses; for mode_mismatch, this is a flow switch (not a retry against update_media_buy) — re-issue through the flow named in available_actions[<action>].mode (call create_proposal/finalize_proposal for requires_proposal; await the seller's webhook for requires_approval); for not_supported_on_product or not_supported_on_buy, do not retry — the action is unavailable on this buy and buyer must select a different product or renegotiate"
+    suggestion: "branch on error.details.reason: for wrong_status, wait for or transition to a status listed under the action's allowed_statuses; for mode_mismatch, this is a flow switch (not a retry against update_media_buy) — follow the mode named in available_actions[<action>].mode (await the seller's webhook for requires_approval); for not_supported_on_product or not_supported_on_buy, do not retry — the action is unavailable on this buy and buyer must select a different product or renegotiate"
   },
   AGENT_BLOCKED: {
     description: "The calling buyer agent's commercial relationship with the seller is permanently denied — the agent is blocked. Sibling to `AGENT_SUSPENDED` on the agent-relationship axis but with no recovery path (a suspension may lift via re-onboarding; a block does not). The code itself is the discriminator — same posture as `AGENT_SUSPENDED`: no `error.details` payload, no per-agent commercial state, cross-tenant onboarding oracle clamp + channel-coverage requirements normative in error-handling.mdx Per-Agent Authorization Gate.",
@@ -389,9 +389,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "verify the referenced identifier exists and is accessible to the caller"
   },
   REQUOTE_REQUIRED: {
-    description: "An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can autonomously re-discover.",
+    description: "An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can decide whether to adjust the update, rediscover products, add packages where supported, or create a separate media buy. AdCP 3.1 does not define an amendment-quote artifact that can be attached to update_media_buy.",
     recovery: "correctable",
-    suggestion: "re-negotiate via get_products in 'refine' mode against the existing proposal_id to obtain a fresh quote, then resubmit against the new proposal_id"
+    suggestion: "adjust the update to stay within the current quote envelope, rediscover products/terms, add packages when available, or create a separate media buy; 3.1 does not define an amendment-quote artifact for update_media_buy"
   },
   SCOPE_INSUFFICIENT: {
     description: "The authenticated caller is not authorized for the invoked task — the task is not in the caller's `allowed_tasks` for this account (discoverable via the `authorization` object on sync_accounts / list_accounts responses). Distinct from `PERMISSION_DENIED` (generic authz failure, often credential-shaped) by being narrowly about task-level scope. Sellers SHOULD populate `error.details.introspection_hint` pointing at where the caller can re-read its scope (strawman: `{ task: 'list_accounts', account: {...} }`).",
