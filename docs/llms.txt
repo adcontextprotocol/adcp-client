@@ -1076,10 +1076,13 @@ Flow: `sync_accounts → get_products → sync_event_sources → create_media_bu
 **Seller fulfills a performance (event-kind goal) media buy with a ROAS target** — Verifies that a seller advertising conversion_tracking with per_ad_spend in supported_targets can accept a media buy whose event-kind optimization_goal carries a ROAS (per_ad_spend) target bound to an event source with value_field, reject ROAS goals that omit value_field on every event-source entry, ingest valued purchase events, and report conversion_value + roas alongside conversions and cost_per_acquisition. Sibling to media_buy_seller/performance_buy_flow gated on the supported_targets sub-capability: sellers that don't advertise per_ad_spend (most broadcast TV, upper-funnel video, signal-only) grade not_applicable.
 Flow: `sync_accounts → get_products → sync_event_sources → create_media_buy → log_event → comply_test_controller → get_media_buy_delivery`
 
+**Seller filters products by accepted pricing currencies** — Verifies that get_products filters.pricing_currencies returns only products buyable in the requested media pricing currency and prunes returned product pricing_options.
+Flow: `get_products`
+
 **Seller exposes wholesale signal options and honors package-level signal_targeting_groups** — Verifies that a seller with wholesale products and wholesale get_signals can expose signal targeting eligibility, accept package-level signal_targeting_groups with pricing, reject unknown signals, and echo the applied grouped expression on readback.
 Flow: `get_products → get_signals → create_media_buy → get_media_buys → create_media_buy`
 
-**Seller handles proposal refinement and finalize** — Verifies the full proposal lifecycle: brief with proposals, refine a proposal, finalize to committed, and accept via create_media_buy.
+**Seller handles proposal refinement and finalize** — Verifies the full proposal lifecycle: brief with proposals, refine a proposal, finalize to committed, and execute via create_media_buy.
 Flow: `sync_accounts → get_products → create_media_buy → get_products → create_media_buy`
 
 **Seller handles proposal finalize — asap start_time form** — Variant of proposal_finalize that exercises start_time: 'asap' on create_media_buy, catching wrapper-layer rejections of the spec-defined string literal form.
@@ -1157,8 +1160,8 @@ Flow: `get_products → create_media_buy`
 
 ### Signals
 
-**Signals baseline** — Baseline domain storyboard — every signals agent must discover signals and return an activation, regardless of whether they are owned or marketplace.
-Flow: `get_adcp_capabilities → get_signals → activate_signal`
+**Signals baseline** — Baseline domain storyboard — every signals agent must declare signals support and return discoverable signals.
+Flow: `get_adcp_capabilities → get_signals`
 
 **Marketplace signal agent** — Signal agent that resells third-party data provider signals with verifiable provider-published provenance.
 Flow: `get_adcp_capabilities → get_signals → activate_signal`
@@ -1166,8 +1169,8 @@ Flow: `get_adcp_capabilities → get_signals → activate_signal`
 **Signal agent rejects activation when governance denies** — Verifies that a signal agent propagates GOVERNANCE_DENIED when the buyer's governance plan denies activation.
 Flow: `sync_plans → sync_accounts → sync_governance → get_signals → activate_signal`
 
-**Owned signal agent** — Signal agent serving first-party or proprietary audience data without external catalog verification.
-Flow: `get_adcp_capabilities → get_signals → activate_signal`
+**Owned signal agent** — Signal agent serving first-party or proprietary audience data for discovery without external catalog verification.
+Flow: `get_adcp_capabilities → get_signals`
 
 **get_signals pagination cursor integrity** — Validates the cursor↔has_more invariant on a paginated get_signals response by walking from a continuation page to the next page under a broad query.
 Flow: `get_adcp_capabilities → get_signals`
@@ -1389,7 +1392,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `RATE_LIMITED` | transient | Request rate exceeded. Retry after the retry_after interval. |
 | `READ_ONLY_SCOPE` | correctable | The caller's scope is read-only; the invoked task would mutate state and was rejected. Distinct from `SCOPE_INSUFFICIENT` (task not in scope at all) — the task is in some scopes this seller supports, just not this caller's. |
 | `REFERENCE_NOT_FOUND` | correctable | Generic fallback for a referenced identifier, grant, session, or other resource that does not exist or is not accessible by the caller. Use when no resource-specific not-found code applies (e.g., property lists, content standards, rights grants, SI offerings, proposals, catalogs, event sources, collection lists, brands, individual properties). Typed parameters that lack a dedicated standard code MUST also use REFERENCE_NOT_FOUND rather than minting a custom *_NOT_FOUND code. See 'Uniform response for inaccessible references' in error-handling.mdx for the full MUST list. Summary of the uniform-response MUST: sellers MUST return the same response for 'exists but the caller lacks access' as for 'does not exist' across every observable channel — error.code/message/field/details (message MUST be generic; error.field MUST be identical across both cases on typed parameters); HTTP status, A2A task.status.state, and MCP isError; response headers (ETag, Cache-Control, per-type rate-limit buckets, CDN tags); side effects (webhook/audit writes, background-job enqueues, per-type quota counters, DB-shard routing); and observability (logs, APM spans, third-party error telemetry like Sentry/Datadog). Sellers MUST perform the same resolution-and-authorization work on both paths (resolve-then-authorize; on true-miss still run an authorization decision of equivalent shape against an empty principal set so authorizer latency is not a side channel). Cache population MUST NOT be gated on authorization. Polymorphism is evaluated against the tool-schema's declared parameter shape before any lookup, and a tool's declared shape MUST be identical across all callers. |
-| `REQUOTE_REQUIRED` | correctable | An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can autonomously re-discover. |
+| `REQUOTE_REQUIRED` | correctable | An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can decide whether to adjust the update, rediscover products, add packages where supported, or create a separate media buy. AdCP 3.1 does not define an amendment-quote artifact that can be attached to update_media_buy. |
 | `SCOPE_INSUFFICIENT` | correctable | The authenticated caller is not authorized for the invoked task — the task is not in the caller's `allowed_tasks` for this account (discoverable via the `authorization` object on sync_accounts / list_accounts responses). Distinct from `PERMISSION_DENIED` (generic authz failure, often credential-shaped) by being narrowly about task-level scope. Sellers SHOULD populate `error.details.introspection_hint` pointing at where the caller can re-read its scope (strawman: `{ task: 'list_accounts', account: {...} }`). |
 | `SERVICE_UNAVAILABLE` | transient | Seller service is temporarily unavailable. Retry with exponential backoff. |
 | `SESSION_NOT_FOUND` | correctable | SI session ID is invalid, expired, or does not exist. |

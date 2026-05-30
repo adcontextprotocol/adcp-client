@@ -22,6 +22,7 @@ import * as tar from 'tar';
 
 const DEFAULT_ADCP_BASE_URL = 'https://adcontextprotocol.org';
 const ADCP_BASE_URL = process.env.ADCP_BASE_URL || DEFAULT_ADCP_BASE_URL;
+const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
@@ -416,8 +417,8 @@ async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promis
 
 // Per-file schema fallback. Used only if the tarball endpoint is unavailable.
 // Compliance is NOT synced by this path — requires the tarball.
-async function syncSchemasPerFile(version: string): Promise<void> {
-  const indexUrl = `${ADCP_BASE_URL}/schemas/${version}/index.json`;
+async function syncSchemasPerFile(version: string, baseUrl = ADCP_BASE_URL): Promise<void> {
+  const indexUrl = `${baseUrl}/schemas/${version}/index.json`;
   console.log(`📥 Fetching schema index ${indexUrl}`);
   const schemaIndex: SchemaIndex = await fetchJson(indexUrl);
 
@@ -443,14 +444,18 @@ async function syncSchemasPerFile(version: string): Promise<void> {
   allRefs.add('/schemas/v1/adagents.json');
 
   const semanticVersion = schemaIndex.adcp_version;
-  await Promise.allSettled(Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion)));
+  await Promise.allSettled(
+    Array.from(allRefs).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion, baseUrl))
+  );
 
   // Resolve transitive $refs
   const attempted = new Set<string>();
   for (let depth = 0; depth < 10; depth++) {
     const missing = findMissingRefs(versionCacheDir, attempted);
     if (missing.size === 0) break;
-    await Promise.allSettled(Array.from(missing).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion)));
+    await Promise.allSettled(
+      Array.from(missing).map(ref => downloadSchema(ref, versionCacheDir, semanticVersion, baseUrl))
+    );
     missing.forEach(r => attempted.add(r));
   }
 
@@ -461,8 +466,13 @@ async function syncSchemasPerFile(version: string): Promise<void> {
   );
 }
 
-async function downloadSchema(schemaRef: string, cacheDir: string, semanticVersion: string): Promise<void> {
-  const url = `${ADCP_BASE_URL}${schemaRef}`;
+async function downloadSchema(
+  schemaRef: string,
+  cacheDir: string,
+  semanticVersion: string,
+  baseUrl = ADCP_BASE_URL
+): Promise<void> {
+  const url = `${baseUrl}${schemaRef}`;
   const localPath = refToLocalPath(schemaRef, cacheDir);
   mkdirSync(path.dirname(localPath), { recursive: true });
   try {
@@ -523,9 +533,21 @@ async function sync(version?: string): Promise<void> {
   const adcpVersion = version || getTargetAdCPVersion();
   console.log(`🔄 Syncing AdCP @ ${adcpVersion}`);
 
-  const viaTarball = await syncFromTarball(adcpVersion);
-  if (!viaTarball) {
-    await syncSchemasPerFile(adcpVersion);
+  async function syncWithBase(baseUrl: string): Promise<void> {
+    const viaTarball = await syncFromTarball(adcpVersion, baseUrl);
+    if (!viaTarball) {
+      await syncSchemasPerFile(adcpVersion, baseUrl);
+    }
+  }
+
+  try {
+    await syncWithBase(ADCP_BASE_URL);
+  } catch (err) {
+    if (ADCP_BASE_URL !== DEFAULT_ADCP_BASE_URL || process.env.ADCP_GITHUB_FALLBACK === '0') {
+      throw err;
+    }
+    console.warn(`⚠️  AdCP ${adcpVersion} was not reachable from adcontextprotocol.org; retrying against GitHub dist.`);
+    await syncWithBase(GITHUB_DIST_BASE_URL);
   }
 
   console.log(`✅ Sync complete for AdCP ${adcpVersion}`);

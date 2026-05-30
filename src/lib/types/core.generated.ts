@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.3
-// Generated at: 2026-05-30T10:30:20.747Z
+// Generated AdCP core types from official schemas v3.1.0-rc.4
+// Generated at: 2026-05-30T16:54:37.082Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -4659,9 +4659,9 @@ export type MediaBuyValidAction =
   | 'update_packages'
   | 'sync_creatives';
 /**
- * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, a proposal lifecycle round-trip, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`).
+ * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead.
  */
-export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_approval';
 /**
  * Available frequencies for delivery reports and metrics updates
  */
@@ -6895,7 +6895,7 @@ export interface ProductAllowedAction {
  */
 export interface SLAWindow {
   /**
-   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, queue ack for requires_approval, proposal task creation for requires_proposal). ISO 8601 duration.
+   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue ack for requires_approval). ISO 8601 duration.
    * @pattern ^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$
    */
   response_max?: string;
@@ -7661,7 +7661,7 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
- * Lifecycle status of this proposal. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at.
+ * Lifecycle status of this proposal and the per-proposal source of truth for whether finalization is required before create_media_buy. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at and executable via create_media_buy.
  */
 export type ProposalStatus = 'draft' | 'committed';
 /**
@@ -8441,7 +8441,7 @@ export interface GetProductsResponse {
      */
     total_candidates?: number;
     /**
-     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
      */
     excluded_by?: {
       [k: string]:
@@ -8629,11 +8629,11 @@ export interface PushNotificationConfig {
   };
 }
 /**
- * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
+ * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable: committed proposals can be executed directly via create_media_buy by providing the proposal_id; draft proposals must first be finalized via get_products refine action 'finalize'.
  */
 export interface Proposal {
   /**
-   * Unique identifier for this proposal. Used to execute it via create_media_buy.
+   * Unique identifier for this proposal. Used to finalize a draft proposal and to execute a committed proposal via create_media_buy.
    * @maxLength 255
    */
   proposal_id: string;
@@ -12565,6 +12565,86 @@ export interface VerifyBrandClaimSuccess {
    */
   context_note?: string;
   context?: ContextObject;
+  /**
+   * Payload-envelope JWS attesting the canonical success response for verify_brand_claim. The signed payload response MUST match the unsigned task-body fields on this response, excluding signed_response and protocol/version envelope fields.
+   */
+  signed_response: ResponsePayloadJWSEnvelope & {
+    payload?: {
+      task: 'verify_brand_claim';
+      response: SignedSuccessPayload;
+    };
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Decoded-payload JWS envelope for the closed designated-task response-signing profile. The protected member is the base64url-encoded JWS protected header; payload is the decoded signed payload that verifiers canonicalize with RFC 8785/JCS and base64url-encode before checking the ordinary JWS signature.
+ */
+export interface ResponsePayloadJWSEnvelope {
+  /**
+   * Base64url-encoded JWS protected header. The decoded header MUST include alg, kid, and typ: adcp-response-payload+jws, and MUST NOT include the RFC 7797 b64 header. Verifiers enforce the key purpose by resolving kid to a JWK with adcp_use: response-signing.
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  protected: string;
+  payload: ResponsePayload;
+  /**
+   * Base64url-encoded JWS signature over the protected header and canonicalized payload.
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  signature: string;
+}
+/**
+ * Decoded signed payload. Signers compute the JWS payload bytes from the RFC 8785/JCS canonicalization of this object.
+ */
+export interface ResponsePayload {
+  /**
+   * Type discriminator preventing cross-profile replay.
+   */
+  typ: 'adcp-response-payload+jws';
+  /**
+   * Designated task whose response payload is signed.
+   */
+  task: 'verify_brand_claim' | 'verify_brand_claims';
+  /**
+   * Brand tenant whose policy store produced the answer. The signer MUST derive this from server-side tenant resolution, not caller-supplied request fields.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  brand_domain: string;
+  /**
+   * Canonical URL of the responding brand agent entry whose response-signing key verifies this envelope.
+   */
+  agent_url: string;
+  /**
+   * sha256: prefix plus unpadded base64url SHA-256 of the canonical request-binding object for this call.
+   * @pattern ^sha256:[A-Za-z0-9_-]{43}$
+   */
+  request_hash: string;
+  /**
+   * Issued-at time as Unix epoch seconds.
+   * @minimum 0
+   */
+  iat: number;
+  /**
+   * Expiration time as Unix epoch seconds. Online verifiers reject envelopes after this time, allowing only implementation-defined clock skew.
+   * @minimum 0
+   */
+  exp: number;
+  /**
+   * Canonical task-body success response payload being attested. Any unsigned task-body fields on the outer response, excluding signed_response and protocol/version envelope fields, MUST match this object.
+   */
+  response: {};
+}
+/**
+ * Canonical task-body success payload signed inside signed_response.payload.response. Excludes protocol/version envelope fields and signed_response itself.
+ */
+export interface SignedSuccessPayload {
+  claim_type: 'subsidiary' | 'parent' | 'property' | 'trademark';
+  verification_status: VerificationStatus;
+  details?: {};
+  /**
+   * @maxLength 500
+   */
+  context_note?: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 export interface VerifyBrandClaimError {
@@ -12657,6 +12737,15 @@ export interface VerifyBrandClaimsSuccess {
    */
   results: ResultEntry[];
   context?: ContextObject;
+  /**
+   * Payload-envelope JWS attesting the canonical bulk success response for verify_brand_claims. The signed payload response MUST match the unsigned task-body fields on this response, excluding signed_response and protocol/version envelope fields.
+   */
+  signed_response: ResponsePayloadJWSEnvelope & {
+    payload?: {
+      task: 'verify_brand_claims';
+      response: SignedSuccessPayload;
+    };
+  };
   ext?: ExtensionObject;
 }
 export interface VerifyBrandClaimsResultSuccess {
@@ -16508,7 +16597,7 @@ export interface CreateMediaBuyRequest {
   plan_id?: string;
   account: AccountReference;
   /**
-   * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
+   * ID of a committed proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array. If the referenced proposal has proposal_status: 'draft', the seller MUST reject with PROPOSAL_NOT_COMMITTED; the buyer finalizes first via get_products refine action 'finalize'.
    */
   proposal_id?: string;
   /**
@@ -17740,7 +17829,7 @@ export interface GetMediaBuysResponseMediaBuy {
   updated_at?: string;
   context?: ContextObject;
   /**
-   * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_proposal / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
+   * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
   valid_actions?: MediaBuyValidAction[];
   /**
@@ -18111,6 +18200,10 @@ export interface ProductFilters {
    * Filter by pricing availability and returned pricing options: true = products offering fixed pricing (at least one option with fixed_price), false = products offering auction pricing (at least one option without fixed_price). Products with both fixed and auction options match both true and false, but sellers MUST return only the pricing_options entries matching the requested pricing type so buyers can deterministically select from the returned options.
    */
   is_fixed_price?: boolean;
+  /**
+   * Filter by currencies the buyer can use for the media product transaction, using ISO 4217 currency codes. Products match when they offer at least one product-level pricing_options entry in one of the requested currencies and any seller-applied or otherwise mandatory product-scoped signal charges are satisfiable in one of those currencies or have no incremental price. Mandatory custom signal pricing without currency is not satisfiable for this filter unless the seller can truthfully treat it as having no incremental price. Sellers MUST return only product pricing_options entries whose currency is in this list so buyers can select deterministically from discovery. This filter does not require pruning optional signal or vendor add-on pricing; buyers should avoid optional add-ons priced only in unsupported currencies.
+   */
+  pricing_currencies?: string[];
   /**
    * Filter by specific format IDs
    */
@@ -20420,7 +20513,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
     idempotency: IdempotencySupported | IdempotencyUnsupported;
   };
   /**
-   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). The `measurement` protocol is in development — currently scoped to `get_adcp_capabilities` for catalog discovery; additional measurement tasks (reporting, attribution, etc.) and a baseline storyboard land in subsequent minors. Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
+   * AdCP protocols this agent supports. Stable values both (a) declare which tools the agent implements and (b) commit the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). The `measurement` protocol is experimental in 3.1 and currently scoped to `get_adcp_capabilities` catalog discovery; agents implementing it MUST also list `measurement.core` in `experimental_features`. Additional measurement tasks (reporting, attribution, etc.) and a baseline storyboard land in subsequent minors. Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
   supported_protocols: (
     | 'media_buy'
@@ -20469,7 +20562,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supported_pricing_models?: PricingModel[];
     /**
-     * Buying modes this seller supports on get_products. 'brief' (semantic discovery driven by the brief) is universally supported and implicit. 'wholesale' (raw wholesale product feed enumeration — caller omits brief and the seller returns the full priced product feed, paginated) is opt-in and SHOULD be declared explicitly so buyers can probe before issuing wholesale calls. 'refine' (iterate on prior products/proposals) is implicit when the seller declares supports_proposals or otherwise honors the refine array. Sellers MAY declare ['brief', 'wholesale'] to signal wholesale support; absent declaration is treated as ['brief'] for wholesale-feed probing purposes and sellers MAY return INVALID_REQUEST for wholesale calls they do not support. Symmetric with signals.discovery_modes.
+     * Buying modes this seller supports on get_products. 'brief' (semantic discovery driven by the brief) is universally supported and implicit. 'wholesale' (raw wholesale product feed enumeration — caller omits brief and the seller returns the full priced product feed, paginated) is opt-in and SHOULD be declared explicitly so buyers can probe before issuing wholesale calls. 'refine' lets buyers iterate on prior products/proposals and is also the vehicle for finalizing draft proposals when the seller returns them. Sellers MAY declare ['brief', 'wholesale'] to signal wholesale support; absent declaration is treated as ['brief'] for wholesale-feed probing purposes and sellers MAY return INVALID_REQUEST for wholesale calls they do not support. Symmetric with signals.discovery_modes.
      */
     buying_modes?: ('brief' | 'wholesale' | 'refine')[];
     /**
@@ -20481,7 +20574,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     offline_delivery_protocols?: CloudStorageProtocol[];
     /**
-     * Whether this seller commits to the proposal lifecycle on get_products: when called with buying_mode: 'brief' the seller will return at least one entry in proposals[]; when called with buying_mode: 'refine' + action: 'finalize' the seller will transition a proposal from draft to committed. A declaration of true is a commitment the seller will be graded against, not just a feature flag — sellers that decline a brief on policy grounds still owe a structured proposal-shaped rejection rather than an empty proposals[]. Most guaranteed-deal sellers (premium pubs, broadcast, CTV) declare true; auction-based PG, retail SKU, and quoted-rate direct-buy flows declare false. When false or absent, the seller serves products directly without proposal abstraction; conformance runners skip proposal-lifecycle storyboards.
+     * Conformance declaration that this seller supports the full proposal lifecycle on get_products: returned proposals are actionable, draft proposals can be finalized with buying_mode: 'refine' + action: 'finalize', and committed proposals can be executed via create_media_buy with proposal_id before expires_at. Buyers SHOULD NOT use this field to decide whether a specific returned proposal is executable; proposal_status is the per-proposal source of truth. A declaration of true opts the seller into proposal-lifecycle grading. When false or absent, conformance runners skip proposal-lifecycle storyboards, but buyers should still honor any proposals the seller actually returns.
      */
     supports_proposals?: boolean;
     /**
@@ -21123,7 +21216,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
     };
   };
   /**
-   * Measurement capability block. Presence indicates this agent computes one or more quantitative metrics about ad delivery, exposure, or effect, and is willing to be discovered as a measurement vendor. Returns metric definitions (this surface), not pricing/coverage (negotiated via `measurement_terms` on `create_media_buy`) or live values (returned per buy via `vendor_metric_values`). Modeled as a capability block (like `compliance_testing` and `webhook_signing`) rather than a `supported_protocols` value because measurement agents have one surface — this catalog — not a tool-set with mandatory tasks. AAO crawls each measurement agent's `metrics[]` on a TTL to populate the federated cross-vendor index. Same self-describing pattern as `governance.property_features[]`: agents own the catalog; the registry aggregates.
+   * Experimental measurement capability block. Presence indicates this agent computes one or more quantitative metrics about ad delivery, exposure, or effect, and is willing to be discovered as a measurement vendor. Agents implementing this block MUST list `measurement.core` in experimental_features. Returns metric definitions (this surface), not pricing/coverage (negotiated via `measurement_terms` on `create_media_buy`) or live values (returned per buy via `vendor_metric_values`). AAO crawls each measurement agent's `metrics[]` on a TTL to populate the federated cross-vendor index. Same self-describing pattern as `governance.property_features[]`: agents own the catalog; the registry aggregates.
    */
   measurement?: {
     /**
@@ -21634,7 +21727,7 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
-   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, and small custom-signal result sets when available. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as taxonomy.etag.
+   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
    */
   fields?: (
     | 'signal_ref'
@@ -25900,7 +25993,7 @@ export interface SignalCoverageForecast {
   ext?: ExtensionObject;
 }
 
-// core/signal-definition.json
+// core/signal-definition-enrichment.json
 /**
  * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
  */
@@ -25916,7 +26009,204 @@ export type RestrictedAttribute =
   | 'age'
   | 'familial_status';
 /**
- * Definition of a signal in published adagents.json signals[]. The publishing domain supplies the namespace, so this definition carries a local id rather than a signal_ref. Media-buy products reference this definition with signal_ref scope 'data_provider', data_provider_domain set to the publishing domain, and signal_id set to this id.
+ * Optional signal-definition enrichment fields that may be projected inline on signal listings when requested through get_signals.fields. This schema intentionally excludes signal identity and required definition fields so source-native, private, or compact listings can include typed partial disclosure without becoming a full adagents.json signal definition.
+ */
+export interface SignalDefinitionEnrichment {
+  /**
+   * Restricted attribute categories this signal touches.
+   */
+  restricted_attributes?: RestrictedAttribute[];
+  /**
+   * Policy categories this signal is sensitive for.
+   */
+  policy_categories?: string[];
+  /**
+   * Optional taxonomy metadata describing what this signal means in an external audience, content, retail-media, or provider-owned taxonomy.
+   */
+  taxonomy?: {
+    ref: string;
+    version?: string;
+    /**
+     * @minimum 1
+     */
+    segtax?: number;
+    etag?: string;
+    values: {
+      /**
+       * @minLength 1
+       */
+      id: string;
+      path?: string;
+      modifiers?: string[];
+    }[];
+    value_mappings?: {
+      value: string;
+      taxonomy_value_id: string;
+      path?: string;
+      modifiers?: string[];
+    }[];
+    parent_match_behavior?: 'exact_only' | 'descendants_supported' | 'unknown';
+  };
+  /**
+   * @maxLength 500
+   */
+  segmentation_criteria?: string;
+  criteria_url?: string;
+  data_sources?: (
+    | 'app_behavior'
+    | 'app_usage'
+    | 'web_usage'
+    | 'geo_location'
+    | 'email'
+    | 'tv_ott_or_stb_device'
+    | 'panel'
+    | 'online_ecommerce'
+    | 'credit_data'
+    | 'loyalty_card'
+    | 'transaction'
+    | 'online_survey'
+    | 'offline_survey'
+    | 'public_record_census'
+    | 'public_record_voter_file'
+    | 'public_record_other'
+    | 'offline_transaction'
+  )[];
+  methodology?: 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled';
+  audience_expansion?: boolean;
+  device_expansion?: boolean;
+  refresh_cadence?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  lookback_window?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  onboarder?: {
+    match_keys: (
+      | 'name'
+      | 'address'
+      | 'email'
+      | 'postal'
+      | 'lat_long'
+      | 'mobile_id'
+      | 'cookie_id'
+      | 'ip'
+      | 'customer_id'
+      | 'phone'
+    )[];
+    pre_onboarding_audience_expansion?: boolean;
+    pre_onboarding_device_expansion?: boolean;
+    pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
+  };
+  countries?: string[];
+  consent_basis?: ConsentBasis[];
+  art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
+  modeling?: {
+    method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
+    seed_source: {
+      type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
+      /**
+       * Provider assertion that the seed source carries a signed attestation. Consumers MUST NOT treat this boolean alone as cryptographic proof.
+       */
+      provider_signed: boolean;
+    };
+    training_data_jurisdictions: string[];
+    ai_act_risk_class: 'minimal' | 'limited' | 'high_risk';
+    disclosure?: SignalModelingDisclosure;
+  };
+  /**
+   * Per-signal data-subject-rights routing. This is a contact/routing reference, not a machine-callable AdCP API.
+   */
+  data_subject_rights?: {
+    /**
+     * @maxLength 253
+     */
+    upstream_source_domain?: string;
+    channels: {
+      rights: ('access' | 'rectification' | 'erasure' | 'portability' | 'objection')[];
+      /**
+       * @pattern ^https:\/\/
+       */
+      url?: string;
+      /**
+       * @format email
+       */
+      email?: string;
+      languages?: string[];
+      countries?: string[];
+    }[];
+    /**
+     * @minimum 1
+     * @maximum 90
+     */
+    response_sla_days?: number;
+    /**
+     * @pattern ^https:\/\/
+     */
+    ccpa_opt_out_url?: string;
+  };
+  dts_compliant_version?: string;
+}
+/**
+ * Disclosure requirements and jurisdictional notes for modeled data signals. This schema is intentionally separate from core/provenance.json because creative provenance is about generated content, render guidance, and asset-level chain of custody, while signal modeling disclosure is about data-segment methodology and data-use transparency.
+ */
+export interface SignalModelingDisclosure {
+  /**
+   * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
+   */
+  required: boolean;
+  /**
+   * Jurisdictions where a modeling or AI-use disclosure applies.
+   */
+  jurisdictions?: {
+    /**
+     * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
+     */
+    country: string;
+    /**
+     * Provider-defined sub-national region code or name when the obligation is regional. No global canonical format is implied.
+     */
+    region?: string;
+    /**
+     * Provider-supplied regulation identifier for the disclosure obligation.
+     */
+    regulation: string;
+    /**
+     * Human-readable disclosure text or summary the provider expects buyers or reviewers to see.
+     */
+    disclosure_text?: string;
+    /**
+     * Optional URL to the provider's canonical disclosure or methodology page for this jurisdiction.
+     */
+    disclosure_url?: string;
+    /**
+     * Primary audience for this disclosure entry.
+     */
+    audience?: 'buyer' | 'data_subject' | 'regulator' | 'public';
+  }[];
+  /**
+   * Optional provider notes on how the disclosure should be interpreted. Informational only; buyers should not branch programmatically on this text.
+   * @maxLength 2000
+   */
+  notes?: string;
+}
+
+
+// core/signal-definition.json
+/**
+ * Definition of a signal in published adagents.json signals[]. The publishing domain supplies the namespace, so this definition carries a local id rather than a signal_ref. Media-buy products reference this definition with signal_ref scope 'data_provider', data_provider_domain set to the publishing domain, and signal_id set to this id. Some constraints use JSON Schema draft-07 conditional keywords such as if/then and contains; SDK generators that drop those keywords need equivalent runtime guards.
  */
 export interface SignalDefinition {
   /**
@@ -26148,7 +26438,7 @@ export interface SignalDefinition {
    */
   originating_domain?: string;
   /**
-   * ISO 3166-1 alpha-2 country codes where the signal is applicable. Sellers must not expose a signal for media buys in countries outside this list unless their own policy allows a narrower operational override.
+   * ISO 3166-1 alpha-2 country codes where the signal is applicable. Sellers must not expose a signal for media buys in countries outside this list. Federating agents that surface a peer's signal MUST treat the peer-published list as an upper bound, re-check it against the buyer's intended deployment countries, and may apply only narrower local policy.
    */
   countries?: string[];
   /**
@@ -26167,7 +26457,7 @@ export interface SignalDefinition {
     seed_source: {
       type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
       /**
-       * Whether the seed source carries a signed attestation under one of the provider's published signing keys.
+       * Whether the seed source carries a signed attestation under one of the provider's published signing keys. This is a forward-looking claim until the consumer can resolve and verify the provider's applicable signing keys through the AdCP signing profile; consumers MUST NOT treat this boolean alone as cryptographic proof.
        */
       provider_signed: boolean;
     };
@@ -26182,7 +26472,7 @@ export interface SignalDefinition {
     disclosure?: SignalModelingDisclosure;
   };
   /**
-   * Per-signal data-subject-rights routing. Inline on the signal because upstream source and rights routing can differ by segment even when the publishing domain is the same. This is a contact/routing reference, not a machine-callable AdCP API.
+   * Per-signal data-subject-rights routing. Inline on the signal because upstream source, rights routing, and response commitments can differ by segment or may be unavailable from a public provider document for custom/private signals. This is a contact/routing reference, not a machine-callable AdCP API.
    */
   data_subject_rights?: {
     /**
@@ -26191,7 +26481,7 @@ export interface SignalDefinition {
      */
     upstream_source_domain?: string;
     /**
-     * Rights request channels and the rights each channel supports.
+     * Rights request channels and the rights each channel supports. At least one declared channel MUST support one or more of access, erasure, or objection; schema validators enforce this with draft-07 contains, and consumers whose SDK drops contains need an equivalent runtime check.
      */
     channels: {
       /**
@@ -26218,15 +26508,11 @@ export interface SignalDefinition {
       countries?: string[];
     }[];
     /**
-     * Maximum response time in days for the declared rights channels.
+     * Maximum response time in days for rights requests handled through the declared rights channels. For provider-published signals, providers SHOULD avoid duplicating this field across every signal unless the value varies by signal or upstream source; consumers MAY also consult the provider's public privacy policy or registry disclosures when present.
      * @minimum 1
      * @maximum 90
      */
     response_sla_days?: number;
-    /**
-     * Whether Global Privacy Control signals are honored as objection or opt-out requests for this signal.
-     */
-    gpc_honored?: boolean;
     /**
      * US-specific 'Do Not Sell or Share' opt-out URL where required.
      * @pattern ^https:\/\/
@@ -26238,51 +26524,6 @@ export interface SignalDefinition {
    */
   dts_compliant_version?: string;
 }
-/**
- * Signal/modeling-specific disclosure requirements and jurisdictional notes. This is not creative provenance render guidance.
- */
-export interface SignalModelingDisclosure {
-  /**
-   * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
-   */
-  required: boolean;
-  /**
-   * Jurisdictions where a modeling or AI-use disclosure applies.
-   */
-  jurisdictions?: {
-    /**
-     * ISO 3166-1 alpha-2 country code.
-     * @pattern ^[A-Z]{2}$
-     */
-    country: string;
-    /**
-     * Provider-defined sub-national region code or name when the obligation is regional. No global canonical format is implied.
-     */
-    region?: string;
-    /**
-     * Provider-supplied regulation identifier for the disclosure obligation.
-     */
-    regulation: string;
-    /**
-     * Human-readable disclosure text or summary the provider expects buyers or reviewers to see.
-     */
-    disclosure_text?: string;
-    /**
-     * Optional URL to the provider's canonical disclosure or methodology page for this jurisdiction.
-     */
-    disclosure_url?: string;
-    /**
-     * Primary audience for this disclosure entry.
-     */
-    audience?: 'buyer' | 'data_subject' | 'regulator' | 'public';
-  }[];
-  /**
-   * Optional provider notes on how the disclosure should be interpreted. Informational only; buyers should not branch programmatically on this text.
-   * @maxLength 2000
-   */
-  notes?: string;
-}
-
 
 // core/signal-pricing-option.json
 /**
