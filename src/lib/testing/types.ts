@@ -82,6 +82,12 @@ export interface TestOptions {
    */
   adcpVersion?: AdcpVersion | (string & {});
   /**
+   * Optional wire-only AdCP version envelope override. Validation and schema
+   * selection continue to use `adcpVersion`; request envelopes use this value.
+   * Intended for hosted stable-line badges backed by prerelease caches.
+   */
+  wireAdcpVersion?: AdcpVersion | (string & {});
+  /**
    * Version-envelope emission mode. Defaults to `auto`; 3.0 storyboards emit
    * the legacy major marker only, while 3.1 storyboards also emit the exact
    * `adcp_version` marker. Compliance discovery may negotiate `major-only`
@@ -219,6 +225,15 @@ export interface TestOptions {
     auth?: {
       /** API key the runner presents on API-key probes. */
       api_key?: string;
+      /** HTTP Basic credential the runner presents on Basic-auth probes. */
+      basic?: {
+        /** Username portion of the Basic credential. */
+        username?: string;
+        /** Password portion of the Basic credential. */
+        password?: string;
+        /** Unencoded `username:password` pair. */
+        credentials?: string;
+      };
       /**
        * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
        * Required whenever `auth` is declared — no default is substituted. Must be one of

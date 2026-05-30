@@ -154,6 +154,7 @@ export type {
   SignalID,
   SignalValueType,
   SignalAvailabilityType,
+  SignalAvailabilityType as SignalCatalogType,
   Destination,
   Deployment,
   ActivationKey,
@@ -161,12 +162,6 @@ export type {
   SignalFilters, // embedded in GetSignalsRequest.filters
   SignalTargeting, // embedded in ActivateSignalRequest.signal_targeting
 } from './tools.generated';
-import type { SignalAvailabilityType } from './tools.generated';
-
-/**
- * @deprecated AdCP 3.1 renamed this type to `SignalAvailabilityType`.
- */
-export type SignalCatalogType = SignalAvailabilityType;
 
 // Creative
 export type {

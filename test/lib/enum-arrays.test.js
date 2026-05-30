@@ -11,6 +11,11 @@ describe('Enum value arrays (enums.generated)', () => {
     assert.ok(enums.PacingValues, 'PacingValues should be exported');
     assert.ok(enums.MediaBuyStatusValues, 'MediaBuyStatusValues should be exported');
     assert.ok(enums.DeliveryTypeValues, 'DeliveryTypeValues should be exported');
+    assert.deepEqual(
+      [...enums.SignalCatalogTypeValues],
+      [...enums.SignalAvailabilityTypeValues],
+      'SignalCatalogTypeValues should remain as a compatibility alias'
+    );
   });
 
   it('values are non-empty const arrays of strings', async () => {

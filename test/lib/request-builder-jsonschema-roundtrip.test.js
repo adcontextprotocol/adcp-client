@@ -69,8 +69,9 @@ function walkJsonFiles(dir) {
 function loadAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
+  const addedIds = new Set();
   // Pre-register every schema so $ref resolution works regardless of lookup
-  // order. Skip the bundled/ and core/ trees: in 3.1.0-beta.3 the bundled
+  // order. Skip the bundled/ tree: in 3.1.0-beta.3 the bundled
   // files embed referenced sub-schemas with their original flat $ids (e.g.
   // a `/schemas/.../a2ui/surface.json` $id appears both standalone AND
   // inside a bundled response). Letting both register triggers AJV's
@@ -92,8 +93,12 @@ function loadAjv() {
       continue;
     }
     const id = raw.$id;
-    if (typeof id === 'string' && !ajv.getSchema(id)) {
+    // Do not use ajv.getSchema(id) while still registering schemas: Ajv may
+    // eagerly compile unresolved refs before later sibling directories have
+    // been added.
+    if (typeof id === 'string' && !addedIds.has(id)) {
       ajv.addSchema(raw);
+      addedIds.add(id);
     }
   }
   return ajv;

@@ -17,6 +17,7 @@ const {
 } = require('../../dist/lib/index.js');
 const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
 const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
+const ADCP_PRERELEASE_FAMILY = ADCP_RELEASE_PRECISION.replace(/\.\d+$/, '');
 
 const TEST_AGENT = {
   id: 'test-agent',
@@ -112,11 +113,20 @@ describe('adcpVersion constructor option', () => {
 
     test('accepts pins that resolve to a bundled version', () => {
       // SDK bundles the current ADCP_VERSION. The full-semver
-      // pin, the release-precision prerelease pin, and the release-precision
-      // pin without a numeric tag all resolve to the same bundle.
+      // pin, the release-precision prerelease pin, and the current
+      // prerelease-family alias all resolve to the same bundle.
       assert.strictEqual(resolveAdcpVersion(ADCP_VERSION), ADCP_VERSION);
       assert.strictEqual(resolveAdcpVersion(ADCP_RELEASE_PRECISION), ADCP_RELEASE_PRECISION);
-      assert.strictEqual(resolveAdcpVersion('3.1-beta'), '3.1-beta');
+      assert.strictEqual(resolveAdcpVersion(ADCP_PRERELEASE_FAMILY), ADCP_PRERELEASE_FAMILY);
+    });
+
+    test('compatibility helpers include release-precision prerelease aliases', () => {
+      const { getCompatibleVersions, isCompatibleWith } = require('../../dist/lib/index.js');
+
+      assert.ok(getCompatibleVersions().includes(ADCP_RELEASE_PRECISION));
+      assert.ok(getCompatibleVersions().includes(ADCP_PRERELEASE_FAMILY));
+      assert.strictEqual(isCompatibleWith(ADCP_RELEASE_PRECISION), true);
+      assert.strictEqual(isCompatibleWith(ADCP_PRERELEASE_FAMILY), true);
     });
 
     test('rejects pins for which no schema bundle ships', () => {

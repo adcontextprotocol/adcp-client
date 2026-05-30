@@ -25,6 +25,7 @@ function walkJsonFiles(dir) {
 function loadAjv() {
   const ajv = new Ajv({ allErrors: true, strict: false });
   addFormats(ajv);
+  const addedIds = new Set();
 
   for (const file of walkJsonFiles(SCHEMA_ROOT)) {
     const rel = path.relative(SCHEMA_ROOT, file);
@@ -32,8 +33,11 @@ function loadAjv() {
     if (top === 'bundled') continue;
 
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (typeof raw.$id === 'string' && !ajv.getSchema(raw.$id)) {
+    // Avoid ajv.getSchema() during registration: it can eagerly compile refs
+    // before later sibling schema directories have been added.
+    if (typeof raw.$id === 'string' && !addedIds.has(raw.$id)) {
       ajv.addSchema(raw);
+      addedIds.add(raw.$id);
     }
   }
 

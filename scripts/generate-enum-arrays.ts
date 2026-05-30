@@ -21,6 +21,18 @@ const CORE_SOURCE_FILE = path.join(__dirname, '../src/lib/types/core.generated.t
 const TOOLS_SOURCE_FILE = path.join(__dirname, '../src/lib/types/tools.generated.ts');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/types/enums.generated.ts');
 
+const BACKWARD_COMPAT_ENUM_VALUE_ALIASES: Array<{
+  oldName: string;
+  newName: string;
+  reason: string;
+}> = [
+  {
+    oldName: 'SignalCatalogType',
+    newName: 'SignalAvailabilityType',
+    reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
+  },
+];
+
 interface ExtractedEnum {
   name: string;
   values: string[];
@@ -115,6 +127,11 @@ function renderOutput(enums: ExtractedEnum[]): string {
     // future-proofs against any spec value that ever contains punctuation.
     const literals = e.values.map(v => JSON.stringify(v)).join(', ');
     body += `export const ${e.name}Values = [${literals}] as const;\n`;
+    for (const alias of BACKWARD_COMPAT_ENUM_VALUE_ALIASES) {
+      if (alias.newName !== e.name) continue;
+      body += `/** @deprecated ${alias.reason} */\n`;
+      body += `export const ${alias.oldName}Values = ${alias.newName}Values;\n`;
+    }
   }
 
   return header + body;

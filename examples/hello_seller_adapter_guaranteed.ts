@@ -521,6 +521,16 @@ function mapMediaBuyStatus(
   }
 }
 
+function asPackageContext(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function packageContextKey(account: Account<NetworkMeta>, mediaBuyId: string, packageId: string): string {
+  const mode = (account as Account<NetworkMeta> & { mode?: string }).mode ?? 'live';
+  const operator = account.operator ?? '';
+  return `${mode}::${account.id}::${operator}::${account.ctx_metadata.network_code}::${mediaBuyId}::${packageId}`;
+}
+
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never>, NetworkMeta> {
@@ -909,15 +919,24 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
               field: `packages[${i}].product_id`,
             });
           }
+          const requestedPackage = pkg as { context?: unknown };
+          const packageContext = asPackageContext(requestedPackage.context);
           const li = await upstream.createLineItem(networkCode, order.order_id, {
             product_id: pkg.product_id,
             budget: pkg.budget ?? 0,
             client_request_id: `${req.idempotency_key}.li.${i}`,
           });
+          if (packageContext) {
+            localPackageContexts.set(
+              packageContextKey(ctx.account, order.order_id, li.line_item_id),
+              structuredClone(packageContext) as Record<string, unknown>
+            );
+          }
           packagesOut.push({
             package_id: li.line_item_id,
             product_id: pkg.product_id,
             budget: pkg.budget ?? 0,
+            ...(packageContext !== undefined && { context: packageContext }),
           });
         }
 
@@ -1058,12 +1077,20 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
             revision: localBuyRevisions.get(o.order_id) ?? 1,
             created_at: o.created_at,
             updated_at: o.updated_at,
-            packages: lineItems.map(li => ({
-              package_id: li.line_item_id,
-              product_id: li.product_id,
-              budget: li.budget,
-              currency: o.currency,
-            })),
+            packages: lineItems.map(li => {
+              const storedContext = localPackageContexts.get(
+                packageContextKey(ctx.account, o.order_id, li.line_item_id)
+              );
+              const packageContext =
+                storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
+              return {
+                package_id: li.line_item_id,
+                product_id: li.product_id,
+                budget: li.budget,
+                currency: o.currency,
+                ...(packageContext !== undefined && { context: packageContext }),
+              };
+            }),
           };
         })
       );
@@ -1217,6 +1244,7 @@ type MediaBuyStatus =
   | 'canceled';
 const localBuyStatus = new Map<string, MediaBuyStatus>();
 const localBuyRevisions = new Map<string, number>();
+const localPackageContexts = new Map<string, Record<string, unknown>>();
 
 // Persist `packages[].targeting_overlay` from create_media_buy and echo it
 // on get_media_buys. The seller spec MANDATES this echo for any seller

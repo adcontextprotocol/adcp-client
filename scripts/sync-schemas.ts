@@ -20,7 +20,8 @@ import { spawnSync } from 'child_process';
 import path from 'path';
 import * as tar from 'tar';
 
-const ADCP_BASE_URL = process.env.ADCP_BASE_URL || 'https://adcontextprotocol.org';
+const DEFAULT_ADCP_BASE_URL = 'https://adcontextprotocol.org';
+const ADCP_BASE_URL = process.env.ADCP_BASE_URL || DEFAULT_ADCP_BASE_URL;
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
@@ -132,6 +133,27 @@ function updateLatestSymlink(cacheRoot: string, version: string): void {
   symlinkSync(version, latestLink);
 }
 
+/**
+ * Reject symlinks anywhere under a verified protocol bundle before copying
+ * extracted trees into the repo. node-tar blocks path traversal by default;
+ * this guards the later file-copy/cache steps from preserving suspicious links.
+ */
+function assertNoSymlinks(root: string): void {
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isSymbolicLink() || lstatSync(abs).isSymbolicLink()) {
+        throw new Error(
+          `Refusing to sync protocol bundle: symlink detected at ${abs}. The upstream bundle should contain plain files only.`
+        );
+      }
+      if (entry.isDirectory()) stack.push(abs);
+    }
+  }
+}
+
 async function fetchBinary(url: string): Promise<Buffer> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
@@ -151,14 +173,14 @@ async function fetchText(url: string): Promise<string> {
  *   - Sidecars present but `cosign` binary missing → checksum-only, log install hint.
  *   - Sidecars present and `cosign` available → verify; throw on failure.
  */
-async function verifyCosignSignature(tgzPath: string, version: string): Promise<void> {
+async function verifyCosignSignature(tgzPath: string, version: string, baseUrl = ADCP_BASE_URL): Promise<void> {
   if (version === 'latest') {
     console.log('ℹ️  latest.tgz is intentionally unsigned upstream (checksum-only trust).');
     return;
   }
 
-  const sigUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.sig`;
-  const crtUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.crt`;
+  const sigUrl = `${baseUrl}/protocol/${version}.tgz.sig`;
+  const crtUrl = `${baseUrl}/protocol/${version}.tgz.crt`;
 
   const [sigProbe, crtProbe] = await Promise.all([
     fetch(sigUrl, { method: 'HEAD' }),
@@ -314,13 +336,13 @@ function syncSkillsFromBundle(extractRoot: string): void {
  * Throws on sha256 mismatch or extraction failure. Returns false if the tarball
  * endpoint returns 404 (caller may fall back to per-file schema sync).
  */
-async function syncFromTarball(version: string): Promise<boolean> {
-  const tgzUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz`;
+async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promise<boolean> {
+  const tgzUrl = `${baseUrl}/protocol/${version}.tgz`;
   const shaUrl = `${tgzUrl}.sha256`;
 
   const probe = await fetch(tgzUrl, { method: 'HEAD' });
   if (probe.status === 404) {
-    console.warn(`⚠️  Tarball not found at ${tgzUrl} (404). Falling back to per-file sync.`);
+    console.warn(`⚠️  Tarball not found at ${tgzUrl} (404).`);
     return false;
   }
 
@@ -343,14 +365,15 @@ async function syncFromTarball(version: string): Promise<boolean> {
 
     // Cosign keyless signature verification (adcontextprotocol/adcp#2273).
     // Best-effort: latest is unsigned, sidecars may be absent on older releases.
-    await verifyCosignSignature(tgzPath, version);
+    await verifyCosignSignature(tgzPath, version, baseUrl);
 
-    await tar.x({ file: tgzPath, cwd: workDir });
+    await tar.x({ file: tgzPath, cwd: workDir, strict: true });
 
     const extractRoot = path.join(workDir, `adcp-${version}`);
     if (!existsSync(extractRoot)) {
       throw new Error(`Tarball root ${extractRoot} not found — upstream wrapping directory may have changed.`);
     }
+    assertNoSymlinks(extractRoot);
 
     replaceTree(path.join(extractRoot, 'schemas'), path.join(SCHEMA_CACHE_DIR, version));
     replaceTree(path.join(extractRoot, 'compliance'), path.join(COMPLIANCE_CACHE_DIR, version));

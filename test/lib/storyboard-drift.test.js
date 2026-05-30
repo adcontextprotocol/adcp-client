@@ -302,6 +302,11 @@ describe('storyboard schema drift', () => {
     // Filed upstream as adcp#3429 (storyboard authoring: response_schema_ref
     // vs envelope-level field assertions).
     'v3_envelope_integrity/no_legacy_status_fields:status',
+    // `creative.supported_formats[].format.params` carries canonical format
+    // registry data. The path is valid for the concrete RC fixture, but the
+    // generic get_adcp_capabilities schema models `params` as an open object,
+    // so this static traversal cannot prove nested canonical slot fields.
+    'creative/canonical_supported_formats/get_capabilities:creative.supported_formats[0].format.params.slots[0].asset_group_id',
   ]);
 
   // Paths that reference spec schema fields the upstream schema doesn't

@@ -15335,6 +15335,8 @@ export type Destination =
  * Commercial/provenance types for signals available for audience targeting
  */
 export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export type SignalCatalogType = SignalAvailabilityType;
 
 /**
  * Filters to refine signal discovery results

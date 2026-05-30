@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.0-rc.3
-// Generated at: 2026-05-30T10:23:13.429Z
+// Generated at: 2026-05-30T10:30:20.747Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -21690,6 +21690,8 @@ export type GetSignalsRequest = {
  * Commercial/provenance types for signals available for audience targeting
  */
 export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export type SignalCatalogType = SignalAvailabilityType;
 
 /**
  * Filters to refine signal discovery results

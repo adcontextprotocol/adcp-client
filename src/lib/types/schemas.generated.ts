@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-30T10:23:28.280Z
+// Generated at: 2026-05-30T10:30:37.191Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4020,6 +4020,8 @@ export const ActivateSignalSuccessSchema = z.object({
 }).passthrough();
 
 export const SignalAvailabilityTypeSchema = z.union([z.literal("marketplace"), z.literal("custom"), z.literal("owned")]);
+
+export const SignalCatalogTypeSchema = SignalAvailabilityTypeSchema;
 
 export const SignalFiltersSchema = z.object({
     catalog_types: z.array(SignalAvailabilityTypeSchema).optional(),

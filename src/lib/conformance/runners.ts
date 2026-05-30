@@ -9,7 +9,7 @@ import type {
 } from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
 import { ADCP_MAJOR_VERSION } from '../version';
-import { loadRequestSchema } from './schemaLoader';
+import { loadRequestSchema, type ConformanceSchemaOptions } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
 
 export interface RunnerOptions {
@@ -20,6 +20,8 @@ export interface RunnerOptions {
   maxFailurePayloadBytes: number;
   /** ID pools for Tier-2 fixture injection. See ConformanceFixtures. */
   fixtures?: ConformanceFixtures;
+  /** Schema bundle override for same-PR / external conformance runs. */
+  schemas?: ConformanceSchemaOptions;
 }
 
 export interface RunnerResult {
@@ -46,7 +48,7 @@ export async function runToolFuzz(
   // schemas that still carry unresolved `$defs` refs (known upstream gap) —
   // skip the tool cleanly rather than flag every run as invalid.
   try {
-    prepareResponseValidator(tool);
+    prepareResponseValidator(tool, options.schemas);
   } catch (err) {
     return {
       stats: skipStats('unresolvable_schema', (err as Error)?.message),
@@ -54,7 +56,7 @@ export async function runToolFuzz(
     };
   }
 
-  const schema = loadRequestSchema(tool);
+  const schema = loadRequestSchema(tool, options.schemas);
   const arb = schemaToArbitrary(schema, { fixtures: options.fixtures }) as fc.Arbitrary<Record<string, unknown>>;
 
   // Counts only increment on fresh samples. `fc.check` re-runs the property
@@ -103,7 +105,7 @@ export async function runToolFuzz(
       ]);
     }
 
-    const verdict = evaluate({ tool, request, result, authToken: options.authToken });
+    const verdict = evaluate({ tool, request, result, authToken: options.authToken, schemas: options.schemas });
     if (isFreshSample) {
       if (verdict.verdict === 'accepted') stats.accepted++;
       else if (verdict.verdict === 'rejected') stats.rejected++;

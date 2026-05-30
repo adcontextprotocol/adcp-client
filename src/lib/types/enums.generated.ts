@@ -147,6 +147,8 @@ export const RightTypeValues = ["talent", "character", "brand_ip", "music", "sto
 export const RightUseValues = ["likeness", "voice", "name", "endorsement", "motion_capture", "signature", "catchphrase", "sync", "background_music", "editorial", "commercial", "ai_generated_image"] as const;
 export const ScanTypeValues = ["progressive", "interlaced"] as const;
 export const SignalAvailabilityTypeValues = ["marketplace", "custom", "owned"] as const;
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export const SignalCatalogTypeValues = SignalAvailabilityTypeValues;
 export const SignalSourceValues = ["catalog", "agent"] as const;
 export const SignalValueTypeValues = ["binary", "categorical", "numeric"] as const;
 export const SISessionStatusValues = ["active", "pending_handoff", "complete", "terminated"] as const;
