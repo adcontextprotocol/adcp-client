@@ -399,6 +399,28 @@ export type StepAuthDirective =
        *   - `random_invalid_jwt` — three base64url segments; valid JSON header/payload, random signature.
        */
       value_strategy?: 'random_invalid_jwt';
+    }
+  | {
+      type: 'basic';
+      /** Pull the Basic credential object from the runtime test kit, e.g. `auth.basic`. */
+      from_test_kit?: string | boolean;
+      /** Explicit username. Mutually exclusive with `credentials`. */
+      username?: string;
+      /** Explicit password. Mutually exclusive with `credentials`. */
+      password?: string;
+      /** Unencoded `username:password` pair. Mutually exclusive with `username`/`password`. */
+      credentials?: string;
+      /** Nested Basic credential shape accepted for authoring parity with test kits. */
+      basic?: {
+        username?: string;
+        password?: string;
+        credentials?: string;
+      };
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid` — random username/password pair.
+       */
+      value_strategy?: 'random_invalid';
     };
 
 export interface StoryboardStep {

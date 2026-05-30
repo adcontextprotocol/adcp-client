@@ -4294,32 +4294,14 @@ function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): s
  * `skipIdempotencyAutoInject` on that path anyway.
  */
 function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<string, string> | undefined {
-  // Reject control chars and non-printable ASCII. Without this, undici's header
-  // validator throws a message that includes the offending value — landing
-  // secrets in logs. Validate raw inputs before encoding so the field name in
-  // the error identifies which input to fix without echoing the value.
-  const assertSafe = (value: string, field: string) => {
-    if (/[\r\n]|[^\x20-\x7E]/.test(value)) {
-      throw new Error(`${field} contains invalid characters (control chars or non-printable ASCII)`);
-    }
-  };
-
   const headers: Record<string, string> = {};
   if (options.auth) {
     if (options.auth.type === 'bearer') {
       if (!options.auth.token) throw new Error('options.auth.token is required for bearer auth');
-      assertSafe(options.auth.token, 'options.auth.token');
+      assertSafeAuthHeaderPart(options.auth.token, 'options.auth.token');
       headers.authorization = `Bearer ${options.auth.token}`;
     } else if (options.auth.type === 'basic') {
-      // RFC 7617 bans `:` in the userid — a colon would decode ambiguously on
-      // the server. Fail loudly rather than silently producing a mangled header.
-      if (options.auth.username.includes(':')) {
-        throw new Error('options.auth.username must not contain colon (RFC 7617)');
-      }
-      assertSafe(options.auth.username, 'options.auth.username');
-      assertSafe(options.auth.password, 'options.auth.password');
-      const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
-      headers.authorization = `Basic ${encoded}`;
+      headers.authorization = encodeBasicAuthHeader(options.auth, 'options.auth');
     } else {
       return undefined;
     }
@@ -4328,11 +4310,11 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
   // from an SDK-shaped one at the transport boundary. HTTP is case-insensitive;
   // this is purely for parity with capture/diff tooling.
   if (options.test_session_id) {
-    assertSafe(options.test_session_id, 'options.test_session_id');
+    assertSafeAuthHeaderPart(options.test_session_id, 'options.test_session_id');
     headers['X-Test-Session-ID'] = options.test_session_id;
   }
   if (options.userAgent) {
-    assertSafe(options.userAgent, 'options.userAgent');
+    assertSafeAuthHeaderPart(options.userAgent, 'options.userAgent');
     headers['User-Agent'] = options.userAgent;
   }
   return headers;
@@ -4343,9 +4325,13 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
  * - `'none'` returns an empty object and the probe sends no `Authorization`.
  * - `api_key` / `oauth_bearer` resolve the value from `value`, `from_test_kit`,
  *   or `value_strategy` — in that order — and produce `Authorization: Bearer <value>`.
+ * - `basic` resolves explicit credentials, `from_test_kit`, or
+ *   `value_strategy: random_invalid` and produces `Authorization: Basic <base64>`.
  */
 function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRunOptions): Record<string, string> {
   if (directive === 'none') return {};
+  if (directive.type === 'basic') return basicAuthHeadersForStep(directive, options);
+
   let value: string | undefined;
   if ('value' in directive && directive.value) {
     value = directive.value;
@@ -4364,6 +4350,100 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
     throw new Error('test_kit.auth.api_key contains invalid characters (control chars or non-printable ASCII)');
   }
   return { authorization: `Bearer ${value}` };
+}
+
+function basicAuthHeadersForStep(
+  directive: Extract<StepAuthDirective, { type: 'basic' }>,
+  options: StoryboardRunOptions
+): Record<string, string> {
+  if (directive.value_strategy) {
+    if (directive.value_strategy !== 'random_invalid') return {};
+    return {
+      authorization: encodeBasicAuthHeader(
+        {
+          username: generateRandomInvalidApiKey(),
+          password: generateRandomInvalidApiKey(),
+        },
+        'step.auth.basic'
+      ),
+    };
+  }
+
+  const source =
+    directive.from_test_kit !== undefined
+      ? resolveStepBasicFromTestKit(directive.from_test_kit, options)
+      : directive.basic !== undefined
+        ? directive.basic
+        : directive;
+  if (source === undefined) return {};
+  return { authorization: encodeBasicAuthHeader(source, 'step.auth.basic') };
+}
+
+function resolveStepBasicFromTestKit(
+  fromTestKit: string | boolean,
+  options: StoryboardRunOptions
+): BasicCredentialInput | undefined {
+  const path = typeof fromTestKit === 'string' && fromTestKit.length > 0 ? fromTestKit : 'auth.basic';
+  const segments = path.split('.');
+  let value: unknown = options.test_kit;
+  for (const segment of segments) {
+    if (value == null || typeof value !== 'object') return undefined;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  if (value === undefined || value === null) return undefined;
+  return value as BasicCredentialInput;
+}
+
+interface BasicCredentialInput {
+  username?: unknown;
+  password?: unknown;
+  credentials?: unknown;
+}
+
+function encodeBasicAuthHeader(input: BasicCredentialInput, fieldPrefix: string): string {
+  const userpass = normalizeBasicCredentials(input, fieldPrefix);
+  return `Basic ${Buffer.from(userpass).toString('base64')}`;
+}
+
+function normalizeBasicCredentials(input: BasicCredentialInput, fieldPrefix: string): string {
+  const hasCredentials = input.credentials !== undefined;
+  const hasUserPass = input.username !== undefined || input.password !== undefined;
+  if (hasCredentials && hasUserPass) {
+    throw new Error(`${fieldPrefix} must use either credentials or username/password, not both`);
+  }
+  if (hasCredentials) {
+    if (typeof input.credentials !== 'string' || input.credentials.length === 0) {
+      throw new Error(`${fieldPrefix}.credentials must be a non-empty string`);
+    }
+    assertSafeAuthHeaderPart(input.credentials, `${fieldPrefix}.credentials`);
+    const colonIndex = input.credentials.indexOf(':');
+    if (colonIndex <= 0 || colonIndex >= input.credentials.length - 1) {
+      throw new Error(`${fieldPrefix}.credentials must be in unencoded username:password form`);
+    }
+    return input.credentials;
+  }
+  if (typeof input.username !== 'string' || input.username.length === 0) {
+    throw new Error(`${fieldPrefix}.username must be a non-empty string`);
+  }
+  if (typeof input.password !== 'string' || input.password.length === 0) {
+    throw new Error(`${fieldPrefix}.password must be a non-empty string`);
+  }
+  if (input.username.includes(':')) {
+    throw new Error(`${fieldPrefix}.username must not contain colon (RFC 7617)`);
+  }
+  assertSafeAuthHeaderPart(input.username, `${fieldPrefix}.username`);
+  assertSafeAuthHeaderPart(input.password, `${fieldPrefix}.password`);
+  return `${input.username}:${input.password}`;
+}
+
+// Reject control chars and non-printable ASCII. Without this, undici's header
+// validator throws a message that includes the offending value — landing
+// secrets in logs. Validate raw inputs before encoding so the field name in
+// the error identifies which input to fix without echoing the value.
+function assertSafeAuthHeaderPart(value: string, field: string): void {
+  if (/[\r\n\x00]|[^\x20-\x7E]/.test(value)) {
+    throw new Error(`${field} contains invalid characters (control chars or non-printable ASCII)`);
+  }
 }
 
 /**

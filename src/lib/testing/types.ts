@@ -198,6 +198,15 @@ export interface TestOptions {
     auth?: {
       /** API key the runner presents on API-key probes. */
       api_key?: string;
+      /** HTTP Basic credential the runner presents on Basic-auth probes. */
+      basic?: {
+        /** Username portion of the Basic credential. */
+        username?: string;
+        /** Password portion of the Basic credential. */
+        password?: string;
+        /** Unencoded `username:password` pair. */
+        credentials?: string;
+      };
       /**
        * Auth-required, read-only tool the runner uses for unauth + invalid-key probes.
        * Required whenever `auth` is declared — no default is substituted. Must be one of
