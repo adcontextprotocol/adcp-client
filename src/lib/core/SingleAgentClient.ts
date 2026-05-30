@@ -502,6 +502,7 @@ export class SingleAgentClient {
   private asyncHandler?: AsyncHandler;
   private normalizedAgent: InternalAgentConfig;
   private discoveredEndpoint?: string; // Cache discovered MCP endpoint
+  private discoveredAgent?: AgentConfig; // Stable post-discovery config for protocol/provider caches
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
@@ -588,11 +589,15 @@ export class SingleAgentClient {
     }
 
     // Already discovered? Use cached value
+    if (this.discoveredAgent) {
+      return this.discoveredAgent;
+    }
     if (this.discoveredEndpoint) {
-      return {
+      this.discoveredAgent = {
         ...this.normalizedAgent,
         agent_uri: this.discoveredEndpoint,
       };
+      return this.discoveredAgent;
     }
 
     // Perform discovery
@@ -601,10 +606,11 @@ export class SingleAgentClient {
     // Compute canonical base URL by stripping /mcp suffix
     this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
 
-    return {
+    this.discoveredAgent = {
       ...this.normalizedAgent,
       agent_uri: this.discoveredEndpoint,
     };
+    return this.discoveredAgent;
   }
 
   /**

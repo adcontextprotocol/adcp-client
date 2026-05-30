@@ -655,7 +655,7 @@ async function validateFormatSchema(
   }
 
   const ajv = draft.draft === '2020-12' ? getDraft2020Ajv() : getDraft07Ajv();
-  const started = Date.now();
+  const started = process.cpuUsage();
   try {
     ajv.compile(resolved.schema);
   } catch (err) {
@@ -669,7 +669,9 @@ async function validateFormatSchema(
       },
     };
   }
-  const validationTimeMs = Date.now() - started;
+  // Ajv compilation is synchronous; CPU time avoids false budget failures when
+  // the process is descheduled during highly parallel test or CI runs.
+  const validationTimeMs = cpuUsageMs(started);
   const validationBudgetMs = options.validationBudgetMs ?? DEFAULT_VALIDATION_BUDGET_MS;
   if (validationTimeMs > validationBudgetMs) {
     return {
@@ -694,6 +696,11 @@ async function validateFormatSchema(
       validationTimeMs,
     },
   };
+}
+
+function cpuUsageMs(started: NodeJS.CpuUsage): number {
+  const elapsed = process.cpuUsage(started);
+  return (elapsed.user + elapsed.system) / 1000;
 }
 
 function detectDraft(

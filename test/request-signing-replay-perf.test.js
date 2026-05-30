@@ -8,16 +8,18 @@ const { InMemoryReplayStore } = require('../dist/lib/signing/index.js');
 // target. The time-bucketed store evicts whole buckets at a time, so
 // amortized cost is O(1) per op.
 //
-// Timing on CI runners is noisy; we cap the growth ratio generously (<4x) and
-// take the median of multiple measurement windows.
+// Timing on CI runners is noisy; measure CPU time instead of wall-clock time,
+// cap the growth ratio generously (<4x), and take the median of multiple
+// measurement windows.
 
 function timeBatch(fn, iterations) {
   const samples = [];
   for (let run = 0; run < 5; run++) {
-    const start = process.hrtime.bigint();
+    const start = process.cpuUsage();
     for (let i = 0; i < iterations; i++) fn(i);
-    const elapsed = Number(process.hrtime.bigint() - start);
-    samples.push(elapsed / iterations);
+    const elapsed = process.cpuUsage(start);
+    const elapsedNs = (elapsed.user + elapsed.system) * 1000;
+    samples.push(elapsedNs / iterations);
   }
   samples.sort((a, b) => a - b);
   return samples[Math.floor(samples.length / 2)];

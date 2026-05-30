@@ -264,15 +264,17 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     // produce fresh servers. Closing is idempotent.
     await bootstrapAgent.close();
 
-    // serve() validates publicUrl path against mountPath synchronously, so
-    // we need the port known before the call. Grab a free port first.
-    const port = await allocatePort();
-    const publicUrl = `http://127.0.0.1:${port}${mountPath}`;
-    const agentUrl = publicUrl;
-
     const protectedResource: ProtectedResourceMetadata | undefined = auth
       ? { authorization_servers: [auth.issuer] }
       : undefined;
+    // For the common unauthenticated local-agent path, bind port 0 directly
+    // and read the assigned port after listen. This avoids the allocate-then-
+    // bind race where another parallel test can claim the probed port.
+    // OAuth protected-resource metadata still needs a publicUrl before
+    // serve() construction, so that path keeps the preallocated port.
+    const port = protectedResource ? await allocatePort() : 0;
+    const publicUrl = `http://127.0.0.1:${port}${mountPath}`;
+    let agentUrl = publicUrl;
 
     httpServer = serve(options.createAgent, {
       ...options.serveOptions,
@@ -285,6 +287,13 @@ export async function runAgainstLocalAgent(options: RunAgainstLocalAgentOptions)
     });
 
     await waitForListening(httpServer);
+    if (!protectedResource) {
+      const address = httpServer.address();
+      if (!address || typeof address === 'string') {
+        throw new Error('runAgainstLocalAgent: local HTTP server did not expose a TCP address');
+      }
+      agentUrl = `http://127.0.0.1:${address.port}${mountPath}`;
+    }
 
     if (options.onListening) {
       await options.onListening({ agentUrl, auth });

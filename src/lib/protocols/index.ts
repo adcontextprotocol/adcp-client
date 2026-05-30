@@ -1,5 +1,12 @@
 // Unified Protocol Interface for AdCP
-export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
+export {
+  callMCPTool,
+  callMCPToolWithOAuth,
+  connectMCP,
+  closeMCPConnections,
+  closeOAuthConnections,
+  UnauthorizedError,
+} from './mcp';
 
 import { closeMCPConnections } from './mcp';
 import { closeA2AConnections } from './a2a';
@@ -51,6 +58,24 @@ import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from 
 import { withResponseSizeLimit } from './responseSizeLimit';
 
 export type VersionEnvelopeMode = 'auto' | 'none' | 'major-only';
+
+const nonInteractiveOAuthProviderCache = new WeakMap<
+  AgentConfig,
+  ReturnType<typeof createNonInteractiveOAuthProvider>
+>();
+
+function getNonInteractiveOAuthProvider(agent: AgentConfig): ReturnType<typeof createNonInteractiveOAuthProvider> {
+  let provider = nonInteractiveOAuthProviderCache.get(agent);
+  if (!provider) {
+    const storage = getAgentStorage(agent);
+    provider = createNonInteractiveOAuthProvider(agent, {
+      agentHint: agent.id,
+      storage,
+    });
+    nonInteractiveOAuthProviderCache.set(agent, provider);
+  }
+  return provider;
+}
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -410,11 +435,7 @@ export class ProtocolClient {
             // and their refresh path is a secret re-exchange (handled above),
             // not the SDK's refresh_token grant.
             if (agent.oauth_tokens && !agent.oauth_client_credentials) {
-              const storage = getAgentStorage(agent);
-              const authProvider = createNonInteractiveOAuthProvider(agent, {
-                agentHint: agent.id,
-                storage,
-              });
+              const authProvider = getNonInteractiveOAuthProvider(agent);
               try {
                 return await callMCPToolWithOAuth({
                   agentUrl: agent.agent_uri,
