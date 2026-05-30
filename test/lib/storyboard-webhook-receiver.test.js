@@ -280,6 +280,57 @@ async function startFakePublisher(config = {}) {
 
       if (mode === 'ok') {
         await fire('evt_stable_' + '0123456789abcdef'.slice(0, 16), 1);
+      } else if (mode === 'mcp_envelope') {
+        try {
+          await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              idempotency_key: 'evt_mcp_envelope_0123456789',
+              operation_id: args.push_notification_config?.operation_id ?? 'op_mcp_envelope',
+              task_id: taskId,
+              task_type: 'create_media_buy',
+              status: 'completed',
+              timestamp: '2026-05-26T09:00:44.582Z',
+              result: {
+                status: 'completed',
+                media_buy_id: 'mb_1',
+                packages: [],
+              },
+            }),
+          });
+        } catch {}
+      } else if (mode === 'missing_envelope_fields') {
+        try {
+          await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              idempotency_key: 'evt_missing_fields_012345',
+              task_id: taskId,
+              task_type: 'create_media_buy',
+              status: 'completed',
+              result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+            }),
+          });
+        } catch {}
+      } else if (mode === 'bare_delivery_result') {
+        try {
+          await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              notification_type: 'scheduled',
+              sequence_number: 31,
+              reporting_period: {
+                start: '2026-05-25T00:00:00Z',
+                end: '2026-05-25T23:59:00Z',
+              },
+              currency: 'USD',
+              media_buy_deliveries: [],
+            }),
+          });
+        } catch {}
       } else if (mode === 'missing_key') {
         try {
           await fetch(url, {
@@ -426,6 +477,100 @@ describe('runStoryboard: expect_webhook step task', () => {
     assert.strictEqual(triggerStep.passed, true, triggerStep.error);
     assert.strictEqual(assertStep.passed, true, `validations: ${JSON.stringify(assertStep.validations)}`);
     assert.strictEqual(assertStep.validations[0].check, 'expect_webhook');
+  });
+
+  test('validates webhook_payload_schema_ref for full MCP webhook envelopes', async () => {
+    publisher = await startFakePublisher({ mode: 'mcp_envelope' });
+    const storyboard = storyboardWith([
+      {
+        id: 'trigger',
+        title: 'Trigger webhook',
+        task: '__test_fire_webhook',
+        auth: 'none',
+        sample_request: {
+          task_id: 'mb-1',
+          push_notification_config: { url: '{{runner.webhook_url:trigger}}' },
+        },
+      },
+      {
+        id: 'assert',
+        title: 'Assert webhook schema',
+        task: 'expect_webhook',
+        triggered_by: 'trigger',
+        timeout_seconds: 2,
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+    ]);
+    const result = await runStoryboard(publisher.url, storyboard, {
+      ...RUN_OPTIONS_BASE,
+      webhook_receiver: {},
+    });
+    const assertStep = result.phases[0].steps[1];
+    assert.strictEqual(assertStep.passed, true, JSON.stringify(assertStep.validations));
+    assert.ok(assertStep.validations.some(v => v.schema_id === '/schemas/3.1.0-beta.7/core/mcp-webhook-payload.json'));
+  });
+
+  test('fails schema_violation when webhook envelope fields are missing', async () => {
+    publisher = await startFakePublisher({ mode: 'missing_envelope_fields' });
+    const storyboard = storyboardWith([
+      {
+        id: 'trigger',
+        title: 'Trigger webhook',
+        task: '__test_fire_webhook',
+        auth: 'none',
+        sample_request: {
+          task_id: 'mb-1',
+          push_notification_config: { url: '{{runner.webhook_url:trigger}}' },
+        },
+      },
+      {
+        id: 'assert',
+        title: 'Assert webhook schema',
+        task: 'expect_webhook',
+        triggered_by: 'trigger',
+        timeout_seconds: 2,
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+    ]);
+    const result = await runStoryboard(publisher.url, storyboard, {
+      ...RUN_OPTIONS_BASE,
+      webhook_receiver: {},
+    });
+    const assertStep = result.phases[0].steps[1];
+    assert.strictEqual(assertStep.passed, false);
+    assert.strictEqual(assertStep.validations[0].actual.code, 'schema_violation');
+    assert.ok(assertStep.validations[0].actual.issues.some(issue => issue.keyword === 'required'));
+  });
+
+  test('fails schema_violation for bare delivery result payloads', async () => {
+    publisher = await startFakePublisher({ mode: 'bare_delivery_result' });
+    const storyboard = storyboardWith([
+      {
+        id: 'trigger',
+        title: 'Trigger webhook',
+        task: '__test_fire_webhook',
+        auth: 'none',
+        sample_request: {
+          task_id: 'mb-1',
+          push_notification_config: { url: '{{runner.webhook_url:trigger}}' },
+        },
+      },
+      {
+        id: 'assert',
+        title: 'Assert webhook schema',
+        task: 'expect_webhook',
+        triggered_by: 'trigger',
+        timeout_seconds: 2,
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+    ]);
+    const result = await runStoryboard(publisher.url, storyboard, {
+      ...RUN_OPTIONS_BASE,
+      webhook_receiver: {},
+    });
+    const assertStep = result.phases[0].steps[1];
+    assert.strictEqual(assertStep.passed, false);
+    assert.strictEqual(assertStep.validations[0].actual.code, 'schema_violation');
   });
 
   test('fails with no_webhook_received when publisher does not emit', async () => {

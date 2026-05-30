@@ -653,6 +653,62 @@ export function getValidator(
 }
 
 /**
+ * Compile an arbitrary schema from the cached bundle by path, e.g.
+ * `core/mcp-webhook-payload.json`. Used by storyboard webhook assertions
+ * whose payload schema is not tied to a tool request/response pair.
+ */
+export function getSchemaValidatorByRef(
+  schemaRef: string,
+  version: string = ADCP_VERSION
+): ValidateFunction | undefined {
+  const s = ensureInit(version);
+  const normalized = normalizeSchemaRef(schemaRef);
+  if (!normalized) return undefined;
+
+  const cacheKey = `schema-ref::${normalized}`;
+  const cached = s.validators.get(cacheKey);
+  if (cached) return cached;
+
+  const file = path.join(s.root, normalized);
+  if (!existsSync(file)) return undefined;
+
+  // Use an isolated AJV instance for arbitrary schema refs. Tool response
+  // validators deliberately relax some roots for SDK back-compat; webhook
+  // payload schemas need strict raw JSON Schema behavior without polluting the
+  // shared tool-validator registry with unrelaxed response schemas.
+  const ajv = new Ajv({
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+  });
+  addFormats(ajv);
+  for (const entry of readdirSync(s.root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === 'bundled') continue;
+    const abs = path.join(s.root, entry.name);
+    for (const schemaFile of walkJsonFiles(abs)) {
+      const schema = loadJson(schemaFile);
+      if (typeof schema.$id === 'string' && !ajv.getSchema(schema.$id)) {
+        ajv.addSchema(schema);
+      }
+    }
+  }
+  const rawSchema = loadJson(file);
+  const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
+  const compiled = existing ?? ajv.compile(rawSchema);
+  s.validators.set(cacheKey, compiled);
+  return compiled;
+}
+
+function normalizeSchemaRef(schemaRef: string): string | undefined {
+  const trimmed = schemaRef.replace(/^\/+/, '');
+  if (trimmed.length === 0) return undefined;
+  const normalized = path.normalize(trimmed);
+  if (normalized.startsWith('..') || path.isAbsolute(normalized)) return undefined;
+  return normalized;
+}
+
+/**
  * Strip `$id` from every subschema of a bundled response file, preserving
  * the root `$id`. Bundled files are fully inlined (no internal `$ref`s),
  * so the nested `$id`s are vestigial metadata — Ajv only cares about the

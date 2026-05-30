@@ -126,19 +126,26 @@ if (result.status === 'submitted' && result.submitted) {
 // Express.js webhook endpoint
 app.post('/webhooks/adcp/:taskId', (req, res) => {
   const { taskId } = req.params;
-  const { status, result, error } = req.body;
+  const envelope = req.body;
+  const { status, result, message } = envelope;
   
   if (status === 'completed') {
     console.log(`Task ${taskId} completed:`, result);
     // Update your database, notify users, etc.
   } else if (status === 'failed') {
-    console.error(`Task ${taskId} failed:`, error);
+    console.error(`Task ${taskId} failed:`, message);
     // Handle failure, retry logic, etc.
   }
   
   res.status(200).send('OK');
 });
 ```
+
+The webhook POST body is the full async envelope (`idempotency_key`,
+`operation_id`, `task_id`, `task_type`, `status`, `timestamp`, and `result`).
+Delivery report fields such as `notification_type` and
+`media_buy_deliveries` live inside `result`; they are not valid as the
+top-level webhook body.
 
 **Key characteristics**:
 - 📞 Webhook-based notifications (preferred)

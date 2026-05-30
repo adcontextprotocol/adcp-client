@@ -1,4 +1,6 @@
 import type { AgentConfig } from '../types';
+import type { AdcpJsonWebKey } from '../signing/types';
+import type { SignerKey } from '../signing/client';
 
 export type ConformanceToolName =
   // Tier 1: no required IDs, discovery-like
@@ -256,6 +258,71 @@ export interface ConformanceReport {
    * byte-equivalence check for a paired probe against one tool.
    */
   uniformError: ReadonlyArray<import('./invariants/uniformError').UniformErrorReport>;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+}
+
+export type WebhookConformanceVerdict = 'accepted' | 'rejected_correctly' | 'false_accept' | 'false_reject';
+
+export interface WebhookConformanceCase {
+  name: string;
+  description: string;
+  expected: 'accept' | 'reject';
+  verdict: WebhookConformanceVerdict;
+  request: {
+    body: unknown;
+    idempotencyKey?: string;
+  };
+  response?: {
+    status: number;
+    body?: string;
+  };
+  error?: string;
+}
+
+export type WebhookConformanceSigningOptions =
+  | { mode: 'none' }
+  | {
+      mode: 'hmac';
+      secret: string;
+      /** Current unix time in seconds. Defaults to Date.now(). */
+      now?: () => number;
+    }
+  | {
+      mode: 'rfc9421';
+      /**
+       * Signing key used for replay. When omitted, the runner mints an
+       * ephemeral Ed25519 webhook-signing key and returns its public JWK in
+       * the report so the receiver can be configured for a repeat run.
+       */
+      key?: SignerKey;
+      /** Target URI to cover in the signature. Defaults to the receiver URL. */
+      targetUrl?: string;
+      /** Current unix time in seconds. Defaults to Date.now(). */
+      now?: () => number;
+    };
+
+export interface RunWebhookConformanceOptions {
+  /** Extra headers to send on every replay. */
+  headers?: Record<string, string>;
+  /** Signature profile. Defaults to unsigned transport-envelope checks. */
+  signing?: WebhookConformanceSigningOptions;
+  /** Override fetch for tests or custom runtimes. */
+  fetchImpl?: typeof fetch;
+  /** Request timeout in milliseconds. Default 10000. */
+  timeoutMs?: number;
+}
+
+export interface WebhookConformanceReport {
+  receiverUrl: string;
+  totalCases: number;
+  totalFailures: number;
+  cases: WebhookConformanceCase[];
+  signing: {
+    mode: 'none' | 'hmac' | 'rfc9421';
+    publicKey?: AdcpJsonWebKey;
+  };
   startedAt: string;
   completedAt: string;
   durationMs: number;

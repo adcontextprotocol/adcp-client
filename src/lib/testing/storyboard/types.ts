@@ -626,6 +626,8 @@ export interface StoryboardStep {
   /** When true (default) assert `idempotency_key` is present and pattern-valid. */
   expect_idempotency_key?: boolean;
   /** Optional webhook schema reference; validates the parsed body. */
+  webhook_payload_schema_ref?: string;
+  /** Back-compat alias for older local storyboards. Prefer `webhook_payload_schema_ref`. */
   response_schema_webhook_ref?: string;
   /**
    * Cap on the number of distinct logical webhook events (grouped by
