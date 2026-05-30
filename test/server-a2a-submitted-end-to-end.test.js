@@ -21,6 +21,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
+const { z } = require('zod');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
@@ -80,42 +81,43 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
       },
       // Custom AdCP `tasks/get` tool dispatched as a buyer-callable
       // tool over `message/send`. First two polls return working;
-      // third returns completed with the result data.
+      // third returns completed with the result data. Keeping this on
+      // the fixture server avoids process-global ProtocolClient monkey
+      // patches, which are fragile in the broad parallel test runner.
+      customTools: {
+        'tasks/get': {
+          inputSchema: { task_id: z.string() },
+          handler: async params => {
+            observedPollSkill = 'tasks/get';
+            observedPollParam = params;
+            pollCount += 1;
+            const response =
+              pollCount < 3
+                ? {
+                    task_id: params.task_id,
+                    task_type: 'create_media_buy',
+                    protocol: 'media-buy',
+                    status: 'working',
+                    created_at: '2026-04-25T10:00:00Z',
+                    updated_at: new Date().toISOString(),
+                  }
+                : {
+                    task_id: params.task_id,
+                    task_type: 'create_media_buy',
+                    protocol: 'media-buy',
+                    status: 'completed',
+                    created_at: '2026-04-25T10:00:00Z',
+                    updated_at: new Date().toISOString(),
+                    result: { media_buy_id: SELLER_MEDIA_BUY_ID, packages: [] },
+                  };
+            return {
+              content: [{ type: 'text', text: JSON.stringify(response) }],
+              structuredContent: response,
+            };
+          },
+        },
+      },
     });
-    // Drive polls via a `ProtocolClient.callTool` monkey-patch
-    // rather than registering a `tasks/get` tool on the seller —
-    // we want to assert on the exact arguments the SDK dispatches
-    // (snake_case `task_id`), and a real seller-side tool
-    // registration would obscure that surface.
-    const { ProtocolClient } = require('../dist/lib/index');
-    const originalCallTool = ProtocolClient.callTool;
-    ProtocolClient.callTool = async (agent, toolName, params, ...rest) => {
-      if (toolName === 'tasks/get') {
-        observedPollSkill = toolName;
-        observedPollParam = params;
-        pollCount += 1;
-        if (pollCount < 3) {
-          return {
-            task_id: params.task_id,
-            task_type: 'create_media_buy',
-            protocol: 'media-buy',
-            status: 'working',
-            created_at: '2026-04-25T10:00:00Z',
-            updated_at: new Date().toISOString(),
-          };
-        }
-        return {
-          task_id: params.task_id,
-          task_type: 'create_media_buy',
-          protocol: 'media-buy',
-          status: 'completed',
-          created_at: '2026-04-25T10:00:00Z',
-          updated_at: new Date().toISOString(),
-          result: { media_buy_id: SELLER_MEDIA_BUY_ID, packages: [] },
-        };
-      }
-      return originalCallTool.call(ProtocolClient, agent, toolName, params, ...rest);
-    };
 
     try {
       const executor = new TaskExecutor({ pollingInterval: 5 });
@@ -159,7 +161,6 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
       assert.deepStrictEqual(completion.data, { media_buy_id: SELLER_MEDIA_BUY_ID, packages: [] });
       assert.ok(pollCount >= 3, `expected ≥3 polls (working/working/completed), got ${pollCount}`);
     } finally {
-      ProtocolClient.callTool = originalCallTool;
       await fixture.close();
     }
   });

@@ -1134,6 +1134,7 @@ export {
   createMCPClient,
   createA2AClient,
   closeMCPConnections,
+  closeOAuthConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
 export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
