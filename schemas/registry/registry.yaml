@@ -579,6 +579,16 @@ components:
             - degraded
             - failing
             - unknown
+        requested_compliance_target:
+          type:
+            - string
+            - "null"
+          description: Requested compliance target before alias resolution, e.g. 3.1, 3.0, or 3.1-beta.
+        adcp_version:
+          type:
+            - string
+            - "null"
+          description: Concrete AdCP compliance bundle version used for the latest run, e.g. 3.0.12.
         lifecycle_stage:
           type: string
           enum:
@@ -1396,6 +1406,16 @@ components:
       properties:
         agent_url:
           type: string
+        requested_compliance_target:
+          type:
+            - string
+            - "null"
+          description: Requested compliance target before alias resolution, e.g. 3.1, 3.0, or 3.1-beta. Null for legacy rows before target recording.
+        adcp_version:
+          type:
+            - string
+            - "null"
+          description: Concrete AdCP compliance bundle version used for the latest run, e.g. 3.0.12. Null for legacy rows before version recording.
         status:
           type: string
           enum:
@@ -1461,6 +1481,26 @@ components:
               - untested
               - unknown
           description: Per-specialism pass/fail/untested status — keyed on declared specialism, derived from the matching storyboard's status
+        notices:
+          type: array
+          items: {}
+          description: Run-summary notices from the latest non-dry-run compliance run. Unknown codes/severities are preserved verbatim.
+        observations:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              severity:
+                type: string
+              message:
+                type: string
+            required:
+              - category
+              - severity
+              - message
+          description: Public-safe advisory observations from the latest non-dry-run compliance run. Raw evidence is intentionally omitted; this array is not merged across runs, so cleared advisories disappear on the next fresh run.
         membership_tier:
           type:
             - string
@@ -1591,6 +1631,16 @@ components:
       properties:
         storyboard_id:
           type: string
+        requested_compliance_target:
+          type:
+            - string
+            - "null"
+          description: Requested compliance target from the run that produced this storyboard verdict, e.g. 3.1, 3.0, or 3.1-beta.
+        adcp_version:
+          type:
+            - string
+            - "null"
+          description: Concrete AdCP compliance bundle version from the run that produced this storyboard verdict.
         title:
           type: string
         category:
@@ -1635,6 +1685,14 @@ components:
       properties:
         id:
           type: string
+        requested_compliance_target:
+          type:
+            - string
+            - "null"
+        adcp_version:
+          type:
+            - string
+            - "null"
         overall_status:
           type: string
         headline:
@@ -6797,9 +6855,9 @@ paths:
       description: |-
         Re-probe the agent and update its registry health (online, tools_count, response_time_ms), capability snapshot (inferred type, discovered tools), and compliance verdict (storyboard pass/fail counts). Use after fixing your agent so the registry shows fresh data without waiting for the periodic heartbeat (~1h).
 
-        **Compliance re-run:** when the caller owns the agent and the capability probe succeeds, the full storyboard suite runs (~30–90s) with a fresh test session and `agent_storyboard_status` is updated under `triggered_by: 'owner_test'`. Badge fan-out reissues verification badges off the new run. If the compliance call fails (timeout, OAuth wall, internal error), the capability/health portion still returns successfully — `compliance.ran` is `false` with an `error` string.
+        **Compliance re-run:** when the caller owns the agent or is an AAO admin and the capability probe succeeds, the full storyboard suite runs (~30–90s) with a fresh test session and `agent_storyboard_status` is updated. Owner-triggered runs use `triggered_by: 'owner_test'`; admin-triggered support runs use `triggered_by: 'manual'`. Badge fan-out reissues verification badges off the new run. If the compliance call fails (timeout, OAuth wall, internal error), the capability/health portion still returns successfully — `compliance.ran` is `false` with an `error` string.
 
-        **Auth:** owner of the agent or AAO admin.
+        **Auth:** owner of the agent, AAO admin, or static `ADMIN_API_KEY`.
 
         **Rate limits:** 60 seconds per agent URL, 30 requests per user per hour.
       tags:
@@ -6852,6 +6910,26 @@ paths:
                       ran:
                         type: boolean
                         description: True if the full storyboard suite ran and agent_storyboard_status was updated. False when ownership couldn't be resolved, the agent reported auth_required, or the compliance call itself failed.
+                      run_id:
+                        type: string
+                        description: Compliance run id written by this refresh. Use with /compliance/diagnostics?run_id=... to inspect failing-step wire evidence.
+                      test_session_id:
+                        type: string
+                        description: Fresh test session id used for the compliance run. Useful when matching seller-side logs to the refresh.
+                      requested_compliance_target:
+                        type: string
+                        description: Requested compliance target before alias resolution, e.g. 3.1, 3.0, or 3.1-beta. Present when `ran` is true.
+                      adcp_version:
+                        type: string
+                        description: Concrete AdCP compliance bundle version used for the run, e.g. 3.0.12 or 3.1.0-beta.7. Present when `ran` is true.
+                      badge_eligible:
+                        type: boolean
+                        description: True when this run can update public badge state.
+                      badge_eligible_adcp_versions:
+                        type: array
+                        items:
+                          type: string
+                        description: Public badge versions this run can issue, e.g. ['3.1', '3.0'].
                       overall_status:
                         type: string
                         description: Aggregate verdict from the run (passing / failing / partial / unknown). Only present when `ran` is true.
@@ -6861,6 +6939,12 @@ paths:
                       storyboards_total:
                         type: integer
                         description: Number of storyboards evaluated on this run.
+                      observations_count:
+                        type: integer
+                        description: Number of advisory observations emitted by this run.
+                      notices_count:
+                        type: integer
+                        description: Number of run-summary notices emitted by this run.
                       error:
                         type: string
                         description: Reason compliance didn't run when `ran` is false.
@@ -7281,6 +7365,10 @@ paths:
                 properties:
                   agent_url:
                     type: string
+                  requested_compliance_target:
+                    type: string
+                  adcp_version:
+                    type: string
                   agent_name:
                     type: string
                   supported_protocols:
@@ -7333,6 +7421,8 @@ paths:
                     type: integer
                 required:
                   - agent_url
+                  - requested_compliance_target
+                  - adcp_version
                   - agent_name
                   - supported_protocols
                   - specialisms
@@ -7357,7 +7447,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "422":
-          description: Agent requires authentication, or declares a specialism not in the local compliance cache
+          description: Agent requires authentication, or declared capabilities cannot be resolved for the selected compliance target
           content:
             application/json:
               schema:
@@ -7365,15 +7455,36 @@ paths:
                 properties:
                   error:
                     type: string
+                  error_kind:
+                    type: string
+                    enum:
+                      - specialism_parent_protocol_missing
+                      - unknown_specialism
+                      - unsupported_adcp_version
                   needs_auth:
                     type: boolean
                   unknown_specialism:
                     type: boolean
+                  specialism_parent_protocol_missing:
+                    type: boolean
+                  specialism:
+                    type: string
+                  parent_protocol:
+                    type: string
+                  compliance_version:
+                    type: string
+                  supported_versions:
+                    type: string
                   declared_specialisms:
                     type: array
                     items:
                       type: string
                     description: Specialisms the agent declared, for unknown-specialism errors
+                  declared_protocols:
+                    type: array
+                    items:
+                      type: string
+                    description: Protocols the agent declared, for capability-resolution errors
                   known_specialisms:
                     type: array
                     items:
@@ -7430,6 +7541,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
                   storyboards:
                     type: array
                     items:
@@ -7437,6 +7552,8 @@ paths:
                   count:
                     type: integer
                 required:
+                  - adcp_version
+                  - requested_compliance_target
                   - storyboards
                   - count
         "500":
@@ -7468,10 +7585,16 @@ paths:
               schema:
                 type: object
                 properties:
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
                   storyboard:
                     $ref: "#/components/schemas/StoryboardDetail"
                   test_kit: {}
                 required:
+                  - adcp_version
+                  - requested_compliance_target
                   - storyboard
         "404":
           description: Storyboard not found
@@ -7859,7 +7982,17 @@ paths:
           description: Step execution result
           content:
             application/json:
-              schema: {}
+              schema:
+                type: object
+                properties:
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
+                required:
+                  - adcp_version
+                  - requested_compliance_target
+                additionalProperties: {}
         "400":
           description: Invalid parameters
           content:
@@ -7911,6 +8044,10 @@ paths:
               schema:
                 type: object
                 properties:
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
                   storyboard:
                     type: object
                     properties:
@@ -7923,6 +8060,8 @@ paths:
                       - title
                   step: {}
                 required:
+                  - adcp_version
+                  - requested_compliance_target
                   - storyboard
         "404":
           description: Storyboard not found or has no steps
@@ -7990,6 +8129,16 @@ paths:
                       profile: {}
                     required:
                       - url
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
+                  badge_eligible:
+                    type: boolean
+                  badge_eligible_adcp_versions:
+                    type: array
+                    items:
+                      type: string
                   phases: {}
                   summary: {}
                   observations: {}
@@ -7999,6 +8148,10 @@ paths:
                 required:
                   - storyboard
                   - agent
+                  - adcp_version
+                  - requested_compliance_target
+                  - badge_eligible
+                  - badge_eligible_adcp_versions
                   - total_duration_ms
         "400":
           description: Invalid agent URL
@@ -8095,6 +8248,16 @@ paths:
                     required:
                       - url
                       - name
+                  adcp_version:
+                    type: string
+                  requested_compliance_target:
+                    type: string
+                  badge_eligible:
+                    type: boolean
+                  badge_eligible_adcp_versions:
+                    type: array
+                    items:
+                      type: string
                   phases: {}
                   total_duration_ms:
                     type: number
@@ -8102,6 +8265,10 @@ paths:
                   - storyboard
                   - user_agent
                   - reference_agent
+                  - adcp_version
+                  - requested_compliance_target
+                  - badge_eligible
+                  - badge_eligible_adcp_versions
                   - total_duration_ms
         "400":
           description: Invalid agent URL

@@ -3,9 +3,15 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
-const CURRENT_BETA_VERSION = '3.1.0-beta.7';
-const CURRENT_BETA_RELEASE_PRECISION = '3.1-beta.7';
+const CURRENT_PRERELEASE_VERSION = ADCP_VERSION;
+const CURRENT_PRERELEASE_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
+const CURRENT_PRERELEASE_FAMILY = CURRENT_PRERELEASE_RELEASE_PRECISION.replace(/\.\d+$/, '');
+const CURRENT_PRERELEASE_NUMBER = Number(CURRENT_PRERELEASE_RELEASE_PRECISION.match(/\.(\d+)$/)?.[1] ?? 0);
+const DIFFERENT_PRERELEASE_NUMBER = CURRENT_PRERELEASE_NUMBER + 1;
+const DIFFERENT_PRERELEASE_RELEASE_PRECISION = CURRENT_PRERELEASE_FAMILY + `.${DIFFERENT_PRERELEASE_NUMBER}`;
+const DIFFERENT_PRERELEASE_VERSION = ADCP_VERSION.replace(/\.\d+$/, `.${DIFFERENT_PRERELEASE_NUMBER}`);
 
 function writeComplianceIndex(complianceDir, version = '3.0.12') {
   fs.mkdirSync(complianceDir, { recursive: true });
@@ -92,9 +98,9 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('derives explicit opt-in envelope for 3.1 storyboards', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 
-    const options = applyStoryboardVersionOptions({ adcp_version: CURRENT_BETA_VERSION }, {});
+    const options = applyStoryboardVersionOptions({ adcp_version: CURRENT_PRERELEASE_VERSION }, {});
 
-    assert.strictEqual(options.adcpVersion, CURRENT_BETA_VERSION);
+    assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
     assert.strictEqual(options.versionEnvelope, 'auto');
   });
 
@@ -123,14 +129,14 @@ describe('storyboard runner AdCP version negotiation', () => {
     const { createTestClient, getOrCreateClient } = require('../../dist/lib/testing/client.js');
 
     const shared = createTestClient('https://example.com/mcp', 'mcp', {
-      adcpVersion: CURRENT_BETA_VERSION,
+      adcpVersion: CURRENT_PRERELEASE_VERSION,
       versionEnvelope: 'auto',
     });
 
     assert.strictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: CURRENT_BETA_VERSION,
+        adcpVersion: CURRENT_PRERELEASE_VERSION,
         versionEnvelope: 'auto',
       }),
       shared
@@ -138,7 +144,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.notStrictEqual(
       getOrCreateClient('https://example.com/mcp', {
         _client: shared,
-        adcpVersion: CURRENT_BETA_VERSION,
+        adcpVersion: CURRENT_PRERELEASE_VERSION,
         versionEnvelope: 'none',
       }),
       shared
@@ -188,7 +194,7 @@ describe('storyboard runner AdCP version negotiation', () => {
       },
       'get_adcp_capabilities',
       {},
-      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'major-only' }
+      { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'major-only' }
     );
 
     assert.strictEqual(captured.adcp_major_version, 3);
@@ -251,14 +257,20 @@ describe('storyboard runner AdCP version negotiation', () => {
   test('exact seller supported_versions are matched against cache version aliases', () => {
     const { isComplianceVersionSupported } = require('../../dist/lib/testing/storyboard/index.js');
 
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, [CURRENT_BETA_VERSION]), true);
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, [CURRENT_BETA_RELEASE_PRECISION]), true);
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1-beta']), true);
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1-beta.2']), false);
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1.0-beta.2']), false);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_VERSION]), true);
+    assert.strictEqual(
+      isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_RELEASE_PRECISION]),
+      true
+    );
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [CURRENT_PRERELEASE_FAMILY]), true);
+    assert.strictEqual(
+      isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [DIFFERENT_PRERELEASE_RELEASE_PRECISION]),
+      false
+    );
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, [DIFFERENT_PRERELEASE_VERSION]), false);
     assert.strictEqual(isComplianceVersionSupported('3.0.12', ['3.0.0']), true);
     assert.strictEqual(isComplianceVersionSupported('3.1.1', ['3.1.0']), true);
-    assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.0']), false);
+    assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.0']), false);
   });
 
   test('compliance negotiation uses major-only envelope for strict 3.0 capability profiles', () => {
@@ -273,8 +285,8 @@ describe('storyboard runner AdCP version negotiation', () => {
         supported_protocols: ['media_buy'],
         library_version: '@adcp/client@5.22.0',
       },
-      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
-      { complianceVersion: CURRENT_BETA_VERSION }
+      { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_PRERELEASE_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'major-only');
@@ -293,11 +305,11 @@ describe('storyboard runner AdCP version negotiation', () => {
         adcp_supported_versions: ['3.1'],
         supported_protocols: ['media_buy'],
       },
-      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
-      { complianceVersion: CURRENT_BETA_VERSION, hostedStableLineAlias: '3.1' }
+      { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_PRERELEASE_VERSION, hostedStableLineAlias: '3.1' }
     );
 
-    assert.strictEqual(options.adcpVersion, CURRENT_BETA_VERSION);
+    assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
     assert.strictEqual(options.wireAdcpVersion, '3.1');
     assert.strictEqual(options._serverAdcpVersion, '3.1');
   });
@@ -313,12 +325,12 @@ describe('storyboard runner AdCP version negotiation', () => {
         adcp_major_versions: [3],
         supported_protocols: ['media_buy'],
       },
-      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
-      { complianceVersion: CURRENT_BETA_VERSION }
+      { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_PRERELEASE_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'auto');
-    assert.strictEqual(options._serverAdcpVersion, CURRENT_BETA_VERSION);
+    assert.strictEqual(options._serverAdcpVersion, CURRENT_PRERELEASE_VERSION);
   });
 
   test('pre-3.1 build_version is positive downgrade evidence', () => {
@@ -333,8 +345,8 @@ describe('storyboard runner AdCP version negotiation', () => {
         adcp_build_version: '3.0.12',
         supported_protocols: ['media_buy'],
       },
-      { adcpVersion: CURRENT_BETA_VERSION, versionEnvelope: 'auto' },
-      { complianceVersion: CURRENT_BETA_VERSION }
+      { adcpVersion: CURRENT_PRERELEASE_VERSION, versionEnvelope: 'auto' },
+      { complianceVersion: CURRENT_PRERELEASE_VERSION }
     );
 
     assert.strictEqual(options.versionEnvelope, 'major-only');
@@ -369,17 +381,17 @@ describe('storyboard runner AdCP version negotiation', () => {
     } = require('../../dist/lib/testing/storyboard/index.js');
 
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-hosted-stable-alias-'));
-    const complianceDir = path.join(tempRoot, 'compliance', 'cache', CURRENT_BETA_VERSION);
+    const complianceDir = path.join(tempRoot, 'compliance', 'cache', CURRENT_PRERELEASE_VERSION);
     try {
-      writeComplianceIndex(complianceDir, CURRENT_BETA_VERSION);
+      writeComplianceIndex(complianceDir, CURRENT_PRERELEASE_VERSION);
 
-      assert.strictEqual(isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1']), false);
+      assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1']), false);
       assert.strictEqual(
-        isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.1'], { hostedStableLineAlias: '3.1' }),
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1'], { hostedStableLineAlias: '3.1' }),
         true
       );
       assert.strictEqual(
-        isComplianceVersionSupported(CURRENT_BETA_VERSION, ['3.0'], { hostedStableLineAlias: '3.1' }),
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.0'], { hostedStableLineAlias: '3.1' }),
         false
       );
 
@@ -503,6 +515,40 @@ describe('storyboard runner AdCP version negotiation', () => {
     }
   });
 
+  test('explicit schemaRoot accepts release-precision prerelease aliases for an exact external bundle', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+    const { withExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
+    const { getValidator, _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-prerelease-alias-schema-root-'));
+    const schemaRoot = path.join(tempRoot, 'schema-bundles', CURRENT_PRERELEASE_VERSION);
+    const aliases = [CURRENT_PRERELEASE_RELEASE_PRECISION, CURRENT_PRERELEASE_FAMILY];
+    try {
+      writeGetProductsRequestSchema(schemaRoot, CURRENT_PRERELEASE_VERSION, 'prerelease-alias');
+
+      for (const adcpVersion of aliases) {
+        const complianceDir = path.join(tempRoot, 'compliance-cache', adcpVersion);
+        writeComplianceIndex(complianceDir, adcpVersion);
+
+        loadComplianceIndex({ complianceDir, schemaRoot });
+
+        withExternalSchemaRoot(adcpVersion, schemaRoot, () => {
+          const validator = getValidator('get_products', 'request', adcpVersion);
+          assert.ok(validator, `${adcpVersion} explicit schema root validator should compile`);
+          assert.strictEqual(validator({ sentinel: 'prerelease-alias' }), true);
+          assert.strictEqual(validator({ sentinel: 'installed-sdk-default' }), false);
+        });
+
+        _resetValidationLoader(adcpVersion);
+      }
+    } finally {
+      for (const adcpVersion of [CURRENT_PRERELEASE_VERSION, ...aliases]) {
+        _resetValidationLoader(adcpVersion);
+      }
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('explicit schemaRoot fails fast when missing or version-mismatched', () => {
     const { withExternalSchemaRoot } = require('../../dist/lib/testing/index.js');
     const { _resetValidationLoader } = require('../../dist/lib/validation/schema-loader.js');
@@ -522,10 +568,10 @@ describe('storyboard runner AdCP version negotiation', () => {
         /External AdCP schema root for version "3\.0\.12" not found or empty/
       );
 
-      writeGetProductsRequestSchema(wrongSchemaRoot, CURRENT_BETA_VERSION);
+      writeGetProductsRequestSchema(wrongSchemaRoot, CURRENT_PRERELEASE_VERSION);
       assert.throws(
         () => withExternalSchemaRoot('3.0.12', wrongSchemaRoot, () => {}),
-        /must contain only bundle "3\.0".*3\.1\.0-beta\.7/
+        new RegExp(`does not match the requested version.*${CURRENT_PRERELEASE_VERSION.replaceAll('.', '\\.')}`)
       );
     } finally {
       _resetValidationLoader('3.0.12');
@@ -558,7 +604,7 @@ describe('storyboard runner AdCP version negotiation', () => {
       [{ id: 'story', track: 'core', phases: [{ steps: [{ id: 'step', expected: 'works' }] }] }],
       'agent-alias',
       {
-        complianceVersion: CURRENT_BETA_VERSION,
+        complianceVersion: CURRENT_PRERELEASE_VERSION,
         complianceDir: '/tmp/compliance cache',
         schemaRoot: '/tmp/schema root',
         hostedStableLineAlias: '3.1',
