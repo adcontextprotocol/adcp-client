@@ -238,6 +238,15 @@ function resolveSchemaRoot(version: string): string {
   const distCandidate = path.join(__dirname, '..', 'schemas-data', key);
   if (existsSync(distCandidate)) return distCandidate;
 
+  // Published builds carry exact prerelease bundle directories
+  // (`3.1.0-rc.1/`), while callers may pin the release-precision family
+  // alias (`3.1-rc`). Resolve that alias before falling back to source cache.
+  const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
+  if (releasePrecisionMatch) {
+    const distPrereleaseCandidate = findPrereleaseBundle(path.join(__dirname, '..', 'schemas-data'), key);
+    if (distPrereleaseCandidate) return distPrereleaseCandidate;
+  }
+
   // Source-tree fallback: cache stays exact-version-named, so map the key
   // back to the highest-patch cache directory in the same minor for stable
   // pins. Prereleases need an exact match.
@@ -276,24 +285,11 @@ function resolveSchemaRoot(version: string): string {
   // form starts with the requested key. A pin of `'3.1-beta'` matches any
   // directory whose `toReleasePrecisionWire` form is `'3.1-beta'` or
   // `'3.1-beta.*'`. A pin of `'3.1-beta.0'` matches `'3.1-beta.0'` or
-  // `'3.1-beta.0.*'`. Sort newest-first by directory name (lexicographic
-  // is a good-enough proxy; proper SemVer §11 prerelease ordering can come
-  // later if it bites in practice).
-  const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
-  if (releasePrecisionMatch && existsSync(cacheRoot)) {
-    const cached = readdirSync(cacheRoot, { withFileTypes: true })
-      .filter(e => e.isDirectory() && !e.name.endsWith('.previous'))
-      .map(e => {
-        try {
-          return { name: e.name, rp: toReleasePrecisionWire(e.name) };
-        } catch {
-          return null;
-        }
-      })
-      .filter((c): c is { name: string; rp: string } => c !== null)
-      .filter(c => c.rp === key || c.rp.startsWith(`${key}.`))
-      .sort((a, b) => b.name.localeCompare(a.name));
-    if (cached.length > 0) return path.join(cacheRoot, cached[0]!.name);
+  // `'3.1-beta.0.*'`. Sort newest-first by directory name with numeric
+  // collation so rc.10 wins over rc.9.
+  if (releasePrecisionMatch) {
+    const cachePrereleaseCandidate = findPrereleaseBundle(cacheRoot, key);
+    if (cachePrereleaseCandidate) return cachePrereleaseCandidate;
   }
 
   throw new Error(
@@ -302,6 +298,28 @@ function resolveSchemaRoot(version: string): string {
       `and the latest-patch fallback in ${cacheRoot}. ` +
       `Run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the bundle.`
   );
+}
+
+function findPrereleaseBundle(root: string, key: string): string | undefined {
+  if (!existsSync(root)) return undefined;
+  const cached = readdirSync(root, { withFileTypes: true })
+    .filter(e => e.isDirectory() && !e.name.endsWith('.previous'))
+    .map(e => {
+      try {
+        return { name: e.name, rp: toReleasePrecisionWire(e.name) };
+      } catch {
+        return null;
+      }
+    })
+    .filter((c): c is { name: string; rp: string } => c !== null)
+    .filter(c => c.rp === key || c.rp.startsWith(`${key}.`))
+    .sort((a, b) => compareBundleNamesDesc(a.name, b.name));
+  if (cached.length === 0) return undefined;
+  return path.join(root, cached[0]!.name);
+}
+
+function compareBundleNamesDesc(a: string, b: string): number {
+  return b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
 }
 
 interface LoaderState {
@@ -335,8 +353,8 @@ function schemaIdVersionHint(schemaId: string): string | undefined {
   return schemaId.match(/\/schemas\/([^/]+)\//)?.[1];
 }
 
-function collectSchemaRootVersionKeys(root: string): Set<string> {
-  const keys = new Set<string>();
+function collectSchemaRootVersionAliases(root: string): Set<string> {
+  const aliases = new Set<string>();
   for (const file of walkJsonFiles(root)) {
     let schema: LoadedSchema;
     try {
@@ -347,26 +365,48 @@ function collectSchemaRootVersionKeys(root: string): Set<string> {
     if (typeof schema.$id !== 'string') continue;
     const hint = schemaIdVersionHint(schema.$id);
     if (!hint) continue;
-    try {
-      keys.add(resolveBundleKey(hint));
-    } catch {
-      // Ignore non-AdCP schema ids; root shape validation already guarantees
-      // the directory contains JSON schemas, and the loader will surface any
-      // actual compile failure later with the file context.
-    }
+    for (const alias of schemaRootVersionAliases(hint)) aliases.add(alias);
   }
-  return keys;
+  return aliases;
 }
 
-function assertSchemaRootMatchesVersion(version: string, root: string): void {
-  const expectedKey = resolveBundleKey(version);
-  const keys = collectSchemaRootVersionKeys(root);
-  if (keys.size === 0 || keys.has(expectedKey)) return;
+function schemaRootVersionAliases(version: string): Set<string> {
+  const aliases = new Set<string>([version]);
+  try {
+    aliases.add(resolveBundleKey(version));
+  } catch {
+    // Keep the raw value only; callers that care will throw separately.
+  }
+  try {
+    const releasePrecision = toReleasePrecisionWire(version);
+    aliases.add(releasePrecision);
+    const family = prereleaseFamilyAlias(releasePrecision);
+    if (family) aliases.add(family);
+  } catch {
+    // Keep any aliases already collected.
+  }
+  return aliases;
+}
+
+function prereleaseFamilyAlias(releasePrecisionVersion: string): string | undefined {
+  return releasePrecisionVersion.match(/^(\d+\.\d+-[0-9A-Za-z-]+)\.\d+$/)?.[1];
+}
+
+function assertSchemaRootMatchesVersion(version: string, root: string): Set<string> {
+  const expectedAliases = schemaRootVersionAliases(version);
+  const rootAliases = collectSchemaRootVersionAliases(root);
+  if (rootAliases.size === 0) return expectedAliases;
+  for (const alias of rootAliases) {
+    if (expectedAliases.has(alias)) return new Set([...expectedAliases, ...rootAliases]);
+  }
   throw new Error(
     `External AdCP schema root for version "${version}" at ${root} does not match the requested version. ` +
-      `Expected schema ids for bundle "${expectedKey}", found ${Array.from(keys).sort().join(', ')}.`
+      `Expected schema ids matching ${Array.from(expectedAliases).sort().join(', ')}, ` +
+      `found ${Array.from(rootAliases).sort().join(', ')}.`
   );
 }
+
+const externalSchemaRootAliases: Map<string, Set<string>> = new Map();
 
 /**
  * Register a schema bundle supplied outside the installed SDK package.
@@ -381,17 +421,33 @@ export function registerExternalSchemaRoot(version: string, root: string): void 
   if (!hasSchemaRootShape(root)) {
     throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
   }
-  assertSchemaRootMatchesVersion(version, root);
-  const previous = externalSchemaRoots.get(key);
-  externalSchemaRoots.set(key, root);
-  if (previous !== root) states.delete(key);
+  const aliases = assertSchemaRootMatchesVersion(version, root);
+  externalSchemaRootAliases.set(key, aliases);
+  for (const alias of aliases) {
+    const previous = externalSchemaRoots.get(alias);
+    externalSchemaRoots.set(alias, root);
+    if (previous !== root) states.delete(alias);
+  }
 }
 
 /** Test/helper hook for unregistering an external schema bundle. */
 export function unregisterExternalSchemaRoot(version: string): void {
   const key = resolveBundleKey(version);
-  externalSchemaRoots.delete(key);
-  states.delete(key);
+  const aliases = new Set(schemaRootVersionAliases(version));
+  for (const [registeredKey, registeredAliases] of externalSchemaRootAliases) {
+    if (
+      registeredKey === key ||
+      registeredAliases.has(key) ||
+      [...aliases].some(alias => registeredAliases.has(alias))
+    ) {
+      for (const alias of registeredAliases) aliases.add(alias);
+      externalSchemaRootAliases.delete(registeredKey);
+    }
+  }
+  for (const alias of aliases) {
+    externalSchemaRoots.delete(alias);
+    states.delete(alias);
+  }
 }
 
 function walkJsonFiles(dir: string): string[] {

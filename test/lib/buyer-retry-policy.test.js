@@ -98,6 +98,13 @@ describe('decideRetry — operator-grade defaults', () => {
       assert.equal(d.reason, 'capability');
     });
 
+    it('FORMAT_NOT_SUPPORTED → mutate-and-retry (capability) with fresh idempotency key', () => {
+      const d = decideRetry(err('FORMAT_NOT_SUPPORTED'));
+      assert.equal(d.action, 'mutate-and-retry');
+      assert.equal(d.reason, 'capability');
+      assert.equal(d.sameIdempotencyKey, false);
+    });
+
     it('BUDGET_TOO_LOW → mutate-and-retry (budget)', () => {
       const d = decideRetry(err('BUDGET_TOO_LOW'));
       assert.equal(d.action, 'mutate-and-retry');
