@@ -98,6 +98,10 @@ export interface RunConformanceOptions {
   authToken?: string;
   /** Additional AgentConfig overrides. `id` and `agent_uri` are filled in automatically. */
   agentConfig?: Partial<AgentConfig>;
+  /** AdCP schema/cache version to use for conformance request/response schemas. */
+  version?: string;
+  /** External schema-data root to use for conformance request/response schemas. */
+  schemaRoot?: string;
   /** Skip runs where the agent returns UNSUPPORTED/NOT_IMPLEMENTED. Default true. */
   skipUnsupported?: boolean;
   /**
@@ -226,6 +230,8 @@ export interface ConformanceReport {
   seed: number;
   /** Schema version the fuzzer loaded. Pinned so a report is replayable. */
   schemaVersion: string;
+  /** External schema root used for validation, when supplied. */
+  schemaRoot?: string;
   /** Protocol used for the run. */
   protocol: 'mcp' | 'a2a';
   /** Iterations per tool that were requested. */

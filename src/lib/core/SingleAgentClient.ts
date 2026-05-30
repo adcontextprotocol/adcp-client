@@ -198,6 +198,11 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   adcpVersion?: AdcpVersion | (string & {});
   /**
+   * Optional wire-only AdCP version envelope override. Request/response
+   * validation still uses `adcpVersion`; protocol envelopes use this value.
+   */
+  wireAdcpVersion?: AdcpVersion | (string & {});
+  /**
    * Controls emission of AdCP version envelope fields. Defaults to `auto`.
    * `none` is primarily for conformance harnesses that need to send a
    * request exactly as authored, without SDK-managed version fields.
@@ -458,6 +463,7 @@ export class SingleAgentClient {
       onActivity: config.onActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
+      ...(config.wireAdcpVersion !== undefined && { wireAdcpVersion: config.wireAdcpVersion }),
       ...(config.versionEnvelope !== undefined && { versionEnvelope: config.versionEnvelope }),
       transport: config.transport,
     });

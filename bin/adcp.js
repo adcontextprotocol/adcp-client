@@ -325,12 +325,18 @@ function readFlagValue(args, flag) {
 function parseComplianceSelection(args) {
   const complianceVersion = readFlagValue(args, '--compliance-version');
   const complianceDir = readFlagValue(args, '--compliance-dir');
+  const schemaRoot = readFlagValue(args, '--schema-root') || readFlagValue(args, '--validator-source');
+  const hostedStableLineAlias = readFlagValue(args, '--hosted-stable-line-alias');
   return {
     complianceVersion,
     complianceDir,
+    schemaRoot,
+    hostedStableLineAlias,
     resolveOptions: {
       ...(complianceVersion && { version: complianceVersion }),
       ...(complianceDir && { complianceDir }),
+      ...(schemaRoot && { schemaRoot }),
+      ...(hostedStableLineAlias && { hostedStableLineAlias }),
     },
   };
 }
@@ -947,7 +953,7 @@ function parseAgentOptions(args) {
     storyboardsValue = args[storyboardsIndex + 1];
   }
 
-  const { complianceVersion, complianceDir } = parseComplianceSelection(args);
+  const { complianceVersion, complianceDir, schemaRoot, hostedStableLineAlias } = parseComplianceSelection(args);
 
   const platformTypeIndex = args.indexOf('--platform-type');
   let platformTypeValue = null;
@@ -1109,6 +1115,8 @@ function parseAgentOptions(args) {
     storyboardsValue,
     complianceVersion,
     complianceDir,
+    schemaRoot,
+    hostedStableLineAlias,
     platformTypeValue,
     timeoutValue,
     multiInstanceStrategyValue,
@@ -1151,6 +1159,8 @@ function parseAgentOptions(args) {
     softFail,
     complianceVersion,
     complianceDir,
+    schemaRoot,
+    hostedStableLineAlias,
   };
 }
 
@@ -1735,6 +1745,11 @@ RUN OPTIONS (full assessment):
                       storyboard resolution and wire-version defaults.
   --compliance-dir PATH
                       Use a specific compliance cache directory
+  --schema-root PATH  Use a specific schema bundle/root for validation.
+                      --validator-source is accepted as an alias.
+  --hosted-stable-line-alias VERSION
+                      Hosted badge mode: allow a stable line (e.g. 3.1)
+                      to resolve against a prerelease compliance cache.
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
@@ -2164,7 +2179,8 @@ async function handleStoryboardShow(args) {
     PROTOCOL_TO_PATH,
   } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
-  const { complianceVersion, complianceDir, resolveOptions } = parseComplianceSelection(args);
+  const { complianceVersion, complianceDir, schemaRoot, hostedStableLineAlias, resolveOptions } =
+    parseComplianceSelection(args);
 
   // --specialism <slug>: resolve which storyboards are graded for a given specialism claim.
   const specialismIdx = args.indexOf('--specialism');
@@ -2181,6 +2197,8 @@ async function handleStoryboardShow(args) {
       !a.startsWith('--') &&
       a !== complianceVersion &&
       a !== complianceDir &&
+      a !== schemaRoot &&
+      a !== hostedStableLineAlias &&
       (specialismSlug === null || i !== specialismIdx + 1)
   );
   const storyboardId = positionalArgs[0];
@@ -2453,13 +2471,27 @@ async function handleStoryboardRun(args) {
     return;
   }
 
-  const { loadStoryboardFile, runStoryboard } = await import('../dist/lib/testing/storyboard/index.js');
+  const { loadStoryboardFile, runStoryboard, loadComplianceIndex, getExternalSchemaRootForCompliance } =
+    await import('../dist/lib/testing/storyboard/index.js');
   let storyboard;
   try {
     storyboard = loadStoryboardFile(filePath);
   } catch (err) {
     console.error(`Failed to load storyboard from ${filePath}: ${err.message}`);
     process.exit(2);
+  }
+  let fileComplianceVersion = opts.complianceVersion;
+  let fileSchemaRoot = opts.schemaRoot;
+  if (opts.complianceDir || opts.complianceVersion || opts.schemaRoot) {
+    try {
+      const resolveOptions = parseComplianceSelection(args).resolveOptions;
+      const index = loadComplianceIndex(resolveOptions);
+      fileComplianceVersion = fileComplianceVersion || index.adcp_version;
+      fileSchemaRoot = fileSchemaRoot || getExternalSchemaRootForCompliance(resolveOptions, index.adcp_version);
+    } catch (err) {
+      console.error(`ERROR: ${err.message}`);
+      process.exit(2);
+    }
   }
 
   const {
@@ -2553,6 +2585,8 @@ async function handleStoryboardRun(args) {
       resolvedOauthClientCredentials,
     }),
     ...(webhookReceiverOpts ?? {}),
+    ...(fileComplianceVersion && { adcpVersion: fileComplianceVersion }),
+    ...(fileSchemaRoot && { schemaRoot: fileSchemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
@@ -3388,10 +3422,11 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
       createAgent,
       storyboards: storyboardsSpec,
       compliance: resolveOptions,
-      ...(opts.complianceVersion || opts.noSandbox || opts.assertsSeededState
+      ...(opts.complianceVersion || opts.schemaRoot || opts.noSandbox || opts.assertsSeededState
         ? {
             runStoryboardOptions: {
               ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
+              ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
               ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
               ...(opts.assertsSeededState && { assertsSeededState: true }),
             },
@@ -3781,6 +3816,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
     ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
+    ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
@@ -4042,6 +4078,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.complianceVersion && !opts.complianceDir && { adcpVersion: opts.complianceVersion }),
+    ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
@@ -4260,6 +4297,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(loadedTestKit && { test_kit: loadedTestKit }),
     ...(opts.complianceVersion && { version: opts.complianceVersion }),
     ...(opts.complianceDir && { complianceDir: opts.complianceDir }),
+    ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
+    ...(opts.hostedStableLineAlias && { hostedStableLineAlias: opts.hostedStableLineAlias }),
   };
 
   if (!opts.jsonOutput) {
@@ -4399,7 +4438,8 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, authScheme, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
+  const { authToken, authScheme, protocolFlag, jsonOutput, positionalArgs, complianceVersion, schemaRoot } =
+    parseAgentOptions(args);
   const { resolveOptions } = parseComplianceSelection(args);
 
   enforceStrictFlags(args, warnRemovedFlags(args));
@@ -4447,6 +4487,8 @@ async function handleStoryboardStepCmd(args) {
     protocol,
     context,
     request,
+    ...(complianceVersion && { adcpVersion: complianceVersion }),
+    ...(schemaRoot && { schemaRoot }),
     ...buildResolvedAuthOption({
       resolvedAuth,
       resolvedAuthScheme,

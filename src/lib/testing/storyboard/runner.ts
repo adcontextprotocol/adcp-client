@@ -41,11 +41,7 @@ import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import {
-  registerExternalSchemaRoot,
-  resolveBundleKey,
-  schemaAllowsTopLevelField,
-} from '../../validation/schema-loader';
+import { resolveBundleKey, schemaAllowsTopLevelField, withExternalSchemaRoot } from '../../validation/schema-loader';
 import { parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
@@ -173,15 +169,15 @@ export function applyAdcpVersionRunOptions(
   return { ...options, adcpVersion, versionEnvelope };
 }
 
-function registerRunSchemaRoot(options: StoryboardRunOptions): void {
-  if (!options.schemaRoot) return;
+function getRunSchemaRoot(options: StoryboardRunOptions): { adcpVersion: string; schemaRoot: string } | undefined {
+  if (!options.schemaRoot) return undefined;
   const adcpVersion = options.adcpVersion ?? options._serverAdcpVersion;
   if (!adcpVersion) {
     throw new Error(
       'schemaRoot requires an AdCP version. Pass adcpVersion, or run a storyboard/compliance bundle with adcp_version set.'
     );
   }
-  registerExternalSchemaRoot(adcpVersion, options.schemaRoot);
+  return { adcpVersion, schemaRoot: options.schemaRoot };
 }
 
 function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
@@ -951,7 +947,20 @@ export async function runStoryboard(
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
   options = applyStoryboardVersionOptions(storyboard, options);
-  registerRunSchemaRoot(options);
+  const schemaRoot = getRunSchemaRoot(options);
+  if (schemaRoot) {
+    return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+      runStoryboardBody(agentUrlOrUrls, storyboard, options)
+    );
+  }
+  return await runStoryboardBody(agentUrlOrUrls, storyboard, options);
+}
+
+async function runStoryboardBody(
+  agentUrlOrUrls: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
@@ -3228,7 +3237,21 @@ export async function runStoryboardStep(
 ): Promise<StoryboardStepResult> {
   validateStoryboardShape(storyboard);
   options = applyStoryboardVersionOptions(storyboard, options);
-  registerRunSchemaRoot(options);
+  const schemaRoot = getRunSchemaRoot(options);
+  if (schemaRoot) {
+    return await withExternalSchemaRoot(schemaRoot.adcpVersion, schemaRoot.schemaRoot, () =>
+      runStoryboardStepBody(agentUrl, storyboard, stepId, options)
+    );
+  }
+  return await runStoryboardStepBody(agentUrl, storyboard, stepId, options);
+}
+
+async function runStoryboardStepBody(
+  agentUrl: string,
+  storyboard: Storyboard,
+  stepId: string,
+  options: StoryboardRunOptions
+): Promise<StoryboardStepResult> {
   validateTestKit(options.test_kit);
   const clientResolution = getOrCreateClientResolution(agentUrl, options);
   const client = clientResolution.client;

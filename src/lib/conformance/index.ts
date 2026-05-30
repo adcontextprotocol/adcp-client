@@ -22,6 +22,7 @@
 export { runConformance } from './runConformance';
 export { seedFixtures } from './seeder';
 export type { SeedOptions, SeedResult, SeederName, SeedWarning } from './seeder';
+export type { ConformanceSchemaOptions } from './schemaLoader';
 export {
   STATELESS_TIER_TOOLS,
   REFERENTIAL_STATELESS_TOOLS,

@@ -15,6 +15,7 @@
 
 import Ajv, { type ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
+import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
@@ -232,6 +233,9 @@ export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
  */
 function resolveSchemaRoot(version: string): string {
   const key = resolveBundleKey(version);
+  const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
+  if (scopedRoot && existsSync(scopedRoot)) return scopedRoot;
+
   const externalRoot = externalSchemaRoots.get(key);
   if (externalRoot && existsSync(externalRoot)) return externalRoot;
 
@@ -334,6 +338,17 @@ interface LoaderState {
 
 const states: Map<string, LoaderState> = new Map();
 const externalSchemaRoots: Map<string, string> = new Map();
+const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
+
+function stateCacheKey(bundleKey: string, root: string): string {
+  return `${bundleKey}\0${root}`;
+}
+
+function clearStatesForBundle(bundleKey: string): void {
+  for (const [stateKey, state] of states) {
+    if (state.version === bundleKey) states.delete(stateKey);
+  }
+}
 
 function hasSchemaRootShape(root: string): boolean {
   if (!existsSync(root)) return false;
@@ -392,17 +407,43 @@ function prereleaseFamilyAlias(releasePrecisionVersion: string): string | undefi
   return releasePrecisionVersion.match(/^(\d+\.\d+-[0-9A-Za-z-]+)\.\d+$/)?.[1];
 }
 
+function collectSchemaRootVersionAliasGroups(root: string): Array<{ hint: string; aliases: Set<string> }> {
+  const groups: Array<{ hint: string; aliases: Set<string> }> = [];
+  for (const file of walkJsonFiles(root)) {
+    let schema: LoadedSchema;
+    try {
+      schema = loadJson(file);
+    } catch {
+      continue;
+    }
+    if (typeof schema.$id !== 'string') continue;
+    const hint = schemaIdVersionHint(schema.$id);
+    if (!hint) continue;
+    groups.push({ hint, aliases: schemaRootVersionAliases(hint) });
+  }
+  return groups;
+}
+
 function assertSchemaRootMatchesVersion(version: string, root: string): Set<string> {
   const expectedAliases = schemaRootVersionAliases(version);
+  const rootGroups = collectSchemaRootVersionAliasGroups(root);
   const rootAliases = collectSchemaRootVersionAliases(root);
-  if (rootAliases.size === 0) return expectedAliases;
-  for (const alias of rootAliases) {
-    if (expectedAliases.has(alias)) return new Set([...expectedAliases, ...rootAliases]);
+  if (
+    rootGroups.length > 0 &&
+    rootGroups.every(group => [...group.aliases].some(alias => expectedAliases.has(alias)))
+  ) {
+    return new Set([...expectedAliases, ...rootAliases]);
   }
+  const found =
+    rootGroups.length === 0
+      ? 'no AdCP schema ids'
+      : rootGroups
+          .map(group => `${group.hint} (${Array.from(group.aliases).sort().join(', ')})`)
+          .sort()
+          .join(', ');
   throw new Error(
-    `External AdCP schema root for version "${version}" at ${root} does not match the requested version. ` +
-      `Expected schema ids matching ${Array.from(expectedAliases).sort().join(', ')}, ` +
-      `found ${Array.from(rootAliases).sort().join(', ')}.`
+    `External AdCP schema root for version "${version}" at ${root} does not match the requested version and ` +
+      `must contain only schema ids matching ${Array.from(expectedAliases).sort().join(', ')}; found ${found}.`
   );
 }
 
@@ -426,7 +467,7 @@ export function registerExternalSchemaRoot(version: string, root: string): void 
   for (const alias of aliases) {
     const previous = externalSchemaRoots.get(alias);
     externalSchemaRoots.set(alias, root);
-    if (previous !== root) states.delete(alias);
+    if (previous !== root) clearStatesForBundle(alias);
   }
 }
 
@@ -446,8 +487,28 @@ export function unregisterExternalSchemaRoot(version: string): void {
   }
   for (const alias of aliases) {
     externalSchemaRoots.delete(alias);
-    states.delete(alias);
+    clearStatesForBundle(alias);
   }
+}
+
+/**
+ * Run a callback with an external schema root scoped to the current async
+ * execution chain. Unlike `registerExternalSchemaRoot`, this does not poison
+ * process-global validation state for later hosted/compliance runs.
+ */
+export function withExternalSchemaRoot<T>(version: string, root: string | undefined, fn: () => T): T {
+  if (root === undefined) return fn();
+  if (!hasSchemaRootShape(root)) {
+    throw new Error(`External AdCP schema root for version "${version}" not found or empty at ${root}`);
+  }
+  const aliases = assertSchemaRootMatchesVersion(version, root);
+  const parent = scopedExternalSchemaRoots.getStore();
+  const next = new Map(parent);
+  for (const alias of aliases) {
+    next.set(alias, root);
+    clearStatesForBundle(alias);
+  }
+  return scopedExternalSchemaRoots.run(next, fn);
 }
 
 function walkJsonFiles(dir: string): string[] {
@@ -500,6 +561,14 @@ function relaxResponseRoot(schema: LoadedSchema): LoadedSchema {
     }
   }
   return clone;
+}
+
+function getAjvRegisteredIds(ajv: Ajv): Set<string> {
+  const internals = ajv as unknown as {
+    schemas?: Record<string, unknown>;
+    refs?: Record<string, unknown>;
+  };
+  return new Set([...Object.keys(internals.schemas ?? {}), ...Object.keys(internals.refs ?? {})]);
 }
 
 /**
@@ -575,10 +644,10 @@ function ensureInit(version: string): LoaderState {
   // `'3.0.1'` share state — both resolve to bundle key `'3.0'` and the
   // same compiled AJV instance.
   const key = resolveBundleKey(version);
-  const cached = states.get(key);
-  if (cached) return cached;
-
   const root = resolveSchemaRoot(version);
+  const cacheKey = stateCacheKey(key, root);
+  const cached = states.get(cacheKey);
+  if (cached) return cached;
   const ajv = new Ajv({
     strict: false,
     allErrors: true,
@@ -595,7 +664,7 @@ function ensureInit(version: string): LoaderState {
     coreLoaded: false,
     version: key,
   };
-  states.set(key, state);
+  states.set(cacheKey, state);
   return state;
 }
 
@@ -613,21 +682,20 @@ function ensureInit(version: string): LoaderState {
  *     referenced by `signals/activate-signal-*.json`.
  *
  * Walk every directory except `bundled/` (pre-resolved schemas with refs
- * already inlined). Skip files that `buildFileIndex` registered as tool
- * request/response — those compile via `getValidator` with
- * `relaxResponseRoot` applied to the response variant, and pre-registering
- * the raw schema would short-circuit the relaxation. The fileIndex check
- * is stricter than a filename-suffix match: building-block fragments like
- * `core/pagination-response.json` end in `-response.json` but aren't tools,
- * so suffix-matching would wrongly exclude them.
+ * already inlined). Response files that `buildFileIndex` registered as tools
+ * are registered with `relaxResponseRoot` applied, matching `getValidator`.
+ * The fileIndex check is stricter than a filename-suffix match:
+ * building-block fragments like `core/pagination-response.json` end in
+ * `-response.json` but aren't tools, so suffix-matching would wrongly treat
+ * them as relaxable response roots.
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
-  // Tool RESPONSE files only — those need lazy compile through `getValidator`
-  // so `relaxResponseRoot` can apply. Tool REQUEST files and unclassified
-  // fragments are safe to pre-register: requests don't need root-level
-  // relaxation, and fragments registered here are exactly what cross-tool
-  // `$ref`s expect to find by `$id`.
+  // Tool response files are pre-registered with the same response-root
+  // relaxation `getValidator` would apply. This matters for the async response
+  // union: `core/async-response-data.json` can `$ref` both async variants and
+  // sync responses, so callers must not have to prewarm response validators
+  // before compiling a request that references the union.
   //
   // Why this matters: bundles whose source tree doesn't include a `bundled/`
   // pre-resolved subtree (e.g. v2.5, where the spec ships flat schemas with
@@ -636,20 +704,25 @@ function ensureCoreLoaded(s: LoaderState): void {
   // `buildFileIndex`. Skipping all tool files would leave that fragment
   // unregistered, so a later compile of `create_media_buy` fails on
   // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
-  const responseToolFiles = new Set<string>();
+  //
+  const responseToolFiles = new Map<string, Direction>();
   for (const [key, file] of s.fileIndex) {
     if (key.endsWith('::request')) continue;
-    responseToolFiles.add(file);
+    const direction = key.slice(key.indexOf('::') + 2) as Direction;
+    responseToolFiles.set(file, direction);
   }
+  const registeredIds = getAjvRegisteredIds(s.ajv);
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (entry.name === 'bundled') continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      if (responseToolFiles.has(file)) continue;
+      const responseDirection = responseToolFiles.get(file);
       const schema = loadJson(file);
-      if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
-        s.ajv.addSchema(schema);
+      const schemaToRegister = responseDirection === undefined ? schema : relaxResponseRoot(schema);
+      if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
+        s.ajv.addSchema(schemaToRegister);
+        registeredIds.add(schemaToRegister.$id);
       }
     }
   }
@@ -684,7 +757,7 @@ export function getValidator(
   // schemas (anything outside `bundled/`) do too — their $refs weren't
   // pre-resolved at spec-publish time.
   const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
-  if (!fromBundled) ensureCoreLoaded(s);
+  if (direction === 'request' || !fromBundled) ensureCoreLoaded(s);
 
   const rawSchema = loadJson(file);
   // Bundled files inline every referenced subschema with the original
@@ -791,7 +864,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
   } else {
-    states.delete(resolveBundleKey(version));
+    clearStatesForBundle(resolveBundleKey(version));
   }
 }
 

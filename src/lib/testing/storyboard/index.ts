@@ -109,6 +109,7 @@ export { parseStoryboard, loadStoryboardFile } from './loader';
 // Compliance cache: capability-driven resolution
 export {
   getComplianceCacheDir,
+  getExternalSchemaRootForCompliance,
   loadComplianceIndex,
   listBundles,
   loadBundleStoryboards,
