@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.11.1
+
+### Patch Changes
+
+- f26971e: Add storyboard runner support for step-level HTTP Basic auth directives.
+
 ## 7.11.0
 
 ### Minor Changes
