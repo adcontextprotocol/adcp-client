@@ -15,6 +15,14 @@ const { AccountNotFoundError } = require('../dist/lib/server/decisioning/account
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { setStatusChangeBus, createInMemoryStatusChangeBus } = require('../dist/lib/server/decisioning/status-changes');
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
+const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loader');
+
+const validateMcpWebhookPayload = getSchemaValidatorByRef('core/mcp-webhook-payload.json');
+assert.ok(validateMcpWebhookPayload, 'MCP webhook payload schema must compile');
+
+function assertMcpWebhookPayloadValid(payload) {
+  assert.strictEqual(validateMcpWebhookPayload(payload), true, JSON.stringify(validateMcpWebhookPayload.errors));
+}
 
 function buildPlatform(overrides = {}) {
   return {
@@ -2671,7 +2679,7 @@ describe('HITL push notification webhook on terminal state', () => {
     };
   }
 
-  it('emits webhook on completed task with push_notification_config', async () => {
+  it('emits webhook on completed task with push_notification_config operation_id', async () => {
     const emits = [];
     const fakeEmitter = {
       emit: async params => {
@@ -2699,7 +2707,11 @@ describe('HITL push notification webhook on terminal state', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: { url: 'https://buyer.example.com/webhook', token: 'shhh' },
+          push_notification_config: {
+            url: 'https://buyer.example.com/webhook',
+            token: 'webhook-token-1234',
+            operation_id: 'op_webhook_test',
+          },
         },
       },
     });
@@ -2716,13 +2728,63 @@ describe('HITL push notification webhook on terminal state', () => {
     // carries the success-arm body.
     assert.strictEqual(emit.payload.task_id, taskId);
     assert.strictEqual(emit.payload.task_type, 'create_media_buy');
+    assert.strictEqual(emit.payload.operation_id, 'op_webhook_test');
     assert.strictEqual(emit.payload.status, 'completed');
     assert.strictEqual(emit.payload.protocol, 'media-buy');
     assert.ok(typeof emit.payload.idempotency_key === 'string' && emit.payload.idempotency_key.length >= 16);
     assert.ok(typeof emit.payload.timestamp === 'string');
     assert.deepStrictEqual(emit.payload.result, { media_buy_id: 'mb_42', status: 'active' });
-    assert.strictEqual(emit.payload.token, 'shhh');
-    assert.ok(emit.operation_id.startsWith('create_media_buy.task_'));
+    assert.strictEqual(emit.payload.token, 'webhook-token-1234');
+    assert.match(emit.operation_id, new RegExp(`^task-webhook:acc_1:create_media_buy:${taskId}$`));
+    assert.notStrictEqual(emit.operation_id, 'op_webhook_test');
+    assertMcpWebhookPayloadValid(emit.payload);
+  });
+
+  it('treats webhook URL as opaque when push config omits operation_id', async () => {
+    const emits = [];
+    const fakeEmitter = {
+      emit: async params => {
+        emits.push(params);
+        return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+      },
+    };
+
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'webhook',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: fakeEmitter,
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: {
+            url: 'https://buyer.example.com/step/create_media_buy/op_url_must_not_be_parsed',
+            token: 'webhook-token-1234',
+          },
+        },
+      },
+    });
+
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    await server.awaitTask(result.structuredContent.task_id);
+
+    assert.strictEqual(emits.length, 1, 'one webhook emitted on terminal completion');
+    assert.ok(emits[0].payload.operation_id.startsWith('create_media_buy.'));
+    assert.match(emits[0].operation_id, /^task-webhook:acc_1:create_media_buy:task_/);
+    assert.notStrictEqual(emits[0].payload.operation_id, 'op_url_must_not_be_parsed');
+    assert.notStrictEqual(emits[0].operation_id, 'op_url_must_not_be_parsed');
+    assertMcpWebhookPayloadValid(emits[0].payload);
   });
 
   it('emits webhook on failed task with structured error', async () => {
@@ -2835,7 +2897,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     };
   }
 
-  async function dispatchWithUrl(server, url, token) {
+  async function dispatchWithPushConfig(server, pushNotificationConfig) {
     return server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -2847,10 +2909,14 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: { url, ...(token != null && { token }) },
+          push_notification_config: pushNotificationConfig,
         },
       },
     });
+  }
+
+  async function dispatchWithUrl(server, url, token) {
+    return dispatchWithPushConfig(server, { url, ...(token != null && { token }) });
   }
 
   function makeServer({ warns, emits } = {}) {
@@ -2971,6 +3037,31 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     assert.ok(result.structuredContent.adcp_error.message.includes('control characters'));
     assert.strictEqual(emits.length, 0);
   });
+
+  for (const [label, operationId, reasonFragment] of [
+    ['non-string operation_id', 123, 'must be a string'],
+    ['empty operation_id', '', 'must match'],
+    ['operation_id over 255 chars', 'a'.repeat(256), 'must match'],
+    ['operation_id with invalid character', 'op/bad', 'must match'],
+    ['operation_id with control character', 'op_\n_bad', 'must match'],
+  ]) {
+    it(`rejects ${label}`, async () => {
+      const emits = [];
+      const server = makeServer({ emits });
+      const result = await dispatchWithPushConfig(server, {
+        url: 'https://buyer.example.com/webhook',
+        operation_id: operationId,
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.operation_id');
+      assert.ok(
+        result.structuredContent.adcp_error.message.includes(reasonFragment),
+        `expected rejection reason "${reasonFragment}", got: ${result.structuredContent.adcp_error.message}`
+      );
+      assert.strictEqual(emits.length, 0);
+    });
+  }
 
   it('accepts a well-formed token', async () => {
     const emits = [];
