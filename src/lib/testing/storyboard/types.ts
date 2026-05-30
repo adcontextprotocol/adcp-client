@@ -736,6 +736,25 @@ export type StoryboardValidationCheck =
   | 'envelope_field_value_or_absent'
   | 'field_value'
   | 'field_value_or_absent'
+  /**
+   * Assert that a string field in the task payload matches a JavaScript
+   * regular expression source declared in `pattern`. Fails when the path is
+   * missing, the value is not a string, the pattern is invalid, or the regex
+   * does not match. Failure output carries `expected: { pattern }` and
+   * `actual` as the observed value (or null when missing). Added for
+   * runner-output-contract v2.5.0.
+   */
+  | 'field_pattern'
+  /**
+   * Envelope-scoped `field_pattern`. The path resolves against the union of
+   * protocol-envelope fields (`status`, `task_id`, etc.) and string-valued
+   * version-envelope fields such as `adcp_version`. Runtime matching is the
+   * same as `field_pattern`; the distinct kind lets static linting validate
+   * against the envelope schemas instead of the task payload schema. Numeric
+   * envelope fields such as `adcp_major_version` should use
+   * `envelope_field_value`.
+   */
+  | 'envelope_field_pattern'
   // Wildcard-aware membership check. `path` may include `[*]` segments that
   // expand to every array element via `resolvePathAll`. Passes when ANY
   // resolved value matches `value` (or any of `allowed_values`). Lets
@@ -1062,6 +1081,8 @@ export interface StoryboardValidation {
   value?: unknown;
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
+  /** JavaScript regular expression source for field_pattern checks. */
+  pattern?: string;
   description: string;
   // ─── refs_resolve fields ───────────────────────────────────
   /** Source refs (the refs being checked). */

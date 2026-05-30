@@ -250,22 +250,27 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'field_absent':
       return validateFieldAbsent(validation, resolveTarget(ctx));
     case 'envelope_field_present':
-    case 'envelope_field_absent':
-    case 'envelope_field_value':
-    case 'envelope_field_value_or_absent':
       // Envelope-scoped variants — runtime semantics identical to the
       // un-prefixed checks (TaskResult exposes envelope fields like
-      // `status`, `task_id` at the surface level). The distinct check types
-      // exist primarily so static drift detection can walk the envelope
-      // schema instead of the per-tool response. See adcp#3429.
-      if (validation.check === 'envelope_field_present') return validateFieldPresent(validation, resolveTarget(ctx));
-      if (validation.check === 'envelope_field_absent') return validateFieldAbsent(validation, resolveTarget(ctx));
-      if (validation.check === 'envelope_field_value') return validateFieldValue(validation, resolveTarget(ctx));
+      // `status`, `task_id` and version-envelope fields like `adcp_version`
+      // at the surface level). The distinct check types exist primarily so
+      // static drift detection can walk the envelope schemas instead of the
+      // per-tool response. See adcp#3429 and adcp#5195.
+      return validateFieldPresent(validation, resolveTarget(ctx));
+    case 'envelope_field_absent':
+      return validateFieldAbsent(validation, resolveTarget(ctx));
+    case 'envelope_field_value':
+      return validateFieldValue(validation, resolveTarget(ctx));
+    case 'envelope_field_value_or_absent':
       return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
+    case 'envelope_field_pattern':
+      return validateFieldPattern(validation, resolveTarget(ctx));
     case 'field_value':
       return validateFieldValue(validation, resolveTarget(ctx));
     case 'field_value_or_absent':
       return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
+    case 'field_pattern':
+      return validateFieldPattern(validation, resolveTarget(ctx));
     case 'field_contains':
       return validateFieldContains(validation, resolveTarget(ctx));
     case 'status_code':
@@ -1005,6 +1010,99 @@ const TASK_ENVELOPE_STATUSES = new Set([
 
 function isTaskEnvelopeStatus(value: unknown): boolean {
   return typeof value === 'string' && TASK_ENVELOPE_STATUSES.has(value);
+}
+
+// ────────────────────────────────────────────────────────────
+// field_pattern / envelope_field_pattern: check a string matches
+// a storyboard-authored JavaScript regular expression source.
+// ────────────────────────────────────────────────────────────
+
+function validateFieldPattern(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const checkName = validation.check;
+  if (!validation.path) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `No path specified for ${checkName} validation`,
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const pointer = toJsonPointer(validation.path);
+  const expected = { pattern: validation.pattern };
+
+  if (typeof validation.pattern !== 'string' || validation.pattern.length === 0) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `${checkName} requires a non-empty \`pattern\` string`,
+      json_pointer: pointer,
+      expected: { pattern: 'non-empty JavaScript regular expression source' },
+      actual: validation.pattern ?? null,
+    };
+  }
+
+  let re: RegExp;
+  try {
+    re = new RegExp(validation.pattern);
+  } catch (err) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Invalid ${checkName} pattern ${JSON.stringify(validation.pattern)}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      json_pointer: pointer,
+      expected,
+      actual: validation.pattern ?? null,
+    };
+  }
+
+  const actual = resolvePath(taskResult.data, validation.path);
+  if (typeof actual !== 'string') {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error:
+        actual === undefined || actual === null
+          ? `Field not found at path: ${validation.path}`
+          : `Expected string at path: ${validation.path}, got ${Array.isArray(actual) ? 'array' : typeof actual}`,
+      json_pointer: pointer,
+      expected,
+      actual: actual ?? null,
+    };
+  }
+
+  if (re.test(actual)) {
+    return {
+      check: checkName,
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+
+  return {
+    check: checkName,
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected string at path ${validation.path} to match pattern ${JSON.stringify(validation.pattern)}, got ${JSON.stringify(actual)}`,
+    json_pointer: pointer,
+    expected,
+    actual,
+  };
 }
 
 // ────────────────────────────────────────────────────────────

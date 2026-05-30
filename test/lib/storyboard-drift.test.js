@@ -1,8 +1,8 @@
 /**
  * Schema drift detection for storyboard YAML validations.
  *
- * Catches when field_present / field_value / field_value_or_absent paths in
- * storyboard YAML reference fields that don't exist in the corresponding
+ * Catches when field_present / field_value / field_value_or_absent /
+ * field_pattern paths in storyboard YAML reference fields that don't exist in the corresponding
  * Zod response schemas, when context extractors reference tasks without
  * schemas, and when `field_value_or_absent` is asserted on a path the
  * response schema already marks required (the tolerance is meaningless —
@@ -17,14 +17,12 @@ const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storybo
 const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
-// `envelope_field_present` (and `envelope_field_value{,_or_absent}`)
-// validations walk the v3 protocol envelope — `status`, `task_id`,
-// `message`, `replayed`, `governance_context`, `timestamp`, `context_id`,
-// `push_notification_config` — instead of per-tool response schemas.
-// `errors` and `adcp_version` are NOT envelope fields (errors lives inside
-// `payload` per the per-tool response schema; adcp_major_version is on the
-// request, not on either response surface). Added per adcp#3429.
-const { ProtocolEnvelopeSchema } = require('../../dist/lib/types/schemas.generated.js');
+// `envelope_field_*` validations walk the v3 protocol + version envelopes
+// (`status`, `task_id`, `message`, `replayed`, `adcp_version`, etc.) instead
+// of per-tool response schemas. `errors` lives inside `payload` per the
+// per-tool response schema. Added per adcp#3429 and adcp#5195.
+const { AdCPVersionEnvelopeSchema, ProtocolEnvelopeSchema } = require('../../dist/lib/types/schemas.generated.js');
+const EnvelopeSchema = ProtocolEnvelopeSchema.merge(AdCPVersionEnvelopeSchema);
 
 // Runner-internal tasks with no agent-facing schema.
 const HARNESS_TASKS = new Set([
@@ -233,7 +231,9 @@ function collectFieldValidations(storyboards) {
               v.check === 'field_value' ||
               v.check === 'envelope_field_value' ||
               v.check === 'field_value_or_absent' ||
-              v.check === 'envelope_field_value_or_absent') &&
+              v.check === 'envelope_field_value_or_absent' ||
+              v.check === 'field_pattern' ||
+              v.check === 'envelope_field_pattern') &&
             v.path
           ) {
             if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema
@@ -267,7 +267,7 @@ describe('storyboard schema drift', () => {
   it('found field validations to check', () => {
     assert.ok(
       fieldValidations.length > 0,
-      'Expected at least one field_present, field_value, or field_value_or_absent validation'
+      'Expected at least one field_present, field_value, field_value_or_absent, or field_pattern validation'
     );
   });
 
@@ -364,15 +364,16 @@ describe('storyboard schema drift', () => {
     // `task_id`, `message`, `replayed`, `governance_context`, `timestamp`,
     // `context_id`, `push_notification_config`) using the envelope-scoped
     // checks so the drift detector knows to walk `protocol-envelope.json`
-    // rather than the per-tool response schema. `errors` and `adcp_version`
-    // are NOT envelope fields — keep them on the un-prefixed checks.
+    // and `version-envelope.json` rather than the per-tool response schema.
+    // `errors` lives inside `payload`, not on either envelope.
     // `envelope_field_absent` is excluded here — absence checks have no schema
     // target (see the `field_absent / envelope_field_absent` block above).
     const envelopeValidations = fieldValidations.filter(
       v =>
         v.check === 'envelope_field_present' ||
         v.check === 'envelope_field_value' ||
-        v.check === 'envelope_field_value_or_absent'
+        v.check === 'envelope_field_value_or_absent' ||
+        v.check === 'envelope_field_pattern'
     );
 
     for (const entry of envelopeValidations) {
@@ -383,10 +384,10 @@ describe('storyboard schema drift', () => {
         { skip },
         () => {
           const segments = parsePath(entry.path);
-          const reachable = isPathReachable(ProtocolEnvelopeSchema, segments);
+          const reachable = isPathReachable(EnvelopeSchema, segments);
           assert.ok(
             reachable,
-            `Path "${entry.path}" is not reachable in protocol-envelope.json. ` +
+            `Path "${entry.path}" is not reachable in protocol-envelope.json or version-envelope.json. ` +
               `Segments: ${JSON.stringify(segments)}`
           );
         }
@@ -398,6 +399,27 @@ describe('storyboard schema drift', () => {
     const valueValidations = fieldValidations.filter(v => v.check === 'field_value');
 
     for (const entry of valueValidations) {
+      const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
+      if (!schema) continue;
+
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(`${entry.storyboard}/${entry.step}: ${entry.path} exists in ${entry.task} schema`, { skip }, () => {
+        const segments = parsePath(entry.path);
+        const reachable = isPathReachable(schema, segments);
+        assert.ok(
+          reachable,
+          `Path "${entry.path}" is not reachable in ${entry.task} response schema. ` +
+            `Segments: ${JSON.stringify(segments)}`
+        );
+      });
+    }
+  });
+
+  describe('field_pattern paths are reachable in response schemas', () => {
+    const patternValidations = fieldValidations.filter(v => v.check === 'field_pattern');
+
+    for (const entry of patternValidations) {
       const schema = TOOL_RESPONSE_SCHEMAS[entry.task];
       if (!schema) continue;
 
