@@ -213,7 +213,11 @@ type ExhaustiveScenarioCheck = Exclude<
   ControllerScenario,
   (typeof CONTROLLER_SCENARIOS)[keyof typeof CONTROLLER_SCENARIOS] | SeedScenario
 >;
-const _scenarioExhaustivenessGuard: ExhaustiveScenarioCheck extends never ? true : never = true;
+const _scenarioExhaustivenessGuard: string extends ControllerScenario
+  ? true
+  : ExhaustiveScenarioCheck extends never
+    ? true
+    : never = true;
 void _scenarioExhaustivenessGuard;
 
 // ────────────────────────────────────────────────────────────

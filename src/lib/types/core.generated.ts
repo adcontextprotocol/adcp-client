@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.2
-// Generated at: 2026-05-29T23:54:04.507Z
+// Generated AdCP core types from official schemas v3.1.0-rc.3
+// Generated at: 2026-05-30T10:30:20.747Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -456,6 +456,45 @@ export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate
  * Measurement standard. Required when metric is 'viewability' (MRC and GroupM define materially different thresholds). Omit for other metrics.
  */
 export type ViewabilityStandard = 'mrc' | 'groupm';
+/**
+ * One metric in a package's binding reporting contract. Each entry uses `scope` as the discriminator and identifies a standard or vendor-defined metric that the seller has committed to populate in delivery reports.
+ */
+export type CommittedMetric =
+  | {
+      /**
+       * Standard metric from the closed `available-metric.json` enum.
+       */
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Disambiguates metrics whose definition varies by qualifier. Today carries five keys — `viewability_standard` (MRC vs GroupM viewability), `completion_source` (seller- vs vendor-attested completion), `attribution_methodology` (how attribution was computed for outcome metrics), `attribution_window` (the time window over which outcomes were attributed), and `lift_dimension` (which dimension of brand_lift this row represents — awareness, consideration, etc.). Required when the underlying `metric_id` has multiple incompatible measurement paths AND the seller commits to a specific one. Symmetric on `missing_metrics`. Reserved for additive qualifiers in future minors — schema is closed (`additionalProperties: false`); new keys ship explicitly. **Heterogeneous value types**: qualifier values can be either string enums (`viewability_standard`, `completion_source`, `attribution_methodology`, `lift_dimension`) or structured objects (`attribution_window` is a duration `{interval, unit}`). Consumers MUST dispatch on key name to know value shape; structured-value qualifiers join on canonical (key-sorted) deep equality so `{interval: 14, unit: 'days'}` and `{unit: 'days', interval: 14}` resolve to the same partition. Rate-style metrics (`new_to_brand_rate`, `engagement_rate`, etc.) inherit the methodology of their numerator — when a rate carries `attribution_methodology` qualifier, it applies to the underlying conversions/events being rated.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+      /**
+       * ISO 8601 timestamp when this metric became part of the contract. Day-1 commitments use `create_media_buy.confirmed_at`; mid-flight additions use the time the amendment was accepted.
+       * @format date-time
+       */
+      committed_at: string;
+    }
+  | {
+      /**
+       * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+       */
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      /**
+       * ISO 8601 timestamp when this vendor metric became part of the contract.
+       * @format date-time
+       */
+      committed_at: string;
+    };
 /**
  * Identifier for the standard metric.
  */
@@ -1422,43 +1461,7 @@ export interface Package {
   /**
    * The binding reporting contract for this package — what the seller has agreed to populate in delivery reports. Each entry carries an explicit `committed_at` timestamp, so the array also serves as the contract amendment ledger: day-1 commitments share `committed_at = create_media_buy.confirmed_at`; mid-flight additions carry their own timestamps. When `create_media_buy.confirmed_at` is null for a provisional buy, sellers MUST omit `committed_metrics` until commitment. The first response that sets `confirmed_at` MAY include the initial committed-metrics set, and each such entry's `committed_at` MUST equal `confirmed_at`. The `missing_metrics` field on `get_media_buy_delivery` reconciles against this list, filtering to entries where `committed_at < reporting_period.end` (a metric committed mid-flight is only audited from its commitment timestamp forward). Sellers stamp the day-1 set on the `create_media_buy` response; mid-flight additions are appended via `update_media_buy` (append-only — sellers MUST reject attempts to modify or remove existing entries with `validation_error`, suggested code: `IMMUTABLE_FIELD`). Optional in v1; absence means the seller does not provide an audit-grade contract and `missing_metrics` falls back to the product's live `available_metrics` (a known audit gap — buyers SHOULD treat absence as 'no audit-grade contract' rather than 'clean delivery'). Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. The unified shape is symmetric with `missing_metrics` and `aggregated_totals.metric_aggregates` — same atomic unit `(scope, metric_id, qualifier)` across contract, diff, and delivery, so reconciliation collapses to a row-level join on the tuple. Replaces the parallel-array design that shipped briefly in #3510.
    */
-  committed_metrics?: (
-    | {
-        /**
-         * Standard metric from the closed `available-metric.json` enum.
-         */
-        scope: 'standard';
-        metric_id: AvailableMetric;
-        /**
-         * Disambiguates metrics whose definition varies by qualifier. Today carries five keys — `viewability_standard` (MRC vs GroupM viewability), `completion_source` (seller- vs vendor-attested completion), `attribution_methodology` (how attribution was computed for outcome metrics), `attribution_window` (the time window over which outcomes were attributed), and `lift_dimension` (which dimension of brand_lift this row represents — awareness, consideration, etc.). Required when the underlying `metric_id` has multiple incompatible measurement paths AND the seller commits to a specific one. Symmetric on `missing_metrics`. Reserved for additive qualifiers in future minors — schema is closed (`additionalProperties: false`); new keys ship explicitly. **Heterogeneous value types**: qualifier values can be either string enums (`viewability_standard`, `completion_source`, `attribution_methodology`, `lift_dimension`) or structured objects (`attribution_window` is a duration `{interval, unit}`). Consumers MUST dispatch on key name to know value shape; structured-value qualifiers join on canonical (key-sorted) deep equality so `{interval: 14, unit: 'days'}` and `{unit: 'days', interval: 14}` resolve to the same partition. Rate-style metrics (`new_to_brand_rate`, `engagement_rate`, etc.) inherit the methodology of their numerator — when a rate carries `attribution_methodology` qualifier, it applies to the underlying conversions/events being rated.
-         */
-        qualifier?: {
-          viewability_standard?: ViewabilityStandard;
-          completion_source?: CompletionSource;
-          attribution_methodology?: AttributionMethodology;
-          attribution_window?: Duration;
-          lift_dimension?: LiftDimension;
-        };
-        /**
-         * ISO 8601 timestamp when this metric became part of the contract. Day-1 commitments use `create_media_buy.confirmed_at`; mid-flight additions use the time the amendment was accepted.
-         * @format date-time
-         */
-        committed_at: string;
-      }
-    | {
-        /**
-         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
-         */
-        scope: 'vendor';
-        vendor: BrandReference;
-        metric_id: VendorMetricID;
-        /**
-         * ISO 8601 timestamp when this vendor metric became part of the contract.
-         * @format date-time
-         */
-        committed_at: string;
-      }
-  )[];
+  committed_metrics?: CommittedMetric[];
   /**
    * Creative assets assigned to this package
    */
@@ -6679,6 +6682,9 @@ export interface ForecastPoint {
    */
   vendor_metric_values?: ForecastVendorMetricValue[];
 }
+/**
+ * A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface GeoForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6698,6 +6704,9 @@ export interface GeoForecastDimension {
    */
   geo_name?: string;
 }
+/**
+ * A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface PlacementForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6709,6 +6718,9 @@ export interface PlacementForecastDimension {
    */
   placement_name?: string;
 }
+/**
+ * A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface DeviceTypeForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6716,6 +6728,9 @@ export interface DeviceTypeForecastDimension {
   kind: 'device_type';
   device_type: DeviceType;
 }
+/**
+ * An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface DevicePlatformForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6723,6 +6738,9 @@ export interface DevicePlatformForecastDimension {
   kind: 'device_platform';
   device_platform: DevicePlatform;
 }
+/**
+ * An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface AudienceForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6738,6 +6756,9 @@ export interface AudienceForecastDimension {
    */
   audience_name?: string;
 }
+/**
+ * A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface SignalForecastDimension {
   /**
    * Dimension family discriminator.
@@ -7207,30 +7228,34 @@ export interface SignalTargetingRules {
   /**
    * Optional product-scoped overrides for specific ProductSignalTargetingOption.selection_group values. Use this when one product has mixed behavior, such as fixed seller-applied suppressions, a required pick-one include tier, optional buyer-selected exclusions, or heterogeneous targeting planes that must be represented as separate ANDed clauses. Rules apply only to options whose selection_group matches. When selection_group_rules are present, each packages[].targeting_overlay.signal_targeting_groups child group MUST contain signals from exactly one selection_group and one targeting_mode, and buyers MUST send at most one child group for each (selection_group, targeting_mode) pair. Sellers MUST reject duplicate, mixed, or collapsed groups that combine distinct selection_group_rules into the same child group.
    */
-  selection_group_rules?: {
-    /**
-     * ProductSignalTargetingOption.selection_group value this rule applies to.
-     */
-    selection_group: string;
-    /**
-     * How options in this selection_group are intended to be used in signal_targeting_groups. 'include' maps to child groups with operator 'any'. 'exclude' maps to child groups with operator 'none'. Omit when options in the group may be used according to each option's allowed_targeting_modes.
-     */
-    targeting_mode?: 'include' | 'exclude';
-    /**
-     * Selection behavior for this selection_group. 'required' means at least min_selected_signals, or 1 when omitted. 'fixed' means default_selected options in this group are seller-applied and read-only.
-     */
-    selection_mode?: 'optional' | 'required' | 'fixed';
-    /**
-     * Minimum selected options from this selection_group. If selection_mode is 'required' and omitted, sellers MUST treat the minimum as 1.
-     * @minimum 0
-     */
-    min_selected_signals?: number;
-    /**
-     * Maximum selected options from this selection_group.
-     * @minimum 1
-     */
-    max_selected_signals?: number;
-  }[];
+  selection_group_rules?: SignalSelectionGroupRule[];
+}
+/**
+ * Product-scoped override for one ProductSignalTargetingOption.selection_group value. Use this when a product has mixed signal-selection behavior, such as fixed suppressions plus a required pick-one include tier.
+ */
+export interface SignalSelectionGroupRule {
+  /**
+   * ProductSignalTargetingOption.selection_group value this rule applies to.
+   */
+  selection_group: string;
+  /**
+   * How options in this selection_group are intended to be used in signal_targeting_groups. 'include' maps to child groups with operator 'any'. 'exclude' maps to child groups with operator 'none'. Omit when options in the group may be used according to each option's allowed_targeting_modes.
+   */
+  targeting_mode?: 'include' | 'exclude';
+  /**
+   * Selection behavior for this selection_group. 'required' means at least min_selected_signals, or 1 when omitted. 'fixed' means default_selected options in this group are seller-applied and read-only.
+   */
+  selection_mode?: 'optional' | 'required' | 'fixed';
+  /**
+   * Minimum selected options from this selection_group. If selection_mode is 'required' and omitted, sellers MUST treat the minimum as 1.
+   * @minimum 0
+   */
+  min_selected_signals?: number;
+  /**
+   * Maximum selected options from this selection_group.
+   * @minimum 1
+   */
+  max_selected_signals?: number;
 }
 /**
  * Vendor-attested metric optimization capabilities for this product. Presence indicates the product supports `optimization_goals` with `kind: 'vendor_metric'` — the seller's bidding stack can steer delivery toward a specific vendor's measurement (e.g., DV/IAS/Adelaide attention, Scope3 emissions, Kantar brand lift, retail-media partner metrics). Distinct from `metric_optimization` (seller-native metrics with no vendor binding) and from `reporting_capabilities.vendor_metrics` (which declares what the product can *report* rather than what it can *optimize against*). A product may report a vendor metric without being able to optimize for it. Buyers MUST verify the goal's `(vendor, metric_id)` is in `supported_metrics` AND that the package's `committed_metrics[]` includes a matching `{ scope: 'vendor', vendor, metric_id }` entry — optimization without committed reporting is unverifiable and is rejected at the wire level.
@@ -7239,14 +7264,18 @@ export interface VendorMetricOptimization {
   /**
    * Vendor-defined metrics this product can steer delivery toward. Each entry pairs a vendor identity (BrandRef anchored on the vendor's `brand.json` `agents[type='measurement']`) with a `metric_id` from that vendor's published `measurement.metrics[]` catalog, plus the target kinds the seller supports for the pair. Semantic uniqueness key is `(vendor.domain, vendor.brand_id, metric_id)`; sellers MUST de-duplicate before publication. JSON Schema `uniqueItems` blocks exact-object duplicates; semantic deduplication on the BrandRef-domain key is a seller obligation.
    */
-  supported_metrics: {
-    vendor: BrandReference;
-    metric_id: VendorMetricID;
-    /**
-     * Target kinds available for `vendor_metric` goals against this `(vendor, metric_id)` pair. Values match `target.kind` on the optimization goal. `cost_per` — target cost per metric unit (e.g., $0.05 per attention-second). `threshold_rate` — minimum per-impression value (e.g., attention_score ≥ 70). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes the metric within budget — no declaration needed for that mode. When omitted, buyers can still set target-less vendor_metric goals.
-     */
-    supported_targets?: ('cost_per' | 'threshold_rate')[];
-  }[];
+  supported_metrics: VendorMetricOptimizationSupportedMetric[];
+}
+/**
+ * One vendor-defined metric that a product can optimize toward. Identified by the tuple `(vendor, metric_id)` plus the supported target kinds for optimization goals.
+ */
+export interface VendorMetricOptimizationSupportedMetric {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  /**
+   * Target kinds available for `vendor_metric` goals against this `(vendor, metric_id)` pair. Values match `target.kind` on the optimization goal. `cost_per` — target cost per metric unit (e.g., $0.05 per attention-second). `threshold_rate` — minimum per-impression value (e.g., attention_score ≥ 70). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes the metric within budget — no declaration needed for that mode. When omitted, buyers can still set target-less vendor_metric goals.
+   */
+  supported_targets?: ('cost_per' | 'threshold_rate')[];
 }
 /**
  * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
@@ -7558,6 +7587,7 @@ export interface Property {
 export type TaskType =
   | 'create_media_buy'
   | 'update_media_buy'
+  | 'media_buy_delivery'
   | 'sync_creatives'
   | 'activate_signal'
   | 'get_signals'
@@ -7617,6 +7647,7 @@ export type AdCPAsyncResponseData =
   | UpdateMediaBuyAsyncWorking
   | UpdateMediaBuyAsyncInputRequired
   | UpdateMediaBuyAsyncSubmitted
+  | MediaBuyDeliveryWebhookResult
   | BuildCreativeResponse
   | BuildCreativeAsyncWorking
   | BuildCreativeAsyncInputRequired
@@ -7803,6 +7834,10 @@ export type UpdateMediaBuyResponse = {
    */
   adcp_major_version?: number;
 } & (UpdateMediaBuySuccess | UpdateMediaBuyError | UpdateMediaBuySubmitted);
+/**
+ * Supported pricing models for advertising products
+ */
+export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
 /**
  * Response for completed or failed build_creative
  */
@@ -9232,6 +9267,516 @@ export interface UpdateMediaBuyAsyncSubmitted {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Delivery-report payload for media_buy_delivery webhook notifications. This is the inner result object carried by mcp-webhook-payload.json, not the full top-level get_media_buy_delivery task response envelope.
+ */
+export interface MediaBuyDeliveryWebhookResult {
+  /**
+   * Type of delivery-report notification: scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = corrected data for the same window, window_update = a wider measurement window supersedes a prior window.
+   */
+  notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
+  /**
+   * Indicates if any media buys in this webhook have missing or delayed data.
+   */
+  partial_data?: boolean;
+  /**
+   * Number of media buys with reporting_delayed or failed status when partial_data is true.
+   * @minimum 0
+   */
+  unavailable_count?: number;
+  /**
+   * Sequential notification number for this reporting webhook stream.
+   * @minimum 1
+   */
+  sequence_number?: number;
+  /**
+   * ISO 8601 timestamp for the next expected notification. Omitted on final notifications.
+   * @format date-time
+   */
+  next_expected_at?: string;
+  /**
+   * UTC date range covered by the delivery report.
+   */
+  reporting_period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+  };
+  /**
+   * ISO 4217 currency code.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency: string;
+  attribution_window?: AttributionWindow;
+  /**
+   * Delivery rows for one or more media buys included in this notification.
+   */
+  media_buy_deliveries: {
+    /**
+     * Seller's media buy identifier.
+     */
+    media_buy_id: string;
+    /**
+     * Current media buy lifecycle or reporting status. This is distinct from the webhook envelope's top-level task status.
+     */
+    status:
+      | 'pending_creatives'
+      | 'pending_start'
+      | 'pending'
+      | 'active'
+      | 'paused'
+      | 'completed'
+      | 'rejected'
+      | 'canceled'
+      | 'failed'
+      | 'reporting_delayed';
+    /**
+     * When delayed data is expected to be available. Present when status is reporting_delayed.
+     * @format date-time
+     */
+    expected_availability?: string;
+    /**
+     * Indicates this row contains updated data for a previously reported period.
+     */
+    is_adjusted?: boolean;
+    /**
+     * Whether this row's delivery data is final for the reporting period.
+     */
+    is_final?: boolean;
+    /**
+     * Timestamp when this row became final. Present only when is_final is true.
+     * @format date-time
+     */
+    finalized_at?: string;
+    pricing_model?: PricingModel;
+    totals: DeliveryMetrics & {
+      /**
+       * @minimum 0
+       */
+      effective_rate?: number;
+    };
+    /**
+     * Metrics broken down by package.
+     */
+    by_package: (DeliveryMetrics & {
+      package_id?: string;
+      /**
+       * @minimum 0
+       */
+      pacing_index?: number;
+      pricing_model?: PricingModel;
+      /**
+       * @minimum 0
+       */
+      rate?: number;
+      /**
+       * @pattern ^[A-Z]{3}$
+       */
+      currency?: string;
+      delivery_status?: 'delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
+      paused?: boolean;
+      is_final?: boolean;
+      /**
+       * @format date-time
+       */
+      finalized_at?: string;
+      /**
+       * @maxLength 50
+       */
+      measurement_window?: string;
+      /**
+       * @maxLength 50
+       */
+      supersedes_window?: string;
+    })[];
+  }[];
+  /**
+   * Task-specific delivery errors or warnings.
+   */
+  errors?: Error[];
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard delivery metrics that can be reported at media buy, package, or creative level
+ */
+export interface DeliveryMetrics {
+  /**
+   * Impressions delivered
+   * @minimum 0
+   */
+  impressions?: number;
+  /**
+   * Amount spent
+   * @minimum 0
+   */
+  spend?: number;
+  /**
+   * Total clicks
+   * @minimum 0
+   */
+  clicks?: number;
+  /**
+   * Click-through rate (clicks/impressions)
+   * @minimum 0
+   * @maximum 1
+   */
+  ctr?: number;
+  /**
+   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
+   * @minimum 0
+   */
+  views?: number;
+  /**
+   * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
+   * @minimum 0
+   */
+  completed_views?: number;
+  /**
+   * Completion rate (completed_views/impressions)
+   * @minimum 0
+   * @maximum 1
+   */
+  completion_rate?: number;
+  /**
+   * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
+   * @minimum 0
+   */
+  conversions?: number;
+  /**
+   * Total monetary value of attributed conversions (in the reporting currency)
+   * @minimum 0
+   */
+  conversion_value?: number;
+  /**
+   * Return on ad spend (conversion_value / spend)
+   * @minimum 0
+   */
+  roas?: number;
+  /**
+   * Cost per conversion (spend / conversions)
+   * @minimum 0
+   */
+  cost_per_acquisition?: number;
+  /**
+   * Fraction of `conversions` (transactions) from first-time brand buyers, 0 = none, 1 = all. For retail-media unit-volume tracking of first-time buyers, see `new_to_brand_units` (count, not rate).
+   * @minimum 0
+   * @maximum 1
+   */
+  new_to_brand_rate?: number;
+  /**
+   * Leads generated (convenience alias for by_event_type where event_type='lead')
+   * @minimum 0
+   */
+  leads?: number;
+  /**
+   * Incremental sales lift attributed to the campaign — sales above the control/holdout baseline. Reported as a fraction (0.15 = 15% lift) or as an absolute value depending on seller convention. The seller's `attribution_methodology` qualifier (typically `deterministic_purchase` or `modeled`) and `attribution_window` qualifier on the matching `committed_metrics` entry disambiguate the methodology and window.
+   * @minimum 0
+   */
+  incremental_sales_lift?: number;
+  /**
+   * Brand lift — measured change in a brand metric (awareness, consideration, favorability, purchase intent, or ad recall) attributed to the campaign. Typically panel-based or survey-based. Reported as a fraction (0.05 = 5% lift). **Multidimensional in production** — Kantar, Upwave, Cint, DV all report each dimension separately with its own sample size and confidence interval. The dimension flows through `qualifier.lift_dimension` on `committed_metrics` / `metric_aggregates` (`awareness` | `consideration` | `favorability` | `purchase_intent` | `ad_recall`); rows under different dimensions are different surveyed outcomes and must not be combined. Use `attribution_methodology: 'panel_based'` qualifier when the underlying methodology is a panel.
+   * @minimum 0
+   */
+  brand_lift?: number;
+  /**
+   * Store visits attributed to ad exposure. Count of incremental visits over baseline. Typically uses location-data panel methodology (`attribution_methodology: 'panel_based'`) or deterministic loyalty-card match (`attribution_methodology: 'deterministic_purchase'`).
+   * @minimum 0
+   */
+  foot_traffic?: number;
+  /**
+   * Incremental conversions attributed to the campaign — conversions above the control/holdout baseline. Reported as a fraction (0.10 = 10% lift) or as an absolute count depending on seller convention. Distinct from `conversions` (raw count of attributed conversions); conversion_lift requires a control group and an incrementality methodology.
+   * @minimum 0
+   */
+  conversion_lift?: number;
+  /**
+   * Lift in brand search query volume attributed to the campaign — measured via search-data partnerships (Google, Microsoft) or survey methodology. Reported as a fraction (0.20 = 20% lift in branded search).
+   * @minimum 0
+   */
+  brand_search_lift?: number;
+  /**
+   * Number of times the ad creative was displayed on a DOOH screen or played in a loop. Raw play count before any impression multiplier is applied. Mirrors `forecastable-metric.json`'s `plays` token for forecast↔delivery reconciliation. Distinct from `dooh_metrics.loop_plays` (per-screen rotation count) and from `impressions` (multiplied audience figure). Used for DOOH and broadcast inventory where buyers reconcile against forecast `plays`.
+   * @minimum 0
+   */
+  plays?: number;
+  /**
+   * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
+   */
+  by_event_type?: {
+    event_type: EventType;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of events of this type
+     * @minimum 0
+     */
+    count: number;
+    /**
+     * Total monetary value of events of this type
+     * @minimum 0
+     */
+    value?: number;
+  }[];
+  /**
+   * Gross Rating Points delivered (for CPP)
+   * @minimum 0
+   */
+  grps?: number;
+  /**
+   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit. The measurement window for this value is declared in `reach_window`; when `reach_window` is omitted, the window is unspecified and buyers MUST NOT sum reach across reports (the value MAY be a daily snapshot, a cumulative total, or something else).
+   * @minimum 0
+   */
+  reach?: number;
+  /**
+   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
+   */
+  reach_unit?: ReachUnit;
+  /**
+   * Measurement window for the reported `reach` and `frequency` values in this row. Declares whether the values are a per-period snapshot, a trailing rolling window, or cumulative-to-date — without this declaration, buyers summing `reach` across rows (e.g., daily delivery reports) can silently double-count audiences. Sellers SHOULD populate this whenever `reach` is present.
+   */
+  reach_window?: {
+    /**
+     * Window semantics. `cumulative` — uniques since campaign start; the value is the total unique count to date and MUST NOT be summed across rows (each later row supersedes the earlier value). `period` — uniques within a single non-overlapping reporting period (e.g., a daily snapshot for a specific calendar day). Adjacent `period` rows do not share audiences by construction, but the same person MAY appear across multiple periods, so MUST NOT be summed across rows to compute campaign reach. `rolling` — uniques within a trailing window ending at the row's reporting timestamp (e.g., trailing-7-day reach). Adjacent rolling rows overlap and MUST NOT be summed; each row's value stands alone.
+     */
+    kind: 'cumulative' | 'period' | 'rolling';
+    /**
+     * Duration of the measurement window. REQUIRED when `kind` is `period` or `rolling` — declares the snapshot length (e.g., `{"interval": 1, "unit": "days"}` for a daily snapshot) or the trailing-window length (e.g., `{"interval": 7, "unit": "days"}` for trailing-7-day rolling reach). When `kind` is `cumulative`, this field is implicit (campaign-to-date) and SHOULD be omitted.
+     */
+    period?: Duration;
+  };
+  /**
+   * Average frequency per reach unit, measured over the window declared in `reach_window`. When `reach_unit` is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc. When `reach_window` is omitted, the window is unspecified — buyers MUST NOT compare or average frequency values across rows.
+   * @minimum 0
+   */
+  frequency?: number;
+  /**
+   * Audio/video quartile completion data
+   */
+  quartile_data?: {
+    /**
+     * 25% completion views
+     * @minimum 0
+     */
+    q1_views?: number;
+    /**
+     * 50% completion views
+     * @minimum 0
+     */
+    q2_views?: number;
+    /**
+     * 75% completion views
+     * @minimum 0
+     */
+    q3_views?: number;
+    /**
+     * 100% completion views
+     * @minimum 0
+     */
+    q4_views?: number;
+  };
+  /**
+   * DOOH-specific metrics (only included for DOOH campaigns)
+   */
+  dooh_metrics?: {
+    /**
+     * Number of times ad played in rotation
+     * @minimum 0
+     */
+    loop_plays?: number;
+    /**
+     * Number of unique screens displaying the ad
+     * @minimum 0
+     */
+    screens_used?: number;
+    /**
+     * Total display time in seconds
+     * @minimum 0
+     */
+    screen_time_seconds?: number;
+    /**
+     * Actual share of voice delivered (0.0 to 1.0)
+     * @minimum 0
+     * @maximum 1
+     */
+    sov_achieved?: number;
+    /**
+     * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
+     */
+    calculation_notes?: string;
+    /**
+     * Per-venue performance breakdown
+     */
+    venue_breakdown?: {
+      /**
+       * Venue identifier
+       */
+      venue_id: string;
+      /**
+       * Human-readable venue name
+       */
+      venue_name?: string;
+      /**
+       * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
+       */
+      venue_type?: string;
+      /**
+       * Impressions delivered at this venue
+       * @minimum 0
+       */
+      impressions: number;
+      /**
+       * Loop plays at this venue
+       * @minimum 0
+       */
+      loop_plays?: number;
+      /**
+       * Number of screens used at this venue
+       * @minimum 0
+       */
+      screens_used?: number;
+    }[];
+  };
+  /**
+   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — since duration is governed by the same viewability threshold (`standard`) and shares the same `measurable_impressions` denominator. Sellers SHOULD include `standard` whenever measured viewability values are reported because MRC and GroupM rows are not interchangeable.
+   */
+  viewability?: {
+    vendor?: BrandReference;
+    /**
+     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate` AND `viewed_seconds` — both metrics are computed over the same measurable population.
+     * @minimum 0
+     */
+    measurable_impressions?: number;
+    /**
+     * Impressions that met the viewability threshold defined by the measurement standard.
+     * @minimum 0
+     */
+    viewable_impressions?: number;
+    /**
+     * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
+     * @minimum 0
+     * @maximum 1
+     */
+    viewable_rate?: number;
+    /**
+     * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
+     * @minimum 0
+     */
+    viewed_seconds?: number;
+    standard?: ViewabilityStandard;
+  };
+  /**
+   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric. Maps to DBCFM KPI_INTERACTIONS (Interaktionen) in the Reporting/Performance block.
+   * @minimum 0
+   */
+  engagements?: number;
+  /**
+   * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
+   * @minimum 0
+   */
+  follows?: number;
+  /**
+   * Saves, bookmarks, playlist adds, pins attributed to this delivery.
+   * @minimum 0
+   */
+  saves?: number;
+  /**
+   * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
+   * @minimum 0
+   */
+  profile_visits?: number;
+  /**
+   * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
+   * @minimum 0
+   * @maximum 1
+   */
+  engagement_rate?: number;
+  /**
+   * Cost per click (spend / clicks)
+   * @minimum 0
+   */
+  cost_per_click?: number;
+  /**
+   * Cost per completed view (spend / completed_views). Primary CPCV pricing scalar for video/audio inventory; the package's `pricing_model` is `cpcv` when this field is the billing basis.
+   * @minimum 0
+   */
+  cost_per_completed_view?: number;
+  /**
+   * Cost per thousand impressions, computed as (spend / impressions) × 1000. Universal pricing scalar across CTV, display, mobile/web video, native, audio, and DOOH inventory; the package's `pricing_model` is `cpm` when this field is the billing basis. Field name aligns with the canonical `cpm` token in `enums/pricing-model.json` and `pricing-options/cpm-option.json` so buyers cross-walk pricing model → reported scalar without a translation table.
+   * @minimum 0
+   */
+  cpm?: number;
+  /**
+   * Audio/podcast downloads (IAB Podcast Measurement Technical Guidelines 2.x methodology). Distinct from `views` — for podcast inventory this is the count of podcast episode downloads; for streaming audio it is the count of stream starts that meet the platform's download threshold. Prefer this over `views` for audio inventory.
+   * @minimum 0
+   */
+  downloads?: number;
+  /**
+   * Items sold attributed to this delivery. Retail-media scalar distinct from `conversions` — a single conversion (transaction) may carry multiple `units_sold`. Used by retail media platforms where the buyer optimizes against unit movement, not transaction count. Attribution lookback windows are platform-specific (commonly 7/14/30 days, view-through and click-through variants); sellers SHOULD declare the window via `reporting_capabilities.measurement_windows` or `measurement_terms` rather than encoding it in this scalar.
+   * @minimum 0
+   */
+  units_sold?: number;
+  /**
+   * Units sold to first-time brand buyers (count, not rate). Retail-media scalar — the unit-volume parallel to the conversion-fraction `new_to_brand_rate`. Used by retail media platforms where new-customer acquisition unit volume is a primary KPI. Same attribution-window note as `units_sold` applies.
+   * @minimum 0
+   */
+  new_to_brand_units?: number;
+  /**
+   * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
+   */
+  by_action_source?: {
+    action_source: ActionSource;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of conversions from this action source
+     * @minimum 0
+     */
+    count: number;
+    /**
+     * Total monetary value of conversions from this action source
+     * @minimum 0
+     */
+    value?: number;
+  }[];
+  /**
+   * Reported values for vendor-defined metrics that the product's `reporting_capabilities.vendor_metrics` declared. Each entry carries the vendor (BrandRef), the metric identifier within the vendor's vocabulary, the value, optional unit, and `measurable_impressions` as the coverage denominator — vendor measurement is rarely 100% of delivered impressions, since vendors only score impressions where their SDK fires or their panel matches. When a declared vendor metric is omitted from this array, buyers infer no measurement happened (no integration). One row per `(vendor.domain, vendor.brand_id, metric_id)` per reporting period — sellers MUST de-duplicate before emission and MUST NOT emit the same vendor metric twice; buyers MAY treat duplicate rows as a seller-side conformance bug. The structured `vendor_metric_values` array is the recommended path for vendor metrics; `additionalProperties: true` on this parent object is preserved so existing free-form vendor emissions remain conformant during migration.
+   */
+  vendor_metric_values?: VendorMetricValue[];
+}
+/**
+ * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
+ */
+export interface VendorMetricValue {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  /**
+   * The reported value. Unit semantics are vendor-defined — see `unit` field below and the vendor's `brand.json` measurement-agent documentation.
+   */
+  value: number;
+  /**
+   * Unit of the value. Free-form to accommodate the heterogeneity of vendor metrics (e.g., `score`, `seconds`, `persons`, `gCO2e`, `USD`, `lift_percent`). When the value is monetary, use the ISO 4217 code (e.g., `USD`, `EUR`); for non-monetary, use whatever the vendor publishes. Optional on every row — the canonical unit lives at the vendor's measurement-agent metric definition (`brand.json` `agents[type='measurement']`). When sellers populate it inline they SHOULD match the vendor's published unit; buyers MAY resolve from the vendor's measurement agent when this field is absent.
+   */
+  unit?: string;
+  /**
+   * Number of impressions in this reporting period that the vendor was able to measure. Coverage denominator — buyers compute coverage rate as `measurable_impressions / impressions`. When absent, coverage is unspecified — buyers MUST NOT compute a coverage rate or assume full coverage. When the vendor measured zero impressions but is integrated, set to 0 explicitly. When the entry is omitted from `vendor_metric_values` entirely, the buyer infers no measurement happened (no integration). This pattern parallels `viewability.measurable_impressions` (`delivery-metrics.json#/properties/viewability`), which has handled vendor coverage in the IAS/DV/MRC ecosystem for over a decade — same convention: absence is unknown, not full.
+   * @minimum 0
+   */
+  measurable_impressions?: number;
+  /**
+   * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
+   */
+  breakdown?: {};
 }
 /**
  * Single-format success response. Returned when the request used target_format_id.
@@ -11267,10 +11812,6 @@ export type GetRightsResponse = {
    */
   adcp_major_version?: number;
 } & (GetRightsSuccess | GetRightsError);
-/**
- * Pricing model (cpm, flat_rate, etc.)
- */
-export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
 export interface GetRightsSuccess {
   /**
    * Matching rights with pricing options, ranked by relevance
@@ -14582,380 +15123,6 @@ export type CreativeVariant = DeliveryMetrics & {
   };
 };
 /**
- * Aggregate delivery metrics across all variants of this creative
- */
-export interface DeliveryMetrics {
-  /**
-   * Impressions delivered
-   * @minimum 0
-   */
-  impressions?: number;
-  /**
-   * Amount spent
-   * @minimum 0
-   */
-  spend?: number;
-  /**
-   * Total clicks
-   * @minimum 0
-   */
-  clicks?: number;
-  /**
-   * Click-through rate (clicks/impressions)
-   * @minimum 0
-   * @maximum 1
-   */
-  ctr?: number;
-  /**
-   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
-   * @minimum 0
-   */
-  views?: number;
-  /**
-   * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
-   * @minimum 0
-   */
-  completed_views?: number;
-  /**
-   * Completion rate (completed_views/impressions)
-   * @minimum 0
-   * @maximum 1
-   */
-  completion_rate?: number;
-  /**
-   * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
-   * @minimum 0
-   */
-  conversions?: number;
-  /**
-   * Total monetary value of attributed conversions (in the reporting currency)
-   * @minimum 0
-   */
-  conversion_value?: number;
-  /**
-   * Return on ad spend (conversion_value / spend)
-   * @minimum 0
-   */
-  roas?: number;
-  /**
-   * Cost per conversion (spend / conversions)
-   * @minimum 0
-   */
-  cost_per_acquisition?: number;
-  /**
-   * Fraction of `conversions` (transactions) from first-time brand buyers, 0 = none, 1 = all. For retail-media unit-volume tracking of first-time buyers, see `new_to_brand_units` (count, not rate).
-   * @minimum 0
-   * @maximum 1
-   */
-  new_to_brand_rate?: number;
-  /**
-   * Leads generated (convenience alias for by_event_type where event_type='lead')
-   * @minimum 0
-   */
-  leads?: number;
-  /**
-   * Incremental sales lift attributed to the campaign — sales above the control/holdout baseline. Reported as a fraction (0.15 = 15% lift) or as an absolute value depending on seller convention. The seller's `attribution_methodology` qualifier (typically `deterministic_purchase` or `modeled`) and `attribution_window` qualifier on the matching `committed_metrics` entry disambiguate the methodology and window.
-   * @minimum 0
-   */
-  incremental_sales_lift?: number;
-  /**
-   * Brand lift — measured change in a brand metric (awareness, consideration, favorability, purchase intent, or ad recall) attributed to the campaign. Typically panel-based or survey-based. Reported as a fraction (0.05 = 5% lift). **Multidimensional in production** — Kantar, Upwave, Cint, DV all report each dimension separately with its own sample size and confidence interval. The dimension flows through `qualifier.lift_dimension` on `committed_metrics` / `metric_aggregates` (`awareness` | `consideration` | `favorability` | `purchase_intent` | `ad_recall`); rows under different dimensions are different surveyed outcomes and must not be combined. Use `attribution_methodology: 'panel_based'` qualifier when the underlying methodology is a panel.
-   * @minimum 0
-   */
-  brand_lift?: number;
-  /**
-   * Store visits attributed to ad exposure. Count of incremental visits over baseline. Typically uses location-data panel methodology (`attribution_methodology: 'panel_based'`) or deterministic loyalty-card match (`attribution_methodology: 'deterministic_purchase'`).
-   * @minimum 0
-   */
-  foot_traffic?: number;
-  /**
-   * Incremental conversions attributed to the campaign — conversions above the control/holdout baseline. Reported as a fraction (0.10 = 10% lift) or as an absolute count depending on seller convention. Distinct from `conversions` (raw count of attributed conversions); conversion_lift requires a control group and an incrementality methodology.
-   * @minimum 0
-   */
-  conversion_lift?: number;
-  /**
-   * Lift in brand search query volume attributed to the campaign — measured via search-data partnerships (Google, Microsoft) or survey methodology. Reported as a fraction (0.20 = 20% lift in branded search).
-   * @minimum 0
-   */
-  brand_search_lift?: number;
-  /**
-   * Number of times the ad creative was displayed on a DOOH screen or played in a loop. Raw play count before any impression multiplier is applied. Mirrors `forecastable-metric.json`'s `plays` token for forecast↔delivery reconciliation. Distinct from `dooh_metrics.loop_plays` (per-screen rotation count) and from `impressions` (multiplied audience figure). Used for DOOH and broadcast inventory where buyers reconcile against forecast `plays`.
-   * @minimum 0
-   */
-  plays?: number;
-  /**
-   * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
-   */
-  by_event_type?: {
-    event_type: EventType;
-    /**
-     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
-     */
-    event_source_id?: string;
-    /**
-     * Number of events of this type
-     * @minimum 0
-     */
-    count: number;
-    /**
-     * Total monetary value of events of this type
-     * @minimum 0
-     */
-    value?: number;
-  }[];
-  /**
-   * Gross Rating Points delivered (for CPP)
-   * @minimum 0
-   */
-  grps?: number;
-  /**
-   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit. The measurement window for this value is declared in `reach_window`; when `reach_window` is omitted, the window is unspecified and buyers MUST NOT sum reach across reports (the value MAY be a daily snapshot, a cumulative total, or something else).
-   * @minimum 0
-   */
-  reach?: number;
-  /**
-   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
-   */
-  reach_unit?: ReachUnit;
-  /**
-   * Measurement window for the reported `reach` and `frequency` values in this row. Declares whether the values are a per-period snapshot, a trailing rolling window, or cumulative-to-date — without this declaration, buyers summing `reach` across rows (e.g., daily delivery reports) can silently double-count audiences. Sellers SHOULD populate this whenever `reach` is present.
-   */
-  reach_window?: {
-    /**
-     * Window semantics. `cumulative` — uniques since campaign start; the value is the total unique count to date and MUST NOT be summed across rows (each later row supersedes the earlier value). `period` — uniques within a single non-overlapping reporting period (e.g., a daily snapshot for a specific calendar day). Adjacent `period` rows do not share audiences by construction, but the same person MAY appear across multiple periods, so MUST NOT be summed across rows to compute campaign reach. `rolling` — uniques within a trailing window ending at the row's reporting timestamp (e.g., trailing-7-day reach). Adjacent rolling rows overlap and MUST NOT be summed; each row's value stands alone.
-     */
-    kind: 'cumulative' | 'period' | 'rolling';
-    /**
-     * Duration of the measurement window. REQUIRED when `kind` is `period` or `rolling` — declares the snapshot length (e.g., `{"interval": 1, "unit": "days"}` for a daily snapshot) or the trailing-window length (e.g., `{"interval": 7, "unit": "days"}` for trailing-7-day rolling reach). When `kind` is `cumulative`, this field is implicit (campaign-to-date) and SHOULD be omitted.
-     */
-    period?: Duration;
-  };
-  /**
-   * Average frequency per reach unit, measured over the window declared in `reach_window`. When `reach_unit` is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc. When `reach_window` is omitted, the window is unspecified — buyers MUST NOT compare or average frequency values across rows.
-   * @minimum 0
-   */
-  frequency?: number;
-  /**
-   * Audio/video quartile completion data
-   */
-  quartile_data?: {
-    /**
-     * 25% completion views
-     * @minimum 0
-     */
-    q1_views?: number;
-    /**
-     * 50% completion views
-     * @minimum 0
-     */
-    q2_views?: number;
-    /**
-     * 75% completion views
-     * @minimum 0
-     */
-    q3_views?: number;
-    /**
-     * 100% completion views
-     * @minimum 0
-     */
-    q4_views?: number;
-  };
-  /**
-   * DOOH-specific metrics (only included for DOOH campaigns)
-   */
-  dooh_metrics?: {
-    /**
-     * Number of times ad played in rotation
-     * @minimum 0
-     */
-    loop_plays?: number;
-    /**
-     * Number of unique screens displaying the ad
-     * @minimum 0
-     */
-    screens_used?: number;
-    /**
-     * Total display time in seconds
-     * @minimum 0
-     */
-    screen_time_seconds?: number;
-    /**
-     * Actual share of voice delivered (0.0 to 1.0)
-     * @minimum 0
-     * @maximum 1
-     */
-    sov_achieved?: number;
-    /**
-     * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
-     */
-    calculation_notes?: string;
-    /**
-     * Per-venue performance breakdown
-     */
-    venue_breakdown?: {
-      /**
-       * Venue identifier
-       */
-      venue_id: string;
-      /**
-       * Human-readable venue name
-       */
-      venue_name?: string;
-      /**
-       * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
-       */
-      venue_type?: string;
-      /**
-       * Impressions delivered at this venue
-       * @minimum 0
-       */
-      impressions: number;
-      /**
-       * Loop plays at this venue
-       * @minimum 0
-       */
-      loop_plays?: number;
-      /**
-       * Number of screens used at this venue
-       * @minimum 0
-       */
-      screens_used?: number;
-    }[];
-  };
-  /**
-   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — since duration is governed by the same viewability threshold (`standard`) and shares the same `measurable_impressions` denominator. Sellers SHOULD include `standard` whenever measured viewability values are reported because MRC and GroupM rows are not interchangeable.
-   */
-  viewability?: {
-    vendor?: BrandReference;
-    /**
-     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate` AND `viewed_seconds` — both metrics are computed over the same measurable population.
-     * @minimum 0
-     */
-    measurable_impressions?: number;
-    /**
-     * Impressions that met the viewability threshold defined by the measurement standard.
-     * @minimum 0
-     */
-    viewable_impressions?: number;
-    /**
-     * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
-     * @minimum 0
-     * @maximum 1
-     */
-    viewable_rate?: number;
-    /**
-     * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
-     * @minimum 0
-     */
-    viewed_seconds?: number;
-    standard?: ViewabilityStandard;
-  };
-  /**
-   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric. Maps to DBCFM KPI_INTERACTIONS (Interaktionen) in the Reporting/Performance block.
-   * @minimum 0
-   */
-  engagements?: number;
-  /**
-   * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
-   * @minimum 0
-   */
-  follows?: number;
-  /**
-   * Saves, bookmarks, playlist adds, pins attributed to this delivery.
-   * @minimum 0
-   */
-  saves?: number;
-  /**
-   * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
-   * @minimum 0
-   */
-  profile_visits?: number;
-  /**
-   * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
-   * @minimum 0
-   * @maximum 1
-   */
-  engagement_rate?: number;
-  /**
-   * Cost per click (spend / clicks)
-   * @minimum 0
-   */
-  cost_per_click?: number;
-  /**
-   * Cost per completed view (spend / completed_views). Primary CPCV pricing scalar for video/audio inventory; the package's `pricing_model` is `cpcv` when this field is the billing basis.
-   * @minimum 0
-   */
-  cost_per_completed_view?: number;
-  /**
-   * Cost per thousand impressions, computed as (spend / impressions) × 1000. Universal pricing scalar across CTV, display, mobile/web video, native, audio, and DOOH inventory; the package's `pricing_model` is `cpm` when this field is the billing basis. Field name aligns with the canonical `cpm` token in `enums/pricing-model.json` and `pricing-options/cpm-option.json` so buyers cross-walk pricing model → reported scalar without a translation table.
-   * @minimum 0
-   */
-  cpm?: number;
-  /**
-   * Audio/podcast downloads (IAB Podcast Measurement Technical Guidelines 2.x methodology). Distinct from `views` — for podcast inventory this is the count of podcast episode downloads; for streaming audio it is the count of stream starts that meet the platform's download threshold. Prefer this over `views` for audio inventory.
-   * @minimum 0
-   */
-  downloads?: number;
-  /**
-   * Items sold attributed to this delivery. Retail-media scalar distinct from `conversions` — a single conversion (transaction) may carry multiple `units_sold`. Used by retail media platforms where the buyer optimizes against unit movement, not transaction count. Attribution lookback windows are platform-specific (commonly 7/14/30 days, view-through and click-through variants); sellers SHOULD declare the window via `reporting_capabilities.measurement_windows` or `measurement_terms` rather than encoding it in this scalar.
-   * @minimum 0
-   */
-  units_sold?: number;
-  /**
-   * Units sold to first-time brand buyers (count, not rate). Retail-media scalar — the unit-volume parallel to the conversion-fraction `new_to_brand_rate`. Used by retail media platforms where new-customer acquisition unit volume is a primary KPI. Same attribution-window note as `units_sold` applies.
-   * @minimum 0
-   */
-  new_to_brand_units?: number;
-  /**
-   * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
-   */
-  by_action_source?: {
-    action_source: ActionSource;
-    /**
-     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
-     */
-    event_source_id?: string;
-    /**
-     * Number of conversions from this action source
-     * @minimum 0
-     */
-    count: number;
-    /**
-     * Total monetary value of conversions from this action source
-     * @minimum 0
-     */
-    value?: number;
-  }[];
-  /**
-   * Reported values for vendor-defined metrics that the product's `reporting_capabilities.vendor_metrics` declared. Each entry carries the vendor (BrandRef), the metric identifier within the vendor's vocabulary, the value, optional unit, and `measurable_impressions` as the coverage denominator — vendor measurement is rarely 100% of delivered impressions, since vendors only score impressions where their SDK fires or their panel matches. When a declared vendor metric is omitted from this array, buyers infer no measurement happened (no integration). One row per `(vendor.domain, vendor.brand_id, metric_id)` per reporting period — sellers MUST de-duplicate before emission and MUST NOT emit the same vendor metric twice; buyers MAY treat duplicate rows as a seller-side conformance bug. The structured `vendor_metric_values` array is the recommended path for vendor metrics; `additionalProperties: true` on this parent object is preserved so existing free-form vendor emissions remain conformant during migration.
-   */
-  vendor_metric_values?: VendorMetricValue[];
-}
-/**
- * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
- */
-export interface VendorMetricValue {
-  vendor: BrandReference;
-  metric_id: VendorMetricID;
-  /**
-   * The reported value. Unit semantics are vendor-defined — see `unit` field below and the vendor's `brand.json` measurement-agent documentation.
-   */
-  value: number;
-  /**
-   * Unit of the value. Free-form to accommodate the heterogeneity of vendor metrics (e.g., `score`, `seconds`, `persons`, `gCO2e`, `USD`, `lift_percent`). When the value is monetary, use the ISO 4217 code (e.g., `USD`, `EUR`); for non-monetary, use whatever the vendor publishes. Optional on every row — the canonical unit lives at the vendor's measurement-agent metric definition (`brand.json` `agents[type='measurement']`). When sellers populate it inline they SHOULD match the vendor's published unit; buyers MAY resolve from the vendor's measurement agent when this field is absent.
-   */
-  unit?: string;
-  /**
-   * Number of impressions in this reporting period that the vendor was able to measure. Coverage denominator — buyers compute coverage rate as `measurable_impressions / impressions`. When absent, coverage is unspecified — buyers MUST NOT compute a coverage rate or assume full coverage. When the vendor measured zero impressions but is integrated, set to 0 explicitly. When the entry is omitted from `vendor_metric_values` entirely, the buyer infers no measurement happened (no integration). This pattern parallels `viewability.measurable_impressions` (`delivery-metrics.json#/properties/viewability`), which has handled vendor coverage in the IAS/DV/MRC ecosystem for over a decade — same convention: absence is unknown, not full.
-   * @minimum 0
-   */
-  measurable_impressions?: number;
-  /**
-   * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
-   */
-  breakdown?: {};
-}
-/**
  * Property where the artifact appears
  */
 export interface Identifier {
@@ -16931,90 +17098,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
     /**
      * Cross-buy delivery aggregates partitioned by qualifier. Row-symmetric with `package.committed_metrics` and `by_package[].missing_metrics` — same atomic unit `(scope, metric_id, qualifier)` — so reconciliation collapses to a row-level join on the tuple. Granularity rule: one row per `(metric_id, full-qualifier-set)`, reported at the finest available granularity; buyers re-aggregate up if they want a coarser view. Used only for metrics with non-empty qualifier sets — unqualified metrics (`impressions`, `spend`, `media_buy_count`, etc.) remain at the top of `aggregated_totals`. **Mutual exclusion MUST**: for any `metric_id` appearing in `metric_aggregates`, the corresponding top-level scalar in `aggregated_totals` MUST be omitted (not zeroed) — avoids duplicate sources of truth. The qualifier vocabulary on this delivery surface is closed today (`additionalProperties: false`, same content as `committed_metrics.qualifier`) but is expected to **diverge from contract qualifier in future minors** as transparency disclosures buyers don't commit to ship delivery-only (e.g., `tracker_firing` pending #3832 resolution). Each row carries a `value` plus inlined per-metric component fields (e.g., `measurable_impressions` and `viewable_impressions` for `viewable_rate`; `spend` and `conversions` for `cost_per_acquisition`). Per-buy `totals` keeps its flat shape — each buy is single-qualifier by definition; only the aggregate spans qualifiers. **Qualifier-set drift across reports**: when a campaign gains a new qualifier mid-flight (e.g., adds `tracker_firing` partitioning in week 2), prior periods' rows remain valid at their original granularity; buyers SHOULD NOT retroactively repartition.
      */
-    metric_aggregates?: (
-      | {
-          /**
-           * Standard metric from the closed `available-metric.json` enum.
-           */
-          scope: 'standard';
-          metric_id: AvailableMetric;
-          /**
-           * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
-           */
-          qualifier?: {
-            viewability_standard?: ViewabilityStandard;
-            completion_source?: CompletionSource;
-            attribution_methodology?: AttributionMethodology;
-            attribution_window?: Duration;
-            lift_dimension?: LiftDimension;
-          };
-          /**
-           * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
-           */
-          value: number;
-          /**
-           * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
-           * @minimum 0
-           */
-          measurable_impressions?: number;
-          /**
-           * Component for `viewable_rate` (numerator).
-           * @minimum 0
-           */
-          viewable_impressions?: number;
-          /**
-           * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
-           * @minimum 0
-           */
-          impressions?: number;
-          /**
-           * Component for `completion_rate` (numerator).
-           * @minimum 0
-           */
-          completed_views?: number;
-          /**
-           * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
-           * @minimum 0
-           */
-          spend?: number;
-          /**
-           * Component for `cost_per_acquisition` and ROAS-family metrics.
-           * @minimum 0
-           */
-          conversions?: number;
-          /**
-           * Component for `roas` (numerator).
-           * @minimum 0
-           */
-          conversion_value?: number;
-          /**
-           * Component for `cost_per_click` and click-rate metrics.
-           * @minimum 0
-           */
-          clicks?: number;
-        }
-      | {
-          /**
-           * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
-           */
-          scope: 'vendor';
-          vendor: BrandReference;
-          metric_id: VendorMetricID;
-          /**
-           * Optional qualifier keys for vendor metrics that need disambiguation (rare today — most vendor methodologies are intrinsic to the metric definition).
-           */
-          qualifier?: {};
-          /**
-           * Aggregated vendor-attested value. Unit semantics defined by the vendor — see the vendor's measurement-agent metric definition.
-           */
-          value: number;
-          /**
-           * Coverage denominator — vendor measurement is rarely 100% of delivery (only impressions where the vendor's SDK fired or panel matched). Buyers compute coverage as `measurable_impressions / impressions`. Same convention as `vendor_metric_value.measurable_impressions`.
-           * @minimum 0
-           */
-          measurable_impressions?: number;
-        }
-    )[];
+    metric_aggregates?: DeliveryMetricAggregate[];
   };
   /**
    * Array of delivery data for media buys. When used in webhook notifications, may contain multiple media buys aggregated by publisher. When used in get_media_buy_delivery API responses, typically contains requested media buys.
@@ -17118,80 +17202,23 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Metrics that the binding reporting contract declared but that are NOT populated in this report. Reconciliation source: when `package.committed_metrics` is present, `missing_metrics` is computed against entries where `committed_at < reporting_period.end` — independent of subsequent product mutations and respecting the commitment timestamp on each entry (a metric committed mid-flight is only flagged missing in reports for periods after its commitment). When `package.committed_metrics` is absent, fall back to the product's current `reporting_capabilities.available_metrics` (no timestamp filter). Empty array (or absent) indicates clean delivery against the contract. Non-empty signals an accountability breach — the seller committed to the metric but did not produce the value here. Sellers MUST exclude metrics that are not yet measurable for the current `measurement_window` (e.g., post-IVT counts during the live window) — those will appear (or not) when a wider window supersedes this report via `supersedes_window`. Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. Symmetric with `committed_metrics`.
        */
-      missing_metrics?: (
-        | {
-            scope: 'standard';
-            metric_id: AvailableMetric;
-            /**
-             * Mirrors the qualifier on `committed_metrics` so the missing entry preserves the contract distinction (e.g., flagging MRC viewability as missing when only GroupM was reported, vendor-attested completion as missing when only seller-attested was reported, or deterministic_purchase attribution as missing when only probabilistic was reported). MUST match the qualifier on the corresponding `committed_metrics` entry the missing flag refers to.
-             */
-            qualifier?: {
-              viewability_standard?: ViewabilityStandard;
-              completion_source?: CompletionSource;
-              attribution_methodology?: AttributionMethodology;
-              attribution_window?: Duration;
-              lift_dimension?: LiftDimension;
-            };
-          }
-        | {
-            scope: 'vendor';
-            vendor: BrandReference;
-            metric_id: VendorMetricID;
-          }
-      )[];
+      missing_metrics?: MissingMetric[];
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
-      by_catalog_item?: (DeliveryMetrics & {
-        /**
-         * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
-         */
-        content_id?: string;
-        content_id_type?: ContentIDType;
-      })[];
+      by_catalog_item?: CatalogItemDeliveryMetrics[];
       /**
        * Metrics broken down by creative within this package. Available when the seller supports creative-level reporting.
        */
-      by_creative?: (DeliveryMetrics & {
-        /**
-         * Creative identifier matching the creative assignment
-         */
-        creative_id: string;
-        /**
-         * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
-         * @minimum 0
-         * @maximum 100
-         */
-        weight?: number;
-      })[];
+      by_creative?: CreativeDeliveryMetrics[];
       /**
        * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
        */
-      by_keyword?: (DeliveryMetrics & {
-        /**
-         * The targeted keyword
-         */
-        keyword?: string;
-        match_type?: MatchType;
-      })[];
+      by_keyword?: KeywordDeliveryMetrics[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
        */
-      by_geo?: (DeliveryMetrics & {
-        geo_level?: GeographicTargetingLevel;
-        /**
-         * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
-         */
-        system?: string;
-        /**
-         * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
-         */
-        geo_code?: string;
-        /**
-         * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
-         */
-        geo_name?: string;
-      })[];
+      by_geo?: GeoDeliveryMetrics[];
       /**
        * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
        */
@@ -17382,6 +17409,168 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
   sandbox?: boolean;
   context?: ContextObject;
   ext?: ExtensionObject;
+};
+/**
+ * One cross-buy delivery aggregate partitioned by metric scope and qualifier. Row-symmetric with `package.committed_metrics` and delivery `missing_metrics` so buyers can reconcile by `(scope, metric_id, qualifier)`.
+ */
+export type DeliveryMetricAggregate =
+  | {
+      /**
+       * Standard metric from the closed `available-metric.json` enum.
+       */
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+      /**
+       * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
+       */
+      value: number;
+      /**
+       * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
+       * @minimum 0
+       */
+      measurable_impressions?: number;
+      /**
+       * Component for `viewable_rate` (numerator).
+       * @minimum 0
+       */
+      viewable_impressions?: number;
+      /**
+       * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
+       * @minimum 0
+       */
+      impressions?: number;
+      /**
+       * Component for `completion_rate` (numerator).
+       * @minimum 0
+       */
+      completed_views?: number;
+      /**
+       * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
+       * @minimum 0
+       */
+      spend?: number;
+      /**
+       * Component for `cost_per_acquisition` and ROAS-family metrics.
+       * @minimum 0
+       */
+      conversions?: number;
+      /**
+       * Component for `roas` (numerator).
+       * @minimum 0
+       */
+      conversion_value?: number;
+      /**
+       * Component for `cost_per_click` and click-rate metrics.
+       * @minimum 0
+       */
+      clicks?: number;
+    }
+  | {
+      /**
+       * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+       */
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      /**
+       * Optional qualifier keys for vendor metrics that need disambiguation (rare today — most vendor methodologies are intrinsic to the metric definition).
+       */
+      qualifier?: {};
+      /**
+       * Aggregated vendor-attested value. Unit semantics defined by the vendor — see the vendor's measurement-agent metric definition.
+       */
+      value: number;
+      /**
+       * Coverage denominator — vendor measurement is rarely 100% of delivery (only impressions where the vendor's SDK fired or panel matched). Buyers compute coverage as `measurable_impressions / impressions`. Same convention as `vendor_metric_value.measurable_impressions`.
+       * @minimum 0
+       */
+      measurable_impressions?: number;
+    };
+/**
+ * One metric the binding reporting contract declared but that is not populated in a delivery report. Symmetric with `committed_metrics` and discriminated by `scope`.
+ */
+export type MissingMetric =
+  | {
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Mirrors the qualifier on `committed_metrics` so the missing entry preserves the contract distinction (e.g., flagging MRC viewability as missing when only GroupM was reported, vendor-attested completion as missing when only seller-attested was reported, or deterministic_purchase attribution as missing when only probabilistic was reported). MUST match the qualifier on the corresponding `committed_metrics` entry the missing flag refers to.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+    }
+  | {
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+    };
+/**
+ * Delivery metrics row for one catalog item within a package.
+ */
+export type CatalogItemDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
+   */
+  content_id?: string;
+  content_id_type?: ContentIDType;
+};
+/**
+ * Delivery metrics row for one creative within a package.
+ */
+export type CreativeDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Creative identifier matching the creative assignment
+   */
+  creative_id: string;
+  /**
+   * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
+   * @minimum 0
+   * @maximum 100
+   */
+  weight?: number;
+};
+/**
+ * Delivery metrics row for one keyword and match-type pair within a package.
+ */
+export type KeywordDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * The targeted keyword
+   */
+  keyword?: string;
+  match_type?: MatchType;
+};
+/**
+ * Delivery metrics row for one geographic area within a package.
+ */
+export type GeoDeliveryMetrics = DeliveryMetrics & {
+  geo_level?: GeographicTargetingLevel;
+  /**
+   * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+   */
+  system?: string;
+  /**
+   * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+   */
+  geo_code?: string;
+  /**
+   * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
+   */
+  geo_name?: string;
 };
 /**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
@@ -20992,29 +21181,9 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
    */
   compliance_testing?: {
     /**
-     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Values mirror the canonical scenario enum in compliance/comply-test-controller-request.json, excluding list_scenarios because that value is a discovery operation rather than a test capability. Callers can also use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
+     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Values SHOULD include every canonical controller scenario the agent implements, excluding list_scenarios because that value is a discovery operation rather than a test capability. Values MAY also include implementation-specific scenarios. Callers can use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
      */
-    scenarios: (
-      | 'force_creative_status'
-      | 'force_account_status'
-      | 'force_media_buy_status'
-      | 'force_create_media_buy_arm'
-      | 'force_task_completion'
-      | 'force_creative_purge'
-      | 'force_session_status'
-      | 'simulate_delivery'
-      | 'simulate_budget_spend'
-      | 'seed_product'
-      | 'seed_pricing_option'
-      | 'seed_creative'
-      | 'seed_plan'
-      | 'seed_media_buy'
-      | 'seed_creative_format'
-      | 'seed_measurement_catalog'
-      | 'query_upstream_traffic'
-      | 'query_provenance_audit_observations'
-      | 'force_upstream_unavailable'
-    )[];
+    scenarios: string[];
   };
   /**
    * Optional — specialized compliance claims this agent supports. Values MUST be kebab-case enum IDs (e.g., 'creative-generative', 'sales-non-guaranteed'). An agent that implements a specialism's tools but omits its ID from this array will receive 'No applicable tracks found' from the compliance runner — tracks for that specialism are not evaluated even if every tool works. Omitting the field means the agent declares no specialism claims (it still passes the universal + domain-baseline storyboards implied by supported_protocols). Each specialism maps to a storyboard bundle at /compliance/{version}/specialisms/{id}/ that the AAO compliance runner executes to verify the claim. Each specialism rolls up to one of the protocols in supported_protocols — the runner rejects a specialism claim whose parent protocol is missing. Only list specialisms your agent actually implements — the AAO Verified badge enumerates which specialisms were demonstrably passed.
@@ -22584,6 +22753,14 @@ export interface AccountAuthorization {
 }
 
 
+// core/account-with-authorization.json
+/**
+ * List-accounts response item: the full Account object plus optional caller-specific authorization metadata. Named separately so SDKs can generate a stable response item type instead of inventing local wrappers for `Account` plus inline `authorization`.
+ */
+export type AccountWithAuthorization = Account & {
+  authorization?: AccountAuthorization;
+};
+
 // core/agent-encryption-key.json
 /**
  * X25519 public key for HPKE encryption. Used for TMPX exposure token encryption with HPKE mode_base.
@@ -22883,29 +23060,33 @@ export interface CanonicalProjectionReference {
   /**
    * When the v1 named format's slot shape differs from the canonical's default slots, this carries the override that the projected v2 declaration's `params.slots[]` should use. REPLACES (does not merge with) the canonical's default slots — projection-time semantics. The slot vocabulary follows `asset-group-vocabulary.json`. Asset IDs in the v1 format's `assets[*]` MUST resolve (directly or via the vocabulary's aliases) to the `asset_group_id` values declared here.
    */
-  slots_override?: {
-    /**
-     * Asset group identifier from `asset-group-vocabulary.json` (e.g., `generation_prompt`, `creative_brief`, `image_main`, `video_main`).
-     */
-    asset_group_id: string;
-    /**
-     * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
-     */
-    asset_type: string;
-    /**
-     * Whether the slot is required in the projected declaration.
-     */
-    required?: boolean;
-    /**
-     * Max character count for text slots.
-     * @minimum 1
-     */
-    max_chars?: number;
-    /**
-     * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
-     */
-    consumed_for_production?: boolean;
-  }[];
+  slots_override?: CanonicalProjectionSlotOverride[];
+}
+/**
+ * A single slot override used when projecting a legacy named format to a v2 canonical ProductFormatDeclaration. The override replaces the canonical format's default slot with an asset-group-vocabulary entry.
+ */
+export interface CanonicalProjectionSlotOverride {
+  /**
+   * Asset group identifier from `asset-group-vocabulary.json` (e.g., `generation_prompt`, `creative_brief`, `image_main`, `video_main`).
+   */
+  asset_group_id: string;
+  /**
+   * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
+   */
+  asset_type: string;
+  /**
+   * Whether the slot is required in the projected declaration.
+   */
+  required?: boolean;
+  /**
+   * Max character count for text slots.
+   * @minimum 1
+   */
+  max_chars?: number;
+  /**
+   * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
+   */
+  consumed_for_production?: boolean;
 }
 
 

@@ -199,8 +199,20 @@ export {
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
-export { SingleAgentClient, createSingleAgentClient, UnsupportedFeatureError } from './core/SingleAgentClient';
-export type { SingleAgentClientConfig } from './core/SingleAgentClient';
+export {
+  SingleAgentClient,
+  WebhookDispatchError,
+  createSingleAgentClient,
+  UnsupportedFeatureError,
+} from './core/SingleAgentClient';
+export type {
+  SingleAgentClientConfig,
+  VerifyAndParseWebhookOptions,
+  WebhookParseErrorCode,
+  WebhookParseFailure,
+  WebhookParseResult,
+  WebhookParseSuccess,
+} from './core/SingleAgentClient';
 export {
   AgentClient,
   type TaskResponseTypeMap,

@@ -5,7 +5,12 @@ import { randomUUID } from 'node:crypto';
 import type { AgentConfig } from '../types';
 import type { MCPWebhookPayload } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
-import { SingleAgentClient, type SingleAgentClientConfig } from './SingleAgentClient';
+import {
+  SingleAgentClient,
+  type SingleAgentClientConfig,
+  type VerifyAndParseWebhookOptions,
+  type WebhookParseResult,
+} from './SingleAgentClient';
 import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
@@ -440,6 +445,13 @@ export class AgentClient {
     rawBody?: string | Buffer | Uint8Array
   ): Promise<boolean> {
     return this.client.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
+  }
+
+  /**
+   * Verify and normalize an inbound webhook without dispatching handlers.
+   */
+  async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
+    return this.client.verifyAndParseWebhook(options);
   }
 
   /**

@@ -81,8 +81,7 @@ function assertSafeVersion(value: string, source: string): void {
 // historical versions stay in the compat surface.
 //
 // Keep historical versions in the compat surface. Consumers can also pin
-// `adcpVersion: '3.1-beta'` / `'3.1-rc'` to follow the newest bundled 3.1
-// prerelease line.
+// `adcpVersion: '3.1-beta'` to follow the newest bundled 3.1 prerelease.
 const COMPATIBLE_PREFIX = [
   'v2.5',
   'v2.6',
@@ -96,6 +95,7 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-beta.7',
   '3.1.0-rc.1',
   '3.1.0-rc.2',
+  '3.1.0-rc.3',
 ] as const;
 
 /**

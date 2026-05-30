@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-29
+> Generated at: 2026-05-30
 > Library: @adcp/sdk v8.1.0-beta.16
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1254,6 +1254,9 @@ Flow: `get_adcp_capabilities`
 
 **Webhook emission — outbound webhook conformance (signing + idempotency)** — Any agent that emits webhooks MUST carry a stable idempotency_key across retries and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
 Flow: `get_adcp_capabilities → expect_webhook → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
+
+**Webhook receiver envelope: inbound POST conformance** — Buyer webhook receivers MUST accept full MCP webhook envelopes, reject bare delivery-result payloads, preserve raw-body signature verification, and dedupe retries by a stable idempotency_key.
+Flow: `replay_webhook_vector`
 
 **Wholesale feed bulk-change webhook registration** — Validates account-level notification_configs[] registration for agents that advertise wholesale_feed.bulk_change webhook events.
 Flow: `sync_accounts`

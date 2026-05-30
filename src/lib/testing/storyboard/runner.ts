@@ -6,7 +6,9 @@
  * - runStoryboardStep(): run a single step (stateless, LLM-friendly)
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
 import { closeConnections, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
@@ -41,7 +43,12 @@ import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import { resolveBundleKey, schemaAllowsTopLevelField, withExternalSchemaRoot } from '../../validation/schema-loader';
+import {
+  getSchemaValidatorByRef,
+  resolveBundleKey,
+  schemaAllowsTopLevelField,
+  withExternalSchemaRoot,
+} from '../../validation/schema-loader';
 import { parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
@@ -59,6 +66,8 @@ import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { getComplianceCacheDir } from './compliance';
+import { signWebhook, type RequestLike } from '../../signing/client';
 
 /**
  * Pre-computed controller-seeding outcome passed into `executeStoryboardPass`.
@@ -216,6 +225,9 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
   transport_ungradable: 'Vector cannot be graded faithfully by the selected transport.',
   rate_limit_not_triggered: 'No RATE_LIMITED response was observed within the configured max_attempts.',
 };
+
+const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
+const WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS = 10_000;
 
 function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string): RunnerSelectionResult | undefined {
   switch (reason) {
@@ -3427,6 +3439,13 @@ async function executeStep(
     return executeWebhookAssertionStep(step, phaseId, context, allSteps, options, runState);
   }
 
+  // Inbound webhook receiver conformance posts canonical vectors to a
+  // buyer/orchestrator receiver URL. This is a runner-native HTTP probe, not
+  // a seller tool call.
+  if (step.task === REPLAY_WEBHOOK_VECTOR_TASK) {
+    return executeReplayWebhookVectorStep(step, phaseId, context, allSteps, options, runState);
+  }
+
   // Resolve $test_kit.* task references before any downstream dispatch / skip checks.
   // When the reference resolves to nothing, fall back to `task_default`.
   const resolvedTask = resolveTaskName(step, options);
@@ -4696,6 +4715,523 @@ function buildEffectiveStepRequest(
     request = applyDisableSandboxHint(request, step.task);
   }
   return applyIdempotencyInvariant(request, step.task, step);
+}
+
+interface ResolvedWebhookReplayVector {
+  id: string;
+  description?: string;
+  expected: 'accept' | 'reject';
+  expected_error?: string;
+  same_event_as?: string;
+  payload: Record<string, unknown>;
+  source: string;
+}
+
+async function executeReplayWebhookVectorStep(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  options: StoryboardRunOptions,
+  runState: ExecutionState
+): Promise<StoryboardStepResult> {
+  const start = Date.now();
+  const receiver = options.webhook_replay_receiver;
+  if (!receiver?.url) {
+    const detail =
+      'No webhook replay receiver URL configured. Pass `webhook_replay_receiver.url` in StoryboardRunOptions to run inbound receiver conformance.';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'grader_skipped',
+      skip: buildSkip('not_applicable', detail),
+      duration_ms: Date.now() - start,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none', note: 'webhook replay receiver not configured' },
+    };
+  }
+
+  const vector = resolveWebhookReplayVector(step, options);
+  if ('error' in vector) {
+    return failedWebhookReplayStep(step, phaseId, context, allSteps, runState, start, vector.error);
+  }
+
+  const body = JSON.stringify(vector.payload);
+  let headers: Record<string, string>;
+  try {
+    headers = buildWebhookReplayHeaders(receiver.url, body, receiver);
+  } catch (error) {
+    return failedWebhookReplayStep(
+      step,
+      phaseId,
+      context,
+      allSteps,
+      runState,
+      start,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  const requestRecord: RunnerRequestRecord = {
+    transport: 'http',
+    operation: step.task,
+    payload: {
+      vector_ref: step.vector_ref,
+      vector_id: vector.id,
+      expected: vector.expected,
+      body: redactSecrets(vector.payload),
+    },
+    url: receiver.url,
+  };
+
+  let httpResult: HttpProbeResult;
+  try {
+    httpResult = await postWebhookReplayVector(
+      receiver.url,
+      body,
+      headers,
+      receiver.fetchImpl ?? fetch,
+      receiver.timeoutMs ?? WEBHOOK_REPLAY_DEFAULT_TIMEOUT_MS,
+      options.signal
+    );
+  } catch (error) {
+    httpResult = {
+      url: receiver.url,
+      status: 0,
+      headers: {},
+      body: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const duration = Date.now() - start;
+  const filteredProbeHeaders = filterResponseHeaders(httpResult.headers);
+  const responseRecord: RunnerResponseRecord = {
+    transport: 'http',
+    payload: redactSecrets(httpResult.body),
+    status: httpResult.status,
+    ...(filteredProbeHeaders && { headers: filteredProbeHeaders }),
+    duration_ms: duration,
+  };
+  const redactedHttpResult: HttpProbeResult = {
+    ...httpResult,
+    body: redactSecrets(httpResult.body),
+  };
+
+  const validations = buildWebhookReplayValidations(step, vector, allSteps, options, requestRecord, responseRecord);
+  const allValidationsPassed = validations.every(v => v.passed);
+  const fetchOk = !httpResult.error;
+  const passed = fetchOk && allValidationsPassed;
+
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed,
+    expect_error: step.expect_error,
+    duration_ms: duration,
+    response: redactedHttpResult,
+    validations,
+    context,
+    error: httpResult.error ?? (passed ? undefined : 'Webhook replay validations failed.'),
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+    request: requestRecord,
+    response_record: responseRecord,
+    extraction: httpResult.error
+      ? { path: 'error' }
+      : { path: 'structured_content', note: 'webhook receiver HTTP response parsed' },
+  };
+}
+
+function failedWebhookReplayStep(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runState: ExecutionState,
+  start: number,
+  error: string
+): StoryboardStepResult {
+  return {
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: false,
+    duration_ms: Date.now() - start,
+    validations: [
+      {
+        check: 'webhook_replay_vector_resolved',
+        passed: false,
+        description: 'Resolve webhook replay vector before dispatch.',
+        expected: step.vector_ref ?? 'vector_ref',
+        actual: null,
+        error,
+        json_pointer: null,
+      },
+    ],
+    context,
+    error,
+    next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+    extraction: { path: 'none' },
+  };
+}
+
+function buildWebhookReplayValidations(
+  step: StoryboardStep,
+  vector: ResolvedWebhookReplayVector,
+  allSteps: FlatStep[],
+  options: StoryboardRunOptions,
+  request: RunnerRequestRecord,
+  response: RunnerResponseRecord
+): ValidationResult[] {
+  const expectedReject = step.expect_error === true || vector.expected === 'reject';
+  const status = typeof response.status === 'number' ? response.status : 0;
+  const accepted = status >= 200 && status < 300;
+  const validations: ValidationResult[] = [
+    {
+      check: 'webhook_replay_http_status',
+      passed: expectedReject ? !accepted : accepted,
+      description: expectedReject
+        ? 'Receiver rejects malformed webhook replay vectors with a non-2xx status.'
+        : 'Receiver accepts canonical webhook replay vectors with a 2xx status.',
+      expected: expectedReject ? 'non-2xx' : '2xx',
+      actual: status,
+      json_pointer: null,
+      request,
+      response,
+    },
+  ];
+
+  if (step.webhook_payload_schema_ref) {
+    const validator = getSchemaValidatorByRef(step.webhook_payload_schema_ref, options.adcpVersion);
+    const schemaValid = validator ? validator(vector.payload) : false;
+    validations.push({
+      check: 'webhook_replay_payload_schema',
+      passed: expectedReject ? !schemaValid : schemaValid,
+      description: expectedReject
+        ? 'Malformed replay vector is rejected by the webhook payload schema.'
+        : 'Canonical replay vector validates against the webhook payload schema.',
+      expected: expectedReject ? 'schema invalid' : 'schema valid',
+      actual: schemaValid
+        ? 'schema valid'
+        : validator
+          ? validator.errors
+          : `schema not found: ${step.webhook_payload_schema_ref}`,
+      schema_id: step.webhook_payload_schema_ref,
+      schema_url: null,
+      json_pointer: null,
+      request,
+    });
+  }
+
+  const sameEventAs = step.same_event_as ?? vector.same_event_as;
+  if (sameEventAs) {
+    const priorStep = findWebhookReplaySameEventStep(allSteps, sameEventAs);
+    const priorVector = priorStep ? resolveWebhookReplayVector(priorStep, options) : undefined;
+    const currentKey = readStringField(vector.payload, 'idempotency_key');
+    const priorKey =
+      priorVector && !('error' in priorVector) ? readStringField(priorVector.payload, 'idempotency_key') : undefined;
+    validations.push({
+      check: 'webhook_replay_same_event_idempotency_key',
+      passed: Boolean(currentKey && priorKey && currentKey === priorKey),
+      description: 'Retry replay vectors for the same logical event preserve idempotency_key.',
+      expected: priorKey ?? `prior vector for step ${sameEventAs}`,
+      actual: currentKey ?? null,
+      json_pointer: '/idempotency_key',
+      request,
+    });
+  }
+
+  return validations;
+}
+
+function findWebhookReplaySameEventStep(allSteps: FlatStep[], sameEventAs: string): StoryboardStep | undefined {
+  return (
+    allSteps.find(item => item.step.id === sameEventAs)?.step ??
+    allSteps.find(item => vectorRefId(item.step.vector_ref) === sameEventAs)?.step
+  );
+}
+
+function vectorRefId(ref: string | undefined): string | undefined {
+  return ref ? parseWebhookVectorRef(ref)?.id : undefined;
+}
+
+function resolveWebhookReplayVector(
+  step: StoryboardStep,
+  options: StoryboardRunOptions
+): ResolvedWebhookReplayVector | { error: string } {
+  if (!step.vector_ref) {
+    return { error: '`replay_webhook_vector` step requires vector_ref.' };
+  }
+  const parsed = parseWebhookVectorRef(step.vector_ref);
+  if (!parsed) {
+    return { error: `Invalid webhook vector_ref: ${step.vector_ref}` };
+  }
+
+  const vectorFile = readWebhookVectorFile(parsed.path, options);
+  if ('error' in vectorFile) {
+    const fallback = fallbackWebhookReplayVector(parsed, step);
+    if (fallback) return fallback;
+    return vectorFile;
+  }
+
+  const selected = selectWebhookReplayVector(vectorFile.body, parsed.section, parsed.id);
+  if (!selected) {
+    return { error: `Webhook replay vector not found: ${step.vector_ref}` };
+  }
+  return {
+    id: selected.id,
+    description: selected.description,
+    expected: parsed.section === 'negative' || step.expect_error === true ? 'reject' : 'accept',
+    ...(selected.expected_error && { expected_error: selected.expected_error }),
+    ...(selected.same_event_as && { same_event_as: selected.same_event_as }),
+    payload: selected.payload,
+    source: vectorFile.path,
+  };
+}
+
+function parseWebhookVectorRef(ref: string): { path: string; section: string; id: string } | undefined {
+  const [pathPart, fragment] = ref.split('#');
+  if (!pathPart || !fragment) return undefined;
+  const parts = fragment.split('/').filter(Boolean);
+  if (parts.length !== 2) return undefined;
+  return { path: pathPart, section: parts[0]!, id: parts[1]! };
+}
+
+function readWebhookVectorFile(
+  refPath: string,
+  options: StoryboardRunOptions
+): { path: string; body: unknown } | { error: string } {
+  for (const candidate of webhookVectorFileCandidates(refPath, options)) {
+    if (!existsSync(candidate)) continue;
+    try {
+      return { path: candidate, body: JSON.parse(readFileSync(candidate, 'utf8')) };
+    } catch (error) {
+      return {
+        error: `Failed to read webhook replay vector file ${candidate}: ${error instanceof Error ? error.message : error}`,
+      };
+    }
+  }
+  return { error: `Webhook replay vector file not found for ${refPath}` };
+}
+
+function webhookVectorFileCandidates(refPath: string, options: StoryboardRunOptions): string[] {
+  const withoutStatic = refPath.replace(/^static\//, '');
+  const baseName = basename(refPath);
+  const candidates: string[] = [];
+  if (options.webhook_replay_receiver?.vectorsRoot) {
+    candidates.push(join(options.webhook_replay_receiver.vectorsRoot, refPath));
+    candidates.push(join(options.webhook_replay_receiver.vectorsRoot, withoutStatic));
+    candidates.push(join(options.webhook_replay_receiver.vectorsRoot, baseName));
+  }
+  const complianceDir = getComplianceCacheDir({ version: options.adcpVersion });
+  candidates.push(join(complianceDir, withoutStatic));
+  candidates.push(join(complianceDir, refPath));
+  candidates.push(join(process.cwd(), refPath));
+  candidates.push(join(process.cwd(), withoutStatic));
+  return [...new Set(candidates)];
+}
+
+function selectWebhookReplayVector(
+  body: unknown,
+  section: string,
+  id: string
+):
+  | {
+      id: string;
+      description?: string;
+      expected_error?: string;
+      same_event_as?: string;
+      payload: Record<string, unknown>;
+    }
+  | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const bucket = (body as Record<string, unknown>)[section];
+  if (!Array.isArray(bucket)) return undefined;
+  for (const item of bucket) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.id !== id || !rec.payload || typeof rec.payload !== 'object' || Array.isArray(rec.payload)) continue;
+    return {
+      id,
+      ...(typeof rec.description === 'string' && { description: rec.description }),
+      ...(typeof rec.expected_error === 'string' && { expected_error: rec.expected_error }),
+      ...(typeof rec.same_event_as === 'string' && { same_event_as: rec.same_event_as }),
+      payload: rec.payload as Record<string, unknown>,
+    };
+  }
+  return undefined;
+}
+
+function fallbackWebhookReplayVector(
+  parsed: { path: string; section: string; id: string },
+  step: StoryboardStep
+): ResolvedWebhookReplayVector | undefined {
+  if (basename(parsed.path) !== 'webhook-receiver-envelope.json') return undefined;
+  const canonical = fallbackWebhookDeliveryEnvelope('whk_20260526_example_000031');
+  const byId: Record<string, Record<string, unknown>> = {
+    'mcp-delivery-report-envelope': canonical,
+    'mcp-delivery-report-retry-same-idempotency-key': {
+      ...canonical,
+      timestamp: '2026-05-26T09:00:45.582Z',
+    },
+    'bare-delivery-result': canonical.result as Record<string, unknown>,
+    'missing-idempotency-key': omitKey(canonical, 'idempotency_key'),
+    'unsupported-top-level-status': {
+      ...canonical,
+      idempotency_key: 'whk_20260526_example_000032',
+      task_id: 'delivery_report_67_2026_04_000032',
+      status: 'active',
+    },
+  };
+  const payload = byId[parsed.id];
+  if (!payload) return undefined;
+  return {
+    id: parsed.id,
+    expected: parsed.section === 'negative' || step.expect_error === true ? 'reject' : 'accept',
+    ...(parsed.id === 'mcp-delivery-report-retry-same-idempotency-key' && {
+      same_event_as: 'mcp-delivery-report-envelope',
+    }),
+    ...(parsed.id === 'bare-delivery-result' && { expected_error: 'missing_envelope_fields' }),
+    ...(parsed.id === 'missing-idempotency-key' && { expected_error: 'missing_idempotency_key' }),
+    ...(parsed.id === 'unsupported-top-level-status' && { expected_error: 'invalid_envelope_status' }),
+    payload,
+    source: 'built-in:webhook-receiver-envelope',
+  };
+}
+
+function fallbackWebhookDeliveryEnvelope(idempotencyKey: string): Record<string, unknown> {
+  return {
+    idempotency_key: idempotencyKey,
+    operation_id: 'delivery_report_67_2026_04',
+    task_id: 'delivery_report_67_2026_04_000031',
+    task_type: 'media_buy_delivery',
+    status: 'completed',
+    timestamp: '2026-05-26T09:00:44.582Z',
+    message: 'Scheduled media buy delivery report available',
+    result: {
+      notification_type: 'scheduled',
+      sequence_number: 31,
+      reporting_period: {
+        start: '2026-05-25T00:00:00Z',
+        end: '2026-05-25T23:59:00Z',
+      },
+      currency: 'USD',
+      media_buy_deliveries: [],
+    },
+  };
+}
+
+function omitKey(input: Record<string, unknown>, key: string): Record<string, unknown> {
+  const out = { ...input };
+  delete out[key];
+  return out;
+}
+
+function readStringField(input: Record<string, unknown>, key: string): string | undefined {
+  const value = input[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function buildWebhookReplayHeaders(
+  receiverUrl: string,
+  body: string,
+  receiver: NonNullable<StoryboardRunOptions['webhook_replay_receiver']>
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    ...(receiver.headers ?? {}),
+  };
+  const signing = receiver.signing ?? { mode: 'none' as const };
+  if (signing.mode === 'none') return headers;
+  if (signing.mode === 'hmac') {
+    const timestamp = signing.now ? signing.now() : Math.floor(Date.now() / 1000);
+    const hmac = createHmac('sha256', signing.secret);
+    hmac.update(String(timestamp), 'utf8');
+    hmac.update('.', 'utf8');
+    hmac.update(body, 'utf8');
+    return {
+      ...headers,
+      'x-adcp-timestamp': String(timestamp),
+      'x-adcp-signature': `sha256=${hmac.digest('hex')}`,
+    };
+  }
+  if (!signing.key) {
+    throw new Error('webhook_replay_receiver.signing.key is required when signing.mode is "rfc9421".');
+  }
+  const request: RequestLike = {
+    method: 'POST',
+    url: signing.targetUrl ?? receiverUrl,
+    headers,
+    body,
+  };
+  return { ...headers, ...signWebhook(request, signing.key, { now: signing.now }).headers };
+}
+
+async function postWebhookReplayVector(
+  url: string,
+  body: string,
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  parentSignal?: AbortSignal
+): Promise<HttpProbeResult> {
+  const controller = new AbortController();
+  const abort = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abort();
+  parentSignal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(
+    () => controller.abort(new Error(`webhook replay timed out after ${timeoutMs}ms`)),
+    timeoutMs
+  );
+  try {
+    const response = await fetchImpl(url, {
+      method: 'POST',
+      headers,
+      body,
+      signal: controller.signal,
+    });
+    const responseBody = await readWebhookReplayResponseBody(response);
+    return {
+      url,
+      status: response.status,
+      headers: lowerCaseHeaders(response.headers),
+      body: responseBody,
+    };
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener('abort', abort);
+  }
+}
+
+async function readWebhookReplayResponseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return null;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.toLowerCase().includes('application/json')) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+  return text;
+}
+
+function lowerCaseHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value;
+  });
+  return out;
 }
 
 function resolveAdvertisedTools(options: StoryboardRunOptions): string[] | undefined {

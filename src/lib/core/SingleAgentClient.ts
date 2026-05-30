@@ -104,7 +104,7 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
-import { verifyWebhookRequest, type WebhookHeaderValue } from '../webhooks';
+import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import {
   isWellKnownAgentCardUrl as isWellKnownCardUrl,
@@ -176,6 +176,91 @@ type NormalizedWebhookPayload = {
   idempotency_key?: string;
   protocol?: 'mcp' | 'a2a';
 };
+
+export type WebhookParseErrorCode =
+  | 'webhook_signature_invalid'
+  | 'webhook_timestamp_invalid'
+  | 'webhook_unsupported_payload'
+  | 'webhook_envelope_invalid'
+  | 'webhook_result_invalid';
+
+export interface VerifyAndParseWebhookOptions {
+  /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
+  rawBody?: string | Buffer | Uint8Array;
+  /** Parsed payload or raw body. When HMAC is configured, verified raw bytes are parsed instead of `payload`. */
+  body?: string | Buffer | Uint8Array | unknown;
+  /** Parsed protocol payload. */
+  payload?: unknown;
+  /** Header bag from the receiver framework. Used for HMAC verification when configured. */
+  headers?: WebhookHeadersLike;
+  /** Task type from trusted routing context. Used as an A2A fallback. */
+  taskType?: string;
+  /** Operation id from trusted routing context. Used as an A2A fallback. */
+  operationId?: string;
+  /** Explicit legacy HMAC signature header value. */
+  signature?: WebhookHeaderValue;
+  /** Explicit legacy HMAC timestamp header value. */
+  timestamp?: WebhookHeaderValue;
+}
+
+export type WebhookParseResult = WebhookParseSuccess | WebhookParseFailure;
+
+export interface WebhookParseSuccess {
+  ok: true;
+  protocol: 'mcp' | 'a2a';
+  envelope: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent;
+  result: unknown;
+  metadata: {
+    taskId: string;
+    taskType: string;
+    operationId: string;
+    contextId?: string;
+    idempotencyKey?: string;
+    status: TaskStatus;
+    timestamp?: string;
+    message?: string;
+  };
+}
+
+export interface WebhookParseFailure {
+  ok: false;
+  code: WebhookParseErrorCode;
+  message: string;
+  cause?: unknown;
+}
+
+export class WebhookDispatchError extends Error {
+  readonly code: WebhookParseErrorCode;
+  readonly cause?: unknown;
+
+  constructor(code: WebhookParseErrorCode, message: string, cause?: unknown) {
+    super(message);
+    this.name = 'WebhookDispatchError';
+    this.code = code;
+    this.cause = cause;
+  }
+}
+
+const WEBHOOK_TASK_STATUSES = new Set<string>([
+  'submitted',
+  'working',
+  'input-required',
+  'completed',
+  'canceled',
+  'failed',
+  'rejected',
+  'auth-required',
+  'unknown',
+]);
+
+const MCP_WEBHOOK_REQUIRED_FIELDS = [
+  'idempotency_key',
+  'operation_id',
+  'task_id',
+  'task_type',
+  'status',
+  'timestamp',
+] as const;
 
 /**
  * Configuration for SingleAgentClient (and multi-agent client)
@@ -894,34 +979,114 @@ export class SingleAgentClient {
     timestamp?: WebhookHeaderValue,
     rawBody?: string | Buffer | Uint8Array
   ): Promise<boolean> {
-    // Verify signature if secret is configured
-    if (this.config.webhookSecret) {
-      if (!signature || !timestamp) {
-        throw new Error('Webhook signature and timestamp required but not provided');
-      }
-
-      const isValid = this.verifyWebhookSignature(rawBody ?? payload, signature, timestamp);
-      if (!isValid) {
-        throw new Error('Invalid webhook signature or timestamp too old');
-      }
-
-      console.log('[ADCP Client]: Webhook signature is valid');
+    const parsed = await this.verifyAndParseWebhook({
+      payload,
+      taskType,
+      operationId,
+      signature,
+      timestamp,
+      rawBody,
+    });
+    if (!parsed.ok) {
+      throw new WebhookDispatchError(parsed.code, parsed.message, parsed.cause);
     }
 
-    // Transform raw protocol payload to normalized format
-    const normalizedPayload = this.normalizeWebhookPayload(payload, taskType, operationId);
+    return this.dispatchParsedWebhook(parsed);
+  }
 
+  /**
+   * Verify and normalize an inbound webhook without dispatching handlers.
+   *
+   * This is the lower-level receiver primitive for integrations that need to
+   * map malformed webhooks to precise HTTP responses. It verifies the legacy
+   * HMAC profile when `webhookSecret` is configured, parses raw JSON bodies,
+   * validates the transport envelope shape, and returns the unwrapped AdCP
+   * result plus routing metadata.
+   */
+  async verifyAndParseWebhook(options: VerifyAndParseWebhookOptions): Promise<WebhookParseResult> {
+    const rawBody = options.rawBody ?? rawBodyFromUnknown(options.body);
+
+    if (this.config.webhookSecret) {
+      if (rawBody === undefined) {
+        return {
+          ok: false,
+          code: 'webhook_signature_invalid',
+          message: 'Raw webhook body required for HMAC signature verification; capture bytes before JSON parsing.',
+        };
+      }
+      const check = verifyWebhookRequest({
+        rawBody,
+        secret: this.config.webhookSecret,
+        headers: options.headers,
+        signature: options.signature,
+        timestamp: options.timestamp,
+      });
+      if (!check.ok) {
+        return {
+          ok: false,
+          code:
+            check.reason === 'invalid_timestamp' || check.reason === 'stale_timestamp'
+              ? 'webhook_timestamp_invalid'
+              : 'webhook_signature_invalid',
+          message: check.message,
+        };
+      }
+    }
+
+    const payloadSource =
+      this.config.webhookSecret && rawBody !== undefined ? rawBody : (options.payload ?? options.body ?? rawBody);
+    const parsedPayload = parseWebhookBody(payloadSource);
+    if (!parsedPayload.ok) {
+      return parsedPayload;
+    }
+
+    try {
+      const normalizedPayload = this.normalizeWebhookPayload(
+        parsedPayload.payload,
+        options.taskType ?? 'unknown',
+        options.operationId ?? 'unknown'
+      );
+      return {
+        ok: true,
+        protocol: normalizedPayload.protocol ?? 'mcp',
+        envelope: parsedPayload.payload as MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
+        result: normalizedPayload.result,
+        metadata: {
+          operationId: normalizedPayload.operation_id,
+          contextId: normalizedPayload.context_id,
+          taskId: normalizedPayload.task_id,
+          taskType: normalizedPayload.task_type,
+          status: normalizedPayload.status,
+          message: normalizedPayload.message,
+          timestamp: normalizedPayload.timestamp,
+          idempotencyKey: normalizedPayload.idempotency_key,
+        },
+      };
+    } catch (error) {
+      if (error instanceof WebhookDispatchError) {
+        return { ok: false, code: error.code, message: error.message, cause: error.cause };
+      }
+      return {
+        ok: false,
+        code: 'webhook_result_invalid',
+        message: error instanceof Error ? error.message : 'Webhook payload could not be normalized.',
+        cause: error,
+      };
+    }
+  }
+
+  private async dispatchParsedWebhook(parsed: WebhookParseSuccess): Promise<boolean> {
     const metadata: WebhookMetadata = {
-      operation_id: normalizedPayload.operation_id,
-      context_id: normalizedPayload.context_id,
-      task_id: normalizedPayload.task_id,
+      operation_id: parsed.metadata.operationId,
+      context_id: parsed.metadata.contextId,
+      task_id: parsed.metadata.taskId,
       agent_id: this.agent.id,
-      task_type: normalizedPayload.task_type,
-      status: normalizedPayload.status,
-      message: normalizedPayload.message,
-      timestamp: normalizedPayload.timestamp || new Date().toISOString(),
-      idempotency_key: normalizedPayload.idempotency_key,
-      protocol: normalizedPayload.protocol,
+      task_type: parsed.metadata.taskType,
+      status: parsed.metadata.status,
+      message: parsed.metadata.message,
+      timestamp: parsed.metadata.timestamp || new Date().toISOString(),
+      idempotency_key: parsed.metadata.idempotencyKey,
+      protocol: parsed.protocol,
     };
 
     // Emit activity
@@ -933,13 +1098,13 @@ export class SingleAgentClient {
       task_id: metadata.task_id,
       task_type: metadata.task_type,
       status: metadata.status,
-      payload: normalizedPayload.result,
+      payload: parsed.result,
       timestamp: metadata.timestamp,
     });
 
     // Handle through async handler if configured
     if (this.asyncHandler) {
-      await this.asyncHandler.handleWebhook({ result: normalizedPayload.result, metadata });
+      await this.asyncHandler.handleWebhook({ result: parsed.result as AdCPAsyncResponseData | undefined, metadata });
       return true;
     }
 
@@ -959,19 +1124,48 @@ export class SingleAgentClient {
    * @param operationId - Operation id
    * @returns Normalized webhook payload with extracted AdCP response
    */
-  private normalizeWebhookPayload(
-    payload: MCPWebhookPayload | A2ATask | TaskStatusUpdateEvent,
-    taskType: string,
-    operationId: string
-  ): NormalizedWebhookPayload {
+  private normalizeWebhookPayload(payload: unknown, taskType: string, operationId: string): NormalizedWebhookPayload {
+    if (!isObjectRecord(payload)) {
+      throw new WebhookDispatchError(
+        'webhook_unsupported_payload',
+        'Unsupported webhook payload format. Expected an MCP webhook envelope object or an A2A task/status event.'
+      );
+    }
+
+    if (isBareDeliveryReport(payload)) {
+      throw new WebhookDispatchError(
+        'webhook_unsupported_payload',
+        'Unsupported webhook payload format: received a bare delivery report result. Webhook POST bodies must be an MCP envelope with top-level idempotency_key, operation_id, task_id, task_type, status, timestamp, and result, or an A2A task/status event. Put delivery fields under result.'
+      );
+    }
+
     // 1. Check for MCP Webhook Payload (has task_id, status, task_type fields)
-    if ('task_id' in payload && 'task_type' in payload && 'status' in payload) {
-      const mcpPayload = payload as MCPWebhookPayload;
+    if (isMcpWebhookCandidate(payload)) {
+      const missing = missingMcpWebhookFields(payload);
+      if (missing.length > 0) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          `Invalid MCP webhook envelope: missing top-level field(s) ${missing.join(', ')}. Delivery result fields such as notification_type and media_buy_deliveries belong under result, not at the top level.`
+        );
+      }
+      if (typeof payload.status !== 'string' || !WEBHOOK_TASK_STATUSES.has(payload.status)) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          `Invalid MCP webhook envelope: unsupported top-level status ${JSON.stringify(payload.status)}. Expected one of ${Array.from(WEBHOOK_TASK_STATUSES).join(', ')}.`
+        );
+      }
+      if (typeof payload.timestamp !== 'string' || Number.isNaN(Date.parse(payload.timestamp))) {
+        throw new WebhookDispatchError(
+          'webhook_envelope_invalid',
+          'Invalid MCP webhook envelope: timestamp must be an ISO 8601 date-time string.'
+        );
+      }
+      const mcpPayload = payload as unknown as MCPWebhookPayload;
       return {
-        operation_id: operationId || 'unknown',
+        operation_id: mcpPayload.operation_id || operationId || 'unknown',
         context_id: mcpPayload.context_id ?? undefined,
         task_id: mcpPayload.task_id,
-        task_type: taskType,
+        task_type: taskType && taskType !== 'unknown' ? taskType : mcpPayload.task_type,
         status: mcpPayload.status,
         result: mcpPayload.result ?? undefined,
         message: mcpPayload.message ?? undefined,
@@ -983,7 +1177,7 @@ export class SingleAgentClient {
 
     // 2. Check for A2A Task or TaskStatusUpdateEvent
     if ('kind' in payload && (payload.kind === 'task' || payload.kind === 'status-update')) {
-      const a2aPayload = payload as A2ATask | TaskStatusUpdateEvent;
+      const a2aPayload = payload as unknown as A2ATask | TaskStatusUpdateEvent;
       const a2aStatus = a2aPayload.status?.state || 'unknown';
       let result: AdCPAsyncResponseData | undefined = undefined;
 
@@ -1002,12 +1196,11 @@ export class SingleAgentClient {
           // Try to unwrap artifacts for all statuses
           result = unwrapProtocolResponse({ result: a2aPayload }, taskType, 'a2a') as AdCPAsyncResponseData;
         } catch (error) {
-          console.warn(
-            'Failed to unwrap A2A webhook payload:',
-            error instanceof Error ? error.message : 'unknown error'
+          throw new WebhookDispatchError(
+            'webhook_result_invalid',
+            `Failed to unwrap A2A webhook payload artifacts: ${error instanceof Error ? error.message : 'unknown error'}`,
+            error
           );
-          // Fallback: pass raw artifacts so handler has something to work with
-          result = a2aPayload.artifacts as unknown as AdCPAsyncResponseData;
         }
       }
 
@@ -1044,9 +1237,10 @@ export class SingleAgentClient {
     }
 
     // 3. Unknown payload format
-    throw new Error(
-      'Unsupported webhook payload format. Expected MCPWebhookPayload, Task, or TaskStatusUpdateEvent. ' +
-        `Received: ${JSON.stringify(payload).substring(0, 200)}`
+    throw new WebhookDispatchError(
+      'webhook_unsupported_payload',
+      'Unsupported webhook payload format. Expected an MCP webhook envelope with top-level idempotency_key, operation_id, task_id, task_type, status, timestamp, and result, or an A2A Task/TaskStatusUpdateEvent with AdCP data nested in status.message.parts[].data or task artifacts. ' +
+        `Received: ${safeJsonPreview(payload)}`
     );
   }
 
@@ -1133,38 +1327,33 @@ export class SingleAgentClient {
             ? req.body
             : undefined);
         if (this.config.webhookSecret && rawBody === undefined) {
-          throw new Error(
+          throw new WebhookDispatchError(
+            'webhook_signature_invalid',
             'Raw webhook body required for HMAC signature verification; capture bytes before JSON parsing.'
           );
         }
         const payload =
-          typeof req.body === 'string'
-            ? JSON.parse(req.body)
-            : Buffer.isBuffer(req.body) || req.body instanceof Uint8Array
-              ? JSON.parse(Buffer.from(req.body).toString('utf8'))
-              : req.body;
+          typeof req.body === 'string' || Buffer.isBuffer(req.body) || req.body instanceof Uint8Array
+            ? undefined
+            : req.body;
 
         // Extract routing params if available (e.g., Express route params)
         const taskType = req.params?.task_type || req.params?.taskType || 'unknown';
         const operationId = req.params?.operation_id || req.params?.operationId || 'unknown';
 
-        let signature: WebhookHeaderValue;
-        let timestamp: WebhookHeaderValue;
-        if (this.config.webhookSecret) {
-          const check = verifyWebhookRequest({
-            rawBody: rawBody!,
-            secret: this.config.webhookSecret,
-            headers: req.headers,
-          });
-          if (!check.ok) {
-            throw new Error(check.message);
-          }
-          signature = check.signature;
-          timestamp = check.timestamp;
+        const parsed = await this.verifyAndParseWebhook({
+          payload,
+          body: req.body,
+          rawBody,
+          headers: req.headers,
+          taskType,
+          operationId,
+        });
+        if (!parsed.ok) {
+          throw new WebhookDispatchError(parsed.code, parsed.message, parsed.cause);
         }
 
-        // Handle webhook with automatic verification using raw body bytes.
-        const handled = await this.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
+        const handled = await this.dispatchParsedWebhook(parsed);
 
         // Return success
         if (res.json) {
@@ -1176,7 +1365,7 @@ export class SingleAgentClient {
       } catch (error: unknown) {
         // Return error
         const errorMessage = error instanceof Error ? error.message : String(error);
-        const statusCode = errorMessage.includes('signature') || errorMessage.includes('timestamp') ? 401 : 500;
+        const statusCode = webhookErrorHttpStatus(error);
 
         if (res.json) {
           res.status(statusCode).json({ error: errorMessage });
@@ -3439,6 +3628,81 @@ export class SingleAgentClient {
 
     return schemaMap[taskType] || null;
   }
+}
+
+function rawBodyFromUnknown(value: unknown): string | Buffer | Uint8Array | undefined {
+  return typeof value === 'string' || Buffer.isBuffer(value) || value instanceof Uint8Array ? value : undefined;
+}
+
+function parseWebhookBody(value: unknown): { ok: true; payload: unknown } | WebhookParseFailure {
+  if (value === undefined) {
+    return {
+      ok: false,
+      code: 'webhook_envelope_invalid',
+      message: 'Webhook body is required.',
+    };
+  }
+  if (typeof value === 'string' || Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    const raw = Buffer.isBuffer(value) || value instanceof Uint8Array ? Buffer.from(value).toString('utf8') : value;
+    try {
+      return { ok: true, payload: JSON.parse(raw) };
+    } catch (error) {
+      return {
+        ok: false,
+        code: 'webhook_envelope_invalid',
+        message: 'Webhook body must be valid JSON.',
+        cause: error,
+      };
+    }
+  }
+  return { ok: true, payload: value };
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isBareDeliveryReport(payload: Record<string, unknown>): boolean {
+  return (
+    typeof payload.notification_type === 'string' &&
+    ('media_buy_deliveries' in payload || 'creative_deliveries' in payload || 'reporting_period' in payload) &&
+    !('result' in payload) &&
+    !('task_id' in payload)
+  );
+}
+
+function isMcpWebhookCandidate(payload: Record<string, unknown>): boolean {
+  return (
+    MCP_WEBHOOK_REQUIRED_FIELDS.some(field => field in payload) ||
+    'result' in payload ||
+    'context_id' in payload ||
+    'notification_id' in payload
+  );
+}
+
+function missingMcpWebhookFields(payload: Record<string, unknown>): string[] {
+  return MCP_WEBHOOK_REQUIRED_FIELDS.filter(field => {
+    const value = payload[field];
+    return typeof value !== 'string' || value.length === 0;
+  });
+}
+
+function safeJsonPreview(value: unknown): string {
+  try {
+    return JSON.stringify(value).substring(0, 200);
+  } catch {
+    return '[unserializable payload]';
+  }
+}
+
+function webhookErrorHttpStatus(error: unknown): number {
+  if (error instanceof WebhookDispatchError) {
+    if (error.code === 'webhook_signature_invalid' || error.code === 'webhook_timestamp_invalid') {
+      return 401;
+    }
+    return 400;
+  }
+  return 500;
 }
 
 /**

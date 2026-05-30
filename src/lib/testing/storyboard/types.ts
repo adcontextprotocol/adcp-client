@@ -8,6 +8,7 @@
 
 import type { TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
+import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -648,6 +649,8 @@ export interface StoryboardStep {
   /** When true (default) assert `idempotency_key` is present and pattern-valid. */
   expect_idempotency_key?: boolean;
   /** Optional webhook schema reference; validates the parsed body. */
+  webhook_payload_schema_ref?: string;
+  /** Back-compat alias for older local storyboards. Prefer `webhook_payload_schema_ref`. */
   response_schema_webhook_ref?: string;
   /**
    * Cap on the number of distinct logical webhook events (grouped by
@@ -669,6 +672,17 @@ export interface StoryboardStep {
   expect_min_deliveries?: number;
   /** Signature-tag sanity check for `expect_webhook_signature_valid`. Default `adcp/webhook-signing/v1`. */
   require_tag?: string;
+  // ──────────────────────────────────────────────────────────
+  // Webhook receiver replay step fields (only used when task is
+  // `replay_webhook_vector`). The runner sends a canonical webhook POST to
+  // a buyer/orchestrator receiver under test; it does not call the seller.
+  // ──────────────────────────────────────────────────────────
+  /** Compliance vector reference, e.g. `static/test-vectors/webhook-receiver-envelope.json#positive/foo`. */
+  vector_ref?: string;
+  /** Earlier step id that represents the same logical event retry. */
+  same_event_as?: string;
+  /** Expected receiver error label from the vector metadata, when present. */
+  expected_error?: string;
   /**
    * Fan-out spec for parallel-dispatch steps. When set, the runner fires
    * `count` concurrent dispatches of this step (single-process,
@@ -1486,6 +1500,26 @@ export interface StoryboardRunOptions extends TestOptions {
      * validate reachability.
      */
     public_url?: string;
+  };
+  /**
+   * Target receiver for `replay_webhook_vector` storyboards. This is separate
+   * from `webhook_receiver`: that option hosts a local receiver so the runner
+   * can observe seller-emitted webhooks, while this option points at the
+   * buyer/orchestrator receiver the runner should POST canonical vectors to.
+   */
+  webhook_replay_receiver?: {
+    /** Absolute URL of the receiver endpoint under test. */
+    url: string;
+    /** Extra headers to send on every replay. */
+    headers?: Record<string, string>;
+    /** Optional signing profile for raw-body verification tests. */
+    signing?: WebhookConformanceSigningOptions;
+    /** Request timeout in milliseconds. Defaults to 10000. */
+    timeoutMs?: number;
+    /** Optional root directory for resolving vector_ref file paths. */
+    vectorsRoot?: string;
+    /** Override fetch for tests or custom runtimes. */
+    fetchImpl?: typeof fetch;
   };
   /**
    * Test-kit contract ids that are in scope for this run. A step with

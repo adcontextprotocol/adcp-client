@@ -18,6 +18,60 @@ operations that were explicitly registered with legacy
 | Replay protection | A `(keyid, target-uri, nonce)` accepted once must be rejected everywhere until it expires. Multi-replica deployments need a shared replay store. |
 | Dual scheme | RFC 9421 and legacy HMAC are separate profiles. If one is present and fails, reject. Do not fall back to the other scheme after a failed verification. |
 
+## Payload Anatomy
+
+Delivery reporting webhooks are sent as a complete async webhook envelope. The
+delivery report is the nested `result`, not the top-level POST body.
+
+Full wire payload sent as the webhook POST body:
+
+```json
+{
+  "idempotency_key": "whk_20260526_example_000031",
+  "operation_id": "delivery_report_67_2026-04",
+  "task_id": "delivery_report_67_2026-04_000031",
+  "task_type": "media_buy_delivery",
+  "status": "completed",
+  "timestamp": "2026-05-26T09:00:44.582Z",
+  "message": "Scheduled media buy delivery report available",
+  "result": {
+    "notification_type": "scheduled",
+    "sequence_number": 31,
+    "reporting_period": {
+      "start": "2026-05-25T00:00:00Z",
+      "end": "2026-05-25T23:59:00Z"
+    },
+    "currency": "USD",
+    "media_buy_deliveries": []
+  }
+}
+```
+
+Inner delivery result only:
+
+```json
+{
+  "notification_type": "scheduled",
+  "sequence_number": 31,
+  "reporting_period": {
+    "start": "2026-05-25T00:00:00Z",
+    "end": "2026-05-25T23:59:00Z"
+  },
+  "currency": "USD",
+  "media_buy_deliveries": []
+}
+```
+
+That inner object is valid delivery report content, but it is not valid as the
+top-level webhook POST body. Receivers should reject it before dispatch because
+it is missing the async transport fields.
+
+Status fields have different scopes: top-level `status` is the async task or
+webhook event status; nested `media_buy_deliveries[].status` is the media buy's
+delivery status. `idempotency_key` is unique per webhook event and stable across
+retries of that event. Signatures cover the exact raw JSON bytes being sent, so
+verify before parsing or re-serializing.
+
 ## Recommended RFC 9421 Setup
 
 Create one verifier per expected sending agent. The resolver is bound to that
