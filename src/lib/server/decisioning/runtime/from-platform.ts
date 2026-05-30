@@ -2550,6 +2550,7 @@ interface DispatchHitlOpts {
   accountId: string;
   pushNotificationUrl?: string;
   pushNotificationToken?: string;
+  pushNotificationOperationId?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
@@ -2678,7 +2679,7 @@ async function emitSyncCompletionWebhook(opts: DispatchHitlOpts, result: unknown
     const r = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
       payload: wirePayload,
-      operation_id: `${opts.tool}.${taskId}`,
+      operation_id: resolveWebhookDeliveryOperationId(opts, taskId),
     });
     success = r?.delivered === true;
     if (r && Array.isArray(r.errors) && r.errors.length > 0) {
@@ -2839,8 +2840,8 @@ async function dispatchHitl<TResult>(
  * `result`. This helper builds that shape from the v6 task lifecycle data.
  *
  * Spec requires top-level: `idempotency_key`, `task_id`, `task_type`, `status`,
- * `timestamp`. Optional: `protocol`, `context_id`, `message`, `result`,
- * `operation_id`. We add `validation_token` (echoed from
+ * `timestamp`, `operation_id`. Optional: `protocol`, `context_id`, `message`,
+ * `result`. We add `validation_token` (echoed from
  * `push_notification_config.token`) outside the spec but consistent with the
  * intent — receivers that don't expect it ignore the extra property.
  *
@@ -2859,6 +2860,7 @@ function buildTaskWebhookPayload(
   const idempotencyKey = randomUUID();
   const payload: Record<string, unknown> = {
     idempotency_key: idempotencyKey,
+    operation_id: resolveWebhookPayloadOperationId(opts, taskId),
     task_id: taskId,
     task_type: opts.tool,
     status,
@@ -2885,6 +2887,14 @@ function buildTaskWebhookPayload(
     payload.message = artifact.error.message;
   }
   return payload;
+}
+
+function resolveWebhookPayloadOperationId(opts: DispatchHitlOpts, taskId: string): string {
+  return opts.pushNotificationOperationId ?? `${opts.tool}.${taskId}`;
+}
+
+function resolveWebhookDeliveryOperationId(opts: DispatchHitlOpts, taskId: string): string {
+  return `task-webhook:${opts.accountId}:${opts.tool}:${taskId}`;
 }
 
 // `protocolForTool` and `SPEC_WEBHOOK_TASK_TYPES` are exported from
@@ -2922,7 +2932,7 @@ async function emitTaskWebhook(
     const result = await opts.emitWebhook({
       url: opts.pushNotificationUrl,
       payload: wirePayload,
-      operation_id: `${opts.tool}.${taskId}`,
+      operation_id: resolveWebhookDeliveryOperationId(opts, taskId),
     });
     success = result?.delivered === true;
     if (result && Array.isArray(result.errors) && result.errors.length > 0) {
@@ -3522,12 +3532,14 @@ function extractPushConfig(
   params: unknown,
   _logger: AdcpLogger,
   opts: { allowPrivateWebhookUrls?: boolean } = {}
-): { url?: string; token?: string } {
+): { url?: string; token?: string; operationId?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
   if (!cfg || typeof cfg !== 'object') return {};
-  const rawUrl = (cfg as { url?: unknown }).url;
-  const rawToken = (cfg as { token?: unknown }).token;
+  const cfgObj = cfg as { url?: unknown; token?: unknown; operation_id?: unknown };
+  const rawUrl = cfgObj.url;
+  const rawToken = cfgObj.token;
+  const rawOperationId = cfgObj.operation_id;
 
   let url: string | undefined;
   if (typeof rawUrl === 'string') {
@@ -3559,9 +3571,28 @@ function extractPushConfig(
     token = rawToken;
   }
 
+  let operationId: string | undefined;
+  if (Object.prototype.hasOwnProperty.call(cfgObj, 'operation_id')) {
+    if (typeof rawOperationId !== 'string') {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'push_notification_config.operation_id rejected: operation_id must be a string',
+        field: 'push_notification_config.operation_id',
+      });
+    }
+    const validation = validatePushNotificationOperationId(rawOperationId);
+    if (!validation.ok) {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: `push_notification_config.operation_id rejected: ${validation.reason}`,
+        field: 'push_notification_config.operation_id',
+      });
+    }
+    operationId = rawOperationId;
+  }
+
   return {
     ...(url !== undefined && { url }),
     ...(token !== undefined && { token }),
+    ...(operationId !== undefined && { operationId }),
   };
 }
 
@@ -3684,6 +3715,7 @@ function validatePushNotificationUrl(rawUrl: string, opts: { allowPrivate?: bool
 
 const TOKEN_MAX_LENGTH = 255;
 const TOKEN_CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const PUSH_OPERATION_ID_RE = /^[A-Za-z0-9_.:-]{1,255}$/;
 
 function validatePushNotificationToken(token: string): UrlValidationResult {
   if (token.length === 0) {
@@ -3694,6 +3726,13 @@ function validatePushNotificationToken(token: string): UrlValidationResult {
   }
   if (TOKEN_CONTROL_CHAR_RE.test(token)) {
     return { ok: false, reason: 'token contains control characters' };
+  }
+  return { ok: true };
+}
+
+function validatePushNotificationOperationId(operationId: string): UrlValidationResult {
+  if (!PUSH_OPERATION_ID_RE.test(operationId)) {
+    return { ok: false, reason: `operation_id must match ${PUSH_OPERATION_ID_RE.source}` };
   }
   return { ok: true };
 }
@@ -3771,6 +3810,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -3906,6 +3946,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
@@ -3984,6 +4025,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 pushNotificationUrl: push.url,
                 ...(push.token !== undefined && { pushNotificationToken: push.token }),
+                ...(push.operationId !== undefined && { pushNotificationOperationId: push.operationId }),
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 ...(observability && { observability }),
                 logger,
@@ -4019,6 +4061,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               accountId: reqCtx.account.id,
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
+              pushNotificationOperationId: push.operationId,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
@@ -4270,6 +4313,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 accountId: reqCtx.account.id,
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
