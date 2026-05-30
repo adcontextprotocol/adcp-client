@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-30T10:30:37.191Z
+// Generated at: 2026-05-30T11:05:42.029Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3548,8 +3548,8 @@ export const CreativeDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.objec
 }).passthrough());
 
 export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
-    keyword: z.string(),
-    match_type: MatchTypeSchema
+    keyword: z.string().optional(),
+    match_type: MatchTypeSchema.optional()
 }).passthrough());
 
 export const GeoDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
