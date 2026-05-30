@@ -506,6 +506,11 @@ export interface ComplyOptions extends TestOptions {
    */
   webhook_receiver?: StoryboardRunOptions['webhook_receiver'];
   /**
+   * Target an inbound buyer/orchestrator receiver for `replay_webhook_vector`
+   * storyboards. Passed through to `runStoryboard`.
+   */
+  webhook_replay_receiver?: StoryboardRunOptions['webhook_replay_receiver'];
+  /**
    * Test-kit contract ids in scope for this run. Passed through to
    * `runStoryboard`. See `StoryboardRunOptions.contracts`.
    */
@@ -1028,6 +1033,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     timeout_ms,
     signal: externalSignal,
     webhook_receiver,
+    webhook_replay_receiver,
     contracts,
     version,
     complianceDir,
@@ -1266,6 +1272,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         ...effectiveOptions,
         agentTools: profile.tools,
         ...(webhook_receiver !== undefined && { webhook_receiver }),
+        ...(webhook_replay_receiver !== undefined && { webhook_replay_receiver }),
         ...(contracts !== undefined && { contracts }),
         ...(signal !== undefined && { signal }),
       };
@@ -1555,6 +1562,9 @@ async function runWithDegradedProfile(
     // in for anything else, which is what we want.
     agentTools: [],
     ...(options.webhook_receiver !== undefined && { webhook_receiver: options.webhook_receiver }),
+    ...(options.webhook_replay_receiver !== undefined && {
+      webhook_replay_receiver: options.webhook_replay_receiver,
+    }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
     ...(signal !== undefined && { signal }),
   };

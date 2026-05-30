@@ -420,6 +420,36 @@ function stopPublisher(p) {
   return new Promise(r => p.server.close(r));
 }
 
+async function startReplayReceiver(handler) {
+  const requests = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const rawBody = Buffer.concat(chunks).toString('utf8');
+    let body;
+    try {
+      body = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      body = rawBody;
+    }
+    requests.push({ method: req.method, url: req.url, headers: req.headers, rawBody, body });
+    const response = await handler({ req, body, rawBody, requests });
+    res
+      .writeHead(response.status, { 'content-type': 'application/json' })
+      .end(JSON.stringify(response.body ?? { ok: response.status >= 200 && response.status < 300 }));
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  return {
+    server,
+    requests,
+    url: `http://127.0.0.1:${server.address().port}/webhook`,
+  };
+}
+
+function stopReplayReceiver(receiver) {
+  return new Promise(r => receiver.server.close(r));
+}
+
 function storyboardWith(steps) {
   return {
     id: 'webhook_emission_sb',
@@ -508,7 +538,9 @@ describe('runStoryboard: expect_webhook step task', () => {
     });
     const assertStep = result.phases[0].steps[1];
     assert.strictEqual(assertStep.passed, true, JSON.stringify(assertStep.validations));
-    assert.ok(assertStep.validations.some(v => v.schema_id === `/schemas/${ADCP_VERSION}/core/mcp-webhook-payload.json`));
+    assert.ok(
+      assertStep.validations.some(v => v.schema_id === `/schemas/${ADCP_VERSION}/core/mcp-webhook-payload.json`)
+    );
   });
 
   test('fails schema_violation when webhook envelope fields are missing', async () => {
@@ -848,5 +880,117 @@ describe('runStoryboard: expect_webhook_signature_valid (gating)', () => {
     assert.strictEqual(assertStep.skipped, true);
     assert.strictEqual(assertStep.skip.reason, 'unsatisfied_contract');
     assert.match(assertStep.skip.detail, /webhook_signing/);
+  });
+});
+
+describe('runStoryboard: replay_webhook_vector', () => {
+  let receiver;
+  afterEach(async () => {
+    if (receiver) await stopReplayReceiver(receiver);
+    receiver = undefined;
+  });
+
+  test('posts positive envelope vectors and validates retry idempotency stability', async () => {
+    receiver = await startReplayReceiver(({ body }) => ({
+      status:
+        body &&
+        typeof body === 'object' &&
+        body.idempotency_key &&
+        body.task_type === 'media_buy_delivery' &&
+        body.status === 'completed'
+          ? 204
+          : 400,
+    }));
+    const storyboard = storyboardWith([
+      {
+        id: 'post_delivery_report_envelope',
+        title: 'POST delivery report inside MCP webhook envelope',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-envelope',
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+      {
+        id: 'post_same_event_retry',
+        title: 'POST retry with same idempotency_key',
+        task: 'replay_webhook_vector',
+        vector_ref:
+          'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-retry-same-idempotency-key',
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+    ]);
+
+    const result = await runStoryboard('http://127.0.0.1:9/mcp', storyboard, {
+      ...RUN_OPTIONS_BASE,
+      agentTools: [],
+      webhook_replay_receiver: { url: receiver.url },
+    });
+
+    assert.strictEqual(result.phases[0].steps[0].passed, true, JSON.stringify(result.phases[0].steps[0].validations));
+    assert.strictEqual(result.phases[0].steps[1].passed, true, JSON.stringify(result.phases[0].steps[1].validations));
+    assert.strictEqual(receiver.requests.length, 2);
+    assert.strictEqual(receiver.requests[0].body.idempotency_key, receiver.requests[1].body.idempotency_key);
+    assert.ok(
+      result.phases[0].steps[1].validations.some(
+        v => v.check === 'webhook_replay_same_event_idempotency_key' && v.passed === true
+      )
+    );
+  });
+
+  test('passes negative vectors when receiver rejects them before dispatch', async () => {
+    receiver = await startReplayReceiver(({ body }) => ({
+      status:
+        body &&
+        typeof body === 'object' &&
+        body.idempotency_key &&
+        body.operation_id &&
+        body.task_id &&
+        body.task_type &&
+        body.status === 'completed'
+          ? 204
+          : 400,
+      body: { error: 'missing_envelope_fields' },
+    }));
+    const storyboard = storyboardWith([
+      {
+        id: 'reject_bare_delivery_result',
+        title: 'Reject top-level notification_type result',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#negative/bare-delivery-result',
+        expect_error: true,
+        webhook_payload_schema_ref: 'core/mcp-webhook-payload.json',
+      },
+    ]);
+
+    const result = await runStoryboard('http://127.0.0.1:9/mcp', storyboard, {
+      ...RUN_OPTIONS_BASE,
+      agentTools: [],
+      webhook_replay_receiver: { url: receiver.url },
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.passed, true, JSON.stringify(step.validations));
+    assert.strictEqual(step.response.status, 400);
+    assert.ok(step.validations.some(v => v.check === 'webhook_replay_payload_schema' && v.passed === true));
+  });
+
+  test('grades not_applicable when no replay receiver URL is configured', async () => {
+    const storyboard = storyboardWith([
+      {
+        id: 'post_delivery_report_envelope',
+        title: 'POST delivery report inside MCP webhook envelope',
+        task: 'replay_webhook_vector',
+        vector_ref: 'static/test-vectors/webhook-receiver-envelope.json#positive/mcp-delivery-report-envelope',
+      },
+    ]);
+
+    const result = await runStoryboard('http://127.0.0.1:9/mcp', storyboard, {
+      ...RUN_OPTIONS_BASE,
+      agentTools: [],
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.strictEqual(step.skipped, true);
+    assert.strictEqual(step.skip.reason, 'not_applicable');
+    assert.match(step.skip.detail, /webhook_replay_receiver\.url/);
   });
 });
