@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.1.0-beta.18
+
+### Patch Changes
+
+- 448249c: Include `operation_id` in framework-emitted task webhook payloads and validate
+  push notification operation identifiers at the request boundary.
+
 ## 8.1.0-beta.17
 
 ### Minor Changes
