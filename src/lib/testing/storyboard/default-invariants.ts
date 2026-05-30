@@ -151,12 +151,13 @@ registerOnce('context.no_secret_echo', {
       auth_token?: string;
       auth?: unknown;
       secrets?: string[];
-      test_kit?: { auth?: { api_key?: string } };
+      test_kit?: { auth?: { api_key?: string; basic?: unknown } };
     };
     addIfSecret(secrets, optAny.auth_token);
     for (const s of extractAuthSecrets(optAny.auth)) addIfSecret(secrets, s);
     for (const s of optAny.secrets ?? []) addIfSecret(secrets, s);
     addIfSecret(secrets, optAny.test_kit?.auth?.api_key);
+    for (const s of extractBasicSecrets(optAny.test_kit?.auth?.basic)) addIfSecret(secrets, s);
     ctx.state.secrets = secrets;
   },
   onStep: (ctx, stepResult) => {
@@ -541,6 +542,27 @@ function extractAuthSecrets(auth: unknown): string[] {
     // the AS sees, not the reference string. client_id is NOT extracted
     // (RFC 6749 §2.2 — public identifier).
     pushCredentialValue(out, c.client_secret);
+  }
+  return out;
+}
+
+function extractBasicSecrets(basic: unknown): string[] {
+  if (!basic || typeof basic !== 'object') return [];
+  const b = basic as Record<string, unknown>;
+  const out: string[] = [];
+  if (typeof b.credentials === 'string' && b.credentials) {
+    const colonIndex = b.credentials.indexOf(':');
+    if (colonIndex > 0 && colonIndex < b.credentials.length - 1) {
+      out.push(b.credentials.slice(colonIndex + 1));
+      out.push(Buffer.from(b.credentials, 'utf8').toString('base64'));
+    }
+    return out;
+  }
+  if (typeof b.password === 'string' && b.password) {
+    out.push(b.password);
+    if (typeof b.username === 'string' && b.username) {
+      out.push(Buffer.from(`${b.username}:${b.password}`, 'utf8').toString('base64'));
+    }
   }
   return out;
 }
