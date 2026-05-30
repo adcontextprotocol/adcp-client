@@ -111,4 +111,32 @@ describe('verifyAndParseWebhook', () => {
     });
     assert.strictEqual(valid.ok, true);
   });
+
+  test('parses verified raw HMAC bytes instead of a conflicting parsed payload', async () => {
+    const webhookSecret = 'test-secret-key-minimum-32-characters-long';
+    const client = new SingleAgentClient(agent, { webhookSecret });
+    const rawEnvelope = deliveryEnvelope({ idempotency_key: 'whk_signed_raw_0000001' });
+    const rawBody = JSON.stringify(rawEnvelope);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const hmac = crypto.createHmac('sha256', webhookSecret);
+    hmac.update(`${timestamp}.${rawBody}`);
+
+    const parsed = await client.verifyAndParseWebhook({
+      rawBody,
+      payload: deliveryEnvelope({
+        idempotency_key: 'whk_conflicting_payload',
+        result: { notification_type: 'scheduled', media_buy_deliveries: [{ media_buy_id: 'wrong' }] },
+      }),
+      headers: {
+        'x-adcp-signature': `sha256=${hmac.digest('hex')}`,
+        'x-adcp-timestamp': String(timestamp),
+      },
+      taskType: 'media_buy_delivery',
+      operationId: 'delivery_report_67_2026-04',
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.idempotencyKey, 'whk_signed_raw_0000001');
+    assert.deepStrictEqual(parsed.result.media_buy_deliveries, []);
+  });
 });

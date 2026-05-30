@@ -682,20 +682,22 @@ export function getSchemaValidatorByRef(
     allowUnionTypes: true,
   });
   addFormats(ajv);
-  for (const entry of readdirSync(s.root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name === 'bundled') continue;
-    const abs = path.join(s.root, entry.name);
-    for (const schemaFile of walkJsonFiles(abs)) {
-      const schema = loadJson(schemaFile);
-      if (typeof schema.$id === 'string' && !ajv.getSchema(schema.$id)) {
-        ajv.addSchema(schema);
-      }
+  const dependencySchemas: LoadedSchema[] = [];
+  const registeredIds = new Set<string>();
+  for (const schemaFile of walkJsonFiles(s.root)) {
+    if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
+    if (schemaFile === file) continue;
+    const schema = loadJson(schemaFile);
+    if (typeof schema.$id === 'string' && !registeredIds.has(schema.$id)) {
+      registeredIds.add(schema.$id);
+      dependencySchemas.push(schema);
     }
   }
+  if (dependencySchemas.length > 0) {
+    ajv.addSchema(dependencySchemas);
+  }
   const rawSchema = loadJson(file);
-  const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
-  const compiled = existing ?? ajv.compile(rawSchema);
+  const compiled = ajv.compile(rawSchema);
   s.validators.set(cacheKey, compiled);
   return compiled;
 }

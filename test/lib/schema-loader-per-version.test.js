@@ -20,6 +20,7 @@ const path = require('node:path');
 
 const {
   getValidator,
+  getSchemaValidatorByRef,
   listValidatorKeys,
   resolveBundleKey,
   hasSchemaBundle,
@@ -313,5 +314,35 @@ describe('schema-loader per-version state', () => {
       /\/bundled\//,
       `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
     );
+  });
+
+  test('getSchemaValidatorByRef compiles MCP webhook payload schema with nested refs', () => {
+    _resetValidationLoader(ADCP_VERSION);
+    const validate = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION);
+    assert.ok(validate, 'MCP webhook payload schema must compile');
+
+    const ok = validate({
+      idempotency_key: 'evt_schema_ref_0000001',
+      operation_id: 'op_schema_ref',
+      task_id: 'task_schema_ref',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: '2026-05-26T09:00:44.582Z',
+      result: {
+        status: 'completed',
+        media_buy_id: 'mb_1',
+        packages: [],
+      },
+    });
+    assert.strictEqual(ok, true, JSON.stringify(validate.errors));
+
+    const missingEnvelopeFields = validate({
+      idempotency_key: 'evt_schema_ref_0000001',
+      task_id: 'task_schema_ref',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+    });
+    assert.strictEqual(missingEnvelopeFields, false, 'schema should reject missing operation_id and timestamp');
   });
 });

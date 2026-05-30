@@ -187,7 +187,7 @@ export type WebhookParseErrorCode =
 export interface VerifyAndParseWebhookOptions {
   /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
   rawBody?: string | Buffer | Uint8Array;
-  /** Parsed payload or raw body. `payload` wins when both are supplied. */
+  /** Parsed payload or raw body. When HMAC is configured, verified raw bytes are parsed instead of `payload`. */
   body?: string | Buffer | Uint8Array | unknown;
   /** Parsed protocol payload. */
   payload?: unknown;
@@ -1027,7 +1027,9 @@ export class SingleAgentClient {
       }
     }
 
-    const parsedPayload = parseWebhookBody(options.payload ?? options.body ?? rawBody);
+    const payloadSource =
+      this.config.webhookSecret && rawBody !== undefined ? rawBody : (options.payload ?? options.body ?? rawBody);
+    const parsedPayload = parseWebhookBody(payloadSource);
     if (!parsedPayload.ok) {
       return parsedPayload;
     }
