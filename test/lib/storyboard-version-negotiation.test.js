@@ -104,6 +104,78 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.strictEqual(options.versionEnvelope, 'auto');
   });
 
+  test('version_negotiation evaluates envelope_field_pattern instead of forward-compatible not_applicable', async () => {
+    const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
+    const { createTestClient } = require('../../dist/lib/testing/client.js');
+
+    const storyboard = {
+      id: 'version_negotiation',
+      version: '1.0.0',
+      adcp_version: CURRENT_PRERELEASE_VERSION,
+      title: 'Version negotiation',
+      category: 'universal',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'capabilities',
+          title: 'Capabilities',
+          steps: [
+            {
+              id: 'get_capabilities_with_version',
+              title: 'Get capabilities with version envelope',
+              task: 'get_adcp_capabilities',
+              sample_request: {
+                context: {
+                  correlation_id: 'version_negotiation--get_capabilities_with_version',
+                },
+              },
+              validations: [
+                {
+                  check: 'envelope_field_pattern',
+                  path: 'adcp_version',
+                  pattern: '^\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?$',
+                  description: 'Seller echoes release-precision adcp_version on the response envelope',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    const client = createTestClient('https://example.invalid/mcp', 'mcp', {
+      adcpVersion: CURRENT_PRERELEASE_VERSION,
+      versionEnvelope: 'auto',
+    });
+    client.getAgentInfo = async () => ({ name: 'Test', tools: [{ name: 'get_adcp_capabilities' }] });
+    client.getAdcpCapabilities = async () => ({
+      success: true,
+      data: {
+        status: 'completed',
+        adcp_version: CURRENT_PRERELEASE_RELEASE_PRECISION,
+        adcp: { major_versions: [3], supported_versions: [CURRENT_PRERELEASE_RELEASE_PRECISION] },
+        supported_protocols: ['media_buy'],
+        context: { correlation_id: 'version_negotiation--get_capabilities_with_version' },
+      },
+    });
+
+    const result = await runStoryboard('https://example.invalid/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: ['get_adcp_capabilities'],
+      _profile: { name: 'Test', tools: ['get_adcp_capabilities'] },
+      _client: client,
+    });
+
+    const validation = result.phases[0].steps[0].validations.find(v => v.check === 'envelope_field_pattern');
+    assert.ok(validation, 'envelope_field_pattern validation should be present');
+    assert.strictEqual(validation.passed, true, validation.error);
+    assert.strictEqual(validation.not_applicable, undefined);
+    assert.strictEqual(result.validations_not_applicable, undefined);
+  });
+
   test('caller-supplied version envelope mode wins', () => {
     const { applyStoryboardVersionOptions } = require('../../dist/lib/testing/storyboard/index.js');
 

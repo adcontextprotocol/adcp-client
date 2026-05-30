@@ -218,12 +218,14 @@ const IMPLEMENTED_CHECKS = new Set([
   'response_schema',
   'field_present',
   'field_value',
+  'field_pattern',
   // Envelope-scoped variants (adcp#3429). Runtime semantics are identical to
   // the un-prefixed checks because the SDK's response unwrappers expose
   // envelope fields at the structuredContent surface (`status`, `task_id`,
   // `replayed`, etc.); the distinction is for static drift detection.
   'envelope_field_present',
   'envelope_field_value',
+  'envelope_field_pattern',
   // Cardinality assertions (adcp#4685 / adcp-client#1830).
   'array_length',
 ]);
@@ -330,6 +332,35 @@ async function runStep(
       if (actual !== v.value) {
         allPassed = false;
         result.failures.push(`${check} ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
+      }
+    } else if (check === 'field_pattern' || check === 'envelope_field_pattern') {
+      const pattern = (v as { pattern?: unknown }).pattern;
+      if (typeof pattern !== 'string' || pattern.length === 0) {
+        allPassed = false;
+        result.failures.push(`${check} ${v.path}: misconfigured (pattern must be a non-empty string)`);
+      } else {
+        let re: RegExp | undefined;
+        try {
+          re = new RegExp(pattern);
+        } catch (err) {
+          allPassed = false;
+          result.failures.push(
+            `${check} ${v.path}: invalid pattern ${JSON.stringify(pattern)} (${
+              err instanceof Error ? err.message : String(err)
+            })`
+          );
+        }
+        if (re) {
+          const actual = getByPath(structured, v.path as string);
+          if (typeof actual !== 'string') {
+            allPassed = false;
+            const ty = actual === undefined ? 'undefined' : actual === null ? 'null' : typeof actual;
+            result.failures.push(`${check} ${v.path}: got ${ty}, want string matching ${JSON.stringify(pattern)}`);
+          } else if (!re.test(actual)) {
+            allPassed = false;
+            result.failures.push(`${check} ${v.path}: got ${JSON.stringify(actual)}, want /${pattern}/`);
+          }
+        }
       }
     } else if (check === 'array_length') {
       const hasExact = typeof v.value === 'number';
