@@ -1,5 +1,38 @@
 # Changelog
 
+## 8.1.0-beta.17
+
+### Minor Changes
+
+- a7d460d: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.2.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, and wire field allowlists from the 3.1 RC protocol bundle. Preserves
+  `SignalCatalogType` compatibility aliases across generated type, schema, and
+  enum entrypoints while adopting the renamed `SignalAvailabilityType` surface.
+
+- f325c11: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.4.
+
+  Regenerates TypeScript/Zod schemas, docs, manifest-derived constants, entity
+  hydration metadata, and server wire field allowlists from the rc4 protocol
+  bundle. Adds GitHub-dist fallback for schema syncs when the website mirror has
+  not yet published a signed protocol bundle, and keeps the media-buy mode
+  mismatch recovery path tolerant of older 3.1 prerelease sellers that still emit
+  `requires_proposal`.
+
+- e9638ae: Reuse authorization-code OAuth MCP sessions across related tool calls and export `closeOAuthConnections()` for scoped cleanup.
+- f9ed580: fix(storyboard): add regex-backed field pattern validations
+
+  Storyboard validations now support `field_pattern` and `envelope_field_pattern` checks for string fields, with consistent handling for missing fields, non-string values, invalid regex sources, conformance replay, and schema drift detection.
+
+- 2326b27: Expose typed webhook parse/verify results, add buyer webhook receiver conformance replay checks, and clarify delivery webhook envelope docs.
+
+### Patch Changes
+
+- 3300db7: Allow packaged catalog-era `adagents.json` schemas to validate community mirror catalogs with `authorized_agents: []`, while preserving the stricter non-empty authorization requirement for legacy authorization-only schema bundles.
+- 249604c: Fix external compliance/schema bundle handling by scoping schema roots per run, preloading async response refs for request validators, preserving hosted stable-line aliases on the wire, and exposing schema-root options through conformance fuzzing.
+- ceb8b80: Add storyboard runner support for step-level HTTP Basic auth directives.
+
 ## 8.1.0-beta.16
 
 ### Patch Changes
