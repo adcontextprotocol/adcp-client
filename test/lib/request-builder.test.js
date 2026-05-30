@@ -789,6 +789,47 @@ describe('Request Builder', () => {
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
       assert.deepStrictEqual(result.destinations, [{ type: 'agent', agent_url: 'https://resolved.example' }]);
     });
+
+    test('preserves the full signal-owned activate_on_agent sample_request (ADCP-4009)', () => {
+      // Regression: the compliance runner previously sent only
+      // signal_agent_segment_id + context for signal_owned/activate_on_agent,
+      // dropping the required destinations and idempotency_key fields from the
+      // storyboard fixture.
+      const s = step('activate_signal', {
+        id: 'activate_on_agent',
+        sample_request: {
+          account: {
+            brand: { domain: 'novamotors.example' },
+            operator: 'pinnacle-agency.example',
+          },
+          signal_agent_segment_id: 'prism_cart_abandoner',
+          pricing_option_id: 'po_prism_abandoner_cpm',
+          destinations: [{ type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' }],
+          idempotency_key: '$generate:uuid_v4#signal_owned_activate_agent',
+          context: { correlation_id: 'signal_owned--activate_on_agent' },
+          ext: { test_platform: { test_run: true } },
+        },
+      });
+
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'novamotors.example' },
+        operator: 'pinnacle-agency.example',
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'prism_cart_abandoner');
+      assert.strictEqual(result.pricing_option_id, 'po_prism_abandoner_cpm');
+      assert.deepStrictEqual(result.destinations, [
+        { type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' },
+      ]);
+      assert.match(
+        result.idempotency_key,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        `idempotency_key must be a real UUID v4, got: ${result.idempotency_key}`
+      );
+      assert.deepStrictEqual(result.context, { correlation_id: 'signal_owned--activate_on_agent' });
+      assert.deepStrictEqual(result.ext, { test_platform: { test_run: true } });
+    });
   });
 
   describe('sync_governance', () => {
