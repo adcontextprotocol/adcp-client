@@ -93,6 +93,7 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-beta.3',
   '3.1.0-beta.5',
   '3.1.0-beta.7',
+  '3.1.0-rc.3',
 ] as const;
 
 /**
@@ -144,11 +145,16 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   const patch = Number(semverMatch[3]);
   const prerelease = semverMatch[4];
 
-  // 3.1.0-beta.x primary pin (current 8.0-beta line). Keep wire compat with
+  // 3.1.0 prerelease primary pins (current 8.x prerelease line). Keep wire compat with
   // 3.0.x GA sellers — the wire is open-enum and a 3.1-pinned SDK that meets
   // a 3.0.12 seller MUST still parse the envelope. Enumerate 3.0.0..3.0.LAST_3_0_GA_PATCH
   // plus the prerelease lineage already declared in COMPATIBLE_PREFIX.
-  if (major === 3 && minor === 1 && patch === 0 && prerelease?.startsWith('beta.')) {
+  if (
+    major === 3 &&
+    minor === 1 &&
+    patch === 0 &&
+    (prerelease?.startsWith('beta.') || prerelease?.startsWith('rc.'))
+  ) {
     const range3_0_x: string[] = [];
     for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
     // COMPATIBLE_PREFIX already contains every 3.1.0-beta.N the SDK has

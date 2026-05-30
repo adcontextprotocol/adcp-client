@@ -19,6 +19,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { createWebhookReceiver } = require('../../dist/lib/testing/storyboard/webhook-receiver.js');
 const { injectContext, createRunnerVariables } = require('../../dist/lib/testing/storyboard/context.js');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 // ────────────────────────────────────────────────────────────
 // Receiver module: direct tests
@@ -507,7 +508,7 @@ describe('runStoryboard: expect_webhook step task', () => {
     });
     const assertStep = result.phases[0].steps[1];
     assert.strictEqual(assertStep.passed, true, JSON.stringify(assertStep.validations));
-    assert.ok(assertStep.validations.some(v => v.schema_id === '/schemas/3.1.0-beta.7/core/mcp-webhook-payload.json'));
+    assert.ok(assertStep.validations.some(v => v.schema_id === `/schemas/${ADCP_VERSION}/core/mcp-webhook-payload.json`));
   });
 
   test('fails schema_violation when webhook envelope fields are missing', async () => {
