@@ -16,6 +16,7 @@ test('public barrels expose canonical format and payload helper types', () => {
     `
 import {
   CanonicalFormat,
+  createLazyBackend,
   ensureGetProductsCacheScope,
   type CanonicalFormatParams,
   type GetProductsResponse,
@@ -23,6 +24,8 @@ import {
   type SyncCreativesPayload,
 } from '@adcp/sdk';
 import type {
+  LazyBackendFactory,
+  LazyBackendOptions,
   ListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
@@ -35,6 +38,7 @@ import {
   AuthInvalidError,
   AuthMissingError,
   AuthRequiredError,
+  createLazyBackend as createServerLazyBackend,
 } from '@adcp/sdk/server';
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
@@ -63,6 +67,16 @@ const acceptsListPayload = (_payload: ListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
 const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+
+const lazyBackendFactory: LazyBackendFactory = async () => ({
+  async get() { return null; },
+  async putIfAbsent() { return true; },
+  async put() {},
+  async delete() {},
+});
+const lazyBackendOptions: LazyBackendOptions = { clearAll: false };
+const lazyBackend = createLazyBackend(lazyBackendFactory);
+const serverLazyBackend = createServerLazyBackend(lazyBackendFactory, lazyBackendOptions);
 
 const canonicalResolver = createCanonicalReferenceResolver();
 const canonicalRef: CanonicalRef = {
@@ -96,6 +110,9 @@ void typedNative;
 void builtKind;
 void serverSyncError;
 void authErrors;
+void lazyBackend;
+void lazyBackendOptions;
+void serverLazyBackend;
 void scope;
 void required;
 void generatedScope;
