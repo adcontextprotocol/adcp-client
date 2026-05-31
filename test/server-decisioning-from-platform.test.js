@@ -3126,6 +3126,21 @@ describe('tasks_get wire tool (B9)', () => {
     return result.structuredContent.task_id;
   }
 
+  it('advertises only the MCP-safe tasks_get tool name', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_42' })),
+      {
+        name: 'p',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const listed = await server.dispatchTestRequest({ method: 'tools/list' });
+    const toolNames = listed.tools.map(tool => tool.name);
+    assert.ok(toolNames.includes('tasks_get'), 'tasks_get should be advertised');
+    assert.ok(!toolNames.includes('tasks/get'), 'slash alias should not be registered as an MCP tool');
+  });
+
   it('returns spec-flat lifecycle shape for a completed task', async () => {
     const server = createAdcpServerFromPlatform(
       buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' })),

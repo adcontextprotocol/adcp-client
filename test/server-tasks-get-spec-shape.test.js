@@ -1,7 +1,7 @@
 // Regression test for adcp-client#967.
 //
 // Anchors the contract that `getTaskStatus` dispatches the AdCP
-// `tasks/get` tool with snake_case `task_id` per AdCP 3.0
+// work-status polling surface with snake_case `task_id` per AdCP 3.0
 // (`schemas/cache/3.0.0/bundled/core/tasks-get-request.json`) and
 // maps the spec's flat snake_case response shape
 // (`schemas/cache/3.0.0/bundled/core/tasks-get-response.json`) to
@@ -47,12 +47,14 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     if (originalCallTool) ProtocolClient.callTool = originalCallTool;
   });
 
-  test('dispatches tasks/get with snake_case task_id (not camelCase taskId)', async () => {
+  test('dispatches MCP polling as tasks_get with snake_case task_id (not camelCase taskId)', async () => {
     const SERVER_TASK_ID = 'tk_snake_case_test';
     let observedParams;
+    let observedTaskName;
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        observedTaskName = taskName;
         observedParams = params;
         // AdCP 3.0 spec response (flat snake_case)
         return {
@@ -71,9 +73,36 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const result = await executor.executeTask(mockAgent, 'pollSnakeCaseTest', {});
     await result.submitted.waitForCompletion(5);
 
-    assert.ok(observedParams, 'tasks/get was dispatched');
+    assert.strictEqual(observedTaskName, 'tasks_get', 'MCP polling must use the MCP-safe tasks_get tool name');
+    assert.ok(observedParams, 'tasks_get was dispatched');
     assert.strictEqual(observedParams.task_id, SERVER_TASK_ID, 'request must use snake_case task_id per AdCP 3.0 spec');
     assert.strictEqual(observedParams.taskId, undefined, 'request must NOT include legacy camelCase taskId');
+  });
+
+  test('keeps A2A polling on the spec tasks/get name', async () => {
+    const SERVER_TASK_ID = 'tk_a2a_slash_name';
+    let observedTaskName;
+
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        observedTaskName = taskName;
+        return {
+          task_id: SERVER_TASK_ID,
+          task_type: 'create_media_buy',
+          protocol: 'media-buy',
+          status: 'completed',
+          created_at: '2026-04-25T10:00:00Z',
+          updated_at: '2026-04-25T10:05:00Z',
+        };
+      }
+      return { status: 'submitted', task_id: SERVER_TASK_ID };
+    });
+
+    const executor = new TaskExecutor({ pollingInterval: 5 });
+    const result = await executor.executeTask({ ...mockAgent, protocol: 'a2a' }, 'pollA2aNameTest', {});
+    await result.submitted.waitForCompletion(5);
+
+    assert.strictEqual(observedTaskName, 'tasks/get', 'A2A polling must keep the spec slash task name');
   });
 
   test('maps the AdCP-spec flat response shape correctly', async () => {
@@ -82,7 +111,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const UPDATED = '2026-04-25T10:05:30Z';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           task_id: SERVER_TASK_ID,
           task_type: 'create_media_buy',
@@ -115,7 +144,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const COMPLETION_DATA = { media_buy_id: 'mb_42', packages: [] };
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           task_id: SERVER_TASK_ID,
           task_type: 'create_media_buy',
@@ -140,7 +169,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const SERVER_TASK_ID = 'tk_error_mapping';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           task_id: SERVER_TASK_ID,
           task_type: 'create_media_buy',
@@ -169,7 +198,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const SERVER_TASK_ID = 'tk_canceled_test';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           task_id: SERVER_TASK_ID,
           task_type: 'create_media_buy',
@@ -201,7 +230,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const SERVER_TASK_ID = 'tk_mcp_wrapped';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           structuredContent: {
             task_id: SERVER_TASK_ID,
@@ -232,7 +261,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const SERVER_TASK_ID = 'tk_a2a_wrapped';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return {
           jsonrpc: '2.0',
           id: 1,
@@ -288,7 +317,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     let observedParams;
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         observedParams = params;
         return {
           task_id: SERVER_TASK_ID,
@@ -321,7 +350,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
     const SERVER_TASK_ID = 'tk_legacy_shape';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         // Legacy nested wrapper with camelCase TaskInfo fields
         return {
           task: {
@@ -364,7 +393,7 @@ describe('getTaskStatus: AdCP tasks/get spec-shape mapping (#967)', () => {
 
     try {
       ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           return {
             task_id: 'tk_no_experimental',
             task_type: 'create_media_buy',

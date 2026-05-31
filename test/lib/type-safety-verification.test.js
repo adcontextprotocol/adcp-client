@@ -420,7 +420,7 @@ describe(
         };
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'tasks/get') {
+          if (taskName === 'tasks/get' || taskName === 'tasks_get') {
             const processingResult = {
               processed: true,
               itemsCount: 1000,
@@ -525,7 +525,7 @@ describe(
         };
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-          if (taskName === 'tasks/get') {
+          if (taskName === 'tasks/get' || taskName === 'tasks_get') {
             pollCount++;
             return {
               task:

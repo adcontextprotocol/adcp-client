@@ -74,7 +74,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       };
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           // First poll - still working, then completed
           return {
             task: webhookReceived ? { status: 'completed', result: webhookData.result } : { status: 'working' },
@@ -117,7 +117,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
 
       let pollCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           pollCount++;
           // Return working a few times then complete to avoid infinite loop
           if (pollCount > 3) {
@@ -340,7 +340,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       const pollStates = ['working', 'working', 'completed'];
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           const state = pollStates[Math.min(pollCount++, pollStates.length - 1)];
           return {
             task:
@@ -385,7 +385,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       let quickPollCount = 0;
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           quickPollCount++;
           return {
             task:
@@ -432,7 +432,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
           throw new Error('Network timeout');
         }
 
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           return {
             task: {
               status: 'completed',
@@ -560,7 +560,7 @@ describe('TaskExecutor Mocking Strategies', { skip: process.env.CI ? 'Slow tests
       let stepTransitionScheduled = false;
 
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           // Simulate realistic timing - only schedule one transition per step
           const currentStep = Math.min(stepIndex, realWorldSteps.length - 1);
           const step = realWorldSteps[currentStep];

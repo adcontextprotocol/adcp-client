@@ -58,7 +58,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
       // TaskExecutor now returns 'working' status immediately as a valid intermediate state
       // Callers can use taskId to poll for completion or set up webhooks
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           return { task: { status: ADCP_STATUS.WORKING } };
         } else {
           return { status: ADCP_STATUS.WORKING };
@@ -110,7 +110,7 @@ describe('TaskExecutor Error Scenarios', { skip: process.env.CI ? 'Slow tests - 
 
       let pollCount = 0;
       ProtocolClient.callTool = mock.fn(async (agent, taskName) => {
-        if (taskName === 'tasks/get') {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           pollCount++;
           // After a few polls, complete to avoid infinite polling
           if (pollCount > 3) {
