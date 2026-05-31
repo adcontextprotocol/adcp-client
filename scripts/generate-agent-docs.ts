@@ -589,6 +589,10 @@ function generateLlmsTxt(
   );
   ln();
   ln(
+    `**Stateless BYOK provider auth.** For single-account API-key or bearer-token BYOK, the provider credential can be the AdCP request credential for that endpoint: \`Authorization: Bearer <provider_api_key_or_access_token>\`. This keeps the baseline seller-agent wrapper pattern single-plane: the seller agent authenticates the request with the caller-presented provider credential, derives the account from request auth, and uses the same request-local token for upstream provider calls. No SDK-managed OAuth flow, refresh-token store, provider-token store, or callback route is required when the caller owns the provider credential lifecycle. If the provider credential can see multiple upstream accounts, use an explicit account roster pattern such as \`createOAuthPassthroughResolver\` instead of \`'derived'\`. Handlers with a resolved account should read the active token from \`ctx.account.authInfo?.token\`; refresh hooks update \`account.authInfo\`. Handlers without a resolved account can read the request token from \`ctx.authInfo.token\`. Use a stable non-secret identity such as \`ctx.authInfo.credential.key_id\`, \`ctx.authInfo.credential.client_id\`, or an adopter-supplied \`principal\` string for cache/idempotency scoping. Treat both token paths as request-local: do not copy provider tokens into persisted Account rows, \`ctx_metadata\`, \`ctx.authInfo.extra\`, request \`ext\` / body fields, or log lines. Add a separate provider-auth channel only for dual-auth proxy deployments where one request carries both caller-to-agent auth and a distinct upstream-provider credential.`
+  );
+  ln();
+  ln(
     `**Multi-tenant.** Two helpers, pick by deployment shape. **Host-routed**: \`createTenantRegistry({...})\` — one server per tenant, tenant-id keyed lookup with \`registry.get(tenantId)\`. **Account-routed**: \`createTenantStore({...})\` — one server, per-entry tenant-isolation gate built in (cross-tenant entries on \`upsert\` / \`syncGovernance\` rejected with \`PERMISSION_DENIED\` BEFORE adopter callbacks run; fail-closed when the auth principal can't be resolved). \`createTenantStore\` mitigates the canonical multi-tenant write-across-tenants bug class at the SDK layer rather than relying on adopter discipline.`
   );
   ln();
@@ -1087,7 +1091,7 @@ function generateLlmsTxt(
   ln(`## Protocols`);
   ln();
   ln(
-    `AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on \`AgentConfig.protocol\`. MCP endpoints end with \`/mcp/\`. Auth is via bearer token in \`x-adcp-auth\` header.`
+    `AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on \`AgentConfig.protocol\`. MCP endpoints end with \`/mcp/\`. Bearer auth uses \`Authorization: Bearer <token>\`; SDK clients also send the legacy \`x-adcp-auth\` header for compatibility, and servers accept it as a fallback.`
   );
   ln();
   ln(`**Deep dive:** docs/development/PROTOCOL_DIFFERENCES.md`);
