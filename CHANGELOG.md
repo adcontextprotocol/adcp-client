@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.1.0-beta.19
+
+### Minor Changes
+
+- 84c3d94: Add `createLazyBackend()` for deferring idempotency backend construction until first use.
+
+### Patch Changes
+
+- 6293fd8: Document stateless BYOK provider auth for single-account adapters. Adds the single-plane Bearer pattern (provider credential presented as the AdCP request credential) to the bundled `BUILD-AN-AGENT.md` guide and the account-resolution guide, covering token read paths (`ctx.account.authInfo?.token` with `ctx.authInfo.token` fallback), non-secret identity for cache/idempotency scoping, request-local handling guardrails, and when a separate dual-auth provider channel is warranted. Also corrects the protocol auth note: SDK clients send `Authorization: Bearer <token>` with legacy `x-adcp-auth` as a compatibility fallback.
+- a3d1680: Fix the storyboard `create_media_buy` request builder so stale fixture `start_time` values and same-day fixture `end_time` values cannot resolve to an inverted media-buy window.
+- a6dde23: Avoid advertising the slash-based `tasks/get` compatibility alias as an MCP tool and poll MCP agents through the `tasks_get` alias. A2A callers and agent cards keep the spec `tasks/get` skill; the A2A adapter maps it to the server's `tasks_get` handler at lookup time.
+
 ## 8.1.0-beta.18
 
 ### Patch Changes
