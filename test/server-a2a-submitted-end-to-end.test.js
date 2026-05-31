@@ -25,6 +25,7 @@ const { z } = require('zod');
 
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
+const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { TaskExecutor } = require('../dist/lib/index');
 
@@ -38,6 +39,10 @@ function createAdcpServer(config) {
 
 async function startA2aFixture(handlers) {
   const adcp = createAdcpServer(handlers);
+  return startA2aServer(adcp);
+}
+
+async function startA2aServer(adcp) {
   const app = express();
   app.use(express.json());
   const server = app.listen(0);
@@ -69,7 +74,7 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
     const SELLER_MEDIA_BUY_ID = 'mb_completed_42';
     let pollCount = 0;
     let observedPollParam;
-    let observedPollSkill;
+    let observedPollToolName;
 
     const fixture = await startA2aFixture({
       mediaBuy: {
@@ -79,16 +84,19 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
           message: 'IO signature pending',
         }),
       },
-      // Custom AdCP `tasks/get` tool dispatched as a buyer-callable
-      // tool over `message/send`. First two polls return working;
-      // third returns completed with the result data. Keeping this on
-      // the fixture server avoids process-global ProtocolClient monkey
-      // patches, which are fragile in the broad parallel test runner.
+      // Custom AdCP task-polling tool dispatched as a buyer-callable
+      // A2A `tasks/get` skill over `message/send`. The server registers
+      // the MCP-safe handler name, matching framework servers; the A2A
+      // adapter maps the slash skill to this handler at lookup time.
+      // First two polls return working; third returns completed with
+      // the result data. Keeping this on the fixture server avoids
+      // process-global ProtocolClient monkey patches, which are fragile
+      // in the broad parallel test runner.
       customTools: {
-        'tasks/get': {
+        tasks_get: {
           inputSchema: { task_id: z.string() },
           handler: async params => {
-            observedPollSkill = 'tasks/get';
+            observedPollToolName = 'tasks_get';
             observedPollParam = params;
             pollCount += 1;
             const response =
@@ -126,7 +134,7 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
         'create_media_buy',
         {
           brand: { brand_id: 'b' },
-          account: { account_id: 'a' },
+          account: { account_id: 'acc_1' },
           start_time: '2026-01-01T00:00:00Z',
           end_time: '2026-02-01T00:00:00Z',
         }
@@ -145,9 +153,10 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
       // Poll through to completion.
       const completion = await submittedResult.submitted.waitForCompletion(5);
 
-      // (4): poll dispatched `tasks/get` with snake_case `task_id`
-      // carrying the AdCP handle.
-      assert.strictEqual(observedPollSkill, 'tasks/get');
+      // (4): poll carried the AdCP handle as snake_case `task_id`;
+      // the A2A adapter routed the slash skill to the MCP-safe server
+      // handler name.
+      assert.strictEqual(observedPollToolName, 'tasks_get');
       assert.strictEqual(
         observedPollParam.task_id,
         SELLER_TASK_ID,
@@ -160,6 +169,73 @@ describe('A2A submitted → completed end-to-end (#966 + #967 + #973)', () => {
       assert.strictEqual(completion.status, 'completed');
       assert.deepStrictEqual(completion.data, { media_buy_id: SELLER_MEDIA_BUY_ID, packages: [] });
       assert.ok(pollCount >= 3, `expected ≥3 polls (working/working/completed), got ${pollCount}`);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('polls createAdcpServerFromPlatform tasks through the A2A slash skill', async () => {
+    const SELLER_MEDIA_BUY_ID = 'mb_platform_completed_42';
+    let createCalled = false;
+
+    const platform = {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [], cache_scope: 'account' }),
+        createMediaBuy: async (_req, ctx) => {
+          createCalled = true;
+          return ctx.handoffToTask(async () => ({
+            media_buy_id: SELLER_MEDIA_BUY_ID,
+            packages: [],
+          }));
+        },
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+
+    const fixture = await startA2aServer(
+      createAdcpServerFromPlatform(platform, {
+        name: 'platform-a2a-seller',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      })
+    );
+
+    try {
+      const executor = new TaskExecutor({ pollingInterval: 5 });
+      const submittedResult = await executor.executeTask(
+        { id: 't', name: 't', agent_uri: fixture.url, protocol: 'a2a' },
+        'create_media_buy',
+        {
+          brand: { brand_id: 'b' },
+          account: { account_id: 'acc_1' },
+          start_time: '2026-01-01T00:00:00Z',
+          end_time: '2026-02-01T00:00:00Z',
+        }
+      );
+
+      assert.strictEqual(createCalled, true);
+      assert.strictEqual(submittedResult.status, 'submitted');
+
+      const completion = await submittedResult.submitted.waitForCompletion(5);
+      assert.strictEqual(completion.success, true);
+      assert.strictEqual(completion.status, 'completed');
+      assert.deepStrictEqual(completion.data, { media_buy_id: SELLER_MEDIA_BUY_ID, packages: [] });
     } finally {
       await fixture.close();
     }

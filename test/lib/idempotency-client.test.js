@@ -142,7 +142,7 @@ describe('TaskExecutor surfaces response adcp_version on result metadata', () =>
     const capture = [];
     const restore = stubProtocolClient({
       response: toolName => {
-        if (toolName === 'tasks/get') {
+        if (toolName === 'tasks/get' || toolName === 'tasks_get') {
           return {
             structuredContent: {
               status: 'completed',
@@ -187,7 +187,7 @@ describe('TaskExecutor surfaces response adcp_version on result metadata', () =>
     const capture = [];
     const restore = stubProtocolClient({
       response: toolName => {
-        if (toolName === 'tasks/get') {
+        if (toolName === 'tasks/get' || toolName === 'tasks_get') {
           return {
             task: {
               status: 'completed',

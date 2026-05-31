@@ -1404,20 +1404,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       mergeOpts
     ),
     customTools: (() => {
-      // Register the AdCP `tasks/get` work-status interface under BOTH names:
-      //   - `tasks/get` (slash) — the spec name; what `TaskExecutor.getTaskStatus`
-      //     calls (`src/lib/core/TaskExecutor.ts:1374`). The buyer-side SDK
-      //     uses the spec name verbatim because A2A's transport-native
-      //     `tasks/get` method shares it.
-      //   - `tasks_get`  (underscore) — the snake-case substitute kept for
-      //     adopters who built buyer code against the underscore name in
-      //     pre-6.8 SDKs. Native MCP method dispatch (where `tasks/get`
-      //     lands as a transport method, not a tool) is tracked for v6.1.
-      // Same handler factory; second registration is a no-op alias.
+      // MCP tool names cannot contain `/`, so expose the AdCP work-status
+      // polling surface under the MCP-safe `tasks_get` alias only. A2A keeps
+      // using the transport-native `tasks/get` method name on its own path.
       const tasksGetTool = buildTasksGetTool(platform, taskRegistry, platform.agentRegistry, fwLogger);
       return {
         ...opts.customTools,
-        'tasks/get': tasksGetTool,
         tasks_get: tasksGetTool,
       };
     })(),
@@ -1954,8 +1946,6 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       args: { task_id: string; account?: { account_id?: string } },
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
-      // eslint-disable-next-line no-console
-      console.log('[trace.tasks_get]', JSON.stringify({ args, hasAuth: !!extra?.authInfo }));
       const ref = args.account;
       // Resolve the buyer agent (when an `agentRegistry` is configured) so
       // adopters' `accounts.resolve` impl sees `ctx.agent` — same contract as

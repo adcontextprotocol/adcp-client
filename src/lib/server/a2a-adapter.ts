@@ -417,19 +417,45 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
         return;
       }
 
-      let response: McpToolResponse;
+      let response: McpToolResponse | undefined;
+      const toolNames = a2aSkillToServerToolNames(invocation.skill);
+      let invokedToolName: string | undefined;
       try {
-        response = await this.server.invoke({
-          toolName: invocation.skill,
-          args: invocation.input,
-          ...(authInfo && { authInfo }),
-        });
+        for (const toolName of toolNames) {
+          try {
+            invokedToolName = toolName;
+            response = await this.server.invoke({
+              // Platform servers register `tasks_get`; older/custom A2A
+              // fixtures may still register the slash name directly.
+              toolName,
+              args: invocation.input,
+              ...(authInfo && { authInfo }),
+            });
+            break;
+          } catch (err) {
+            if (toolName === 'tasks_get' && invocation.skill === 'tasks/get' && isToolNotRegistered(err, toolName)) {
+              continue;
+            }
+            throw err;
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.logger.error('A2A adapter: handler invocation threw', { toolName: invocation.skill, error: message });
+        this.logger.error('A2A adapter: handler invocation threw', {
+          toolName: invokedToolName ?? invocation.skill,
+          requestedToolName: invocation.skill,
+          error: message,
+        });
         this.emitFailure(eventBus, taskId, contextId, {
           reason: 'HANDLER_THREW',
           message,
+        });
+        return;
+      }
+      if (response === undefined) {
+        this.emitFailure(eventBus, taskId, contextId, {
+          reason: 'HANDLER_THREW',
+          message: `No handler registered for ${invocation.skill}`,
         });
         return;
       }
@@ -576,6 +602,14 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
   }
 }
 
+function isToolNotRegistered(err: unknown, toolName: string): boolean {
+  return err instanceof Error && err.message.includes(`tool "${toolName}" is not registered`);
+}
+
+function a2aSkillToServerToolNames(skill: string): string[] {
+  return skill === 'tasks/get' ? ['tasks_get', 'tasks/get'] : [skill];
+}
+
 // ---------------------------------------------------------------------------
 // Agent card
 // ---------------------------------------------------------------------------
@@ -591,12 +625,17 @@ const PUBLIC_AGENT_CARD_EXCLUDED_SKILLS = new Set(['get_adcp_capabilities', 'com
  * are expected to enrich via `agentCard.skills` in production.
  */
 function deriveSkills(toolNames: string[]): AgentSkill[] {
-  return toolNames.map(name => ({
+  const publicNames = new Set(toolNames.map(toA2ASkillName));
+  return [...publicNames].map(name => ({
     id: name,
     name,
     description: `AdCP tool: ${name}. Send { skill: "${name}", input: { ... } } as a DataPart.`,
     tags: ['adcp'],
   }));
+}
+
+function toA2ASkillName(toolName: string): string {
+  return toolName === 'tasks_get' ? 'tasks/get' : toolName;
 }
 
 function listRegisteredTools(server: AdcpServer): string[] {
