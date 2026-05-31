@@ -719,6 +719,8 @@ const httpServer = createServer(async (req, res) => {
 });
 ```
 
+For existing Express apps that must preserve path-routed public URLs such as `/storefront/:platformId/mcp`, see `examples/decisioning-platform-path-routed.ts`. It shows a `TenantRegistry` mounted behind an Express route, per-request `StreamableHTTPServerTransport`, MCP `req.auth` stamped from existing auth middleware, and `accounts.resolve(ref, ctx)` reading buyer identity from `ctx.authInfo` instead of closing over Express request state.
+
 ## Testing Your Agent
 
 ### Tool Discovery
