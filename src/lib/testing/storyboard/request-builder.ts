@@ -92,10 +92,45 @@ const FIXTURE_AWARE_ENRICHERS = new Set<string>([
  */
 const PRODUCT_ID_SENTINELS = new Set(['test-product']);
 const PRICING_OPTION_ID_SENTINELS = new Set(['test-pricing']);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MEDIA_BUY_WINDOW_MS = 7 * DAY_MS;
 
 function asNonSentinel(value: unknown, sentinels: Set<string>): string | undefined {
   if (typeof value !== 'string') return undefined;
   return sentinels.has(value) ? undefined : value;
+}
+
+function parseTime(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function resolveMediaBuyWindow(
+  sampleStart: string | undefined,
+  sampleEnd: string | undefined
+): {
+  startTime: string;
+  endTime: string;
+} {
+  const now = Date.now();
+  const defaultStart = new Date(now + DAY_MS).toISOString();
+  const defaultEnd = new Date(now + 8 * DAY_MS).toISOString();
+  const sampleStartMs = parseTime(sampleStart);
+  const sampleEndMs = parseTime(sampleEnd);
+
+  const startTime = sampleStart && sampleStartMs !== undefined && sampleStartMs >= now ? sampleStart : defaultStart;
+  let endTime = sampleEnd && sampleEndMs !== undefined && sampleEndMs >= now ? sampleEnd : defaultEnd;
+
+  if (Date.parse(endTime) <= Date.parse(startTime)) {
+    const sampleDurationMs =
+      sampleStartMs !== undefined && sampleEndMs !== undefined && sampleEndMs > sampleStartMs
+        ? sampleEndMs - sampleStartMs
+        : DEFAULT_MEDIA_BUY_WINDOW_MS;
+    endTime = new Date(Date.parse(startTime) + sampleDurationMs).toISOString();
+  }
+
+  return { startTime, endTime };
 }
 
 /**
@@ -228,21 +263,18 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     const product = selectProduct(context);
     const pricingOption = selectPricingOption(product);
 
-    const now = Date.now();
-    const defaultStart = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-    const defaultEnd = new Date(now + 8 * 24 * 60 * 60 * 1000).toISOString();
-
     // Respect sample_request dates when they're future-dated — needed for
     // storyboards that test replay semantics where initial + replay must
     // produce byte-for-byte identical canonical payloads. Two calls
     // generated 5ms apart with `Date.now()` would hash differently,
     // triggering IDEMPOTENCY_CONFLICT on replay. Stale sample dates
     // (authored before the run date) fall back to the dynamic default.
+    // Resolve the pair together so a stale start and same-day future end
+    // cannot produce start_time > end_time.
     const sampleStart =
       typeof step.sample_request?.start_time === 'string' ? step.sample_request.start_time : undefined;
     const sampleEnd = typeof step.sample_request?.end_time === 'string' ? step.sample_request.end_time : undefined;
-    const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
-    const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;
+    const { startTime, endTime } = resolveMediaBuyWindow(sampleStart, sampleEnd);
 
     // Merge hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so

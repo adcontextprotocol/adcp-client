@@ -26,6 +26,16 @@ function step(task, overrides = {}) {
   return { id: `test-${task}`, title: `Test ${task}`, task, ...overrides };
 }
 
+function withDateNow(iso, fn) {
+  const original = Date.now;
+  Date.now = () => Date.parse(iso);
+  try {
+    return fn();
+  } finally {
+    Date.now = original;
+  }
+}
+
 describe('Request Builder', () => {
   describe('create_media_buy', () => {
     test('always includes pricing_option_id from discovered context', () => {
@@ -59,6 +69,42 @@ describe('Request Builder', () => {
       assert.ok(result.start_time, 'should have start_time');
       assert.ok(result.end_time, 'should have end_time');
       assert.ok(new Date(result.start_time) < new Date(result.end_time), 'start should be before end');
+    });
+
+    test('preserves future fixture start_time and end_time byte-for-byte', () => {
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+        },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.start_time, FUTURE_START);
+      assert.strictEqual(result.end_time, FUTURE_END);
+    });
+
+    test('keeps create_media_buy window ordered when stale start meets same-day future end (#2143)', () => {
+      withDateNow('2026-05-31T12:28:07.525Z', () => {
+        const sampleStart = '2026-05-01T00:00:00Z';
+        const sampleEnd = '2026-05-31T23:59:59Z';
+        const s = step('create_media_buy', {
+          sample_request: {
+            start_time: sampleStart,
+            end_time: sampleEnd,
+            packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+          },
+        });
+
+        const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+        const resolvedStart = Date.parse(result.start_time);
+        const resolvedEnd = Date.parse(result.end_time);
+
+        assert.strictEqual(result.start_time, '2026-06-01T12:28:07.525Z');
+        assert.notStrictEqual(result.end_time, sampleEnd, 'same-day sample end would invert the defaulted start');
+        assert.ok(resolvedStart < resolvedEnd, 'start should remain before end');
+        assert.strictEqual(resolvedEnd - resolvedStart, Date.parse(sampleEnd) - Date.parse(sampleStart));
+      });
     });
 
     test('emits every package when sample_request authors multiple', () => {
