@@ -582,8 +582,8 @@ describe('Request Builder', () => {
         runnerVars
       );
 
-      assert.strictEqual(first.catalogs[0].catalog_id, 'test-catalog-1780272000100-sync_catalogs_first');
-      assert.strictEqual(second.catalogs[0].catalog_id, 'test-catalog-1780272000100-sync_catalogs_second');
+      assert.match(first.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
+      assert.match(second.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
       assert.notStrictEqual(first.catalogs[0].catalog_id, second.catalogs[0].catalog_id);
     });
 
@@ -748,6 +748,17 @@ describe('Request Builder', () => {
       assert.strictEqual(replay.events[0].event_id, initial.events[0].event_id);
       assert.strictEqual(replay.events[0].event_time, initial.events[0].event_time);
       assert.strictEqual(initial.events[0].event_time, '2026-06-01T00:00:00.100Z');
+    });
+
+    test('fallback event_id remains bounded when step id is long', () => {
+      const runnerVars = createRunnerVariables();
+      const result = buildRequest(
+        step('log_event', { id: 'log_event_' + 'x'.repeat(240) }),
+        {},
+        DEFAULT_OPTIONS,
+        runnerVars
+      );
+      assert.ok(result.events[0].event_id.length <= 256, `event_id length was ${result.events[0].event_id.length}`);
     });
   });
 

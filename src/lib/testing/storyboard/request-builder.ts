@@ -23,6 +23,7 @@
  * payload" pattern.
  */
 
+import { createHash } from 'node:crypto';
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
@@ -142,8 +143,8 @@ function runClockMs(runnerVars: RunnerVariables | undefined): number {
 function generatedIdSuffix(step: StoryboardStep, runnerVars: RunnerVariables | undefined, nowMs?: number): string {
   const timestamp = nowMs ?? runClockMs(runnerVars);
   if (runnerVars?.runStartMs === undefined) return String(timestamp);
-  const stepId = step.id.replace(/[^A-Za-z0-9_.:-]/g, '_') || 'step';
-  return `${timestamp}-${stepId}`;
+  const stepHash = createHash('sha256').update(step.id).digest('hex').slice(0, 12);
+  return `${timestamp}-${stepHash}`;
 }
 
 /**
