@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-30T16:54:57.781Z
+// Generated at: 2026-06-01T00:32:01.787Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -57,7 +57,7 @@ export const FeedFormatSchema = z.union([z.literal("google_merchant_center"), z.
 
 export const UpdateFrequencySchema = z.union([z.literal("realtime"), z.literal("hourly"), z.literal("daily"), z.literal("weekly")]);
 
-export const EventTypeSchema = z.union([z.literal("page_view"), z.literal("view_content"), z.literal("select_content"), z.literal("select_item"), z.literal("search"), z.literal("share"), z.literal("add_to_cart"), z.literal("remove_from_cart"), z.literal("viewed_cart"), z.literal("add_to_wishlist"), z.literal("initiate_checkout"), z.literal("add_payment_info"), z.literal("purchase"), z.literal("refund"), z.literal("lead"), z.literal("qualify_lead"), z.literal("close_convert_lead"), z.literal("disqualify_lead"), z.literal("complete_registration"), z.literal("subscribe"), z.literal("start_trial"), z.literal("app_install"), z.literal("app_launch"), z.literal("contact"), z.literal("schedule"), z.literal("donate"), z.literal("submit_application"), z.literal("custom")]);
+export const EventTypeSchema = z.union([z.literal("page_view"), z.literal("view_content"), z.literal("select_content"), z.literal("select_item"), z.literal("search"), z.literal("share"), z.literal("add_to_cart"), z.literal("remove_from_cart"), z.literal("viewed_cart"), z.literal("add_to_wishlist"), z.literal("initiate_checkout"), z.literal("add_payment_info"), z.literal("purchase"), z.literal("refund"), z.literal("lead"), z.literal("qualify_lead"), z.literal("close_convert_lead"), z.literal("disqualify_lead"), z.literal("complete_registration"), z.literal("subscribe"), z.literal("follow"), z.literal("content_view"), z.literal("watch_milestone"), z.literal("start_trial"), z.literal("app_install"), z.literal("app_launch"), z.literal("contact"), z.literal("schedule"), z.literal("donate"), z.literal("submit_application"), z.literal("custom")]);
 
 export const ContentIDTypeSchema = z.union([z.literal("sku"), z.literal("gtin"), z.literal("offering_id"), z.literal("job_id"), z.literal("hotel_id"), z.literal("flight_id"), z.literal("vehicle_id"), z.literal("listing_id"), z.literal("store_id"), z.literal("program_id"), z.literal("destination_id"), z.literal("app_id")]);
 
@@ -3647,12 +3647,22 @@ export const EventCustomDataSchema = z.object({
     content_category: z.string().optional(),
     num_items: z.number().min(0).optional(),
     search_string: z.string().optional(),
+    progress_percent: z.number().min(0).max(100).optional(),
+    progress_seconds: z.number().min(0).optional(),
     contents: z.array(z.object({
         id: z.string(),
         quantity: z.number().min(1).optional(),
         price: z.number().min(0).optional(),
         brand: z.string().optional()
     }).passthrough()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const EventSurfaceSchema = z.object({
+    category: z.union([z.literal("owned_property"), z.literal("website"), z.literal("app"), z.literal("offline"), z.literal("phone_call"), z.literal("chat"), z.literal("email"), z.literal("in_store"), z.literal("system_generated"), z.literal("other")]),
+    property_type: z.string().min(1).max(128).optional(),
+    namespace: z.string().min(1).max(128).optional(),
+    property_id: z.string().min(1).max(256).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -3781,7 +3791,9 @@ export const SyncEventSourcesRequestSchema = z.object({
         event_source_id: z.string(),
         name: z.string().optional(),
         event_types: z.array(EventTypeSchema).optional(),
-        allowed_domains: z.array(z.string()).optional()
+        action_source: ActionSourceSchema.optional(),
+        allowed_domains: z.array(z.string()).optional(),
+        surface: EventSurfaceSchema.optional()
     }).passthrough()).optional(),
     delete_missing: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
@@ -6475,6 +6487,7 @@ export const SyncEventSourcesSuccessSchema = z.object({
         seller_id: z.string().optional(),
         event_types: z.array(EventTypeSchema).optional(),
         action_source: ActionSourceSchema.optional(),
+        surface: EventSurfaceSchema.optional(),
         managed_by: z.union([z.literal("buyer"), z.literal("seller")]).optional(),
         setup: z.object({
             snippet: z.string().optional(),
@@ -6483,7 +6496,8 @@ export const SyncEventSourcesSuccessSchema = z.object({
         }).passthrough().optional(),
         action: z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("deleted"), z.literal("failed")]),
         health: EventSourceHealthSchema.optional(),
-        errors: z.array(ErrorSchema).optional()
+        errors: z.array(ErrorSchema).optional(),
+        ext: ExtensionObjectSchema.optional()
     }).passthrough()),
     sandbox: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
@@ -6497,6 +6511,7 @@ export const EventSchema = z.object({
     user_match: UserMatchSchema.optional(),
     custom_data: EventCustomDataSchema.optional(),
     action_source: ActionSourceSchema.optional(),
+    surface: EventSurfaceSchema.optional(),
     event_source_url: z.string().optional(),
     custom_event_name: z.string().optional(),
     ext: ExtensionObjectSchema.optional()

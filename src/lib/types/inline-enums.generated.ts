@@ -210,6 +210,11 @@ export const Error_RecoveryValues = ["transient", "correctable", "terminal"] as 
 /** single | Error.source */
 export const Error_SourceValues = ["producer", "sdk"] as const;
 
+// ====== EventSurface ======
+
+/** single | EventSurface.category */
+export const EventSurface_CategoryValues = ["owned_property", "website", "app", "offline", "phone_call", "chat", "email", "in_store", "system_generated", "other"] as const;
+
 // ====== FeatureRequirement ======
 
 /** single | FeatureRequirement.if_not_covered */
@@ -423,6 +428,11 @@ export const ReportingCapabilities_DateRangeSupportValues = ["date_range", "life
 /** single | ReportPlanOutcomeResponse.outcome_state */
 export const ReportPlanOutcomeResponse_OutcomeStateValues = ["accepted", "findings"] as const;
 
+// ====== ResponsePayload ======
+
+/** single | ResponsePayload.task */
+export const ResponsePayload_TaskValues = ["verify_brand_claim", "verify_brand_claims"] as const;
+
 // ====== RightsConstraint ======
 
 /** single | RightsConstraint.approval_status */
@@ -473,6 +483,11 @@ export const SignalSelectionGroupRule_SelectionModeValues = ["optional", "requir
 
 /** single | SignalTargetingRules.resolution_model */
 export const SignalTargetingRules_ResolutionModelValues = ["direct_targeting", "seller_planned"] as const;
+
+// ====== SignedSuccessPayload ======
+
+/** single | SignedSuccessPayload.claim_type */
+export const SignedSuccessPayload_ClaimTypeValues = ["subsidiary", "parent", "property", "trademark"] as const;
 
 // ====== SIIdentity ======
 
@@ -541,11 +556,6 @@ export const VehicleItem_TransmissionValues = ["automatic", "manual", "cvt"] as 
 
 /** array of | VendorMetricOptimizationSupportedMetric.supported_targets */
 export const VendorMetricOptimizationSupportedMetric_SupportedTargetsValues = ["cost_per", "threshold_rate"] as const;
-
-// ====== VerifyBrandClaimsResultSuccess ======
-
-/** single | VerifyBrandClaimsResultSuccess.claim_type */
-export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = ["subsidiary", "parent", "property", "trademark"] as const;
 
 // ====== VideoAsset ======
 
@@ -677,6 +687,17 @@ export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_Keller
 // --- SignalDefinition ---
 /** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinition.refresh_cadence duplicates the canonical export. */
 export const SignalDefinition_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
+// --- SignalDefinitionEnrichment ---
+/** @deprecated use `SignalDefinition_Art9BasisValues` — same literal set, SignalDefinitionEnrichment.art9_basis duplicates the canonical export. */
+export const SignalDefinitionEnrichment_Art9BasisValues = SignalDefinition_Art9BasisValues;
+/** @deprecated use `SignalDefinition_DataSourcesValues` — same literal set, SignalDefinitionEnrichment.data_sources duplicates the canonical export. */
+export const SignalDefinitionEnrichment_DataSourcesValues = SignalDefinition_DataSourcesValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.lookback_window duplicates the canonical export. */
+export const SignalDefinitionEnrichment_LookbackWindowValues = SignalDefinition_LookbackWindowValues;
+/** @deprecated use `SignalDefinition_MethodologyValues` — same literal set, SignalDefinitionEnrichment.methodology duplicates the canonical export. */
+export const SignalDefinitionEnrichment_MethodologyValues = SignalDefinition_MethodologyValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.refresh_cadence duplicates the canonical export. */
+export const SignalDefinitionEnrichment_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
 // --- SignalSelectionGroupRule ---
 /** @deprecated use `FeatureRequirement_IfNotCoveredValues` — same literal set, SignalSelectionGroupRule.targeting_mode duplicates the canonical export. */
 export const SignalSelectionGroupRule_TargetingModeValues = FeatureRequirement_IfNotCoveredValues;
@@ -692,9 +713,12 @@ export const SyncCreativesInputRequired_ReasonValues = SyncCreativesAsyncInputRe
 // --- UpdateMediaBuyInputRequired ---
 /** @deprecated use `UpdateMediaBuyAsyncInputRequired_ReasonValues` — same literal set, UpdateMediaBuyInputRequired.reason duplicates the canonical export. */
 export const UpdateMediaBuyInputRequired_ReasonValues = UpdateMediaBuyAsyncInputRequired_ReasonValues;
+// --- VerifyBrandClaimsResultSuccess ---
+/** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimsResultSuccess.claim_type duplicates the canonical export. */
+export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;
 // --- VerifyBrandClaimSuccess ---
-/** @deprecated use `VerifyBrandClaimsResultSuccess_ClaimTypeValues` — same literal set, VerifyBrandClaimSuccess.claim_type duplicates the canonical export. */
-export const VerifyBrandClaimSuccess_ClaimTypeValues = VerifyBrandClaimsResultSuccess_ClaimTypeValues;
+/** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimSuccess.claim_type duplicates the canonical export. */
+export const VerifyBrandClaimSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;
 // --- VideoAssetRequirements ---
 /** @deprecated use `CanonicalFormatHostedVideo_VideoCodecsValues` — same literal set, VideoAssetRequirements.codecs duplicates the canonical export. */
 export const VideoAssetRequirements_CodecsValues = CanonicalFormatHostedVideo_VideoCodecsValues;

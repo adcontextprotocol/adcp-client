@@ -269,6 +269,9 @@ export type EventType =
   | 'disqualify_lead'
   | 'complete_registration'
   | 'subscribe'
+  | 'follow'
+  | 'content_view'
+  | 'watch_milestone'
   | 'start_trial'
   | 'app_install'
   | 'app_launch'
@@ -2396,7 +2399,7 @@ export type MediaBuyValidAction =
   | 'update_packages'
   | 'sync_creatives';
 /**
- * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead.
+ * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.
  */
 export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_approval';
 /**
@@ -3060,7 +3063,7 @@ export interface PushNotificationConfig {
    */
   url: string;
   /**
-   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed the same value in the URL path or query as a routing aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
    * @minLength 1
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
@@ -6810,7 +6813,7 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel follows, or free channel/feed subscribes; paid subscriptions use event_type: subscribe), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
        */
       metric:
         | 'clicks'
@@ -11807,7 +11810,7 @@ export interface DeliveryMetrics {
    */
   engagements?: number;
   /**
-   * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
+   * New followers, page likes, artist/podcast/channel follows, or free channel/feed subscribes attributed to this delivery. Paid subscriptions are conversion events with `event_type: subscribe`, not `follows`.
    * @minimum 0
    */
   follows?: number;
@@ -12104,16 +12107,56 @@ export interface SyncEventSourcesRequest {
      * Event types this source handles (e.g. purchase, lead). If omitted, accepts all event types.
      */
     event_types?: EventType[];
+    action_source?: ActionSource;
     /**
      * Domains authorized to send events for this event source
      */
     allowed_domains?: string[];
+    surface?: EventSurface;
   }[];
   /**
    * When true, event sources not included in this sync will be removed
    */
   delete_missing?: boolean;
   context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Optional structured surface this source represents, such as an owned channel, profile, feed, podcast, newsletter list, website, app, or store. Complements the flat `action_source` returned by sellers and avoids putting optimization-relevant surface meaning only in `ext`.
+ */
+export interface EventSurface {
+  /**
+   * Generic surface category. `owned_property` covers durable creator or brand-controlled properties hosted by a platform, such as channels, profiles, feeds, lists, podcasts, or playlists.
+   */
+  category:
+    | 'owned_property'
+    | 'website'
+    | 'app'
+    | 'offline'
+    | 'phone_call'
+    | 'chat'
+    | 'email'
+    | 'in_store'
+    | 'system_generated'
+    | 'other';
+  /**
+   * Open vocabulary describing the kind of property, for example `channel`, `profile`, `feed`, `list`, `podcast`, `playlist`, or `newsletter`. Required by convention when `category` is `owned_property`; optional for other categories.
+   * @minLength 1
+   * @maxLength 128
+   */
+  property_type?: string;
+  /**
+   * Platform, publisher, or system namespace for the property, such as `video_platform`, `short_video_app`, `audio_service`, or a seller-defined namespace. This is intentionally not an enum.
+   * @minLength 1
+   * @maxLength 128
+   */
+  namespace?: string;
+  /**
+   * Optional identifier for the property within `namespace`.
+   * @minLength 1
+   * @maxLength 256
+   */
+  property_id?: string;
   ext?: ExtensionObject;
 }
 
@@ -12192,6 +12235,7 @@ export interface SyncEventSourcesSuccess {
      */
     event_types?: EventType[];
     action_source?: ActionSource;
+    surface?: EventSurface;
     /**
      * Who manages this event source. 'buyer' = configured via this sync. 'seller' = always-on, managed by the seller (e.g. Amazon sales attribution for Amazon advertisers).
      */
@@ -12222,6 +12266,7 @@ export interface SyncEventSourcesSuccess {
      * Errors for this event source (only present when action='failed')
      */
     errors?: Error[];
+    ext?: ExtensionObject;
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -12347,6 +12392,7 @@ export interface Event {
   user_match?: UserMatch;
   custom_data?: EventCustomData;
   action_source?: ActionSource;
+  surface?: EventSurface;
   /**
    * URL where the event occurred (required when action_source is 'website')
    */
@@ -12442,6 +12488,17 @@ export interface EventCustomData {
    * Search query for search events
    */
   search_string?: string;
+  /**
+   * Content progress percentage reached, primarily for `watch_milestone` events. Use 25, 50, 75, or 100 for quartiles, or another publisher-defined threshold. Do not use `value` for non-monetary progress.
+   * @minimum 0
+   * @maximum 100
+   */
+  progress_percent?: number;
+  /**
+   * Content progress duration reached in seconds, primarily for `watch_milestone` events. Use when the milestone is time-based rather than percentage-based.
+   * @minimum 0
+   */
+  progress_seconds?: number;
   /**
    * Per-item details for e-commerce events
    */
@@ -15251,7 +15308,7 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
-   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
+   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. When consent_basis or art9_basis is projected for another provider's signal, the value remains provider-declared signal-definition posture; sellers and federating agents MUST NOT substitute their own processing basis. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
    */
   fields?: (
     | 'signal_ref'
@@ -15592,7 +15649,13 @@ export interface GetSignalsResponse {
       pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
     };
     countries?: string[];
+    /**
+     * Data provider's declared GDPR Article 6 lawful basis or consent basis for the underlying signal definition, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own processing basis for the provider-declared basis.
+     */
     consent_basis?: ConsentBasis[];
+    /**
+     * Data provider's declared GDPR Article 9 basis for the underlying signal definition when special-category data is involved and Article 9 applies, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own Article 9 basis for the provider-declared basis.
+     */
     art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
     modeling?: {
       method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
