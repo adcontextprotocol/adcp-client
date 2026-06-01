@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.1.0-beta.21
+
+### Patch Changes
+
+- 631b2a9: Deprecate schema re-exports from the root package and `@adcp/sdk/types` in favor of the dedicated `@adcp/sdk/schemas` subpath. This keeps backwards compatibility while documenting lower-footprint import paths for large TypeScript monorepos.
+- b2826bd: Capture a per-run storyboard clock and use it during request enrichment so stale media-buy fixture windows and generated fallback IDs stay deterministic across replay steps.
+
 ## 8.1.0-beta.20
 
 ### Minor Changes
