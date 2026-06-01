@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-31
-> Library: @adcp/sdk v8.1.0-beta.18
+> Generated at: 2026-06-01
+> Library: @adcp/sdk v8.1.0-beta.19
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1257,7 +1257,7 @@ Flow: `get_adcp_capabilities`
 **Release-precision version negotiation** — Sellers advertise supported releases on capabilities and echo the served release on every response.
 Flow: `get_adcp_capabilities`
 
-**Webhook emission — outbound webhook conformance (signing + idempotency)** — Any agent that emits webhooks MUST carry a stable idempotency_key across retries and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
+**Webhook emission — outbound webhook conformance (operation ID + signing + idempotency)** — Any agent that emits webhooks MUST echo the caller-supplied operation_id in every payload, carry a stable idempotency_key across retries, and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
 Flow: `get_adcp_capabilities → expect_webhook → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
 
 **Webhook receiver envelope: inbound POST conformance** — Buyer webhook receivers MUST accept full MCP webhook envelopes, reject bare delivery-result payloads, preserve raw-body signature verification, and dedupe retries by a stable idempotency_key.
