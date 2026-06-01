@@ -1028,7 +1028,11 @@ export {
 } from './utils/get-products-cache-scope';
 
 // ====== ZOD SCHEMAS (for runtime validation) ======
-// Re-export all Zod schemas for user validation needs
+/**
+ * @deprecated Import Zod schemas from `@adcp/sdk/schemas` instead. The root
+ * barrel re-export is kept for backwards compatibility, but it can force the
+ * full generated schema declaration set into TypeScript programs.
+ */
 export * from './types/schemas.generated';
 
 // ====== ENUM VALUE ARRAYS ======
