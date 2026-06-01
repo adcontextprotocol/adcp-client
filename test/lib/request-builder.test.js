@@ -9,6 +9,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const { buildRequest, hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
+const { createRunnerVariables } = require('../../dist/lib/testing/storyboard/context.js');
 
 const DEFAULT_OPTIONS = {
   brand: { domain: 'acmeoutdoor.example' },
@@ -105,6 +106,34 @@ describe('Request Builder', () => {
         assert.ok(resolvedStart < resolvedEnd, 'start should remain before end');
         assert.strictEqual(resolvedEnd - resolvedStart, Date.parse(sampleEnd) - Date.parse(sampleStart));
       });
+    });
+
+    test('resolves stale fixture window deterministically for idempotency replay (#2147)', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: '2026-06-01T00:00:00Z',
+          end_time: '2026-06-08T00:00:00Z',
+          packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+        },
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(s, {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(s, {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.strictEqual(initial.start_time, '2026-06-02T00:00:00.100Z');
+      assert.strictEqual(replay.start_time, initial.start_time);
+      assert.strictEqual(replay.end_time, initial.end_time);
     });
 
     test('emits every package when sample_request authors multiple', () => {
@@ -539,6 +568,25 @@ describe('Request Builder', () => {
       );
     });
 
+    test('fallback catalog IDs are deterministic but distinct per step', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      const first = buildRequest(step('sync_catalogs', { id: 'sync_catalogs_first' }), {}, DEFAULT_OPTIONS, runnerVars);
+      const second = buildRequest(
+        step('sync_catalogs', { id: 'sync_catalogs_second' }),
+        {},
+        DEFAULT_OPTIONS,
+        runnerVars
+      );
+
+      assert.match(first.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
+      assert.match(second.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
+      assert.notStrictEqual(first.catalogs[0].catalog_id, second.catalogs[0].catalog_id);
+    });
+
     test('honors step.sample_request when present', () => {
       const fixture = {
         account: { account_id: 'acct_x' },
@@ -592,6 +640,25 @@ describe('Request Builder', () => {
       };
       const result = buildRequest(step('report_usage', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.usage[0].vendor_cost, 42);
+    });
+
+    test('fallback reporting_period is deterministic with runner variables', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.deepStrictEqual(replay.reporting_period, initial.reporting_period);
+      assert.strictEqual(initial.reporting_period.end, '2026-06-01T00:00:00.100Z');
     });
   });
 
@@ -661,6 +728,37 @@ describe('Request Builder', () => {
       const context = { event_source_id: 'resolved-source-id' };
       const result = buildRequest(step('log_event', { sample_request: fixture }), context, DEFAULT_OPTIONS);
       assert.strictEqual(result.event_source_id, 'resolved-source-id');
+    });
+
+    test('fallback event_id and event_time are deterministic with runner variables', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(step('log_event'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(step('log_event'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.strictEqual(replay.events[0].event_id, initial.events[0].event_id);
+      assert.strictEqual(replay.events[0].event_time, initial.events[0].event_time);
+      assert.strictEqual(initial.events[0].event_time, '2026-06-01T00:00:00.100Z');
+    });
+
+    test('fallback event_id remains bounded when step id is long', () => {
+      const runnerVars = createRunnerVariables();
+      const result = buildRequest(
+        step('log_event', { id: 'log_event_' + 'x'.repeat(240) }),
+        {},
+        DEFAULT_OPTIONS,
+        runnerVars
+      );
+      assert.ok(result.events[0].event_id.length <= 256, `event_id length was ${result.events[0].event_id.length}`);
     });
   });
 
