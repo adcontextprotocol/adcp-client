@@ -43,6 +43,8 @@
     "context-extractors-verdict-outcome-state-fixtures",
     "cut-8-0-beta",
     "dedupe-core-shared-types",
+    "deprecate-schema-barrel-exports",
+    "deterministic-storyboard-run-clock",
     "enter-pre-mode-beta",
     "export-media-buy-valid-action",
     "expose-public-server-payload-aliases",
