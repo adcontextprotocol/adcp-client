@@ -47,6 +47,19 @@ Why bother: the full `@adcp/sdk` type surface is ~45,000 lines and crashes `tsc`
 
 Slices use kebab-case filenames matching the schema cache (`sync_accounts` → `@adcp/sdk/types/sync-accounts`). Requires `moduleResolution: "node16"` / `"nodenext"` / `"bundler"` on the adopter side. A machine-readable index of available slices ships at `@adcp/sdk/types/per-tool-index.json`.
 
+### TypeScript footprint in monorepos
+
+Large workspaces should keep the generated schema surface out of the default type-check path unless they actually need runtime Zod validators. The root `@adcp/sdk` export and `@adcp/sdk/types` still re-export schemas for backwards compatibility, but those compatibility exports are deprecated because they can pull the full generated schema declaration set into `tsc`.
+
+| Need                                          | Recommended import                                                                      |
+| --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Client, server, signing, and response helpers | `@adcp/sdk`, `@adcp/sdk/client`, `@adcp/sdk/server`, or another focused runtime subpath |
+| One tool's request/response types             | `@adcp/sdk/types/<tool>` such as `@adcp/sdk/types/sync-accounts`                        |
+| Runtime Zod schemas and tool input shapes     | `@adcp/sdk/schemas`                                                                     |
+| Broad generated protocol type barrel          | `@adcp/sdk/types`                                                                       |
+
+For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.
+
 ## Quick Start: Distributed Operations
 
 ```typescript
