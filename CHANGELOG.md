@@ -1,5 +1,15 @@
 # Changelog
 
+## 8.1.0-beta.20
+
+### Minor Changes
+
+- 2e261c3: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.6.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, entity hydration metadata, and server wire field allowlists from the
+  rc6 protocol bundle.
+
 ## 8.1.0-beta.19
 
 ### Minor Changes
