@@ -153,6 +153,9 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
 const CONTROLLER_SEEDING_FAILED_DETAIL =
   'Skipped: pre-flight comply_test_controller seeding failed; the agent was not populated with the storyboard fixtures the remaining phases depend on.';
 
+const FIXTURE_SEED_UNSUPPORTED_DETAIL =
+  'Skipped: pre-flight comply_test_controller seeding requires a seed_* scenario this agent does not implement (`fixture_seed_unsupported`).';
+
 const OAUTH_NOT_ADVERTISED_DETAIL =
   'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
 
@@ -2195,6 +2198,7 @@ async function executeStoryboardPass(
   let seedingPhaseResult: StoryboardPhaseResult | null = null;
   let seedingFailed = false;
   let seedingMissingController = false;
+  let seedingUnsupported = false;
   {
     const seeding =
       preSeeded !== undefined
@@ -2206,10 +2210,12 @@ async function executeStoryboardPass(
         seedingPhaseResult = seeding.phase;
         passedCount += seeding.passedCount;
         failedCount += seeding.failedCount;
-        if (seeding.missingController) skippedCount += seeding.phase.steps.length;
+        if (seeding.missingController || seeding.seedUnsupported) skippedCount += seeding.phase.steps.length;
       }
       if (seeding.missingController) {
         seedingMissingController = true;
+      } else if (seeding.seedUnsupported) {
+        seedingUnsupported = true;
       } else if (!seeding.allPassed) {
         seedingFailed = true;
       }
@@ -2339,25 +2345,26 @@ async function executeStoryboardPass(
     // (those ride as plain properties on the spread result).
     context = { ...context };
 
-    // Seeding-cascade skip: either the pre-flight seed phase failed (setup
-    // break) or the agent doesn't advertise `comply_test_controller`
-    // (coverage gap). Both paths emit skipped steps; the reasons differ so
-    // compliance reports distinguish "agent misconfigured" from "agent not
-    // graded against this storyboard". `controller_seeding_failed` is a
-    // detailed reason mapped to canonical `prerequisite_failed`;
-    // `missing_test_controller` is canonical on its own. Emits full step
-    // rows (not an empty phase) so implementors see exactly which
+    // Seeding-cascade skip: the pre-flight seed phase can fail as a setup
+    // break, or the agent can be out-of-scope for fixture seeding because it
+    // lacks either the controller tool or a required seed_* scenario. Emit
+    // full step rows (not an empty phase) so implementors see exactly which
     // buyer-side operations were elided.
-    if (seedingMissingController || seedingFailed) {
+    if (seedingMissingController || seedingUnsupported || seedingFailed) {
       const cascadeSkip: Pick<StoryboardStepResult, 'skip_reason' | 'skip'> = seedingMissingController
         ? {
             skip_reason: 'missing_test_controller',
             skip: { reason: 'missing_test_controller', detail: SKIP_DETAILS.missing_test_controller },
           }
-        : {
-            skip_reason: 'controller_seeding_failed',
-            skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
-          };
+        : seedingUnsupported
+          ? {
+              skip_reason: 'fixture_seed_unsupported',
+              skip: { reason: 'not_applicable', detail: FIXTURE_SEED_UNSUPPORTED_DETAIL },
+            }
+          : {
+              skip_reason: 'controller_seeding_failed',
+              skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+            };
       const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
         storyboard_id: storyboard.id,
         step_id: step.id,
@@ -2938,6 +2945,11 @@ async function executeStoryboardPass(
       if (!phaseDef || phaseDef.optional || !p.passed) return false;
       return p.steps.some(s => !s.skipped && s.passed);
     });
+  const storyboardWideFixtureSeedUnsupported =
+    seedingUnsupported &&
+    failedCount === 0 &&
+    phaseResults.some(p => p.steps.some(s => s.skipped && s.skip?.reason === 'not_applicable')) &&
+    phaseResults.every(p => p.steps.every(s => s.skipped && s.skip?.reason === 'not_applicable'));
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
@@ -2959,7 +2971,8 @@ async function executeStoryboardPass(
     // `multi-pass`.
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     ...(routingContext && { agent_map: { ...routingContext.agentMap } }),
-    overall_passed: failedCount === 0 && requiredPhasesPassed && !assertionsFailed,
+    overall_passed:
+      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureSeedUnsupported) && !assertionsFailed,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,

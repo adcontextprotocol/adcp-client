@@ -81,6 +81,32 @@ describe('buildSeedCalls', () => {
     });
   });
 
+  test('creative_formats → seed_creative_format with format_id lifted and fixture body preserved', () => {
+    const calls = buildSeedCalls({
+      creative_formats: [
+        {
+          format_id: 'display_300x250',
+          fixture: { name: 'Display 300x250', type: 'display' },
+        },
+        {
+          format_id: 'video_30s',
+          name: 'Video 30s',
+          type: 'video',
+        },
+      ],
+    });
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(calls[0].scenario, 'seed_creative_format');
+    assert.deepStrictEqual(calls[0].params, {
+      format_id: 'display_300x250',
+      fixture: { name: 'Display 300x250', type: 'display' },
+    });
+    assert.deepStrictEqual(calls[1].params, {
+      format_id: 'video_30s',
+      fixture: { name: 'Video 30s', type: 'video' },
+    });
+  });
+
   test('buyer_agents → seed_buyer_agent with agent_url lifted and commercial fields direct', () => {
     const calls = buildSeedCalls({
       buyer_agents: [
@@ -100,18 +126,27 @@ describe('buildSeedCalls', () => {
     });
   });
 
-  test('emits ordering: buyer_agents → products → pricing_options → creatives → plans → media_buys', () => {
+  test('emits ordering: buyer_agents → products → pricing_options → creative_formats → creatives → plans → media_buys', () => {
     const calls = buildSeedCalls({
       media_buys: [{ media_buy_id: 'mb-1' }],
       buyer_agents: [{ agent_url: 'https://buyer.example/agent' }],
       products: [{ product_id: 'p-1' }],
+      creative_formats: [{ format_id: 'fmt-1' }],
       creatives: [{ creative_id: 'c-1' }],
       plans: [{ plan_id: 'pl-1' }],
       pricing_options: [{ product_id: 'p-1', pricing_option_id: 'po-1' }],
     });
     assert.deepStrictEqual(
       calls.map(c => c.scenario),
-      ['seed_buyer_agent', 'seed_product', 'seed_pricing_option', 'seed_creative', 'seed_plan', 'seed_media_buy']
+      [
+        'seed_buyer_agent',
+        'seed_product',
+        'seed_pricing_option',
+        'seed_creative_format',
+        'seed_creative',
+        'seed_plan',
+        'seed_media_buy',
+      ]
     );
   });
 
@@ -120,13 +155,15 @@ describe('buildSeedCalls', () => {
       buyer_agents: [{ status: 'active' }],
       products: [{ delivery_type: 'non_guaranteed' }],
       pricing_options: [{ product_id: 'p-1' }],
+      creative_formats: [{ name: 'missing format_id' }],
       creatives: [{ format_id: 'x' }],
     });
-    assert.strictEqual(calls.length, 4);
+    assert.strictEqual(calls.length, 5);
     assert.match(calls[0].authoring_error, /agent_url/);
     assert.match(calls[1].authoring_error, /product_id/);
     assert.match(calls[2].authoring_error, /pricing_option_id/);
-    assert.match(calls[3].authoring_error, /creative_id/);
+    assert.match(calls[3].authoring_error, /format_id/);
+    assert.match(calls[4].authoring_error, /creative_id/);
   });
 });
 
@@ -206,10 +243,13 @@ describe('runControllerSeeding', () => {
     const { client, calls } = makeMockClient(successResponse);
     const result = await runControllerSeeding(client, storyboard, {}, {});
     assert.ok(result, 'seeding result should exist');
-    assert.strictEqual(calls.length, 3);
-    for (const call of calls) {
+    assert.strictEqual(calls[0].params.scenario, 'list_scenarios');
+    const seedCalls = calls.filter(call => String(call.params.scenario).startsWith('seed_'));
+    assert.strictEqual(seedCalls.length, 3);
+    for (const call of seedCalls) {
       assert.strictEqual(call.name, 'comply_test_controller');
       assert.match(String(call.params.scenario), /seed_/);
+      assert.deepStrictEqual(call.params.context, { correlation_id: 'test_sb--__seeding__' });
     }
     assert.strictEqual(result.allPassed, true);
     assert.strictEqual(result.passedCount, 3);
@@ -220,6 +260,144 @@ describe('runControllerSeeding', () => {
       assert.strictEqual(step.passed, true);
       assert.strictEqual(step.task, 'comply_test_controller');
     }
+  });
+
+  test('uses a stable seeding correlation id that differs by storyboard id', async () => {
+    const { client, calls } = makeMockClient(successResponse);
+    const first = { ...storyboardWithFixtures, id: 'first_sb' };
+    const second = { ...storyboardWithFixtures, id: 'second_sb' };
+
+    await runControllerSeeding(client, first, {}, { correlation_id: 'runner-context-ignored' });
+    await runControllerSeeding(client, second, {}, { correlation_id: 'runner-context-ignored' });
+
+    const seedCalls = calls.filter(call => String(call.params.scenario).startsWith('seed_'));
+    assert.strictEqual(seedCalls.length, 2);
+    assert.deepStrictEqual(seedCalls[0].params.context, { correlation_id: 'first_sb--__seeding__' });
+    assert.deepStrictEqual(seedCalls[1].params.context, { correlation_id: 'second_sb--__seeding__' });
+    assert.notStrictEqual(seedCalls[0].params.context.correlation_id, seedCalls[1].params.context.correlation_id);
+  });
+
+  test('derives seeding correlation prefix from authored storyboard step context when present', async () => {
+    const storyboard = {
+      ...storyboardWithFixtures,
+      id: 'media_buy_seller/provenance_enforcement',
+      phases: [
+        {
+          id: 'discovery',
+          title: 'discovery',
+          steps: [
+            {
+              id: 'get_products_with_disclosure_policy',
+              title: 'get products',
+              task: 'get_products',
+              sample_request: {
+                context: { correlation_id: 'provenance_enforcement--get_products' },
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const runnerContext = { correlation_id: 'runner-context-ignored' };
+    const { client, calls } = makeMockClient(successResponse);
+
+    const result = await runControllerSeeding(client, storyboard, {}, runnerContext);
+
+    assert.ok(result);
+    const seedCalls = calls.filter(call => String(call.params.scenario).startsWith('seed_'));
+    assert.strictEqual(seedCalls.length, 1);
+    assert.deepStrictEqual(seedCalls[0].params.context, { correlation_id: 'provenance_enforcement--__seeding__' });
+    assert.strictEqual(result.phase.steps[0].context, runnerContext);
+  });
+
+  test('preserves authored correlation prefixes that contain internal double-dash separators', async () => {
+    const storyboard = {
+      ...storyboardWithFixtures,
+      id: 'creative_generative/seller',
+      phases: [
+        {
+          id: 'capabilities',
+          title: 'capabilities',
+          steps: [
+            {
+              id: 'get_capabilities',
+              title: 'get capabilities',
+              task: 'get_adcp_capabilities',
+              sample_request: {
+                context: { correlation_id: 'creative_generative--seller--get_capabilities' },
+              },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+    const { client, calls } = makeMockClient(successResponse);
+
+    await runControllerSeeding(client, storyboard, {}, {});
+
+    const seedCalls = calls.filter(call => String(call.params.scenario).startsWith('seed_'));
+    assert.strictEqual(seedCalls.length, 1);
+    assert.deepStrictEqual(seedCalls[0].params.context, { correlation_id: 'creative_generative--seller--__seeding__' });
+  });
+
+  test('preflights list_scenarios before mixed-fixture seeding to avoid partial writes', async () => {
+    const storyboard = {
+      ...storyboardWithFixtures,
+      fixtures: {
+        products: [{ product_id: 'p-1' }],
+        pricing_options: [{ product_id: 'p-1', pricing_option_id: 'po-1' }],
+      },
+    };
+    const { client, calls } = makeMockClient(({ params }) => {
+      if (params.scenario === 'list_scenarios') {
+        return {
+          success: true,
+          data: {
+            content: [{ type: 'text', text: JSON.stringify({ success: true, scenarios: ['seed_product'] }) }],
+          },
+        };
+      }
+      return successResponse();
+    });
+
+    const result = await runControllerSeeding(client, storyboard, {}, {});
+
+    assert.ok(result);
+    assert.strictEqual(result.seedUnsupported, true);
+    assert.deepStrictEqual(
+      calls.map(call => call.params.scenario),
+      ['list_scenarios'],
+      'no mutating seed call should be issued after preflight finds an unsupported seed scenario'
+    );
+    assert.strictEqual(result.phase.steps.length, 2);
+    for (const step of result.phase.steps) {
+      assert.strictEqual(step.skipped, true);
+      assert.strictEqual(step.skip_reason, 'fixture_seed_unsupported');
+      assert.strictEqual(step.skip.reason, 'not_applicable');
+    }
+  });
+
+  test('fixture authoring errors win over unsupported seed preflight without controller calls', async () => {
+    const storyboard = {
+      ...storyboardWithFixtures,
+      fixtures: {
+        products: [{ delivery_type: 'guaranteed' }],
+        creative_formats: [{ format_id: 'fmt-1' }],
+      },
+    };
+    const { client, calls } = makeMockClient(() => {
+      throw new Error('controller must not be called for malformed fixtures');
+    });
+
+    const result = await runControllerSeeding(client, storyboard, {}, {});
+
+    assert.ok(result);
+    assert.strictEqual(calls.length, 0);
+    assert.strictEqual(result.allPassed, false);
+    assert.strictEqual(result.failedCount, 1);
+    assert.match(result.phase.steps[0].error, /product_id/);
   });
 
   test('failure path: controller returns an error for one seed — phase fails, allPassed is false', async () => {
@@ -331,11 +509,14 @@ describe('runStoryboard: controller seeding integration', () => {
       _client: client,
     });
 
-    const seedCalls = calls.filter(c => c.name === 'comply_test_controller');
+    const controllerCalls = calls.filter(c => c.name === 'comply_test_controller');
+    const seedCalls = controllerCalls.filter(c => String(c.params.scenario).startsWith('seed_'));
     const productCalls = calls.filter(c => c.name === 'get_products');
+    assert.strictEqual(controllerCalls[0].params.scenario, 'list_scenarios');
     assert.strictEqual(seedCalls.length, 1, 'exactly one seed_product call');
     assert.strictEqual(seedCalls[0].params.scenario, 'seed_product');
     assert.strictEqual(seedCalls[0].params.params.product_id, 'sports_display');
+    assert.deepStrictEqual(seedCalls[0].params.context, { correlation_id: 'seed_runner_sb--__seeding__' });
     assert.ok(productCalls.length >= 1, 'real phase should run after seeding');
 
     const seedPhase = result.phases.find(p => p.phase_id === '__controller_seeding__');
@@ -352,7 +533,7 @@ describe('runStoryboard: controller seeding integration', () => {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ success: false, error: 'UNKNOWN_SCENARIO', error_detail: 'no seedProduct' }),
+                text: JSON.stringify({ success: false, error: 'INVALID_PARAMS', error_detail: 'bad fixture' }),
               },
             ],
           },
@@ -383,6 +564,52 @@ describe('runStoryboard: controller seeding integration', () => {
       // controller_seeding_failed collapses to prerequisite_failed per
       // DETAILED_SKIP_TO_CANONICAL.
       assert.strictEqual(step.skip.reason, 'prerequisite_failed');
+    }
+  });
+
+  test('unsupported seed scenario grades not_applicable via fixture_seed_unsupported cascade', async () => {
+    const { client, calls } = makeRunnerClient(({ name }) => {
+      if (name === 'comply_test_controller') {
+        return {
+          success: true,
+          data: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ success: false, error: 'UNKNOWN_SCENARIO', error_detail: 'no seedProduct' }),
+              },
+            ],
+          },
+        };
+      }
+      return successResponse();
+    });
+    const result = await runStoryboard('https://example.invalid/mcp', baseStoryboard, {
+      protocol: 'mcp',
+      agentTools: ['comply_test_controller', 'get_products'],
+      _profile: { name: 'Test', tools: ['comply_test_controller', 'get_products'] },
+      _client: client,
+    });
+
+    assert.strictEqual(result.failed_count, 0, 'unsupported seed scenarios must not count as failures');
+    assert.strictEqual(result.overall_passed, true, 'unsupported seed scenarios grade not_applicable, not failed');
+    const realPhaseCalls = calls.filter(c => c.name === 'get_products');
+    assert.strictEqual(realPhaseCalls.length, 0, 'real phases must not run without required fixture seeding');
+
+    const seedPhase = result.phases.find(p => p.phase_id === '__controller_seeding__');
+    assert.ok(seedPhase);
+    for (const step of seedPhase.steps) {
+      assert.strictEqual(step.skipped, true);
+      assert.strictEqual(step.skip_reason, 'fixture_seed_unsupported');
+      assert.strictEqual(step.skip.reason, 'not_applicable');
+    }
+
+    const realPhase = result.phases.find(p => p.phase_id === 'discovery');
+    assert.ok(realPhase);
+    for (const step of realPhase.steps) {
+      assert.strictEqual(step.skipped, true, `step ${step.step_id} should be skipped`);
+      assert.strictEqual(step.skip_reason, 'fixture_seed_unsupported');
+      assert.strictEqual(step.skip.reason, 'not_applicable');
     }
   });
 
