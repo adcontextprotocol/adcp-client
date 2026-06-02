@@ -9,6 +9,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const { buildRequest, hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
+const { createRunnerVariables } = require('../../dist/lib/testing/storyboard/context.js');
 
 const DEFAULT_OPTIONS = {
   brand: { domain: 'acmeoutdoor.example' },
@@ -24,6 +25,16 @@ const FUTURE_END = '9999-02-01T00:00:00Z';
 
 function step(task, overrides = {}) {
   return { id: `test-${task}`, title: `Test ${task}`, task, ...overrides };
+}
+
+function withDateNow(iso, fn) {
+  const original = Date.now;
+  Date.now = () => Date.parse(iso);
+  try {
+    return fn();
+  } finally {
+    Date.now = original;
+  }
 }
 
 describe('Request Builder', () => {
@@ -59,6 +70,70 @@ describe('Request Builder', () => {
       assert.ok(result.start_time, 'should have start_time');
       assert.ok(result.end_time, 'should have end_time');
       assert.ok(new Date(result.start_time) < new Date(result.end_time), 'start should be before end');
+    });
+
+    test('preserves future fixture start_time and end_time byte-for-byte', () => {
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+        },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.start_time, FUTURE_START);
+      assert.strictEqual(result.end_time, FUTURE_END);
+    });
+
+    test('keeps create_media_buy window ordered when stale start meets same-day future end (#2143)', () => {
+      withDateNow('2026-05-31T12:28:07.525Z', () => {
+        const sampleStart = '2026-05-01T00:00:00Z';
+        const sampleEnd = '2026-05-31T23:59:59Z';
+        const s = step('create_media_buy', {
+          sample_request: {
+            start_time: sampleStart,
+            end_time: sampleEnd,
+            packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+          },
+        });
+
+        const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+        const resolvedStart = Date.parse(result.start_time);
+        const resolvedEnd = Date.parse(result.end_time);
+
+        assert.strictEqual(result.start_time, '2026-06-01T12:28:07.525Z');
+        assert.notStrictEqual(result.end_time, sampleEnd, 'same-day sample end would invert the defaulted start');
+        assert.ok(resolvedStart < resolvedEnd, 'start should remain before end');
+        assert.strictEqual(resolvedEnd - resolvedStart, Date.parse(sampleEnd) - Date.parse(sampleStart));
+      });
+    });
+
+    test('resolves stale fixture window deterministically for idempotency replay (#2147)', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: '2026-06-01T00:00:00Z',
+          end_time: '2026-06-08T00:00:00Z',
+          packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+        },
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(s, {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(s, {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.strictEqual(initial.start_time, '2026-06-02T00:00:00.100Z');
+      assert.strictEqual(replay.start_time, initial.start_time);
+      assert.strictEqual(replay.end_time, initial.end_time);
     });
 
     test('emits every package when sample_request authors multiple', () => {
@@ -493,6 +568,25 @@ describe('Request Builder', () => {
       );
     });
 
+    test('fallback catalog IDs are deterministic but distinct per step', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      const first = buildRequest(step('sync_catalogs', { id: 'sync_catalogs_first' }), {}, DEFAULT_OPTIONS, runnerVars);
+      const second = buildRequest(
+        step('sync_catalogs', { id: 'sync_catalogs_second' }),
+        {},
+        DEFAULT_OPTIONS,
+        runnerVars
+      );
+
+      assert.match(first.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
+      assert.match(second.catalogs[0].catalog_id, /^test-catalog-1780272000100-[a-f0-9]{12}$/);
+      assert.notStrictEqual(first.catalogs[0].catalog_id, second.catalogs[0].catalog_id);
+    });
+
     test('honors step.sample_request when present', () => {
       const fixture = {
         account: { account_id: 'acct_x' },
@@ -546,6 +640,25 @@ describe('Request Builder', () => {
       };
       const result = buildRequest(step('report_usage', { sample_request: fixture }), {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.usage[0].vendor_cost, 42);
+    });
+
+    test('fallback reporting_period is deterministic with runner variables', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(step('report_usage'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.deepStrictEqual(replay.reporting_period, initial.reporting_period);
+      assert.strictEqual(initial.reporting_period.end, '2026-06-01T00:00:00.100Z');
     });
   });
 
@@ -615,6 +728,37 @@ describe('Request Builder', () => {
       const context = { event_source_id: 'resolved-source-id' };
       const result = buildRequest(step('log_event', { sample_request: fixture }), context, DEFAULT_OPTIONS);
       assert.strictEqual(result.event_source_id, 'resolved-source-id');
+    });
+
+    test('fallback event_id and event_time are deterministic with runner variables', () => {
+      let runnerVars;
+      withDateNow('2026-06-01T00:00:00.100Z', () => {
+        runnerVars = createRunnerVariables();
+      });
+
+      let initial;
+      let replay;
+      withDateNow('2026-06-01T00:00:00.200Z', () => {
+        initial = buildRequest(step('log_event'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+      withDateNow('2026-06-01T00:00:00.900Z', () => {
+        replay = buildRequest(step('log_event'), {}, DEFAULT_OPTIONS, runnerVars);
+      });
+
+      assert.strictEqual(replay.events[0].event_id, initial.events[0].event_id);
+      assert.strictEqual(replay.events[0].event_time, initial.events[0].event_time);
+      assert.strictEqual(initial.events[0].event_time, '2026-06-01T00:00:00.100Z');
+    });
+
+    test('fallback event_id remains bounded when step id is long', () => {
+      const runnerVars = createRunnerVariables();
+      const result = buildRequest(
+        step('log_event', { id: 'log_event_' + 'x'.repeat(240) }),
+        {},
+        DEFAULT_OPTIONS,
+        runnerVars
+      );
+      assert.ok(result.events[0].event_id.length <= 256, `event_id length was ${result.events[0].event_id.length}`);
     });
   });
 
@@ -788,6 +932,47 @@ describe('Request Builder', () => {
       const context = { seller_url: 'https://resolved.example' };
       const result = buildRequest(s, context, DEFAULT_OPTIONS);
       assert.deepStrictEqual(result.destinations, [{ type: 'agent', agent_url: 'https://resolved.example' }]);
+    });
+
+    test('preserves the full signal-owned activate_on_agent sample_request (ADCP-4009)', () => {
+      // Regression: the compliance runner previously sent only
+      // signal_agent_segment_id + context for signal_owned/activate_on_agent,
+      // dropping the required destinations and idempotency_key fields from the
+      // storyboard fixture.
+      const s = step('activate_signal', {
+        id: 'activate_on_agent',
+        sample_request: {
+          account: {
+            brand: { domain: 'novamotors.example' },
+            operator: 'pinnacle-agency.example',
+          },
+          signal_agent_segment_id: 'prism_cart_abandoner',
+          pricing_option_id: 'po_prism_abandoner_cpm',
+          destinations: [{ type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' }],
+          idempotency_key: '$generate:uuid_v4#signal_owned_activate_agent',
+          context: { correlation_id: 'signal_owned--activate_on_agent' },
+          ext: { test_platform: { test_run: true } },
+        },
+      });
+
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'novamotors.example' },
+        operator: 'pinnacle-agency.example',
+      });
+      assert.strictEqual(result.signal_agent_segment_id, 'prism_cart_abandoner');
+      assert.strictEqual(result.pricing_option_id, 'po_prism_abandoner_cpm');
+      assert.deepStrictEqual(result.destinations, [
+        { type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' },
+      ]);
+      assert.match(
+        result.idempotency_key,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        `idempotency_key must be a real UUID v4, got: ${result.idempotency_key}`
+      );
+      assert.deepStrictEqual(result.context, { correlation_id: 'signal_owned--activate_on_agent' });
+      assert.deepStrictEqual(result.ext, { test_platform: { test_run: true } });
     });
   });
 

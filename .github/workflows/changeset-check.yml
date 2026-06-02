@@ -30,7 +30,7 @@ jobs:
           changed_files="$(git diff --name-only origin/main...HEAD)"
           package_changes="$(
             printf '%s\n' "$changed_files" |
-              grep -Ev '^(\.changeset/pre\.json|src/lib/version\.ts|docs/(llms\.txt|TYPE-SUMMARY\.md)|\.github/workflows/(changeset-check|release)\.yml)$' ||
+              grep -Ev '^(\.changeset/pre\.json|CHANGELOG\.md|package(-lock)?\.json|packages/[^/]+/(CHANGELOG\.md|package\.json)|src/lib/version\.ts|docs/(llms\.txt|TYPE-SUMMARY\.md)|\.github/workflows/(changeset-check|release)\.yml)$' ||
               true
           )"
 

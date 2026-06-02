@@ -28,6 +28,7 @@ const TEST_CLIENT_VERSION_OPTIONS = Symbol('adcp.testClientVersionOptions');
 
 interface TestClientVersionOptions {
   adcpVersion: string;
+  wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
 }
 
@@ -187,6 +188,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     headers,
     validation: { logSchemaViolations: false },
     ...(options.adcpVersion !== undefined && { adcpVersion: options.adcpVersion }),
+    ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
     ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
   });
@@ -195,6 +197,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   Object.defineProperty(client, TEST_CLIENT_VERSION_OPTIONS, {
     value: {
       adcpVersion: multiClient.getAdcpVersion(),
+      ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
     } satisfies TestClientVersionOptions,
     enumerable: false,
@@ -231,8 +234,13 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
   ];
   if (!meta) return options.adcpVersion === undefined && options.versionEnvelope === undefined;
   const expectedAdcpVersion = options.adcpVersion ?? ADCP_VERSION;
+  const expectedWireAdcpVersion = options.wireAdcpVersion;
   const expectedVersionEnvelope = options.versionEnvelope ?? 'auto';
-  return meta.adcpVersion === expectedAdcpVersion && meta.versionEnvelope === expectedVersionEnvelope;
+  return (
+    meta.adcpVersion === expectedAdcpVersion &&
+    meta.wireAdcpVersion === expectedWireAdcpVersion &&
+    meta.versionEnvelope === expectedVersionEnvelope
+  );
 }
 
 /**

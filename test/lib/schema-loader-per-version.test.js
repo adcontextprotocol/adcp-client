@@ -16,10 +16,13 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const {
   getValidator,
+  getSchemaValidatorByRef,
   listValidatorKeys,
   resolveBundleKey,
   hasSchemaBundle,
@@ -27,14 +30,69 @@ const {
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
+const ADCP_PRERELEASE_FAMILY = ADCP_RELEASE_PRECISION.replace(/\.\d+$/, '');
 
 // Synthetic fixture under a different MAJOR.MINOR so the loader's state map
 // keeps it separate from the real bundle.
 const FIXTURE_KEY = '1.0';
 const FIXTURE_VERSION_PIN = '1.0.0';
+const PRERELEASE_SORT_OLD = '9.9.0-rc.9';
+const PRERELEASE_SORT_NEW = '9.9.0-rc.10';
+const PRERELEASE_SORT_FAMILY = '9.9-rc';
+const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SCHEMAS_DATA_ROOT = path.resolve(__dirname, '..', '..', 'dist', 'lib', 'schemas-data');
 const SOURCE_DIR = path.join(SCHEMAS_DATA_ROOT, resolveBundleKey(ADCP_VERSION));
 const FIXTURE_DIR = path.join(SCHEMAS_DATA_ROOT, FIXTURE_KEY);
+
+function writeMinimalGetProductsBundle(root, version, sentinel) {
+  const bundledDir = path.join(root, 'bundled', 'media-buy');
+  fs.mkdirSync(bundledDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundledDir, 'get-products-request.json'),
+    JSON.stringify({
+      $id: `/schemas/${version}/bundled/media-buy/get-products-request.json`,
+      type: 'object',
+      properties: { sentinel: { const: sentinel } },
+      required: ['sentinel'],
+      additionalProperties: false,
+    })
+  );
+}
+
+function runPrereleaseSortFixture() {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-schema-loader-prerelease-sort-'));
+  try {
+    const tempDist = path.join(tempRoot, 'dist');
+    fs.cpSync(path.join(REPO_ROOT, 'dist'), tempDist, { recursive: true });
+    fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), path.join(tempRoot, 'node_modules'), 'dir');
+    const tempSchemasData = path.join(tempDist, 'lib', 'schemas-data');
+    writeMinimalGetProductsBundle(path.join(tempSchemasData, PRERELEASE_SORT_OLD), PRERELEASE_SORT_OLD, 'old');
+    writeMinimalGetProductsBundle(path.join(tempSchemasData, PRERELEASE_SORT_NEW), PRERELEASE_SORT_NEW, 'new');
+
+    const loaderPath = path.join(tempDist, 'lib', 'validation', 'schema-loader.js').replace(/\\/g, '/');
+    const result = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const { getValidator } = require(${JSON.stringify(loaderPath)});
+const validator = getValidator('get_products', 'request', ${JSON.stringify(PRERELEASE_SORT_FAMILY)});
+console.log(JSON.stringify({
+  hasValidator: !!validator,
+  acceptsNew: validator ? validator({ sentinel: 'new' }) : false,
+  acceptsOld: validator ? validator({ sentinel: 'old' }) : false,
+  errors: validator?.errors ?? null,
+}));
+`,
+      ],
+      { cwd: tempRoot, encoding: 'utf-8' }
+    );
+    assert.strictEqual(result.status, 0, `fixture process failed:\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+    return JSON.parse(result.stdout);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
 
 before(() => {
   if (!fs.existsSync(SOURCE_DIR)) {
@@ -69,7 +127,7 @@ describe('schema-loader per-version state', () => {
 
   test('resolveBundleKey keeps prereleases exact', () => {
     assert.strictEqual(resolveBundleKey('3.1.0-beta.5'), '3.1.0-beta.5');
-    assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
+    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION);
   });
 
   test('stable patch pins share a compiled validator (1.0.0 ≡ 1.0.1 ≡ 1.0 via fixture)', () => {
@@ -169,6 +227,13 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(hasSchemaBundle(''), false);
   });
 
+  test('release-precision prerelease family aliases prefer numeric newest bundle', () => {
+    const result = runPrereleaseSortFixture();
+    assert.strictEqual(result.hasValidator, true, `${PRERELEASE_SORT_FAMILY} get_products::request must compile`);
+    assert.strictEqual(result.acceptsNew, true, 'rc.10 must sort newer than rc.9');
+    assert.strictEqual(result.acceptsOld, false, 'rc.9 must not win lexicographically over rc.10');
+  });
+
   test('resolveBundleKey rejects prerelease tags with non-SemVer chars (path-traversal hardening)', () => {
     // Prerelease group restricts to [0-9A-Za-z-] so traversal-like strings
     // can't slip through verbatim into `path.join`. SemVer §9 identifiers
@@ -188,7 +253,6 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
     // Valid SemVer prereleases still pass through.
     assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION);
-    assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
 
@@ -210,14 +274,14 @@ describe('schema-loader per-version state', () => {
   });
 
   test(`${ADCP_VERSION} opt-in bundle compiles and accepts wholesale-feed request fields`, () => {
-    // Runtime guard for the 3.1-beta opt-in: a consumer pinning the beta
-    // version gets a compiled validator that accepts the new wholesale-feed
+    // Runtime guard for the 3.1 prerelease opt-in: a consumer pinning the
+    // current prerelease gets a compiled validator that accepts the wholesale-feed
     // request fields (if_wholesale_feed_version / if_pricing_version) the type
     // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
     // type-side worked but the wire-side could regress silently.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('get_products', 'request', ADCP_VERSION);
-    assert.ok(v, '3.1-beta get_products::request must compile from the opt-in bundle');
+    assert.ok(v, '3.1 prerelease get_products::request must compile from the opt-in bundle');
     const ok = v({
       adcp_version: ADCP_RELEASE_PRECISION,
       brief: 'wholesale catalog mirror probe',
@@ -242,11 +306,11 @@ describe('schema-loader per-version state', () => {
       false,
       'if_pricing_version without if_wholesale_feed_version must be rejected by Ajv'
     );
-    // Release-precision pin ('3.1-beta') resolves to the same on-disk bundle
-    // via resolveSchemaRoot's prerelease fuzzy-match (a distinct compiled
-    // validator instance, but loaded from the same schema files).
-    const vRP = getValidator('get_products', 'request', '3.1-beta');
-    assert.ok(vRP, "release-precision '3.1-beta' must compile from the cached prerelease bundle");
+    // Release-precision family pin resolves to the same on-disk bundle via
+    // resolveSchemaRoot's prerelease fuzzy-match (a distinct compiled validator
+    // instance, but loaded from the same schema files).
+    const vRP = getValidator('get_products', 'request', ADCP_PRERELEASE_FAMILY);
+    assert.ok(vRP, `${ADCP_PRERELEASE_FAMILY} must compile from the cached prerelease bundle`);
     assert.strictEqual(
       vRP({
         adcp_version: ADCP_RELEASE_PRECISION,
@@ -255,11 +319,11 @@ describe('schema-loader per-version state', () => {
         if_wholesale_feed_version: 'v2026-05-18T08:00:00Z-acme-rev412',
       }),
       true,
-      `'3.1-beta' validator must accept the same wholesale-feed payload as ${ADCP_VERSION}`
+      `${ADCP_PRERELEASE_FAMILY} validator must accept the same wholesale-feed payload as ${ADCP_VERSION}`
     );
 
     const syncAccounts = getValidator('sync_accounts', 'request', ADCP_VERSION);
-    assert.ok(syncAccounts, '3.1-beta sync_accounts::request must compile from the opt-in bundle');
+    assert.ok(syncAccounts, '3.1 prerelease sync_accounts::request must compile from the opt-in bundle');
     assert.strictEqual(
       syncAccounts({
         adcp_version: ADCP_RELEASE_PRECISION,
@@ -313,5 +377,35 @@ describe('schema-loader per-version state', () => {
       /\/bundled\//,
       `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
     );
+  });
+
+  test('getSchemaValidatorByRef compiles MCP webhook payload schema with nested refs', () => {
+    _resetValidationLoader(ADCP_VERSION);
+    const validate = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION);
+    assert.ok(validate, 'MCP webhook payload schema must compile');
+
+    const ok = validate({
+      idempotency_key: 'evt_schema_ref_0000001',
+      operation_id: 'op_schema_ref',
+      task_id: 'task_schema_ref',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      timestamp: '2026-05-26T09:00:44.582Z',
+      result: {
+        status: 'completed',
+        media_buy_id: 'mb_1',
+        packages: [],
+      },
+    });
+    assert.strictEqual(ok, true, JSON.stringify(validate.errors));
+
+    const missingEnvelopeFields = validate({
+      idempotency_key: 'evt_schema_ref_0000001',
+      task_id: 'task_schema_ref',
+      task_type: 'create_media_buy',
+      status: 'completed',
+      result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+    });
+    assert.strictEqual(missingEnvelopeFields, false, 'schema should reject missing operation_id and timestamp');
   });
 });

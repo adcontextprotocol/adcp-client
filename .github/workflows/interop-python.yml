@@ -98,8 +98,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Add Go here only after adcp-go has shipped a tagged, known-good
-          # reusable harness.
           - language: python
             repository: adcontextprotocol/adcp-client-python
             ref: ${{ inputs.python_ref || '92b1618c3bebfef481f3deef423cbe29d8820de3' }}
@@ -108,10 +106,16 @@ jobs:
             advisory: true
           - language: typescript
             repository: adcontextprotocol/adcp-client
-            ref: 97aef9f9561983b21605e77c3377bbdc0641b61c # @adcp/sdk@8.1.0-beta.12
+            ref: df7b5837896154002bb5a4941b4b07c828521001 # @adcp/sdk@8.1.0-beta.17
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3002
             advisory: true
+          - language: go
+            repository: adcontextprotocol/adcp-go
+            ref: adcp-v2.0.1
+            harness: scripts/ci/run_storyboard_reference_seller.sh
+            port: 3004
+            advisory: false
     env:
       STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
@@ -127,6 +131,12 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - name: Setup Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.2'
 
       - name: Download SDK runner tarball
         uses: actions/download-artifact@v7
@@ -277,7 +287,7 @@ jobs:
             echo "- Ref: current checkout \`${{ github.sha }}\`"
             echo "- Seller: \`examples/hello_seller_adapter_guaranteed.ts\`"
             echo "- Harness: \`scripts/ci/run_storyboard_reference_seller.sh\`"
-            echo "- Note: tagged TypeScript release compatibility is covered by the matrix row pinned to @adcp/sdk@8.1.0-beta.12."
+            echo "- Note: tagged TypeScript release compatibility is covered by the matrix row pinned to @adcp/sdk@8.1.0-beta.17."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload storyboard artifacts

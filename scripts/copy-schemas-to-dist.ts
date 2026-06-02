@@ -26,7 +26,7 @@
  * Invoked by the `build:lib` npm script after tsc emits JS.
  */
 
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from 'fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 
 interface ParsedVersion {
@@ -109,6 +109,34 @@ function selectVersionsToCopy(parsed: ParsedVersion[]): { source: ParsedVersion;
   return [...winnerByKey.entries()].map(([key, source]) => ({ source, key }));
 }
 
+function relaxAdagentsAuthorizedAgentsMinItems(schemaRoot: string): void {
+  const adagentsPath = path.join(schemaRoot, 'adagents.json');
+  if (!existsSync(adagentsPath)) return;
+
+  const schema = JSON.parse(readFileSync(adagentsPath, 'utf8'));
+  const inlineVariant = Array.isArray(schema.oneOf)
+    ? schema.oneOf.find((variant: any) => variant?.properties?.authorized_agents)
+    : undefined;
+  const inlineProperties = inlineVariant?.properties;
+
+  // Compatibility patch for the 3.1 catalog-era adagents.json schema:
+  // community mirrors can publish formats/placements before any seller is
+  // authorized, so `authorized_agents: []` is a valid inline file. Older
+  // authorization-only schema bundles keep minItems:1. Remove this once the
+  // upstream schema ships the same constraint directly.
+  if (!inlineProperties?.catalog_etag || !inlineProperties?.formats) return;
+
+  const authorizedAgents = inlineProperties.authorized_agents;
+  if (!authorizedAgents || authorizedAgents.minItems == null) return;
+
+  delete authorizedAgents.minItems;
+  writeFileSync(adagentsPath, `${JSON.stringify(schema, null, 2)}\n`);
+  console.log(
+    `[copy-schemas-to-dist] relaxed adagents.json authorized_agents minItems in ${adagentsPath} ` +
+      `(empty catalog-only mirrors are valid)`
+  );
+}
+
 function main(): void {
   const repoRoot = path.resolve(__dirname, '..');
   const cacheRoot = path.join(repoRoot, 'schemas', 'cache');
@@ -173,6 +201,7 @@ function main(): void {
         return true;
       },
     });
+    relaxAdagentsAuthorizedAgentsMinItems(destRoot);
     const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
   }

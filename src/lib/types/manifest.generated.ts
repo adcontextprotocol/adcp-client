@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-beta.7/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.6/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-beta.7.
+ * Manifest-derived constants for AdCP 3.1.0-rc.6.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-beta.7/manifest.json` (adcp_version: 3.1.0-beta.7, generated_at:
- * 2026-05-28T10:02:56.264Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-rc.6/manifest.json` (adcp_version: 3.1.0-rc.6, generated_at:
+ * 2026-05-31T22:47:36.845Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -71,7 +71,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   ACTION_NOT_ALLOWED: {
     description: "The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, or `mode_mismatch`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip).",
     recovery: "correctable",
-    suggestion: "branch on error.details.reason: for wrong_status, wait for or transition to a status listed under the action's allowed_statuses; for mode_mismatch, this is a flow switch (not a retry against update_media_buy) — re-issue through the flow named in available_actions[<action>].mode (call create_proposal/finalize_proposal for requires_proposal; await the seller's webhook for requires_approval); for not_supported_on_product or not_supported_on_buy, do not retry — the action is unavailable on this buy and buyer must select a different product or renegotiate"
+    suggestion: "branch on error.details.reason: for wrong_status, wait for or transition to a status listed under the action's allowed_statuses; for mode_mismatch, this is a flow switch (not a retry against update_media_buy) — follow the mode named in available_actions[<action>].mode (await the seller's webhook for requires_approval); for not_supported_on_product or not_supported_on_buy, do not retry — the action is unavailable on this buy and buyer must select a different product or renegotiate"
   },
   AGENT_BLOCKED: {
     description: "The calling buyer agent's commercial relationship with the seller is permanently denied — the agent is blocked. Sibling to `AGENT_SUSPENDED` on the agent-relationship axis but with no recovery path (a suspension may lift via re-onboarding; a block does not). The code itself is the discriminator — same posture as `AGENT_SUSPENDED`: no `error.details` payload, no per-agent commercial state, cross-tenant onboarding oracle clamp + channel-coverage requirements normative in error-handling.mdx Per-Agent Authorization Gate.",
@@ -203,6 +203,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "advisory — emitted alongside the partial v1 emission, NOT in place of it: the v2 declaration carries `params.sizes[]` with N entries but only M v1_format_ref entries (M < N), so v1 buyers see partial size coverage on the product. Seller-side fix: add v1_format_ref entries for the missing sizes. SDK MAY (non-normative) fan out automatically by catalog lookup. Non-fatal — do not auto-retry"
   },
+  FORMAT_NOT_SUPPORTED: {
+    description: "A requested creative build target is not supported by this creative agent. Returned by `build_creative` when `target_format_id.id` (or `target_format_ids[N].id` in a multi-format request) is neither an advertised `creative.supported_formats[].capability_id` nor a legacy named format the agent still accepts during the 3.x migration window. Sellers SHOULD set `error.field` to `target_format_id` for single-format requests or `target_format_ids[N]` for multi-format requests, and MAY include supported capability IDs (plain string `capability_id` values, not `FormatID` objects) in `error.details.supported_capability_ids` when safe to disclose. `supported_capability_ids` is intentionally distinct from the generic `details.accepted_values` closed-set hint: the capability set is per creative agent and per caller context, not an ecosystem-wide enum.",
+    recovery: "correctable",
+    suggestion: "retry build_creative with target_format_id.id or target_format_ids[N].id from get_adcp_capabilities.creative.supported_formats[].capability_id, or a legacy named format the agent still advertises during the migration window"
+  },
   FORMAT_OPTION_UNRESOLVED: {
     description: "Non-fatal advisory raised when a placement in `adagents.json` (or any consumer of `placement-definition.json`) carries `format_options[].format_option_id` referencing a `format_option_id` that does NOT exist in the file's top-level `formats[]`. The reference is broken — the publisher's catalog claims the placement accepts a format option that isn't declared. **Resolution scope is same-file only.** Cross-file `format_option_id` lookup is not supported by design (closes off format_option_id squatting across publisher boundaries — a malicious file cannot reference another publisher's format_option_id and claim its narrowing). Buyer SDKs MUST fail closed for the placement (drop the format from the placement's accepted format set) and MUST surface this code rather than silently dropping or guessing what the publisher meant. Surface placement: same single-mandate as the other FORMAT_* codes — SDKs that detect on consumption MUST augment the response's `errors[]` with `source: \"sdk\"`, `sdk_id`, `code: \"FORMAT_OPTION_UNRESOLVED\"`, `field` pointing at the offending placement (e.g., `placements[2].format_options[1].format_option_id`), and `error.details` SHOULD carry `{ placement_id, format_option_id, declared_format_options: [<list of format_option_ids actually in formats[]>] }` so the publisher can fix.",
     recovery: "correctable",
@@ -229,7 +234,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response"
   },
   IDEMPOTENCY_EXPIRED: {
-    description: "The idempotency_key was seen previously but its cached response has been evicted because it is past the seller's declared replay_ttl_seconds. Distinct from IDEMPOTENCY_CONFLICT (different payload within window) — this indicates the retry arrived too late for at-most-once guarantees. If the buyer has any evidence the prior call succeeded (partial response received before crash, entry in the buyer's own DB, a webhook fired), the buyer MUST do the natural-key check BEFORE minting a new key — minting a new key in that situation is exactly how double-creation happens.",
+    description: "The idempotency_key was seen previously but its cached response has been evicted because it is past the seller's declared replay_ttl_seconds. Distinct from IDEMPOTENCY_CONFLICT (different payload within window) — this indicates the retry arrived too late for at-most-once guarantees. If the buyer has any evidence the prior call succeeded (partial response received before crash, entry in the buyer's own DB, a webhook fired), the buyer MUST do the natural-key reconciliation BEFORE minting a new key — minting a new key in that situation is exactly how double-creation happens.",
     recovery: "correctable",
     suggestion: "perform a natural-key check to determine whether the original request succeeded; if no evidence of success, generate a fresh idempotency_key for a new attempt"
   },
@@ -256,7 +261,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   MEDIA_BUY_NOT_FOUND: {
     description: "Referenced media buy does not exist or is not accessible to the requesting agent.",
     recovery: "correctable",
-    suggestion: "verify media_buy_id or buyer_ref"
+    suggestion: "verify media_buy_id; for legacy correlation use get_media_buys plus context, such as context.internal_campaign_id"
   },
   MULTI_FINALIZE_UNSUPPORTED: {
     description: "Returned by sellers that cannot guarantee atomic commit across multiple proposals in a single `get_products` call (multiple `action: 'finalize'` entries in `refine[]` targeting different `proposal_id` values). The buyer's intent — atomic multi-proposal finalize — is structurally well-formed and per spec atomic, but this seller's downstream stack cannot satisfy the atomicity guarantee (e.g., the proposals route to two different ad servers with no 2PC). More specific than `INVALID_REQUEST` so buyers can distinguish 'this seller doesn't support multi-finalize' from 'the request itself is malformed'. See [refinement guide § Finalize is exclusive](/docs/media-buy/product-discovery/refinement#finalize-is-exclusive-within-refine).",
@@ -271,7 +276,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   PACKAGE_NOT_FOUND: {
     description: "Referenced package does not exist within the specified media buy.",
     recovery: "correctable",
-    suggestion: "verify package_id or buyer_ref via get_media_buys"
+    suggestion: "verify package_id; for legacy package correlation use get_media_buys plus package context, such as context.buyer_ref"
   },
   PAYMENT_TERMS_NOT_SUPPORTED: {
     description: "The seller does not accept the requested `payment_terms` value for this account. Payment terms are never silently remapped — sellers either accept or reject. Distinct from `BILLING_NOT_SUPPORTED` (the `billing` enum) by being narrowly about the `payment_terms` enum on the same account.",
@@ -384,9 +389,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "verify the referenced identifier exists and is accessible to the caller"
   },
   REQUOTE_REQUIRED: {
-    description: "An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can autonomously re-discover.",
+    description: "An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can decide whether to adjust the update, rediscover products, add packages where supported, or create a separate media buy. AdCP 3.1 does not define an amendment-quote artifact that can be attached to update_media_buy.",
     recovery: "correctable",
-    suggestion: "re-negotiate via get_products in 'refine' mode against the existing proposal_id to obtain a fresh quote, then resubmit against the new proposal_id"
+    suggestion: "adjust the update to stay within the current quote envelope, rediscover products/terms, add packages when available, or create a separate media buy; 3.1 does not define an amendment-quote artifact for update_media_buy"
   },
   SCOPE_INSUFFICIENT: {
     description: "The authenticated caller is not authorized for the invoked task — the task is not in the caller's `allowed_tasks` for this account (discoverable via the `authorization` object on sync_accounts / list_accounts responses). Distinct from `PERMISSION_DENIED` (generic authz failure, often credential-shaped) by being narrowly about task-level scope. Sellers SHOULD populate `error.details.introspection_hint` pointing at where the caller can re-read its scope (strawman: `{ task: 'list_accounts', account: {...} }`).",

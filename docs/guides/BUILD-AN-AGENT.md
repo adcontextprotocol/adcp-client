@@ -369,6 +369,29 @@ Three resolution modes:
 - **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](../../src/lib/adapters/implicit-account-store.ts) for the reference shape.
 - **`'derived'`** — single-tenant agents where the auth principal alone identifies the tenant. Self-hosted broadcasters, retail-media operators in proxy mode. `resolve(undefined, ctx)` returns the singleton.
 
+**Stateless BYOK provider adapters.** For single-account API-key or
+bearer-token BYOK, the provider credential can be the AdCP request credential
+for that endpoint: `Authorization: Bearer <provider_api_key_or_access_token>`.
+This keeps the baseline seller-agent wrapper pattern single-plane: the seller
+agent authenticates the request with the caller-presented provider credential,
+derives the account from request auth, and uses the same request-local token
+for upstream provider calls. No SDK-managed OAuth flow, refresh-token store,
+provider-token store, or callback route is required when the caller owns the
+provider credential lifecycle. If the provider credential can see multiple
+upstream accounts, use an explicit account roster pattern such as
+`createOAuthPassthroughResolver` instead of `'derived'`. Handlers with a
+resolved account should read the active token from
+`ctx.account.authInfo?.token`; refresh hooks update `account.authInfo`.
+Handlers without a resolved account can read the request token from
+`ctx.authInfo.token`. Use a stable non-secret identity such as
+`ctx.authInfo.credential.key_id`, `ctx.authInfo.credential.client_id`, or
+an adopter-supplied `principal` string for cache/idempotency scoping. Treat
+both token paths as request-local: do not copy provider tokens into persisted
+Account rows, `ctx_metadata`, `ctx.authInfo.extra`, request `ext` / body
+fields, or log lines. Add a separate provider-auth channel only for dual-auth
+proxy deployments where one request carries both caller-to-agent auth and a
+distinct upstream-provider credential.
+
 **Three reference shapes** for adopters who don't want to write the resolver from scratch:
 
 - `InMemoryImplicitAccountStore` — Shape A, buyer-driven `sync_accounts` populates the auth-principal → accounts map.
@@ -544,7 +567,8 @@ See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generat
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServerFromPlatform` calls into this internally.
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/sdk';
+import { createTaskCapableServer, taskToolResponse } from '@adcp/sdk';
+import { GetSignalsRequestSchema } from '@adcp/sdk/schemas';
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('Agent Name', '1.0.0', { taskStore });
@@ -617,6 +641,7 @@ For async tools that need background processing, use `registerAdcpTaskTool()`:
 
 ```typescript
 import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 const taskStore = new InMemoryTaskStore();
 
@@ -718,6 +743,8 @@ const httpServer = createServer(async (req, res) => {
   }
 });
 ```
+
+For existing Express apps that must preserve path-routed public URLs such as `/storefront/:platformId/mcp`, see `examples/decisioning-platform-path-routed.ts`. It shows a `TenantRegistry` mounted behind an Express route, per-request `StreamableHTTPServerTransport`, MCP `req.auth` stamped from existing auth middleware, and `accounts.resolve(ref, ctx)` reading buyer identity from `ctx.authInfo` instead of closing over Express request state.
 
 ## Testing Your Agent
 

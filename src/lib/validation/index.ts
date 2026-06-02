@@ -14,6 +14,7 @@ export {
   hasSchemaBundle,
   registerExternalSchemaRoot,
   unregisterExternalSchemaRoot,
+  withExternalSchemaRoot,
 } from './schema-loader';
 export type { Direction, ResponseVariant } from './schema-loader';
 export { validateOutgoingRequest, validateIncomingResponse, resolveValidationModes } from './client-hooks';

@@ -6,6 +6,13 @@ import { resolveBundleKey } from '../validation/schema-loader';
 
 type JsonSchema = Record<string, unknown>;
 
+export interface ConformanceSchemaOptions {
+  /** AdCP schema/cache version to load. Defaults to the SDK-pinned version. */
+  version?: string;
+  /** External schema-data root, e.g. `dist/schemas/latest` or `dist/lib/schemas-data/3.1.0-beta.7`. */
+  schemaRoot?: string;
+}
+
 interface ToolSchemaLocation {
   domain: string;
   fileBase: string;
@@ -53,12 +60,20 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
  * The cache fallback uses the exact `ADCP_VERSION` string because cache
  * directories preserve their spec-tag lineage (only the dist layout collapses).
  */
-function findBundledDir(): string {
-  const bundleKey = resolveBundleKey(ADCP_VERSION);
+function findBundledDir(options: ConformanceSchemaOptions = {}): string {
+  if (options.schemaRoot) {
+    const bundled = path.join(options.schemaRoot, 'bundled');
+    if (fs.existsSync(bundled)) return bundled;
+    if (path.basename(options.schemaRoot) === 'bundled' && fs.existsSync(options.schemaRoot)) return options.schemaRoot;
+    throw new Error(`Conformance schema bundle not found at ${options.schemaRoot}. Expected a root with bundled/.`);
+  }
+
+  const version = options.version ?? ADCP_VERSION;
+  const bundleKey = resolveBundleKey(version);
   const distCandidate = path.resolve(__dirname, '..', 'schemas-data', bundleKey, 'bundled');
   if (fs.existsSync(distCandidate)) return distCandidate;
 
-  const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', ADCP_VERSION, 'bundled');
+  const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', version, 'bundled');
   if (fs.existsSync(srcCandidate)) return srcCandidate;
 
   throw new Error(
@@ -69,29 +84,31 @@ function findBundledDir(): string {
 
 const schemaCache = new Map<string, JsonSchema>();
 
-function loadSchema(relativePath: string): JsonSchema {
-  const cached = schemaCache.get(relativePath);
+function loadSchema(relativePath: string, options: ConformanceSchemaOptions = {}): JsonSchema {
+  const bundledDir = findBundledDir(options);
+  const cacheKey = `${bundledDir}\0${relativePath}`;
+  const cached = schemaCache.get(cacheKey);
   if (cached) return cached;
-  const full = path.join(findBundledDir(), relativePath);
+  const full = path.join(bundledDir, relativePath);
   const parsed = JSON.parse(fs.readFileSync(full, 'utf8')) as JsonSchema;
-  schemaCache.set(relativePath, parsed);
+  schemaCache.set(cacheKey, parsed);
   return parsed;
 }
 
-export function loadRequestSchema(tool: ConformanceToolName): JsonSchema {
+export function loadRequestSchema(tool: ConformanceToolName, options: ConformanceSchemaOptions = {}): JsonSchema {
   const loc = TOOL_SCHEMA_LOCATIONS[tool];
-  return loadSchema(`${loc.domain}/${loc.fileBase}-request.json`);
+  return loadSchema(`${loc.domain}/${loc.fileBase}-request.json`, options);
 }
 
-export function loadResponseSchema(tool: ConformanceToolName): JsonSchema {
+export function loadResponseSchema(tool: ConformanceToolName, options: ConformanceSchemaOptions = {}): JsonSchema {
   const loc = TOOL_SCHEMA_LOCATIONS[tool];
-  return loadSchema(`${loc.domain}/${loc.fileBase}-response.json`);
+  return loadSchema(`${loc.domain}/${loc.fileBase}-response.json`, options);
 }
 
-export function hasSchemas(tool: ConformanceToolName): boolean {
+export function hasSchemas(tool: ConformanceToolName, options: ConformanceSchemaOptions = {}): boolean {
   try {
-    loadRequestSchema(tool);
-    loadResponseSchema(tool);
+    loadRequestSchema(tool, options);
+    loadResponseSchema(tool, options);
     return true;
   } catch {
     return false;
@@ -102,6 +119,12 @@ export function hasSchemas(tool: ConformanceToolName): boolean {
  * The AdCP schema version the fuzzer loaded. Surfaced on the report so
  * a stored seed is replayable only against a matching snapshot.
  */
-export function detectSchemaVersion(): string {
+export function detectSchemaVersion(options: ConformanceSchemaOptions = {}): string {
+  if (options.version) return options.version;
+  if (options.schemaRoot) {
+    const root =
+      path.basename(options.schemaRoot) === 'bundled' ? path.dirname(options.schemaRoot) : options.schemaRoot;
+    return path.basename(root);
+  }
   return ADCP_VERSION;
 }

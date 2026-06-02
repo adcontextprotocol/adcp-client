@@ -153,7 +153,8 @@ export type {
   ActivateSignalError,
   SignalID,
   SignalValueType,
-  SignalCatalogType,
+  SignalAvailabilityType,
+  SignalAvailabilityType as SignalCatalogType,
   Destination,
   Deployment,
   ActivationKey,
@@ -317,9 +318,6 @@ export * from './asset-instances';
 // leaves these row shapes inline; named types make the discriminators
 // (e.g., SyncAccountsResponseRow.action) reachable to handler authors.
 export * from './sync-rows';
-
-// Re-export Zod schemas for runtime validation
-export * from './schemas.generated';
 
 // Re-export const-array enum values (e.g., MediaChannelValues, PacingValues)
 // for consumers that need to enumerate or validate against the spec's

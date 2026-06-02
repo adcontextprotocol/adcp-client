@@ -38,7 +38,13 @@ export const CONTROLLER_SEEDING_PHASE_ID = '__controller_seeding__';
 /** Seed scenario names. Kept local — the server-side `SEED_SCENARIOS`
  * constant from `src/lib/server/test-controller.ts` is authoritative, but
  * importing it here would cross the testing ⇄ server module boundary. */
-type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
+type SeedScenario =
+  | 'seed_product'
+  | 'seed_pricing_option'
+  | 'seed_creative_format'
+  | 'seed_creative'
+  | 'seed_plan'
+  | 'seed_media_buy';
 type BuyerAgentSeedScenario = 'seed_buyer_agent';
 
 interface SeedCall {
@@ -139,6 +145,27 @@ export function buildSeedCalls(fixtures: StoryboardFixtures | undefined): SeedCa
     });
   });
 
+  (fixtures.creative_formats ?? []).forEach((entry, i) => {
+    const { format_id, ...fixtureFields } = entry;
+    const label = format_id ?? `#${i}`;
+    if (typeof format_id !== 'string' || format_id.length === 0) {
+      calls.push({
+        step_id: `seed_creative_format.${label}`,
+        title: `Seed creative format ${label}`,
+        scenario: 'seed_creative_format',
+        params: { fixture: seedFixtureFromFields(fixtureFields) },
+        authoring_error: `fixtures.creative_formats[${i}] requires a non-empty string 'format_id'`,
+      });
+      return;
+    }
+    calls.push({
+      step_id: `seed_creative_format.${format_id}`,
+      title: `Seed creative format ${format_id}`,
+      scenario: 'seed_creative_format',
+      params: { format_id, fixture: seedFixtureFromFields(fixtureFields) },
+    });
+  });
+
   (fixtures.creatives ?? []).forEach((entry, i) => {
     const { creative_id, ...fixture } = entry;
     const label = creative_id ?? `#${i}`;
@@ -205,6 +232,13 @@ export function buildSeedCalls(fixtures: StoryboardFixtures | undefined): SeedCa
   return calls;
 }
 
+function seedFixtureFromFields(fields: Record<string, unknown>): unknown {
+  if (Object.keys(fields).length === 1 && Object.hasOwn(fields, 'fixture')) {
+    return fields.fixture;
+  }
+  return fields;
+}
+
 export interface ControllerSeedingResult {
   /** Synthetic pre-flight phase to prepend to `StoryboardResult.phases[]`. */
   phase: StoryboardPhaseResult;
@@ -221,6 +255,12 @@ export interface ControllerSeedingResult {
    * grade (storyboard-schema.yaml `skip_reasons`).
    */
   missingController?: boolean;
+  /**
+   * Agent advertised `comply_test_controller`, but not one of the generated
+   * seed_* scenarios this storyboard requires. This is a coverage gap, not
+   * a failed agent behavior.
+   */
+  seedUnsupported?: boolean;
 }
 
 /**
@@ -255,6 +295,19 @@ export async function runControllerSeeding(
   let passedCount = 0;
   let failedCount = 0;
   let allPassed = true;
+  const seedContext = { correlation_id: `${storyboardCorrelationPrefix(storyboard)}--__seeding__` };
+  const authoringErrorResult = buildAuthoringErrorResult(storyboard, calls, context, start);
+  if (authoringErrorResult) return authoringErrorResult;
+  const unsupportedScenario = await findUnsupportedSeedScenario(client, calls, options, seedContext);
+  if (unsupportedScenario) {
+    return buildUnsupportedSeedResult(
+      storyboard,
+      calls,
+      context,
+      unsupportedScenario.scenario,
+      unsupportedScenario.detail
+    );
+  }
 
   for (const call of calls) {
     const stepStart = Date.now();
@@ -265,10 +318,16 @@ export async function runControllerSeeding(
       error = call.authoring_error;
     } else {
       try {
-        const raw = await callControllerRaw(client, { scenario: call.scenario, params: call.params }, options);
+        const raw = await callControllerRaw(
+          client,
+          { scenario: call.scenario, params: call.params, context: seedContext },
+          options
+        );
         const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
         if (raw.success && data?.success === true) {
           passed = true;
+        } else if (raw.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO') {
+          return buildUnsupportedSeedResult(storyboard, calls, context, call.scenario, data.error_detail);
         } else {
           error = formatControllerError(call.scenario, raw, data);
         }
@@ -310,6 +369,153 @@ export async function runControllerSeeding(
     allPassed,
     passedCount,
     failedCount,
+  };
+}
+
+function storyboardCorrelationPrefix(storyboard: Storyboard): string {
+  for (const phase of storyboard.phases) {
+    for (const step of phase.steps) {
+      const requestContext = step.sample_request?.context;
+      if (!requestContext || typeof requestContext !== 'object' || Array.isArray(requestContext)) continue;
+      const correlationId = (requestContext as { correlation_id?: unknown }).correlation_id;
+      if (typeof correlationId !== 'string' || correlationId.length === 0) continue;
+      const suffixSeparator = correlationId.lastIndexOf('--');
+      return suffixSeparator > 0 ? correlationId.slice(0, suffixSeparator) : correlationId;
+    }
+  }
+  return storyboard.id;
+}
+
+function buildAuthoringErrorResult(
+  storyboard: Storyboard,
+  calls: SeedCall[],
+  context: StoryboardContext,
+  start: number
+): ControllerSeedingResult | null {
+  const authoringErrors = calls.filter((call): call is SeedCall & { authoring_error: string } =>
+    Boolean(call.authoring_error)
+  );
+  if (authoringErrors.length === 0) return null;
+  const steps: StoryboardStepResult[] = authoringErrors.map(call => ({
+    storyboard_id: storyboard.id,
+    step_id: call.step_id,
+    phase_id: CONTROLLER_SEEDING_PHASE_ID,
+    title: call.title,
+    task: 'comply_test_controller',
+    passed: false,
+    duration_ms: 0,
+    validations: [],
+    context,
+    extraction: { path: 'none' },
+    error: call.authoring_error,
+  }));
+  return {
+    phase: {
+      phase_id: CONTROLLER_SEEDING_PHASE_ID,
+      phase_title: 'Controller seeding (pre-flight) — invalid storyboard fixtures',
+      passed: false,
+      steps,
+      duration_ms: Date.now() - start,
+    },
+    allPassed: false,
+    passedCount: 0,
+    failedCount: steps.length,
+  };
+}
+
+async function findUnsupportedSeedScenario(
+  client: TestClient,
+  calls: SeedCall[],
+  options: StoryboardRunOptions,
+  seedContext: Record<string, unknown>
+): Promise<{ scenario: SeedScenario | BuyerAgentSeedScenario; detail: string } | null> {
+  const requiredScenarios = [...new Set(calls.filter(call => !call.authoring_error).map(call => call.scenario))];
+  if (requiredScenarios.length === 0) return null;
+
+  let advertisedScenarios = controllerScenarioSetFromOptions(options);
+  if (!advertisedScenarios) {
+    advertisedScenarios = await fetchControllerScenarioSet(client, options, seedContext);
+  }
+  if (!advertisedScenarios) return null;
+
+  for (const scenario of requiredScenarios) {
+    if (!advertisedScenarios.has(scenario)) {
+      return {
+        scenario,
+        detail: `list_scenarios did not advertise required seed scenario "${scenario}".`,
+      };
+    }
+  }
+  return null;
+}
+
+function controllerScenarioSetFromOptions(options: StoryboardRunOptions): Set<string> | null {
+  const capabilities = options._controllerCapabilities;
+  if (capabilities?.detected !== true) return null;
+  return new Set((capabilities.scenarios as readonly string[]).filter(scenario => typeof scenario === 'string'));
+}
+
+async function fetchControllerScenarioSet(
+  client: TestClient,
+  options: StoryboardRunOptions,
+  seedContext: Record<string, unknown>
+): Promise<Set<string> | null> {
+  try {
+    const raw = await callControllerRaw(client, { scenario: 'list_scenarios', context: seedContext }, options);
+    const data = raw.data as { success?: boolean; scenarios?: unknown } | undefined;
+    if (!raw.success || data?.success !== true) return null;
+    if (Array.isArray(data.scenarios)) {
+      return new Set(data.scenarios.filter((scenario): scenario is string => typeof scenario === 'string'));
+    }
+    if (data.scenarios && typeof data.scenarios === 'object') {
+      return new Set(Object.keys(data.scenarios));
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const UNSUPPORTED_SEED_DETAIL =
+  'Skipped: agent advertised comply_test_controller, but does not implement a seed_* scenario required by this storyboard (`fixture_seed_unsupported`). Storyboard grades not_applicable — the buyer-side flow depends on pre-seeded state the agent has no way to accept.';
+
+function buildUnsupportedSeedResult(
+  storyboard: Storyboard,
+  calls: Array<{ step_id: string; title: string }>,
+  context: StoryboardContext,
+  scenario: SeedScenario | BuyerAgentSeedScenario,
+  detail?: string
+): ControllerSeedingResult {
+  const skipDetail = detail
+    ? `${UNSUPPORTED_SEED_DETAIL} Unsupported scenario ${scenario}: ${detail}`
+    : `${UNSUPPORTED_SEED_DETAIL} Unsupported scenario: ${scenario}.`;
+  const steps: StoryboardStepResult[] = calls.map(call => ({
+    storyboard_id: storyboard.id,
+    step_id: call.step_id,
+    phase_id: CONTROLLER_SEEDING_PHASE_ID,
+    title: call.title,
+    task: 'comply_test_controller',
+    passed: true,
+    skipped: true,
+    skip_reason: 'fixture_seed_unsupported',
+    skip: { reason: 'not_applicable', detail: skipDetail },
+    duration_ms: 0,
+    validations: [],
+    context,
+    extraction: { path: 'none' },
+  }));
+  return {
+    phase: {
+      phase_id: CONTROLLER_SEEDING_PHASE_ID,
+      phase_title: 'Controller seeding (pre-flight) — agent lacks required seed scenario',
+      passed: true,
+      steps,
+      duration_ms: 0,
+    },
+    allPassed: true,
+    passedCount: 0,
+    failedCount: 0,
+    seedUnsupported: true,
   };
 }
 

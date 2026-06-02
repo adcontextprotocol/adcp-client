@@ -1583,6 +1583,42 @@ function writeFileIfChanged(filePath: string, newContent: string): boolean {
   return hasChanged;
 }
 
+const BACKWARD_COMPAT_SCHEMA_ALIASES: Array<{
+  oldName: string;
+  newName: string;
+  reason: string;
+}> = [
+  {
+    oldName: 'SignalCatalogType',
+    newName: 'SignalAvailabilityType',
+    reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
+  },
+];
+
+function addBackwardCompatSchemaAliases(content: string): string {
+  let output = content;
+  for (const { oldName, newName, reason } of BACKWARD_COMPAT_SCHEMA_ALIASES) {
+    const oldSchema = `${oldName}Schema`;
+    const newSchema = `${newName}Schema`;
+    if (new RegExp(`^export const ${oldSchema}\\b`, 'm').test(output)) continue;
+    const declaration = new RegExp(`(export const ${newSchema} =[\\s\\S]*?;\\n)`, 'm');
+    if (!declaration.test(output)) continue;
+    const alias = `/** @deprecated ${reason} */\nexport const ${oldSchema} = ${newSchema};\n`;
+    output = output.replace(declaration, `$1${alias}`);
+  }
+  return output;
+}
+
+function postProcessBackwardCompatOptionalFields(content: string): string {
+  return content.replace(
+    /export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema\.merge\(z\.object\(\{\n\s+keyword: z\.string\(\),\n\s+match_type: MatchTypeSchema\n\}\)\.passthrough\(\)\);/m,
+    `export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    keyword: z.string().optional(),
+    match_type: MatchTypeSchema.optional()
+}).passthrough());`
+  );
+}
+
 async function generateZodSchemas() {
   console.log('🔄 Generating Zod v4 schemas from TypeScript types...');
   console.log(`📥 Core source: ${CORE_SOURCE_FILE}`);
@@ -1720,6 +1756,10 @@ async function generateZodSchemas() {
     // Without this fix, 73+ schemas fail MCP SDK's tools/list JSON Schema conversion.
     zodSchemas = postProcessUndefinedUnions(zodSchemas);
 
+    // Keep runtime Zod validation aligned with the TypeScript-side backward
+    // compatibility relaxations for legacy seller responses.
+    zodSchemas = postProcessBackwardCompatOptionalFields(zodSchemas);
+
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
 
@@ -1743,7 +1783,7 @@ async function generateZodSchemas() {
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types\n// Generated at: ${new Date().toISOString()}\n// Sources:\n//   - ${path.basename(CORE_SOURCE_FILE)} (core types)\n//   - ${path.basename(TOOLS_SOURCE_FILE)} (tool types)\n//\n// These schemas provide runtime validation for AdCP data structures\n// Generated using ts-to-zod from TypeScript type definitions\n\n`;
 
-    const finalContent = header + zodSchemas;
+    const finalContent = header + addBackwardCompatSchemaAliases(zodSchemas);
 
     // Write the output
     const changed = writeFileIfChanged(OUTPUT_FILE, finalContent);

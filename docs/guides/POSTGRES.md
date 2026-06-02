@@ -60,6 +60,8 @@ CREATE INDEX idx_adcp_ctx_metadata_expires_at
 
 ### `adcp_decisioning_tasks`
 
+This DDL is returned by `getDecisioningTaskRegistryMigration()` (exported from `@adcp/sdk/server/decisioning`). Call `await pool.query(getDecisioningTaskRegistryMigration())` once at boot — it is idempotent (`CREATE TABLE IF NOT EXISTS`). Pass `{ tableName: 'your_tasks' }` to override the default `adcp_decisioning_tasks` name; constraint and index names derive from the table name automatically. Use `getAllAdcpMigrations()` from `@adcp/sdk/server` when you want one call to install all three SDK tables at once.
+
 ```sql
 CREATE TABLE adcp_decisioning_tasks (
   task_id        TEXT PRIMARY KEY,
@@ -80,6 +82,8 @@ CREATE TABLE adcp_decisioning_tasks (
 CREATE INDEX idx_adcp_decisioning_tasks_account_id ON adcp_decisioning_tasks(account_id);
 CREATE INDEX idx_adcp_decisioning_tasks_status_created ON adcp_decisioning_tasks(status, created_at);
 ```
+
+The four-value status constraint is intentionally narrow. The five additional spec-defined states (`input-required`, `canceled`, `rejected`, `auth-required`, `unknown`) are reserved for adopter-emitted transitions via a forthcoming `taskRegistry.transition()` API; a migration will widen this constraint when that API ships.
 
 - **PK on `task_id`** — primary lookup path.
 - **Index on `account_id`** — tenant-scoped reads (`getTaskState(taskId, expectedAccountId)` and ops queries).
@@ -185,6 +189,8 @@ async function cleanupOldTasks() {
 ## Multi-tenant deployments (TenantRegistry)
 
 The SDK shares one Postgres database across tenants. `account_id` is included in `scoped_key` for idempotency + ctx_metadata, so cross-tenant collisions are impossible at the storage layer. For `adcp_decisioning_tasks`, the SDK relies on `accounts.resolve(ref, ctx)` returning each tenant's own Account — the registry sees `account_id` strings that should be tenant-prefixed in adopter code (e.g., `id: \`tenant_${tenantId}_${accountId}\``).
+
+The `tasks_get` wire handler enforces the `account_id` boundary before returning any task record, so adopters do not need to add additional authorization checks in platform code.
 
 See `skills/build-decisioning-platform/advanced/MULTI-TENANT.md` for the full pattern.
 

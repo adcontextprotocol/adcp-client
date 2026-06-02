@@ -25,6 +25,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const fs = require('node:fs');
 const { spawnSync } = require('node:child_process');
+const { ADCP_VERSION } = require('../dist/lib/version.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
@@ -432,7 +433,7 @@ import { writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { enforceStrictSchema } from '__GENERATE_TYPES__';
 
-const schemaPath = join(process.cwd(), 'schemas/cache/3.1.0-beta.7/compliance/comply-test-controller-request.json');
+const schemaPath = join(process.cwd(), 'schemas/cache/${ADCP_VERSION}/compliance/comply-test-controller-request.json');
 const input = JSON.parse(readFileSync(schemaPath, 'utf8'));
 let ok = false;
 let message = null;
@@ -528,7 +529,7 @@ import { join } from 'path';
 import { compile } from 'json-schema-to-typescript';
 import { enforceStrictSchema } from '__GENERATE_TYPES__';
 
-const schemaPath = join(process.cwd(), 'schemas/cache/3.1.0-beta.7/compliance/comply-test-controller-response.json');
+const schemaPath = join(process.cwd(), 'schemas/cache/${ADCP_VERSION}/compliance/comply-test-controller-response.json');
 const root = JSON.parse(readFileSync(schemaPath, 'utf8'));
 const recordedCallSchema = root.oneOf
   .find((branch) => branch.title === 'UpstreamTrafficSuccess')

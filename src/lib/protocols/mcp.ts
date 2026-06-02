@@ -46,7 +46,11 @@ type CallToolResponse = {
  */
 const connectionCache = new Map<string, MCPClient>();
 const pendingConnections = new Map<string, Promise<MCPClient>>();
+const oauthConnectionCache = new Map<string, MCPClient>();
+const pendingOAuthConnections = new Map<string, Promise<MCPClient>>();
+const oauthProviderIds = new WeakMap<OAuthClientProvider, string>();
 const MAX_CACHED_CONNECTIONS = 20;
+let nextOAuthProviderId = 0;
 
 /**
  * Track URLs where StreamableHTTP has previously connected successfully.
@@ -160,6 +164,32 @@ function evictLeastRecentlyUsed(): void {
   oldClient?.close().catch(() => {});
 }
 
+function evictLeastRecentlyUsedOAuth(): void {
+  if (oauthConnectionCache.size <= MAX_CACHED_CONNECTIONS) return;
+  const lruKey = oauthConnectionCache.keys().next().value;
+  if (!lruKey) return;
+  const oldClient = oauthConnectionCache.get(lruKey);
+  oauthConnectionCache.delete(lruKey);
+  oldClient?.close().catch(() => {});
+}
+
+/**
+ * Close all cached OAuth MCP connections.
+ * Call this when tearing down long-lived service-to-service workflows that
+ * used authorization-code OAuth sessions.
+ */
+export async function closeOAuthConnections(): Promise<void> {
+  const entries = [...oauthConnectionCache.entries()];
+  oauthConnectionCache.clear();
+  for (const [, client] of entries) {
+    try {
+      await client.close();
+    } catch {
+      /* ignore close errors */
+    }
+  }
+}
+
 /**
  * Close all cached MCP connections.
  * Call this at the end of comply/test runs or before process exit.
@@ -175,6 +205,7 @@ export async function closeMCPConnections(): Promise<void> {
       /* ignore close errors */
     }
   }
+  await closeOAuthConnections();
 }
 
 /**
@@ -207,6 +238,144 @@ async function getOrCreateConnection(
 
   pendingConnections.set(cacheKey, promise);
   return promise;
+}
+
+function getOAuthProviderDisambiguator(authProvider: OAuthClientProvider): string {
+  let id = oauthProviderIds.get(authProvider);
+  if (!id) {
+    id = cacheDisambiguator(`oauth-provider:${++nextOAuthProviderId}`);
+    oauthProviderIds.set(authProvider, id);
+  }
+  return id;
+}
+
+function customHeadersDisambiguator(customHeaders?: Record<string, string>): string | undefined {
+  const entries = Object.entries(customHeaders ?? {})
+    .filter(([key]) => key.toLowerCase() !== 'authorization')
+    .map(([key, value]) => [key.toLowerCase(), value] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
+}
+
+function oauthConnectionCacheKey(
+  agentUrl: string,
+  authProvider: OAuthClientProvider,
+  signingCacheKey?: string,
+  customHeaders?: Record<string, string>
+): string {
+  const parts = [`${agentUrl}::oauth:${getOAuthProviderDisambiguator(authProvider)}`];
+  if (signingCacheKey) parts.push(signingCacheKey);
+  const headersKey = customHeadersDisambiguator(customHeaders);
+  if (headersKey) parts.push(`headers:${headersKey}`);
+  return parts.join('::');
+}
+
+/** Get a cached OAuth connection, refreshing its LRU position. */
+function getCachedOAuthConnection(key: string): MCPClient | undefined {
+  const client = oauthConnectionCache.get(key);
+  if (client) {
+    oauthConnectionCache.delete(key);
+    oauthConnectionCache.set(key, client);
+  }
+  return client;
+}
+
+async function getOrCreateOAuthConnection(
+  cacheKey: string,
+  options: {
+    agentUrl: string;
+    authProvider: OAuthClientProvider;
+    debugLogs: DebugLogEntry[];
+    customHeaders?: Record<string, string>;
+    signingContext?: AgentSigningContext;
+  }
+): Promise<MCPClient> {
+  const cached = getCachedOAuthConnection(cacheKey);
+  if (cached) return cached;
+
+  const pending = pendingOAuthConnections.get(cacheKey);
+  if (pending) return pending;
+
+  const promise = connectMCP(options)
+    .then(({ client }) => {
+      oauthConnectionCache.set(cacheKey, client);
+      evictLeastRecentlyUsedOAuth();
+      return client;
+    })
+    .finally(() => {
+      pendingOAuthConnections.delete(cacheKey);
+    });
+
+  pendingOAuthConnections.set(cacheKey, promise);
+  return promise;
+}
+
+async function withCachedOAuthConnection<T>(
+  options: {
+    agentUrl: string;
+    authProvider: OAuthClientProvider;
+    debugLogs: DebugLogEntry[];
+    customHeaders?: Record<string, string>;
+    signingContext?: AgentSigningContext;
+  },
+  label: string,
+  fn: (client: MCPClient) => Promise<T>
+): Promise<T> {
+  const cacheKey = oauthConnectionCacheKey(
+    options.agentUrl,
+    options.authProvider,
+    options.signingContext?.cacheKey,
+    options.customHeaders
+  );
+  const mcpClient = await getOrCreateOAuthConnection(cacheKey, options);
+
+  try {
+    return await fn(mcpClient);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    options.debugLogs.push({
+      type: 'error',
+      message: `MCP: ${label} OAuth call failed: ${errorMessage}`,
+      timestamp: new Date().toISOString(),
+      error,
+    });
+
+    if (is401Error(error)) {
+      oauthConnectionCache.delete(cacheKey);
+      try {
+        await mcpClient.close();
+      } catch {
+        /* ignore */
+      }
+      options.debugLogs.push({
+        type: 'warning',
+        message: `MCP: OAuth authentication issue detected for ${label}; evicted cached connection`,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+
+    oauthConnectionCache.delete(cacheKey);
+    try {
+      await mcpClient.close();
+    } catch {
+      /* ignore */
+    }
+
+    const retryClient = await getOrCreateOAuthConnection(cacheKey, {
+      ...options,
+      debugLogs: options.debugLogs,
+    });
+
+    try {
+      return await fn(retryClient);
+    } catch (retryError) {
+      if (retryError instanceof Error && error instanceof Error) {
+        retryError.cause = error;
+      }
+      throw retryError;
+    }
+  }
 }
 
 /**
@@ -787,17 +956,17 @@ export async function connectMCP(options: {
 /**
  * Call an MCP tool with OAuth support.
  *
- * Note: OAuth connections are NOT cached (each call creates a fresh connection)
- * because OAuth token refresh requires transport-level coordination that is
- * incompatible with connection pooling. This is acceptable because OAuth flows
- * are interactive and infrequent.
+ * OAuth connections are cached by agent URL and OAuth provider identity so a
+ * service-to-service workflow can reuse the initialized MCP session across
+ * related tool calls. Reuse the same OAuthClientProvider instance for a
+ * session/source/principal; the provider owns token refresh state for the
+ * cached transport.
  *
  * Signing: this path consumes `options.signingContext` via the transport —
  * `connectMCP` attaches a signing-fetch wrapper at transport-creation time —
- * rather than via `signingContextStorage`. Because each OAuth call creates a
- * fresh transport that isn't shared across calls, there's no cache-key
- * disambiguation concern and no need to seed ALS. The non-OAuth fallback
- * (`callMCPTool`) does enter ALS.
+ * rather than via `signingContextStorage`. The OAuth cache key includes the
+ * signing cache key so different signing identities do not share a transport.
+ * The non-OAuth fallback (`callMCPTool`) does enter ALS.
  *
  * @param options Call options
  * @returns Tool response
@@ -811,45 +980,36 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
     return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
   }
 
-  let client: MCPClient | undefined;
-  let transport: StreamableHTTPClientTransport | undefined;
-
-  try {
-    const result = await connectMCP({
+  const response = await withCachedOAuthConnection(
+    {
       agentUrl,
       authProvider,
       debugLogs,
       customHeaders,
       signingContext,
-    });
-    client = result.client;
-    transport = result.transport;
+    },
+    toolName,
+    async client => {
+      debugLogs.push({
+        type: 'info',
+        message: `MCP: Calling tool ${toolName}`,
+        timestamp: new Date().toISOString(),
+      });
 
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Calling tool ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
+      const response = await client.callTool({
+        name: toolName,
+        arguments: args,
+      });
 
-    const response = await client.callTool({
-      name: toolName,
-      arguments: args,
-    });
+      debugLogs.push({
+        type: response?.isError ? 'error' : 'success',
+        message: `MCP: Tool ${toolName} response received`,
+        timestamp: new Date().toISOString(),
+      });
 
-    debugLogs.push({
-      type: response?.isError ? 'error' : 'success',
-      message: `MCP: Tool ${toolName} response received`,
-      timestamp: new Date().toISOString(),
-    });
-
-    return response;
-  } finally {
-    if (client) {
-      try {
-        await client.close();
-      } catch {
-        // Ignore close errors
-      }
+      return response;
     }
-  }
+  );
+
+  return response;
 }

@@ -18,7 +18,7 @@ import {
   GetProductsResponseSchema,
   CreateMediaBuyRequestSchema,
   CreateMediaBuyResponseSchema,
-} from '../src/lib/types/schemas.generated';
+} from '@adcp/sdk/schemas';
 
 // Example 1: Validate a media buy structure
 console.log('📦 Example 1: Validating a MediaBuy\n');
@@ -96,7 +96,7 @@ const responseResult = GetProductsResponseSchema.safeParse(getProductsResponse);
 
 if (responseResult.success) {
   console.log('✅ Response is valid!');
-  console.log('Number of products:', responseResult.data.products.length);
+  console.log('Number of products:', responseResult.data.products?.length ?? 0);
 } else {
   console.log('❌ Response validation failed:');
   console.log(responseResult.error.format());

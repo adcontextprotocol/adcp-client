@@ -85,9 +85,21 @@ function restoreFromHead(paths: readonly string[]): void {
   console.log(`♻️  Restored ${tracked.length} side-effect path(s) from HEAD (primary-pin state preserved).`);
 }
 
+function hasBetaCache(): boolean {
+  return (
+    existsSync(path.join(SCHEMA_CACHE_DIR, BETA_VERSION)) && existsSync(path.join(COMPLIANCE_CACHE_DIR, BETA_VERSION))
+  );
+}
+
 async function main(): Promise<void> {
   const primary = getPrimaryAdcpVersion();
   console.log(`🔄 Opt-in sync: AdCP ${BETA_VERSION} (primary pin stays at ${primary})`);
+  if (primary === BETA_VERSION && hasBetaCache()) {
+    console.log(`✅ ${BETA_VERSION} is already synced as the primary pin; skipping duplicate beta sync.`);
+    restoreLatestSymlink(SCHEMA_CACHE_DIR, primary);
+    restoreLatestSymlink(COMPLIANCE_CACHE_DIR, primary);
+    return;
+  }
   const delegatedToFallback = await syncBetaSchemasWithFallback();
   if (delegatedToFallback) return;
   // `syncSchemas` repointed `latest/` at the beta. Move it back so the

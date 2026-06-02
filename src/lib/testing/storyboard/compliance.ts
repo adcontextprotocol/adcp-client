@@ -14,7 +14,7 @@ import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
-import { registerExternalSchemaRoot, resolveBundleKey } from '../../validation/schema-loader';
+import { resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
@@ -155,6 +155,17 @@ export interface ResolveOptions {
    * for example `.../dist/lib/schemas-data/3.0`.
    */
   schemaRoot?: string;
+  /**
+   * Hosted badge compatibility alias. When set, a prerelease compliance cache
+   * for this stable line (for example cache `3.1.0-beta.7` with alias `3.1`)
+   * may be selected for a seller that advertises the stable line in
+   * `adcp.supported_versions`.
+   *
+   * This is deliberately scoped to a single resolver call. Normal wire-version
+   * negotiation and explicit beta diagnostic targets stay strict unless the
+   * caller opts in here.
+   */
+  hostedStableLineAlias?: string;
 }
 
 export interface ResolvedBundle {
@@ -218,18 +229,15 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
     throw new Error(complianceMissingMessage('Compliance cache', dir));
   }
   const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
-  registerExternalComplianceSchemaRoot(options, index.adcp_version);
   return index;
 }
 
-function registerExternalComplianceSchemaRoot(options: ResolveOptions, adcpVersion: string): void {
+export function getExternalSchemaRootForCompliance(options: ResolveOptions, adcpVersion: string): string | undefined {
   if (options.schemaRoot) {
-    registerExternalSchemaRoot(adcpVersion, options.schemaRoot);
-    return;
+    return options.schemaRoot;
   }
-  if (!options.complianceDir) return;
-  const root = findExternalSchemaRoot(options.complianceDir, adcpVersion);
-  if (root) registerExternalSchemaRoot(adcpVersion, root);
+  if (!options.complianceDir) return undefined;
+  return findExternalSchemaRoot(options.complianceDir, adcpVersion);
 }
 
 function findExternalSchemaRoot(complianceDir: string, adcpVersion: string): string | undefined {
@@ -539,7 +547,7 @@ export function resolveStoryboardsForCapabilities(
   options: ResolveOptions = {}
 ): ResolvedStoryboards {
   const index = loadComplianceIndex(options);
-  assertSupportedComplianceVersion(index.adcp_version, caps.supported_versions);
+  assertSupportedComplianceVersion(index.adcp_version, caps.supported_versions, options);
   const cacheDir = getComplianceCacheDir(options);
   const bundles: ResolvedBundle[] = [];
   const storyboards: Storyboard[] = [];
@@ -646,13 +654,24 @@ export function resolveStoryboardsForCapabilities(
   return { bundles, storyboards, not_applicable: notApplicable };
 }
 
-export function isComplianceVersionSupported(cacheVersion: string, supportedVersions: readonly string[]): boolean {
-  return isAdcpVersionSupported(cacheVersion, supportedVersions);
+export function isComplianceVersionSupported(
+  cacheVersion: string,
+  supportedVersions: readonly string[],
+  options: Pick<ResolveOptions, 'hostedStableLineAlias'> = {}
+): boolean {
+  return (
+    isAdcpVersionSupported(cacheVersion, supportedVersions) ||
+    isHostedStableLineAliasSupported(cacheVersion, supportedVersions, options.hostedStableLineAlias)
+  );
 }
 
-function assertSupportedComplianceVersion(cacheVersion: string, supportedVersions: string[] | undefined): void {
+function assertSupportedComplianceVersion(
+  cacheVersion: string,
+  supportedVersions: string[] | undefined,
+  options: Pick<ResolveOptions, 'hostedStableLineAlias'> = {}
+): void {
   if (!supportedVersions || supportedVersions.length === 0) return;
-  if (isComplianceVersionSupported(cacheVersion, supportedVersions)) return;
+  if (isComplianceVersionSupported(cacheVersion, supportedVersions, options)) return;
   throw new CapabilityResolutionError({
     code: 'unsupported_adcp_version',
     message:
@@ -660,6 +679,28 @@ function assertSupportedComplianceVersion(cacheVersion: string, supportedVersion
       `Seller advertises adcp.supported_versions [${supportedVersions.join(', ')}]. ` +
       `Install or select a compatible compliance cache instead of relying on major_versions alone.`,
   });
+}
+
+function isHostedStableLineAliasSupported(
+  cacheVersion: string,
+  supportedVersions: readonly string[],
+  hostedStableLineAlias: string | undefined
+): boolean {
+  if (!hostedStableLineAlias || supportedVersions.length === 0) return false;
+  const cacheLine = stableLineOf(cacheVersion);
+  const aliasLine = stableLineOf(hostedStableLineAlias);
+  if (!cacheLine || !aliasLine || cacheLine !== aliasLine) return false;
+  if (!isPrereleaseVersion(cacheVersion)) return false;
+  return isAdcpVersionSupported(hostedStableLineAlias, supportedVersions);
+}
+
+function stableLineOf(version: string): string | undefined {
+  const match = /^(?:v)?(\d+)\.(\d+)(?:\.|$|-)/.exec(version);
+  return match?.[1] && match?.[2] ? `${match[1]}.${match[2]}` : undefined;
+}
+
+function isPrereleaseVersion(version: string): boolean {
+  return /^\d+\.\d+(?:\.\d+)?-/.test(version);
 }
 
 /**

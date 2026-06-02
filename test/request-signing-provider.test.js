@@ -792,11 +792,10 @@ describe('mintEphemeralEd25519Key', () => {
     assert.strictEqual(privateKey.adcp_use, 'governance-signing');
   });
 
-  test('retired response-signing adcp_use is rejected at runtime', async () => {
-    await assert.rejects(
-      () => mintEphemeralEd25519Key({ adcp_use: 'response-signing' }),
-      err => err instanceof TypeError && /unsupported adcp_use.*response-signing/i.test(err.message)
-    );
+  test('adcp_use: response-signing is reflected in both JWKs', async () => {
+    const { publicKey, privateKey } = await mintEphemeralEd25519Key({ adcp_use: 'response-signing' });
+    assert.strictEqual(publicKey.adcp_use, 'response-signing');
+    assert.strictEqual(privateKey.adcp_use, 'response-signing');
   });
 
   test('unknown adcp_use is rejected at runtime', async () => {

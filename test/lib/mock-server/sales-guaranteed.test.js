@@ -51,6 +51,16 @@ describe('mock-server sales-guaranteed', () => {
     assert.equal(res.status, 403);
   });
 
+  it('resolves storyboard fixture publisher domains via lookup endpoint (#3821)', async () => {
+    for (const domain of ['acmeoutdoor.example', 'pinnacle-agency.example']) {
+      const res = await fetch(`${handle.url}/_lookup/network?adcp_publisher=${encodeURIComponent(domain)}`);
+      assert.equal(res.status, 200, `${domain} should resolve`);
+      const body = await res.json();
+      assert.equal(body.adcp_publisher, domain);
+      assert.ok(body.network_code);
+    }
+  });
+
   it('lists network-scoped inventory', async () => {
     const res = await fetch(`${handle.url}/v1/inventory`, { headers: authHeaders() });
     assert.equal(res.status, 200);

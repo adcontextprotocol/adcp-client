@@ -191,6 +191,215 @@ describe('envelope_field_value_or_absent (adcp#3429)', () => {
   });
 });
 
+describe('field_pattern / envelope_field_pattern (adcp-client#2121)', () => {
+  it('field_pattern passes when the payload field matches the pattern', () => {
+    const taskResult = { success: true, data: { creative: { asset_url: 'https://cdn.example/ad-123.png' } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          pattern: '^https://cdn\\.example/.+\\.png$',
+          description: 'asset URL has expected host and extension',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'field_pattern');
+  });
+
+  it('field_pattern fails with expected pattern and actual value on mismatch', () => {
+    const taskResult = { success: true, data: { creative: { asset_url: 'http://cdn.example/ad-123.gif' } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          pattern: '^https://cdn\\.example/.+\\.png$',
+          description: 'asset URL has expected host and extension',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^https://cdn\\.example/.+\\.png$' });
+    assert.strictEqual(result.actual, 'http://cdn.example/ad-123.gif');
+  });
+
+  it('field_pattern reports null actual when the payload field is missing', () => {
+    const taskResult = { success: true, data: { creative: {} } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          pattern: '^https://',
+          description: 'asset URL is present',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^https://' });
+    assert.strictEqual(result.actual, null);
+    assert.match(result.error, /Field not found at path: creative\.asset_url/);
+  });
+
+  it('field_pattern fails when the payload field is not a string', () => {
+    const taskResult = { success: true, data: { creative: { asset_url: 123 } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          pattern: '^https://',
+          description: 'asset URL is string',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^https://' });
+    assert.strictEqual(result.actual, 123);
+    assert.match(result.error, /Expected string at path: creative\.asset_url, got number/);
+  });
+
+  it('field_pattern rejects missing pattern configuration', () => {
+    const taskResult = { success: true, data: { creative: { asset_url: 'https://cdn.example/ad-123.png' } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          description: 'asset URL is string',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: 'non-empty JavaScript regular expression source' });
+    assert.strictEqual(result.actual, null);
+    assert.match(result.error, /field_pattern requires a non-empty `pattern` string/);
+  });
+
+  it('field_pattern rejects invalid regex sources', () => {
+    const taskResult = { success: true, data: { creative: { asset_url: 'https://cdn.example/ad-123.png' } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_pattern',
+          path: 'creative.asset_url',
+          pattern: '(',
+          description: 'asset URL is string',
+        },
+      ],
+      'build_creative',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '(' });
+    assert.strictEqual(result.actual, '(');
+    assert.match(result.error, /Invalid field_pattern pattern/);
+  });
+
+  it('envelope_field_pattern passes for adcp_version from the version envelope', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        status: 'completed',
+        adcp_version: '3.1-rc.3',
+        adcp: { major_versions: [3], supported_versions: ['3.1-rc.3'] },
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'envelope_field_pattern',
+          path: 'adcp_version',
+          pattern: '^\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?$',
+          description: 'adcp_version has release precision',
+        },
+      ],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'envelope_field_pattern');
+  });
+
+  it('envelope_field_pattern fails with expected pattern and actual value on version-envelope mismatch', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        status: 'completed',
+        adcp_version: '3.1.0-rc.3',
+        adcp: { major_versions: [3], supported_versions: ['3.1-rc.3'] },
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'envelope_field_pattern',
+          path: 'adcp_version',
+          pattern: '^\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?$',
+          description: 'adcp_version has release precision',
+        },
+      ],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?$' });
+    assert.strictEqual(result.actual, '3.1.0-rc.3');
+  });
+
+  it('envelope_field_pattern reports null actual when the envelope field is missing', () => {
+    const taskResult = { success: true, data: { status: 'completed', adcp: { major_versions: [3] } } };
+    const [result] = runOne(
+      [
+        {
+          check: 'envelope_field_pattern',
+          path: 'adcp_version',
+          pattern: '^\\d+\\.\\d+',
+          description: 'adcp_version is present',
+        },
+      ],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^\\d+\\.\\d+' });
+    assert.strictEqual(result.actual, null);
+    assert.match(result.error, /Field not found at path: adcp_version/);
+  });
+
+  it('envelope_field_pattern fails when the version-envelope field is not a string', () => {
+    const taskResult = { success: true, data: { status: 'completed', adcp_major_version: 3 } };
+    const [result] = runOne(
+      [
+        {
+          check: 'envelope_field_pattern',
+          path: 'adcp_major_version',
+          pattern: '^3$',
+          description: 'adcp_major_version is string-shaped',
+        },
+      ],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.expected, { pattern: '^3$' });
+    assert.strictEqual(result.actual, 3);
+    assert.match(result.error, /Expected string at path: adcp_major_version, got number/);
+  });
+});
+
 describe('field_value_or_absent media-buy status collision (adcp-client#1961)', () => {
   it('treats flat MCP envelope status completed as absent for the deprecated media-buy status field', () => {
     const taskResult = {

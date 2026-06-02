@@ -22,6 +22,10 @@ Options:
   --list-tools                Print every tool name + its tier and exit
   --turn-budget <int>         Iterations per tool (default: 50)
   --protocol <mcp|a2a>        Transport (default: mcp)
+  --schema-version <version>  AdCP schema/cache version to validate against
+                              (alias: --compliance-version)
+  --schema-root <path>        External schema-data root for validation
+                              (alias: --validator-source)
   --auth-token <token>        Bearer token. Also reads ADCP_AUTH_TOKEN env var.
   --auth-token-cross-tenant <token>
                               Second auth token for the uniform-error paired
@@ -146,6 +150,16 @@ async function handleFuzzCommand(argv) {
         i++;
         break;
       }
+      case '--schema-version':
+      case '--compliance-version':
+        options.version = requireValue(i, a);
+        i++;
+        break;
+      case '--schema-root':
+      case '--validator-source':
+        options.schemaRoot = requireValue(i, a);
+        i++;
+        break;
       case '--auth-token':
         options.authToken = requireValue(i, '--auth-token');
         i++;
@@ -350,6 +364,8 @@ function reproduceCommand(report, failure) {
   const parts = ['adcp fuzz', quote(report.agentUrl), '--seed', String(failure.seed), '--tools', failure.tool];
   if (report.protocol && report.protocol !== 'mcp') parts.push('--protocol', report.protocol);
   if (report.turnBudget && report.turnBudget !== 50) parts.push('--turn-budget', String(report.turnBudget));
+  if (report.schemaVersion) parts.push('--schema-version', report.schemaVersion);
+  if (report.schemaRoot) parts.push('--schema-root', quote(report.schemaRoot));
   // Prefer --auto-seed over listing seeded IDs when the run used autoSeed:
   // seeded IDs are agent-generated and may differ between runs, so echoing
   // them as --fixture would mislead the user. The user should re-seed.

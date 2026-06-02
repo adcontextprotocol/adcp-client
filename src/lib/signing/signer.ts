@@ -1,12 +1,21 @@
 import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
-import { buildSignatureBase, formatSignatureParams, type RequestLike, type SignatureParams } from './canonicalize';
+import {
+  buildResponseSignatureBase,
+  buildSignatureBase,
+  formatSignatureParams,
+  type RequestLike,
+  type ResponseLike,
+  type SignatureParams,
+} from './canonicalize';
 import { computeContentDigest } from './content-digest';
-import { RequestSignatureError, WebhookSignatureError } from './errors';
+import { RequestSignatureError, ResponseSignatureError, WebhookSignatureError } from './errors';
 import type { AdcpUse } from './jwks-helpers';
 import {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
+  RESPONSE_MANDATORY_COMPONENTS,
+  RESPONSE_SIGNING_TAG,
   type AdcpJsonWebKey,
   type AdcpSignAlg,
 } from './types';
@@ -19,6 +28,7 @@ export interface SignerKey {
    * Private JWK. MUST carry `adcp_use` matching the helper being called:
    * - `signRequest` requires `adcp_use: 'request-signing'`
    * - `signWebhook` requires `adcp_use: 'webhook-signing'`
+   * - `signResponse` requires `adcp_use: 'response-signing'`
    *
    * Mismatched or missing `adcp_use` throws at the signer with the same
    * error code the verifier raises at step 8 — failure surfaces at
@@ -68,9 +78,10 @@ function assertKeyPurpose(key: SignerKey, expected: Rfc9421AdcpUse): void {
  */
 function assertProviderPurpose(
   provider: { readonly keyid: string; readonly adcpUse?: string },
-  expected: Rfc9421AdcpUse
+  expected: Rfc9421AdcpUse,
+  options: { requirePurpose?: boolean } = {}
 ): void {
-  if (provider.adcpUse === undefined) return;
+  if (provider.adcpUse === undefined && !options.requirePurpose) return;
   throwIfPurposeMismatch(provider.keyid, provider.adcpUse, expected);
 }
 
@@ -85,6 +96,8 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
       throw new RequestSignatureError('request_signature_key_purpose_invalid', 8, message);
     case 'webhook-signing':
       throw new WebhookSignatureError('webhook_signature_key_purpose_invalid', 8, message);
+    case 'response-signing':
+      throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
     default: {
       // Compile-time exhaustiveness: a future widening of `Rfc9421AdcpUse`
       // (typically because `AdcpUse` grew an RFC-9421 member) must add a
@@ -282,6 +295,116 @@ export function signWebhook(request: RequestLike, key: SignerKey, options: SignW
   const prepared = prepareWebhookSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
+}
+
+export interface SignResponseOptions {
+  /**
+   * Cover a `Content-Digest` of the response body. Defaults to `true` when
+   * the response has a body.
+   */
+  coverContentDigest?: boolean;
+  /**
+   * Additional derived/header components to cover beyond
+   * {@link RESPONSE_MANDATORY_COMPONENTS}. The defaults include `@status`,
+   * `@method;req`, `@authority;req`, and `@target-uri;req`. Only the
+   * RFC 9421 `;req` component parameter is supported; other component
+   * parameters are rejected rather than silently round-tripped.
+   */
+  additionalComponents?: ReadonlyArray<string>;
+  label?: string;
+  windowSeconds?: number;
+  now?: () => number;
+  nonce?: string;
+  /**
+   * Override the signature tag. Defaults to `adcp/response-signing/v1`.
+   */
+  tag?: string;
+}
+
+export interface SignedResponse {
+  status: number;
+  headers: Record<string, string>;
+  signatureBase: string;
+  params: SignatureParams;
+}
+
+export interface PreparedResponseSignature {
+  status: number;
+  components: string[];
+  params: SignatureParams;
+  /**
+   * Outbound response headers including `Content-Digest` when covered, but
+   * not yet including `Signature-Input` / `Signature`.
+   */
+  headers: Record<string, string>;
+  /** Canonical signature base bytes (UTF-8). Pass to the signer/provider. */
+  base: string;
+  label: string;
+}
+
+/**
+ * Canonicalize a response for RFC 9421 response signing. This compatibility
+ * helper is signing-only; it does not imply a generic AdCP response-verifier
+ * protocol surface.
+ */
+export function prepareResponseSignature(
+  response: ResponseLike,
+  identity: SignatureIdentity,
+  options: SignResponseOptions = {}
+): PreparedResponseSignature {
+  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
+  const nonce = options.nonce ?? base64UrlRandom(16);
+  const label = options.label ?? 'sig1';
+  const hasBody = (response.body ?? '').length > 0;
+  const coverDigest = (options.coverContentDigest ?? true) && hasBody;
+
+  const headers: Record<string, string> = { ...flattenHeaders(response.headers) };
+  if (coverDigest) {
+    headers['Content-Digest'] = computeContentDigest(response.body ?? '');
+  }
+
+  const components = [...RESPONSE_MANDATORY_COMPONENTS];
+  if (hasBody) components.push('content-type');
+  if (coverDigest) components.push('content-digest');
+  if (options.additionalComponents) {
+    for (const component of options.additionalComponents) {
+      if (!components.includes(component)) components.push(component);
+    }
+  }
+
+  const params: SignatureParams = {
+    created: now,
+    expires: now + windowSeconds,
+    nonce,
+    keyid: identity.keyid,
+    alg: identity.alg,
+    tag: options.tag ?? RESPONSE_SIGNING_TAG,
+  };
+
+  const normalizedResponse: ResponseLike = { ...response, headers };
+  const base = buildResponseSignatureBase(components, normalizedResponse, params);
+
+  return { status: response.status, components, params, headers, base, label };
+}
+
+export function finalizeResponseSignature(prepared: PreparedResponseSignature, signature: Uint8Array): SignedResponse {
+  const headers = { ...prepared.headers };
+  const sigB64 = Buffer.from(signature).toString('base64url');
+  headers['Signature-Input'] = `${prepared.label}=${formatSignatureParams(prepared.components, prepared.params)}`;
+  headers['Signature'] = `${prepared.label}=:${sigB64}:`;
+  return { status: prepared.status, headers, signatureBase: prepared.base, params: prepared.params };
+}
+
+export function signResponse(
+  response: ResponseLike,
+  key: SignerKey,
+  options: SignResponseOptions = {}
+): SignedResponse {
+  assertKeyPurpose(key, 'response-signing');
+  const prepared = prepareResponseSignature(response, { keyid: key.keyid, alg: key.alg }, options);
+  const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
+  return finalizeResponseSignature(prepared, signature);
 }
 
 function produceSignature(key: SignerKey, data: Buffer): Uint8Array {

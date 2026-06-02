@@ -7,6 +7,7 @@
  * The aggregate `@adcp/sdk/signing` barrel re-exports both for back-compat.
  */
 export {
+  buildResponseSignatureBase,
   buildSignatureBase,
   canonicalAuthority,
   canonicalMethod,
@@ -14,6 +15,7 @@ export {
   formatSignatureParams,
   getHeaderValue,
   type RequestLike,
+  type ResponseLike,
   type SignatureParams,
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
@@ -29,18 +31,24 @@ export {
 } from './request-context';
 export {
   finalizeRequestSignature,
+  finalizeResponseSignature,
   prepareRequestSignature,
+  prepareResponseSignature,
   prepareWebhookSignature,
   signRequest,
+  signResponse,
   signWebhook,
   type PreparedRequestSignature,
+  type PreparedResponseSignature,
   type SignatureIdentity,
   type SignedRequest,
+  type SignedResponse,
   type SignerKey,
   type SignRequestOptions,
+  type SignResponseOptions,
   type SignWebhookOptions,
 } from './signer';
-export { signRequestAsync, signWebhookAsync } from './signer-async';
+export { signRequestAsync, signResponseAsync, signWebhookAsync } from './signer-async';
 export { derEcdsaToP1363 } from './ecdsa-encoding';
 export { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-verifier';
 export { createSigningFetch, type CoverContentDigestPredicate, type SigningFetchOptions } from './fetch';
@@ -49,6 +57,8 @@ export type { SigningProvider } from './provider';
 export {
   RequestSignatureError,
   type RequestSignatureErrorCode,
+  ResponseSignatureError,
+  type ResponseSignatureErrorCode,
   SigningProviderAlgorithmMismatchError,
   type SigningProviderErrorCode,
   WebhookSignatureError,
@@ -60,6 +70,8 @@ export {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
+  RESPONSE_MANDATORY_COMPONENTS,
+  RESPONSE_SIGNING_TAG,
   type AdcpJsonWebKey,
   type AdcpSignAlg,
   type ContentDigestPolicy,

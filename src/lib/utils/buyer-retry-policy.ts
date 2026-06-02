@@ -310,6 +310,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   FORMAT_DECLARATION_DIVERGENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_OPTION_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
+  FORMAT_NOT_SUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
   PRIVATE_FIELD_IN_PUBLIC_PLACEMENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'capability' },
 

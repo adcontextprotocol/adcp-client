@@ -16,12 +16,15 @@ async function main() {
     throw new Error(`No workflow files found in ${path.relative(process.cwd(), workflowDir)}`);
   }
 
-  const lint = await createLinter();
   let issueCount = 0;
 
   for (const file of workflowFiles) {
     const relativePath = path.relative(process.cwd(), file);
     const input = await readFile(file, 'utf8');
+    // actionlint's JS/WASM linter can throw `RuntimeError: unreachable` when
+    // the same instance is reused across multiple workflow files. A fresh
+    // instance per file keeps diagnostics stable while preserving full linting.
+    const lint = await createLinter();
     const results = lint(input, relativePath);
 
     for (const result of results) {

@@ -199,8 +199,20 @@ export {
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
-export { SingleAgentClient, createSingleAgentClient, UnsupportedFeatureError } from './core/SingleAgentClient';
-export type { SingleAgentClientConfig } from './core/SingleAgentClient';
+export {
+  SingleAgentClient,
+  WebhookDispatchError,
+  createSingleAgentClient,
+  UnsupportedFeatureError,
+} from './core/SingleAgentClient';
+export type {
+  SingleAgentClientConfig,
+  VerifyAndParseWebhookOptions,
+  WebhookParseErrorCode,
+  WebhookParseFailure,
+  WebhookParseResult,
+  WebhookParseSuccess,
+} from './core/SingleAgentClient';
 export {
   AgentClient,
   type TaskResponseTypeMap,
@@ -515,9 +527,10 @@ export * from './types';
 //   PackageRequest  -- creation-shaped (required: buyer_ref, product_id, budget, pricing_option_id)
 //   Package         -- response-shaped from core.generated (has package_id, most fields optional)
 //
-// Platform implementors: use Request types to type/validate incoming tool calls,
+// Platform implementors: use Request types to type incoming tool calls,
 // Response types to shape your return values.
-// Zod schemas for runtime validation are exported below (e.g., CreateMediaBuyRequestSchema).
+// Runtime Zod schemas live at `@adcp/sdk/schemas` to keep ordinary root
+// imports from loading the generated schema declaration bundle.
 export type {
   // Media Buy Domain
   GetProductsRequest,
@@ -871,6 +884,7 @@ export {
   IDEMPOTENCY_MIGRATION,
   cleanupExpiredIdempotency,
   redisBackend,
+  createLazyBackend,
   hashPayload,
   getServeRequestContext,
   ADCP_SERVE_REQUEST_CONTEXT,
@@ -952,6 +966,8 @@ export type {
   RedisBackendOptions,
   RedisBackendClient,
   RedisLikeClient,
+  LazyBackendFactory,
+  LazyBackendOptions,
   A2AAdapter,
   A2AAdapterOptions,
   A2AAgentCardOverrides,
@@ -1011,10 +1027,6 @@ export {
   type GetProductsResponseWithCacheScope,
   type GetProductsCacheScopeValidation,
 } from './utils/get-products-cache-scope';
-
-// ====== ZOD SCHEMAS (for runtime validation) ======
-// Re-export all Zod schemas for user validation needs
-export * from './types/schemas.generated';
 
 // ====== ENUM VALUE ARRAYS ======
 // `${TypeName}Values` const arrays for every named string-literal union in
@@ -1097,21 +1109,9 @@ export {
   type AgentOAuthClientCredentials,
 } from './auth/oauth';
 
-// ====== TOOL SCHEMA MAPS ======
-// Zod schemas keyed by tool name — use with server.registerTool(name, { inputSchema: schema.shape }, handler)
-export { TOOL_REQUEST_SCHEMAS } from './utils/tool-request-schemas';
-export { TOOL_RESPONSE_SCHEMAS } from './utils/response-schemas';
-
 // ====== VALIDATION ======
 // Schema validation for requests/responses
 export { validateAgentUrl, validateAdCPResponse, getExpectedSchema, handleAdCPResponse } from './validation';
-export {
-  SyncCreativesItemSchema,
-  SyncCreativesSuccessStrictSchema,
-  SyncCreativesResponseStrictSchema,
-  SyncCreativesActionSchema,
-} from './validation/sync-creatives';
-export type { SyncCreativesItem, SyncCreativesSuccessStrict } from './validation/sync-creatives';
 
 // ====== PROTOCOL CLIENTS ======
 // Low-level protocol clients for MCP and A2A (primarily for testing)
@@ -1122,6 +1122,7 @@ export {
   createMCPClient,
   createA2AClient,
   closeMCPConnections,
+  closeOAuthConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
 export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';

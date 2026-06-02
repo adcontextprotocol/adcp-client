@@ -17,9 +17,14 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
   'ecdsa-p256-sha256': 'ES256',
 };
 
-export type AdcpUse = 'request-signing' | 'webhook-signing' | 'governance-signing';
+export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing' | 'governance-signing';
 
-const ADCP_USE_VALUES = new Set<AdcpUse>(['request-signing', 'webhook-signing', 'governance-signing']);
+const ADCP_USE_VALUES = new Set<AdcpUse>([
+  'request-signing',
+  'webhook-signing',
+  'response-signing',
+  'governance-signing',
+]);
 
 export function assertAdcpUse(value: unknown, helperName: string): asserts value is AdcpUse {
   if (typeof value !== 'string' || !ADCP_USE_VALUES.has(value as AdcpUse)) {
@@ -39,6 +44,8 @@ export interface PemToAdcpJwkOptions {
    * Purpose binding, enforced by AdCP verifiers at step 8.
    * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`.
    * - `'webhook-signing'` — for JWKs used to sign outbound webhook callbacks.
+   * - `'response-signing'` — for compatibility with agents that sign JSON
+   *   transport responses directly.
    * - `'governance-signing'` — for JWKs used to sign governance context
    *   (JWS-signed, not RFC 9421). Declared on JWKs published in a tenant's
    *   aggregated JWKS so JSON-typed consumers (e.g., third-party verifiers

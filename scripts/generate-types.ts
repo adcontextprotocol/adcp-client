@@ -47,6 +47,18 @@ const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 // of tools.generated.ts and import references from core.generated.ts instead.
 const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set(['AudienceConstraints', 'PurchaseType']);
 
+const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
+  oldName: string;
+  newName: string;
+  reason: string;
+}> = [
+  {
+    oldName: 'SignalCatalogType',
+    newName: 'SignalAvailabilityType',
+    reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
+  },
+];
+
 // Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
 function loadCachedSchema(schemaRef: string): any {
   try {
@@ -1375,6 +1387,18 @@ function addCoreGeneratedTypeReExports(typeDefinitions: string, typeNames: Itera
   return `${exportStatement}\n\n${typeDefinitions}`;
 }
 
+function addBackwardCompatTypeAliases(typeDefinitions: string): string {
+  let output = typeDefinitions;
+  for (const { oldName, newName, reason } of BACKWARD_COMPAT_TYPE_ALIASES) {
+    if (new RegExp(`^export type ${oldName}\\b`, 'm').test(output)) continue;
+    const declaration = new RegExp(`(export type ${newName} =[\\s\\S]*?;\\n)`, 'm');
+    if (!declaration.test(output)) continue;
+    const alias = `/** @deprecated ${reason} */\nexport type ${oldName} = ${newName};\n`;
+    output = output.replace(declaration, `$1${alias}`);
+  }
+  return output;
+}
+
 async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set<string> = new Set()) {
   console.log('🔧 Generating tool parameter and response types...');
 
@@ -2644,12 +2668,14 @@ async function generateTypes() {
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
   const processedCoreTypes = applyIndividualAssetDiscriminators(
-    fixTypedIndexSignatures(applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))))
+    addBackwardCompatTypeAliases(
+      fixTypedIndexSignatures(applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))))
+    )
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = applyIndividualAssetDiscriminators(toolTypes);
+  const processedToolTypes = applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes));
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');

@@ -23,6 +23,7 @@
  * payload" pattern.
  */
 
+import { createHash } from 'node:crypto';
 import { resolveBrand, resolveAccount } from '../client';
 import type { TestOptions } from '../types';
 import type { StoryboardContext, StoryboardStep } from './types';
@@ -31,7 +32,8 @@ import { injectContext, type RunnerVariables } from './context';
 type RequestEnricher = (
   step: StoryboardStep,
   context: StoryboardContext,
-  options: TestOptions
+  options: TestOptions,
+  runnerVars?: RunnerVariables
 ) => Record<string, unknown>;
 
 /** Legacy alias kept for external consumers pinned to the old terminology. */
@@ -92,10 +94,57 @@ const FIXTURE_AWARE_ENRICHERS = new Set<string>([
  */
 const PRODUCT_ID_SENTINELS = new Set(['test-product']);
 const PRICING_OPTION_ID_SENTINELS = new Set(['test-pricing']);
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MEDIA_BUY_WINDOW_MS = 7 * DAY_MS;
 
 function asNonSentinel(value: unknown, sentinels: Set<string>): string | undefined {
   if (typeof value !== 'string') return undefined;
   return sentinels.has(value) ? undefined : value;
+}
+
+function parseTime(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function resolveMediaBuyWindow(
+  sampleStart: string | undefined,
+  sampleEnd: string | undefined,
+  nowMs?: number
+): {
+  startTime: string;
+  endTime: string;
+} {
+  const now = nowMs ?? Date.now();
+  const defaultStart = new Date(now + DAY_MS).toISOString();
+  const defaultEnd = new Date(now + 8 * DAY_MS).toISOString();
+  const sampleStartMs = parseTime(sampleStart);
+  const sampleEndMs = parseTime(sampleEnd);
+
+  const startTime = sampleStart && sampleStartMs !== undefined && sampleStartMs >= now ? sampleStart : defaultStart;
+  let endTime = sampleEnd && sampleEndMs !== undefined && sampleEndMs >= now ? sampleEnd : defaultEnd;
+
+  if (Date.parse(endTime) <= Date.parse(startTime)) {
+    const sampleDurationMs =
+      sampleStartMs !== undefined && sampleEndMs !== undefined && sampleEndMs > sampleStartMs
+        ? sampleEndMs - sampleStartMs
+        : DEFAULT_MEDIA_BUY_WINDOW_MS;
+    endTime = new Date(Date.parse(startTime) + sampleDurationMs).toISOString();
+  }
+
+  return { startTime, endTime };
+}
+
+function runClockMs(runnerVars: RunnerVariables | undefined): number {
+  return runnerVars?.runStartMs ?? Date.now();
+}
+
+function generatedIdSuffix(step: StoryboardStep, runnerVars: RunnerVariables | undefined, nowMs?: number): string {
+  const timestamp = nowMs ?? runClockMs(runnerVars);
+  if (runnerVars?.runStartMs === undefined) return String(timestamp);
+  const stepHash = createHash('sha256').update(step.id).digest('hex').slice(0, 12);
+  return `${timestamp}-${stepHash}`;
 }
 
 /**
@@ -140,7 +189,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  sync_audiences(step, context, options) {
+  sync_audiences(step, context, options, runnerVars) {
     // Honor hand-authored sample_request so storyboards can register a
     // specific audience_id that downstream steps reference. Without this,
     // add-shaped sample_request blocks (authored with audience_id + add[])
@@ -155,7 +204,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       account: context.account ?? resolveAccount(options),
       audiences: [
         {
-          audience_id: context.audience_id ?? `test-audience-${Date.now()}`,
+          audience_id: context.audience_id ?? `test-audience-${generatedIdSuffix(step, runnerVars)}`,
           name: 'E2E Test Audience',
           add: [
             {
@@ -224,25 +273,22 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   // ── Media Buy ──────────────────────────────────────────
 
-  create_media_buy(step, context, options) {
+  create_media_buy(step, context, options, runnerVars) {
     const product = selectProduct(context);
     const pricingOption = selectPricingOption(product);
-
-    const now = Date.now();
-    const defaultStart = new Date(now + 24 * 60 * 60 * 1000).toISOString();
-    const defaultEnd = new Date(now + 8 * 24 * 60 * 60 * 1000).toISOString();
 
     // Respect sample_request dates when they're future-dated — needed for
     // storyboards that test replay semantics where initial + replay must
     // produce byte-for-byte identical canonical payloads. Two calls
     // generated 5ms apart with `Date.now()` would hash differently,
     // triggering IDEMPOTENCY_CONFLICT on replay. Stale sample dates
-    // (authored before the run date) fall back to the dynamic default.
+    // (authored before the run date) fall back to the run-start-relative
+    // default. Resolve the pair together so a stale start and same-day
+    // future end cannot produce start_time > end_time.
     const sampleStart =
       typeof step.sample_request?.start_time === 'string' ? step.sample_request.start_time : undefined;
     const sampleEnd = typeof step.sample_request?.end_time === 'string' ? step.sample_request.end_time : undefined;
-    const startTime = sampleStart && Date.parse(sampleStart) >= now ? sampleStart : defaultStart;
-    const endTime = sampleEnd && Date.parse(sampleEnd) >= now ? sampleEnd : defaultEnd;
+    const { startTime, endTime } = resolveMediaBuyWindow(sampleStart, sampleEnd, runnerVars?.runStartMs);
 
     // Merge hand-authored package fields from sample_request (targeting_overlay,
     // measurement_terms, creative_assignments, performance_standards, etc.) so
@@ -458,7 +504,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   // ── Catalogs & Events ─────────────────────────────────
 
-  sync_catalogs(step, context, options) {
+  sync_catalogs(step, context, options, runnerVars) {
     // Prefer the fixture's sample_request — it's the authoritative request
     // shape for the storyboard step. The fallback's hardcoded feed_format
     // ('json') is NOT in the spec's 5-literal union and its `type` is
@@ -468,7 +514,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       account: context.account ?? resolveAccount(options),
       catalogs: [
         {
-          catalog_id: `test-catalog-${Date.now()}`,
+          catalog_id: `test-catalog-${generatedIdSuffix(step, runnerVars)}`,
           name: 'E2E Test Catalog',
           type: 'product',
           feed_url: 'https://test-assets.adcontextprotocol.org/feeds/test-catalog.json',
@@ -478,12 +524,12 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  sync_event_sources(_step, context, options) {
+  sync_event_sources(step, context, options, runnerVars) {
     return {
       account: context.account ?? resolveAccount(options),
       event_sources: [
         {
-          event_source_id: `test-source-${Date.now()}`,
+          event_source_id: `test-source-${generatedIdSuffix(step, runnerVars)}`,
           name: 'E2E Test Event Source',
           event_types: ['purchase', 'add_to_cart'],
         },
@@ -491,7 +537,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  log_event(step, context, _options) {
+  log_event(step, context, _options, runnerVars) {
     // Storyboards routinely ship spec-conformant event payloads with
     // event_time, content_ids, and custom_data siblings that only the
     // author knows. Honor sample_request when present.
@@ -499,21 +545,21 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       event_source_id: context.event_source_id ?? 'test-source',
       events: [
         {
-          event_id: `evt-${Date.now()}`,
+          event_id: `evt-${generatedIdSuffix(step, runnerVars)}`,
           event_type: 'purchase',
-          event_time: new Date().toISOString(),
+          event_time: new Date(runClockMs(runnerVars)).toISOString(),
           custom_data: { value: 49.99, currency: 'USD' },
         },
       ],
     };
   },
 
-  report_usage(step, context, options) {
+  report_usage(step, context, options, runnerVars) {
     // Prefer the fixture's sample_request — creative-ad-server and other
     // specialisms carry per-usage-entry fields (vendor_cost, currency,
     // pricing_option_id) that the hardcoded fallback here omits, causing
     // agents running the generated Zod schema to reject every step.
-    const now = new Date();
+    const now = new Date(runClockMs(runnerVars));
     const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     return {
       account: context.account ?? resolveAccount(options),
@@ -570,25 +616,25 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  sync_creatives(step, context, options) {
+  sync_creatives(step, context, options, runnerVars) {
     // Honor hand-authored sample_request for scenarios that require specific
     // creative shapes (delete/patch flows, format-scoped uploads, etc).
     const formats = (context.formats as Array<Record<string, unknown>> | undefined) ?? [];
-    const now = Date.now();
+    const idSuffix = generatedIdSuffix(step, runnerVars);
 
     // Send one creative per discovered format so downstream steps
     // (e.g., build_video_tag) can find creatives in every format.
     const creatives =
       formats.length > 0
         ? formats.map((fmt, i) => ({
-            creative_id: `test-creative-${now}-${i}`,
+            creative_id: `test-creative-${idSuffix}-${i}`,
             name: `E2E Test Creative ${i + 1}`,
             format_id: fmt.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
             assets: buildAssetsForFormat(fmt),
           }))
         : [
             {
-              creative_id: `test-creative-${now}`,
+              creative_id: `test-creative-${idSuffix}`,
               name: 'E2E Test Creative',
               format_id: context.format_id ?? UNKNOWN_FORMAT_ID,
               assets: {
@@ -702,17 +748,18 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  sync_plans(step, context, options) {
+  sync_plans(step, context, options, runnerVars) {
     // Governance storyboards define scenario-specific plans in sample_request
     // (e.g., custom_policies for conditions, reallocation_threshold for denied).
     // Delegate to sample_request when present.
-    const now = Date.now();
+    const now = runClockMs(runnerVars);
     const startDate = new Date(now + 24 * 60 * 60 * 1000).toISOString();
     const endDate = new Date(now + 90 * 24 * 60 * 60 * 1000).toISOString();
+    const idSuffix = generatedIdSuffix(step, runnerVars, now);
     return {
       plans: [
         {
-          plan_id: `test-plan-${Date.now()}`,
+          plan_id: `test-plan-${idSuffix}`,
           brand: resolveBrand(options),
           objectives: 'E2E test campaign — maximize reach across digital channels',
           budget: { total: options.budget ?? 10000, currency: 'USD', reallocation_unlimited: true },
@@ -747,7 +794,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  create_content_standards(step, context, _options) {
+  create_content_standards(step, context, _options, runnerVars) {
     // `anyOf: [{required: [policies]}, {required: [registry_policy_ids]}]` —
     // one must be present. Emit a minimal inline bespoke policy rather than
     // pinning a registry id the agent may not carry; storyboards that want
@@ -765,7 +812,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       },
       policies: [
         {
-          policy_id: `e2e-fallback-${Date.now()}`,
+          policy_id: `e2e-fallback-${generatedIdSuffix(step, runnerVars)}`,
           enforcement: 'should',
           policy: 'E2E fallback policy — storyboard author did not supply sample_request.',
         },
@@ -839,7 +886,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     };
   },
 
-  si_initiate_session(step, context, options) {
+  si_initiate_session(step, context, options, runnerVars) {
     // `intent` is required and represents the user's ask. Default to a
     // semantically plausible one so agents that dispatch on intent still
     // behave sensibly; storyboards override via sample_request when
@@ -849,7 +896,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       offering_token: context.offering_token,
       identity: {
         consent_granted: false,
-        anonymous_session_id: `e2e-anon-${Date.now()}`,
+        anonymous_session_id: `e2e-anon-${generatedIdSuffix(step, runnerVars)}`,
       },
       intent: options.si_context ?? 'Browse available offerings',
       placement: 'e2e-test',
@@ -941,7 +988,7 @@ export function enrichRequest(
 
   if (!enricher) return fixture ?? {};
 
-  const enriched = enricher(step, context, options);
+  const enriched = enricher(step, context, options, runnerVars);
 
   // Fixture-aware enrichers already did the body merge internally and know
   // the array/nested shapes better than a generic top-level overlay can.

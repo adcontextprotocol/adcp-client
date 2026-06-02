@@ -68,7 +68,7 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
       );
     });
 
-    test('rejects a legacy provider key with adcpUse="response-signing"', async () => {
+    test('rejects a response-signing provider key', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
@@ -145,7 +145,7 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
       );
     });
 
-    test('rejects a legacy provider key with adcpUse="response-signing"', async () => {
+    test('rejects a response-signing provider key', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
@@ -192,7 +192,7 @@ describe('SigningProvider.adcpUse — explicit option overrides JWK metadata', (
     assert.ok(signed.headers.Signature);
   });
 
-  test('explicit retired adcpUse fails closed even when JWK metadata is valid', async () => {
+  test('explicit response-signing adcpUse fails closed for request signing even when JWK metadata is valid', async () => {
     const provider = new InMemorySigningProvider({
       keyid: KID,
       algorithm: 'ed25519',

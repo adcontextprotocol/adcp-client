@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-beta.7
-// Generated at: 2026-05-28T12:11:22.784Z
+// Generated AdCP core types from official schemas v3.1.0-rc.6
+// Generated at: 2026-06-01T00:31:48.140Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -179,6 +179,9 @@ export type EventType =
   | 'disqualify_lead'
   | 'complete_registration'
   | 'subscribe'
+  | 'follow'
+  | 'content_view'
+  | 'watch_milestone'
   | 'start_trial'
   | 'app_install'
   | 'app_launch'
@@ -207,6 +210,23 @@ export type ContentIDType =
  * Discriminated reference to a product format option. The global canonical shape is still named by `format_kind`; this reference selects one concrete product `format_options[]` entry. `scope: "publisher"` identifies a publisher-declared catalog option by `{ publisher_domain, format_option_id }`. `scope: "product"` identifies a product-local option by `format_option_id`; the enclosing package/product context supplies the namespace.
  */
 export type FormatOptionReference = PublisherCatalogFormatOptionReference | ProductLocalFormatOptionReference;
+/**
+ * Direct canonical selector supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it, including informational-echo cases where `format_ids` was the winning selector, so read surfaces preserve the original wire contract.
+ */
+export type CanonicalFormatKind =
+  | 'image'
+  | 'html5'
+  | 'display_tag'
+  | 'image_carousel'
+  | 'video_hosted'
+  | 'video_vast'
+  | 'audio_hosted'
+  | 'audio_daast'
+  | 'sponsored_placement'
+  | 'native_in_feed'
+  | 'responsive_creative'
+  | 'agent_placement'
+  | 'custom';
 /**
  * Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')
  */
@@ -258,50 +278,6 @@ export type ActivationKey =
        */
       value: string;
     };
-/**
- * Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.
- */
-export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
-/**
- * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
- */
-export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
-/**
- * Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.
- */
-export type DevicePlatform =
-  | 'ios'
-  | 'android'
-  | 'windows'
-  | 'macos'
-  | 'linux'
-  | 'chromeos'
-  | 'tvos'
-  | 'tizen'
-  | 'webos'
-  | 'fire_os'
-  | 'roku_os'
-  | 'unknown';
-/**
- * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
- */
-export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
-/**
- * Time unit for isochrone (travel-time catchment) calculations.
- */
-export type TravelTimeUnit = 'min' | 'hr';
-/**
- * Transportation mode for isochrone calculation. Required when travel_time is provided.
- */
-export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
-/**
- * Distance unit.
- */
-export type DistanceUnit = 'km' | 'mi' | 'm';
-/**
- * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
- */
-export type MatchType = 'broad' | 'phrase' | 'exact';
 /**
  * Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.
  */
@@ -363,16 +339,16 @@ export type SignalRef =
     }
   | {
       /**
-       * Discriminator indicating the signal resolves through a data provider's published adagents.json signal catalog.
+       * Discriminator indicating the signal resolves through a data provider's published adagents.json signals[].
        */
       scope: 'data_provider';
       /**
-       * Domain that publishes the signal definition in its adagents.json signal catalog.
+       * Domain that publishes the signal definition in its adagents.json signals[].
        * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
-       * Signal identifier within the data provider's published signal catalog.
+       * Signal identifier within the data provider's published adagents.json signals[].
        * @pattern ^[a-zA-Z0-9_-]+$
        */
       signal_id: string;
@@ -398,7 +374,7 @@ export type SignalRef =
 export type SignalID =
   | {
       /**
-       * Discriminator indicating this signal is from a data provider's published catalog
+       * Discriminator indicating this signal is from a data provider's published adagents.json signals[]
        */
       source: 'catalog';
       /**
@@ -414,7 +390,7 @@ export type SignalID =
     }
   | {
       /**
-       * Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider catalog.
+       * Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions.
        */
       source: 'agent';
       /**
@@ -428,6 +404,50 @@ export type SignalID =
       id: string;
     };
 /**
+ * Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.
+ */
+export type ReachUnit = 'individuals' | 'households' | 'devices' | 'accounts' | 'cookies' | 'custom';
+/**
+ * Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.
+ */
+export type AgeVerificationMethod = 'facial_age_estimation' | 'id_document' | 'digital_id' | 'credit_card' | 'world_id';
+/**
+ * Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.
+ */
+export type DevicePlatform =
+  | 'ios'
+  | 'android'
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'chromeos'
+  | 'tvos'
+  | 'tizen'
+  | 'webos'
+  | 'fire_os'
+  | 'roku_os'
+  | 'unknown';
+/**
+ * Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.
+ */
+export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
+/**
+ * Time unit for isochrone (travel-time catchment) calculations.
+ */
+export type TravelTimeUnit = 'min' | 'hr';
+/**
+ * Transportation mode for isochrone calculation. Required when travel_time is provided.
+ */
+export type TransportMode = 'walking' | 'cycling' | 'driving' | 'public_transport';
+/**
+ * Distance unit.
+ */
+export type DistanceUnit = 'km' | 'mi' | 'm';
+/**
+ * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
+ */
+export type MatchType = 'broad' | 'phrase' | 'exact';
+/**
  * Remedy types available when a performance standard or billing measurement threshold is breached.
  */
 export type MakegoodRemedy = 'additional_delivery' | 'credit' | 'invoice_adjustment';
@@ -439,6 +459,45 @@ export type PerformanceStandardMetric = 'viewability' | 'ivt' | 'completion_rate
  * Measurement standard. Required when metric is 'viewability' (MRC and GroupM define materially different thresholds). Omit for other metrics.
  */
 export type ViewabilityStandard = 'mrc' | 'groupm';
+/**
+ * One metric in a package's binding reporting contract. Each entry uses `scope` as the discriminator and identifies a standard or vendor-defined metric that the seller has committed to populate in delivery reports.
+ */
+export type CommittedMetric =
+  | {
+      /**
+       * Standard metric from the closed `available-metric.json` enum.
+       */
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Disambiguates metrics whose definition varies by qualifier. Today carries five keys — `viewability_standard` (MRC vs GroupM viewability), `completion_source` (seller- vs vendor-attested completion), `attribution_methodology` (how attribution was computed for outcome metrics), `attribution_window` (the time window over which outcomes were attributed), and `lift_dimension` (which dimension of brand_lift this row represents — awareness, consideration, etc.). Required when the underlying `metric_id` has multiple incompatible measurement paths AND the seller commits to a specific one. Symmetric on `missing_metrics`. Reserved for additive qualifiers in future minors — schema is closed (`additionalProperties: false`); new keys ship explicitly. **Heterogeneous value types**: qualifier values can be either string enums (`viewability_standard`, `completion_source`, `attribution_methodology`, `lift_dimension`) or structured objects (`attribution_window` is a duration `{interval, unit}`). Consumers MUST dispatch on key name to know value shape; structured-value qualifiers join on canonical (key-sorted) deep equality so `{interval: 14, unit: 'days'}` and `{unit: 'days', interval: 14}` resolve to the same partition. Rate-style metrics (`new_to_brand_rate`, `engagement_rate`, etc.) inherit the methodology of their numerator — when a rate carries `attribution_methodology` qualifier, it applies to the underlying conversions/events being rated.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+      /**
+       * ISO 8601 timestamp when this metric became part of the contract. Day-1 commitments use `create_media_buy.confirmed_at`; mid-flight additions use the time the amendment was accepted.
+       * @format date-time
+       */
+      committed_at: string;
+    }
+  | {
+      /**
+       * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+       */
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      /**
+       * ISO 8601 timestamp when this vendor metric became part of the contract.
+       * @format date-time
+       */
+      committed_at: string;
+    };
 /**
  * Identifier for the standard metric.
  */
@@ -502,7 +561,7 @@ export type OptimizationGoal =
   | {
       kind: 'metric';
       /**
-       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel subscribes), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
+       * Seller-native metric to optimize for. Delivery metrics: clicks (link clicks, swipe-throughs, CTA taps that navigate away), views (viewable impressions), completed_views (video/audio completions — see view_duration_seconds), reach (unique audience reach — see reach_unit and target_frequency). Duration/score metrics: viewed_seconds (time in view per impression — reported back via `delivery-metrics.viewability.viewed_seconds`, governed by the viewability `standard`). Audience action metrics: engagements (any direct interaction with the ad unit beyond viewing — social reactions/comments/shares, story/unit opens, interactive overlay taps, companion banner interactions on audio and CTV), follows (new followers, page likes, artist/podcast/channel follows, or free channel/feed subscribes; paid subscriptions use event_type: subscribe), saves (saves, bookmarks, playlist adds, pins — signals of intent to return), profile_visits (visits to the brand's in-platform page — profile, artist page, channel, or storefront. Does not include external website clicks, which are covered by 'clicks'). **DEPRECATED values** (slated for removal at next major): `attention_seconds` and `attention_score` — these have no industry-graduated definition (DoubleVerify, IAS, Adelaide, TVision, Lumen each define them differently) and cannot be meaningfully optimized for without a vendor binding. Use `kind: 'vendor_metric'` with an explicit `vendor` and `metric_id` instead — that path binds the goal to a specific measurement vendor and reconciles to the same `(vendor, metric_id)` key in delivery's `vendor_metric_values[]`. Sellers MAY reject the deprecated values with `TERMS_REJECTED` and a suggestion to use the `vendor_metric` kind.
        */
       metric:
         | 'clicks'
@@ -707,6 +766,7 @@ export interface MediaBuy {
    * Array of packages within this media buy
    */
   packages: Package[];
+  context?: ContextObject;
   invoice_recipient?: BusinessEntity;
   /**
    * ISO 8601 timestamp for creative upload deadline
@@ -1354,7 +1414,7 @@ export interface Package {
    */
   package_id: string;
   /**
-   * ID of the product this package is based on
+   * ID of the product this package is based on. For packages created from an explicit create_media_buy package request, sellers MUST echo the request package's product_id on every response package object that represents that requested package.
    */
   product_id?: string;
   /**
@@ -1383,13 +1443,18 @@ export interface Package {
    */
   catalogs?: Catalog[];
   /**
-   * Legacy named-format IDs active for this package. Echoed from the create_media_buy request; omitted means all formats for the product are active unless `format_option_refs` narrows the 3.1+ format-option set.
+   * Legacy named-format IDs supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it, including dual-emission cases where `format_option_refs` was the winning selector, so read surfaces preserve the original wire contract. Omitted means the request did not carry legacy format_ids unless the seller cannot reconstruct legacy requests created before this field was persisted.
    */
   format_ids?: FormatReferenceStructuredObject[];
   /**
-   * Structured 3.1+ format option references active for this package, echoed from the create_media_buy request. Publisher-catalog-backed options are identified by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options are identified by `{ scope: "product", format_option_id }` and resolve only against this package's target product. Omitted means all 3.1+ format options for the product are active unless `format_ids` narrows the set.
+   * Structured 3.1+ format option references supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it. Publisher-catalog-backed options are identified by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options are identified by `{ scope: "product", format_option_id }` and resolve only against this package's target product. Omitted means the request did not carry format_option_refs unless the seller cannot reconstruct legacy requests created before this field was persisted.
    */
   format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`, echoed from the create_media_buy request whenever the request included it. Requires `format_kind`; omitted only when the request did not carry direct canonical params or when the seller cannot reconstruct legacy requests created before this field was persisted.
+   */
+  params?: {};
   targeting_overlay?: TargetingOverlay;
   measurement_terms?: MeasurementTerms;
   /**
@@ -1399,43 +1464,7 @@ export interface Package {
   /**
    * The binding reporting contract for this package — what the seller has agreed to populate in delivery reports. Each entry carries an explicit `committed_at` timestamp, so the array also serves as the contract amendment ledger: day-1 commitments share `committed_at = create_media_buy.confirmed_at`; mid-flight additions carry their own timestamps. When `create_media_buy.confirmed_at` is null for a provisional buy, sellers MUST omit `committed_metrics` until commitment. The first response that sets `confirmed_at` MAY include the initial committed-metrics set, and each such entry's `committed_at` MUST equal `confirmed_at`. The `missing_metrics` field on `get_media_buy_delivery` reconciles against this list, filtering to entries where `committed_at < reporting_period.end` (a metric committed mid-flight is only audited from its commitment timestamp forward). Sellers stamp the day-1 set on the `create_media_buy` response; mid-flight additions are appended via `update_media_buy` (append-only — sellers MUST reject attempts to modify or remove existing entries with `validation_error`, suggested code: `IMMUTABLE_FIELD`). Optional in v1; absence means the seller does not provide an audit-grade contract and `missing_metrics` falls back to the product's live `available_metrics` (a known audit gap — buyers SHOULD treat absence as 'no audit-grade contract' rather than 'clean delivery'). Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. The unified shape is symmetric with `missing_metrics` and `aggregated_totals.metric_aggregates` — same atomic unit `(scope, metric_id, qualifier)` across contract, diff, and delivery, so reconciliation collapses to a row-level join on the tuple. Replaces the parallel-array design that shipped briefly in #3510.
    */
-  committed_metrics?: (
-    | {
-        /**
-         * Standard metric from the closed `available-metric.json` enum.
-         */
-        scope: 'standard';
-        metric_id: AvailableMetric;
-        /**
-         * Disambiguates metrics whose definition varies by qualifier. Today carries five keys — `viewability_standard` (MRC vs GroupM viewability), `completion_source` (seller- vs vendor-attested completion), `attribution_methodology` (how attribution was computed for outcome metrics), `attribution_window` (the time window over which outcomes were attributed), and `lift_dimension` (which dimension of brand_lift this row represents — awareness, consideration, etc.). Required when the underlying `metric_id` has multiple incompatible measurement paths AND the seller commits to a specific one. Symmetric on `missing_metrics`. Reserved for additive qualifiers in future minors — schema is closed (`additionalProperties: false`); new keys ship explicitly. **Heterogeneous value types**: qualifier values can be either string enums (`viewability_standard`, `completion_source`, `attribution_methodology`, `lift_dimension`) or structured objects (`attribution_window` is a duration `{interval, unit}`). Consumers MUST dispatch on key name to know value shape; structured-value qualifiers join on canonical (key-sorted) deep equality so `{interval: 14, unit: 'days'}` and `{unit: 'days', interval: 14}` resolve to the same partition. Rate-style metrics (`new_to_brand_rate`, `engagement_rate`, etc.) inherit the methodology of their numerator — when a rate carries `attribution_methodology` qualifier, it applies to the underlying conversions/events being rated.
-         */
-        qualifier?: {
-          viewability_standard?: ViewabilityStandard;
-          completion_source?: CompletionSource;
-          attribution_methodology?: AttributionMethodology;
-          attribution_window?: Duration;
-          lift_dimension?: LiftDimension;
-        };
-        /**
-         * ISO 8601 timestamp when this metric became part of the contract. Day-1 commitments use `create_media_buy.confirmed_at`; mid-flight additions use the time the amendment was accepted.
-         * @format date-time
-         */
-        committed_at: string;
-      }
-    | {
-        /**
-         * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
-         */
-        scope: 'vendor';
-        vendor: BrandReference;
-        metric_id: VendorMetricID;
-        /**
-         * ISO 8601 timestamp when this vendor metric became part of the contract.
-         * @format date-time
-         */
-        committed_at: string;
-      }
-  )[];
+  committed_metrics?: CommittedMetric[];
   /**
    * Creative assets assigned to this package
    */
@@ -1758,6 +1787,11 @@ export interface TargetingOverlay {
    */
   audience_exclude?: string[];
   signal_targeting_groups?: PackageSignalTargetingGroups;
+  /**
+   * @deprecated
+   * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
+   */
+  signal_targeting?: SignalTargeting[];
   frequency_cap?: FrequencyCap;
   property_list?: PropertyListReference;
   collection_list?: CollectionListReference;
@@ -1940,11 +1974,6 @@ export interface TargetingOverlay {
     keyword: string;
     match_type: MatchType;
   }[];
-  /**
-   * @deprecated
-   * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
-   */
-  signal_targeting?: SignalTargeting[];
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -1972,7 +2001,7 @@ export interface DaypartTarget {
   label?: string;
 }
 /**
- * Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external published adagents.json signal catalogs. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. On update_media_buy, sellers MAY reject changes that require repricing with REQUOTE_REQUIRED.
+ * Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external signals published in adagents.json signals[]. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. On update_media_buy, sellers MAY reject changes that require repricing with REQUOTE_REQUIRED.
  */
 export interface PackageSignalTargetingGroups {
   /**
@@ -1998,7 +2027,7 @@ export interface PackageSignalTargetingGroup {
   signals: PackageSignalTargeting[];
 }
 /**
- * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined by a data provider's published adagents.json signal catalog, or scope 'signal_source' for a source-native signal that is not catalog-published. The selected product's inline Product.signal_targeting_options, get_signals feed, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
+ * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
 export interface PackageSignalTargeting {
   /**
@@ -2188,7 +2217,7 @@ export interface AttributionWindow {
   model?: AttributionModel;
 }
 /**
- * Opaque correlation data that is echoed unchanged in responses. Used for internal tracking, UI session IDs, trace IDs, and other caller-specific identifiers that don't affect protocol behavior. Context data is never parsed by AdCP agents - it's simply preserved and returned.
+ * Opaque package-level correlation data echoed unchanged in responses, webhooks, and read surfaces. Buyers targeting mixed seller populations SHOULD include a per-package correlation value here, commonly context.buyer_ref, so responses from legacy sellers that do not echo product_id can still be mapped back to the requested product or line item. Sellers MUST preserve this object unchanged and MUST NOT parse it for business logic.
  */
 export interface ContextObject {}
 /**
@@ -2260,23 +2289,6 @@ export type CreativeAsset = {
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
 } & (LegacyCreativeNamedFormatReference | CreativeCanonicalFormatKind);
-/**
- * 3.1+ canonical-format path. The canonical format name this creative targets (e.g., `image`, `video_hosted`). Mutually exclusive with `format_id`.
- */
-export type CanonicalFormatKind =
-  | 'image'
-  | 'html5'
-  | 'display_tag'
-  | 'image_carousel'
-  | 'video_hosted'
-  | 'video_vast'
-  | 'audio_hosted'
-  | 'audio_daast'
-  | 'sponsored_placement'
-  | 'native_in_feed'
-  | 'responsive_creative'
-  | 'agent_placement'
-  | 'custom';
 /**
  * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
  */
@@ -3577,6 +3589,10 @@ export type Product = {
      * Optional array of specific public placements within this product. Placement IDs are scoped by publisher domain. Product placements declare `kind` to distinguish publisher-referenced placements (`publisher_ref`) from seller-defined inline placements (`seller_inline`). Publisher-referenced placements carry `publisher_domain` plus `placement_id` and may omit `name` because buyers resolve the name from the publisher's adagents.json placement declarations. Seller-inline placements carry buyer-facing `name` directly; when `publisher_domain` is omitted, buyers MAY interpret the placement ID relative to the seller agent's own publisher domain only during the legacy single-publisher transition. Community-maintained fallback files are resolver/source metadata, not a distinct placement kind. Each placement MUST declare `mode: 'targetable'` (buyer may select the placement by PlacementRef, for example in creative assignments) or `mode: 'included'` (part of the public product composition but not buyer-selectable). Placement-level format declarations narrow the product-level creative contract and MUST NOT broaden it. Seller-private delivery objects, source/origin details, and ad-server mappings MUST NOT be exposed here.
      */
     placements?: Placement[];
+    /**
+     * Declared video placement types that may be included in this product, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Use on OLV, CTV, and other video products when buyers need to distinguish instream, accompanying-content, interstitial, and standalone/no-content inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `video_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+     */
+    video_placement_types?: VideoPlacementType[];
     delivery_type: DeliveryType;
     exclusivity?: Exclusivity;
     /**
@@ -3624,7 +3640,7 @@ export type Product = {
     property_targeting_allowed?: boolean;
     /**
      * @deprecated
-     * Deprecated. Legacy/non-selectable metadata for data-provider catalog signals already bundled into or associated with this product. This field does not provide buyer-selectable options, prices, or seller activation handles. Use included_signals for non-selectable product signal metadata, or signal_targeting_options for selectable package-level signal groups.
+     * Deprecated. Legacy/non-selectable metadata for data-provider signals already bundled into or associated with this product. This field does not provide buyer-selectable options, prices, or seller activation handles. Use included_signals for non-selectable product signal metadata, or signal_targeting_options for selectable package-level signal groups.
      */
     data_provider_signals?: DataProviderSignalSelector[];
     /**
@@ -3632,7 +3648,7 @@ export type Product = {
      */
     included_signals?: SignalListing[];
     /**
-     * Inline seller-offered signals that may be applied to packages for this product at create_media_buy time. Each entry references a named signal definition with signal_ref scope 'product' for a product-local signal option, scope 'data_provider' for an external published adagents.json signal catalog the seller is authorized to apply, or scope 'signal_source' for a source-native signal. Product-local options define name and value_type inline; data-provider and signal-source options may omit those fields when the referenced catalog or source is authoritative. Use this field when the selectable menu is product-specific, has product-specific pricing or activation handles, is the relevant subset for a brief/refine result, or should be rendered without an additional get_signals call. Wholesale products may omit this field and rely on get_signals for the selectable signal feed. Buyers select eligible signals through packages[].targeting_overlay.signal_targeting_groups when signal_targeting_rules allow; fixed/default entries are applied by the seller and echoed on the package state. Sellers MUST set signal_targeting_allowed to true whenever this field is present. Bundled, non-selectable signal metadata belongs in included_signals; legacy data_provider_signals may appear only for backwards compatibility.
+     * Inline seller-offered signals that may be applied to packages for this product at create_media_buy time. Each entry references a named signal definition with signal_ref scope 'product' for a product-local signal option, scope 'data_provider' for an external signal definition published in adagents.json signals[] that the seller is authorized to apply, or scope 'signal_source' for a source-native signal. Product-local options define name and value_type inline; data-provider and signal-source options may omit those fields when the referenced definition or source is authoritative. Use this field when the selectable menu is product-specific, has product-specific pricing or activation handles, is the relevant subset for a brief/refine result, or should be rendered without an additional get_signals call. Wholesale products may omit this field and rely on get_signals for the selectable signal feed. Buyers select eligible signals through packages[].targeting_overlay.signal_targeting_groups when signal_targeting_rules allow; fixed/default entries are applied by the seller and echoed on the package state. Sellers MUST set signal_targeting_allowed to true whenever this field is present. Bundled, non-selectable signal metadata belongs in included_signals; legacy data_provider_signals may appear only for backwards compatibility.
      */
     signal_targeting_options?: ProductSignalTargetingOption[];
     signal_targeting_rules?: SignalTargetingRules;
@@ -4071,7 +4087,7 @@ export type CanonicalFormatImage = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -4225,7 +4241,7 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -4381,7 +4397,7 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -4547,7 +4563,15 @@ export type Placement = {
    * 3.1+ canonical format-option declarations supported by this specific product placement. When present, this field narrows the product-level `format_options` contract for this placement and MUST NOT introduce formats the product does not accept. Buyers compute the effective accepted formats for a placement as the intersection of product-level and placement-level declarations; placements without a format declaration inherit the product-level formats.
    */
   format_options?: ProductFormatDeclaration[];
+  /**
+   * Declared video placement types for this product placement, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  video_placement_types?: VideoPlacementType[];
 };
+/**
+ * Declared video placement classification for OLV and other video inventory, using the IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native value names. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+ */
+export type VideoPlacementType = 'instream' | 'accompanying_content' | 'interstitial' | 'standalone';
 /**
  * Type of inventory delivery
  */
@@ -4638,9 +4662,9 @@ export type MediaBuyValidAction =
   | 'update_packages'
   | 'sync_creatives';
 /**
- * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, a proposal lifecycle round-trip, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`).
+ * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.
  */
-export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_approval';
 /**
  * Available frequencies for delivery reports and metrics updates
  */
@@ -4654,7 +4678,7 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 /**
- * Selects signals from a data provider's adagents.json catalog. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
+ * Selects signals from a data provider's adagents.json signals[]. Used for product definitions and agent authorization. Supports three selection patterns: all signals, specific IDs, or by tags.
  */
 export type DataProviderSignalSelector =
   | {
@@ -4679,7 +4703,7 @@ export type DataProviderSignalSelector =
        */
       selection_type: 'by_id';
       /**
-       * Specific signal IDs from the data provider's catalog
+       * Specific signal IDs from the data provider's published signal definitions
        */
       signal_ids: string[];
     }
@@ -4694,12 +4718,12 @@ export type DataProviderSignalSelector =
        */
       selection_type: 'by_tag';
       /**
-       * Signal tags from the data provider's catalog. Selector covers all signals with these tags
+       * Signal tags from the data provider's published signal definitions. Selector covers all signals with these tags
        */
       signal_tags: string[];
     };
 /**
- * Shared signal identity and definition metadata used when a signal is listed outside its authoritative catalog. New listings carry signal_ref; legacy listings may carry deprecated signal_id during the SignalRef migration window. Product-local signals use the listing as the definition boundary and MUST include name and value_type. Data-provider and signal-source refs MAY omit definition metadata when the buyer can resolve it from the referenced catalog or source; any supplied name, description, value_type, categories, range, methodology_url, or last_updated is product/account/source context and does not replace the authoritative definition.
+ * Shared signal identity and definition metadata used when a signal is listed outside its authoritative definition. New listings carry signal_ref; legacy listings may carry deprecated signal_id during the SignalRef migration window. Product-local signals use the listing as the definition boundary and MUST include name and value_type. Data-provider and signal-source refs MAY omit definition metadata when the buyer can resolve it from the referenced provider-published definition or source; any supplied name, description, value_type, categories, range, methodology_url, or last_updated is product/account/source context and does not replace the authoritative definition.
  */
 export type SignalListing = {
   [k: string]: unknown | undefined;
@@ -4707,7 +4731,7 @@ export type SignalListing = {
   signal_ref?: SignalRef;
   signal_id?: SignalID;
   /**
-   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced catalog or source remains authoritative.
+   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced definition or source remains authoritative.
    */
   name?: string;
   /**
@@ -4747,7 +4771,7 @@ export type SignalListing = {
  */
 export type SignalValueType = 'binary' | 'categorical' | 'numeric';
 /**
- * A signal the seller makes available inline for package-level signal composition on this product. Product.signal_targeting_options is used when the product needs product-scoped pricing, activation handles, defaults, grouping hints, a brief/refine-selected subset, or a curated inline menu. Wholesale products can instead omit inline options when the selectable menu is the broader get_signals feed. Product-local signals define their name and value_type inline through the shared signal-listing fields; data-provider and signal-source refs may omit those definition fields when the referenced catalog or source is authoritative.
+ * A signal the seller makes available inline for package-level signal composition on this product. Product.signal_targeting_options is used when the product needs product-scoped pricing, activation handles, defaults, grouping hints, a brief/refine-selected subset, or a curated inline menu. Wholesale products can instead omit inline options when the selectable menu is the broader get_signals feed. Product-local signals define their name and value_type inline through the shared signal-listing fields; data-provider and signal-source refs may omit those definition fields when the referenced definition or source is authoritative.
  */
 export type ProductSignalTargetingOption = {
   [k: string]: unknown | undefined;
@@ -4755,7 +4779,7 @@ export type ProductSignalTargetingOption = {
   signal_ref: SignalRef;
   signal_id?: SignalID;
   /**
-   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced catalog or source remains authoritative.
+   * Human-readable signal name. Required when signal_ref.scope is 'product'. For data_provider and signal_source refs, this is optional contextual display text; the referenced definition or source remains authoritative.
    */
   name?: string;
   /**
@@ -4968,7 +4992,7 @@ export interface CanonicalFormatImageCarousel {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -5078,7 +5102,7 @@ export interface CanonicalFormatHostedVideo {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -5227,7 +5251,7 @@ export interface CanonicalFormatVASTVideo {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -5351,7 +5375,7 @@ export interface CanonicalFormatHostedAudio {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -5473,7 +5497,7 @@ export interface CanonicalFormatDAASTAudio {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**
@@ -5961,7 +5985,7 @@ export interface AgentPlacementFormatDeclaration {
   params: CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement;
 }
 /**
- * **3.2-track canonical.** The structural shape (algorithmic composition + brand-context input + optional offering/landing_page) is captured here so adopters can declare against it in 3.1 catalogs, but the **mention-level tracking contract is intentionally underspecified for 3.1**: no normative macro vocabulary, no postback shape, no cross-surface dedup model. Adopters claiming `agent_placement` in 3.1 ship private tracking integrations and SHOULD set `runtime_status: 'preview'` or `'declared_only'` on the declaration; buyer agents MUST treat agent_placement attribution as adapter-defined until the 3.2 tracking-macro spec lands. The canonical promotes to a normatively-buyer-callable surface in 3.2 (or later) once the tracking contract is specified.
+ * **3.2-track canonical.** The structural shape (algorithmic composition + brand-context input + optional offering/landing_page) is captured here so adopters can declare against it in 3.1 catalogs, but the **mention-level tracking contract is intentionally underspecified for 3.1**: no normative macro vocabulary, no postback shape, no cross-surface dedup model. Adopters claiming `agent_placement` in 3.1 ship private tracking integrations and SHOULD leave `experimental: true` on the product declaration that references this canonical; buyer agents MUST treat agent_placement attribution as adapter-defined until the 3.2 tracking-macro spec lands. The canonical promotes to a normatively-buyer-callable surface in 3.2 (or later) once the tracking contract is specified.
  *
  * Sponsored placement integrated into an AI-surface's response to a user. Buyer supplies a `BrandRef` (resolving brand.json for context), an optional `offering_ref` to focus the mention on a specific offering, and an optional `landing_page_url` the surface MAY attach as a citation. The surface (LLM, voice assistant, sponsored-search ranker) composes a natural-language mention, sponsored card, or audio snippet within its response to a user query. **Composition is algorithmic** — the agent chooses phrasing and presentation. Output asset_type varies by surface: `text` for chat UIs and sponsored search snippets; `audio` (synthesized) for voice assistants; `card` for structured AI-surface result cards. Tracking model: mention-level impression + attribution events; per-mention id keys back to brand and offering — but see the 3.2-track note above; the wire shape of these events is not yet specified. Distinct from `si_chat` (which is the user-converses-with-brand's-agent pattern — brand owns the conversational surface) and from `sponsored_placement` (retail-media catalog-driven). Parallels `sponsored_placement` structurally: both are surface-composed placements; agent_placement is for AI/agentic surfaces, sponsored_placement is for retail media.
  */
@@ -6661,6 +6685,9 @@ export interface ForecastPoint {
    */
   vendor_metric_values?: ForecastVendorMetricValue[];
 }
+/**
+ * A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface GeoForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6680,6 +6707,9 @@ export interface GeoForecastDimension {
    */
   geo_name?: string;
 }
+/**
+ * A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface PlacementForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6691,6 +6721,9 @@ export interface PlacementForecastDimension {
    */
   placement_name?: string;
 }
+/**
+ * A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface DeviceTypeForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6698,6 +6731,9 @@ export interface DeviceTypeForecastDimension {
   kind: 'device_type';
   device_type: DeviceType;
 }
+/**
+ * An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface DevicePlatformForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6705,6 +6741,9 @@ export interface DevicePlatformForecastDimension {
   kind: 'device_platform';
   device_platform: DevicePlatform;
 }
+/**
+ * An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface AudienceForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6720,6 +6759,9 @@ export interface AudienceForecastDimension {
    */
   audience_name?: string;
 }
+/**
+ * A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules.
+ */
 export interface SignalForecastDimension {
   /**
    * Dimension family discriminator.
@@ -6856,7 +6898,7 @@ export interface ProductAllowedAction {
  */
 export interface SLAWindow {
   /**
-   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, queue ack for requires_approval, proposal task creation for requires_proposal). ISO 8601 duration.
+   * Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue ack for requires_approval). ISO 8601 duration.
    * @pattern ^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$
    */
   response_max?: string;
@@ -7189,30 +7231,34 @@ export interface SignalTargetingRules {
   /**
    * Optional product-scoped overrides for specific ProductSignalTargetingOption.selection_group values. Use this when one product has mixed behavior, such as fixed seller-applied suppressions, a required pick-one include tier, optional buyer-selected exclusions, or heterogeneous targeting planes that must be represented as separate ANDed clauses. Rules apply only to options whose selection_group matches. When selection_group_rules are present, each packages[].targeting_overlay.signal_targeting_groups child group MUST contain signals from exactly one selection_group and one targeting_mode, and buyers MUST send at most one child group for each (selection_group, targeting_mode) pair. Sellers MUST reject duplicate, mixed, or collapsed groups that combine distinct selection_group_rules into the same child group.
    */
-  selection_group_rules?: {
-    /**
-     * ProductSignalTargetingOption.selection_group value this rule applies to.
-     */
-    selection_group: string;
-    /**
-     * How options in this selection_group are intended to be used in signal_targeting_groups. 'include' maps to child groups with operator 'any'. 'exclude' maps to child groups with operator 'none'. Omit when options in the group may be used according to each option's allowed_targeting_modes.
-     */
-    targeting_mode?: 'include' | 'exclude';
-    /**
-     * Selection behavior for this selection_group. 'required' means at least min_selected_signals, or 1 when omitted. 'fixed' means default_selected options in this group are seller-applied and read-only.
-     */
-    selection_mode?: 'optional' | 'required' | 'fixed';
-    /**
-     * Minimum selected options from this selection_group. If selection_mode is 'required' and omitted, sellers MUST treat the minimum as 1.
-     * @minimum 0
-     */
-    min_selected_signals?: number;
-    /**
-     * Maximum selected options from this selection_group.
-     * @minimum 1
-     */
-    max_selected_signals?: number;
-  }[];
+  selection_group_rules?: SignalSelectionGroupRule[];
+}
+/**
+ * Product-scoped override for one ProductSignalTargetingOption.selection_group value. Use this when a product has mixed signal-selection behavior, such as fixed suppressions plus a required pick-one include tier.
+ */
+export interface SignalSelectionGroupRule {
+  /**
+   * ProductSignalTargetingOption.selection_group value this rule applies to.
+   */
+  selection_group: string;
+  /**
+   * How options in this selection_group are intended to be used in signal_targeting_groups. 'include' maps to child groups with operator 'any'. 'exclude' maps to child groups with operator 'none'. Omit when options in the group may be used according to each option's allowed_targeting_modes.
+   */
+  targeting_mode?: 'include' | 'exclude';
+  /**
+   * Selection behavior for this selection_group. 'required' means at least min_selected_signals, or 1 when omitted. 'fixed' means default_selected options in this group are seller-applied and read-only.
+   */
+  selection_mode?: 'optional' | 'required' | 'fixed';
+  /**
+   * Minimum selected options from this selection_group. If selection_mode is 'required' and omitted, sellers MUST treat the minimum as 1.
+   * @minimum 0
+   */
+  min_selected_signals?: number;
+  /**
+   * Maximum selected options from this selection_group.
+   * @minimum 1
+   */
+  max_selected_signals?: number;
 }
 /**
  * Vendor-attested metric optimization capabilities for this product. Presence indicates the product supports `optimization_goals` with `kind: 'vendor_metric'` — the seller's bidding stack can steer delivery toward a specific vendor's measurement (e.g., DV/IAS/Adelaide attention, Scope3 emissions, Kantar brand lift, retail-media partner metrics). Distinct from `metric_optimization` (seller-native metrics with no vendor binding) and from `reporting_capabilities.vendor_metrics` (which declares what the product can *report* rather than what it can *optimize against*). A product may report a vendor metric without being able to optimize for it. Buyers MUST verify the goal's `(vendor, metric_id)` is in `supported_metrics` AND that the package's `committed_metrics[]` includes a matching `{ scope: 'vendor', vendor, metric_id }` entry — optimization without committed reporting is unverifiable and is rejected at the wire level.
@@ -7221,14 +7267,18 @@ export interface VendorMetricOptimization {
   /**
    * Vendor-defined metrics this product can steer delivery toward. Each entry pairs a vendor identity (BrandRef anchored on the vendor's `brand.json` `agents[type='measurement']`) with a `metric_id` from that vendor's published `measurement.metrics[]` catalog, plus the target kinds the seller supports for the pair. Semantic uniqueness key is `(vendor.domain, vendor.brand_id, metric_id)`; sellers MUST de-duplicate before publication. JSON Schema `uniqueItems` blocks exact-object duplicates; semantic deduplication on the BrandRef-domain key is a seller obligation.
    */
-  supported_metrics: {
-    vendor: BrandReference;
-    metric_id: VendorMetricID;
-    /**
-     * Target kinds available for `vendor_metric` goals against this `(vendor, metric_id)` pair. Values match `target.kind` on the optimization goal. `cost_per` — target cost per metric unit (e.g., $0.05 per attention-second). `threshold_rate` — minimum per-impression value (e.g., attention_score ≥ 70). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes the metric within budget — no declaration needed for that mode. When omitted, buyers can still set target-less vendor_metric goals.
-     */
-    supported_targets?: ('cost_per' | 'threshold_rate')[];
-  }[];
+  supported_metrics: VendorMetricOptimizationSupportedMetric[];
+}
+/**
+ * One vendor-defined metric that a product can optimize toward. Identified by the tuple `(vendor, metric_id)` plus the supported target kinds for optimization goals.
+ */
+export interface VendorMetricOptimizationSupportedMetric {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  /**
+   * Target kinds available for `vendor_metric` goals against this `(vendor, metric_id)` pair. Values match `target.kind` on the optimization goal. `cost_per` — target cost per metric unit (e.g., $0.05 per attention-second). `threshold_rate` — minimum per-impression value (e.g., attention_score ≥ 70). Only these target kinds are accepted — goals with unlisted target kinds will be rejected. A goal without a target implicitly maximizes the metric within budget — no declaration needed for that mode. When omitted, buyers can still set target-less vendor_metric goals.
+   */
+  supported_targets?: ('cost_per' | 'threshold_rate')[];
 }
 /**
  * Assessment of whether the buyer's event source setup is sufficient for this product to optimize effectively. Only present when the seller can evaluate the buyer's account context. Buyers should check this before creating media buys with event-based optimization goals.
@@ -7540,6 +7590,7 @@ export interface Property {
 export type TaskType =
   | 'create_media_buy'
   | 'update_media_buy'
+  | 'media_buy_delivery'
   | 'sync_creatives'
   | 'activate_signal'
   | 'get_signals'
@@ -7599,6 +7650,7 @@ export type AdCPAsyncResponseData =
   | UpdateMediaBuyAsyncWorking
   | UpdateMediaBuyAsyncInputRequired
   | UpdateMediaBuyAsyncSubmitted
+  | MediaBuyDeliveryWebhookResult
   | BuildCreativeResponse
   | BuildCreativeAsyncWorking
   | BuildCreativeAsyncInputRequired
@@ -7612,7 +7664,7 @@ export type AdCPAsyncResponseData =
   | SyncCatalogsAsyncInputRequired
   | SyncCatalogsAsyncSubmitted;
 /**
- * Lifecycle status of this proposal. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at.
+ * Lifecycle status of this proposal and the per-proposal source of truth for whether finalization is required before create_media_buy. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at and executable via create_media_buy.
  */
 export type ProposalStatus = 'draft' | 'committed';
 /**
@@ -7785,6 +7837,10 @@ export type UpdateMediaBuyResponse = {
    */
   adcp_major_version?: number;
 } & (UpdateMediaBuySuccess | UpdateMediaBuyError | UpdateMediaBuySubmitted);
+/**
+ * Supported pricing models for advertising products
+ */
+export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
 /**
  * Response for completed or failed build_creative
  */
@@ -8179,7 +8235,7 @@ export interface MCPWebhookPayload {
    */
   notification_id?: string;
   /**
-   * Client-generated correlation identifier for the operation that produced this webhook. Buyers supply this value at webhook registration time via `push_notification_config.operation_id`; sellers MUST echo it verbatim in every webhook payload. Sellers MUST NOT derive `operation_id` by parsing `push_notification_config.url` — the URL is opaque to the seller. Receivers MUST correlate webhooks using this payload field, never URL-path inspection. See [Webhooks — Operation IDs and URL templates](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates) for the full normative wire contract.
+   * Client-generated correlation identifier for the operation that produced this webhook. Buyers supply this value at webhook registration time via `push_notification_config.operation_id`; sellers MUST echo it verbatim in every webhook payload. Sellers MUST NOT derive `operation_id` by parsing `push_notification_config.url` — the URL is opaque to the seller. Receivers MAY dispatch endpoints by URL path or query string, but MUST correlate the operation using this payload field, not URL-derived values. See [Webhooks — Operation IDs and URL templates](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates) for the full normative wire contract.
    */
   operation_id: string;
   /**
@@ -8388,7 +8444,7 @@ export interface GetProductsResponse {
      */
     total_candidates?: number;
     /**
-     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
+     * Per-filter exclusion counts, keyed by the filter property name as it appears in the request's `filters` object (e.g., `pricing_currencies`, `required_metrics`, `required_vendor_metrics`, `required_geo_targeting`, `budget_range`). Values are objects carrying `count` and optional filter-specific detail. Only filters that actually narrowed the set need appear here; absence of a key means that filter did not exclude anything (or was not in the request).
      */
     excluded_by?: {
       [k: string]:
@@ -8548,7 +8604,7 @@ export interface PushNotificationConfig {
    */
   url: string;
   /**
-   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed the same value in the URL path or query as a routing aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
    * @minLength 1
    * @maxLength 255
    * @pattern ^[A-Za-z0-9_.:-]{1,255}$
@@ -8576,11 +8632,11 @@ export interface PushNotificationConfig {
   };
 }
 /**
- * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable - buyers can execute them directly via create_media_buy by providing the proposal_id.
+ * A proposed media plan with budget allocations across products. Represents the publisher's strategic recommendation for how to structure a campaign based on the brief. Proposals are actionable: committed proposals can be executed directly via create_media_buy by providing the proposal_id; draft proposals must first be finalized via get_products refine action 'finalize'.
  */
 export interface Proposal {
   /**
-   * Unique identifier for this proposal. Used to execute it via create_media_buy.
+   * Unique identifier for this proposal. Used to finalize a draft proposal and to execute a committed proposal via create_media_buy.
    * @maxLength 255
    */
   proposal_id: string;
@@ -9214,6 +9270,516 @@ export interface UpdateMediaBuyAsyncSubmitted {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Delivery-report payload for media_buy_delivery webhook notifications. This is the inner result object carried by mcp-webhook-payload.json, not the full top-level get_media_buy_delivery task response envelope.
+ */
+export interface MediaBuyDeliveryWebhookResult {
+  /**
+   * Type of delivery-report notification: scheduled = regular periodic update, final = campaign completed, delayed = data not yet available, adjusted = corrected data for the same window, window_update = a wider measurement window supersedes a prior window.
+   */
+  notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
+  /**
+   * Indicates if any media buys in this webhook have missing or delayed data.
+   */
+  partial_data?: boolean;
+  /**
+   * Number of media buys with reporting_delayed or failed status when partial_data is true.
+   * @minimum 0
+   */
+  unavailable_count?: number;
+  /**
+   * Sequential notification number for this reporting webhook stream.
+   * @minimum 1
+   */
+  sequence_number?: number;
+  /**
+   * ISO 8601 timestamp for the next expected notification. Omitted on final notifications.
+   * @format date-time
+   */
+  next_expected_at?: string;
+  /**
+   * UTC date range covered by the delivery report.
+   */
+  reporting_period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+  };
+  /**
+   * ISO 4217 currency code.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency: string;
+  attribution_window?: AttributionWindow;
+  /**
+   * Delivery rows for one or more media buys included in this notification.
+   */
+  media_buy_deliveries: {
+    /**
+     * Seller's media buy identifier.
+     */
+    media_buy_id: string;
+    /**
+     * Current media buy lifecycle or reporting status. This is distinct from the webhook envelope's top-level task status.
+     */
+    status:
+      | 'pending_creatives'
+      | 'pending_start'
+      | 'pending'
+      | 'active'
+      | 'paused'
+      | 'completed'
+      | 'rejected'
+      | 'canceled'
+      | 'failed'
+      | 'reporting_delayed';
+    /**
+     * When delayed data is expected to be available. Present when status is reporting_delayed.
+     * @format date-time
+     */
+    expected_availability?: string;
+    /**
+     * Indicates this row contains updated data for a previously reported period.
+     */
+    is_adjusted?: boolean;
+    /**
+     * Whether this row's delivery data is final for the reporting period.
+     */
+    is_final?: boolean;
+    /**
+     * Timestamp when this row became final. Present only when is_final is true.
+     * @format date-time
+     */
+    finalized_at?: string;
+    pricing_model?: PricingModel;
+    totals: DeliveryMetrics & {
+      /**
+       * @minimum 0
+       */
+      effective_rate?: number;
+    };
+    /**
+     * Metrics broken down by package.
+     */
+    by_package: (DeliveryMetrics & {
+      package_id?: string;
+      /**
+       * @minimum 0
+       */
+      pacing_index?: number;
+      pricing_model?: PricingModel;
+      /**
+       * @minimum 0
+       */
+      rate?: number;
+      /**
+       * @pattern ^[A-Z]{3}$
+       */
+      currency?: string;
+      delivery_status?: 'delivering' | 'completed' | 'budget_exhausted' | 'flight_ended' | 'goal_met';
+      paused?: boolean;
+      is_final?: boolean;
+      /**
+       * @format date-time
+       */
+      finalized_at?: string;
+      /**
+       * @maxLength 50
+       */
+      measurement_window?: string;
+      /**
+       * @maxLength 50
+       */
+      supersedes_window?: string;
+    })[];
+  }[];
+  /**
+   * Task-specific delivery errors or warnings.
+   */
+  errors?: Error[];
+  sandbox?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Standard delivery metrics that can be reported at media buy, package, or creative level
+ */
+export interface DeliveryMetrics {
+  /**
+   * Impressions delivered
+   * @minimum 0
+   */
+  impressions?: number;
+  /**
+   * Amount spent
+   * @minimum 0
+   */
+  spend?: number;
+  /**
+   * Total clicks
+   * @minimum 0
+   */
+  clicks?: number;
+  /**
+   * Click-through rate (clicks/impressions)
+   * @minimum 0
+   * @maximum 1
+   */
+  ctr?: number;
+  /**
+   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
+   * @minimum 0
+   */
+  views?: number;
+  /**
+   * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
+   * @minimum 0
+   */
+  completed_views?: number;
+  /**
+   * Completion rate (completed_views/impressions)
+   * @minimum 0
+   * @maximum 1
+   */
+  completion_rate?: number;
+  /**
+   * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
+   * @minimum 0
+   */
+  conversions?: number;
+  /**
+   * Total monetary value of attributed conversions (in the reporting currency)
+   * @minimum 0
+   */
+  conversion_value?: number;
+  /**
+   * Return on ad spend (conversion_value / spend)
+   * @minimum 0
+   */
+  roas?: number;
+  /**
+   * Cost per conversion (spend / conversions)
+   * @minimum 0
+   */
+  cost_per_acquisition?: number;
+  /**
+   * Fraction of `conversions` (transactions) from first-time brand buyers, 0 = none, 1 = all. For retail-media unit-volume tracking of first-time buyers, see `new_to_brand_units` (count, not rate).
+   * @minimum 0
+   * @maximum 1
+   */
+  new_to_brand_rate?: number;
+  /**
+   * Leads generated (convenience alias for by_event_type where event_type='lead')
+   * @minimum 0
+   */
+  leads?: number;
+  /**
+   * Incremental sales lift attributed to the campaign — sales above the control/holdout baseline. Reported as a fraction (0.15 = 15% lift) or as an absolute value depending on seller convention. The seller's `attribution_methodology` qualifier (typically `deterministic_purchase` or `modeled`) and `attribution_window` qualifier on the matching `committed_metrics` entry disambiguate the methodology and window.
+   * @minimum 0
+   */
+  incremental_sales_lift?: number;
+  /**
+   * Brand lift — measured change in a brand metric (awareness, consideration, favorability, purchase intent, or ad recall) attributed to the campaign. Typically panel-based or survey-based. Reported as a fraction (0.05 = 5% lift). **Multidimensional in production** — Kantar, Upwave, Cint, DV all report each dimension separately with its own sample size and confidence interval. The dimension flows through `qualifier.lift_dimension` on `committed_metrics` / `metric_aggregates` (`awareness` | `consideration` | `favorability` | `purchase_intent` | `ad_recall`); rows under different dimensions are different surveyed outcomes and must not be combined. Use `attribution_methodology: 'panel_based'` qualifier when the underlying methodology is a panel.
+   * @minimum 0
+   */
+  brand_lift?: number;
+  /**
+   * Store visits attributed to ad exposure. Count of incremental visits over baseline. Typically uses location-data panel methodology (`attribution_methodology: 'panel_based'`) or deterministic loyalty-card match (`attribution_methodology: 'deterministic_purchase'`).
+   * @minimum 0
+   */
+  foot_traffic?: number;
+  /**
+   * Incremental conversions attributed to the campaign — conversions above the control/holdout baseline. Reported as a fraction (0.10 = 10% lift) or as an absolute count depending on seller convention. Distinct from `conversions` (raw count of attributed conversions); conversion_lift requires a control group and an incrementality methodology.
+   * @minimum 0
+   */
+  conversion_lift?: number;
+  /**
+   * Lift in brand search query volume attributed to the campaign — measured via search-data partnerships (Google, Microsoft) or survey methodology. Reported as a fraction (0.20 = 20% lift in branded search).
+   * @minimum 0
+   */
+  brand_search_lift?: number;
+  /**
+   * Number of times the ad creative was displayed on a DOOH screen or played in a loop. Raw play count before any impression multiplier is applied. Mirrors `forecastable-metric.json`'s `plays` token for forecast↔delivery reconciliation. Distinct from `dooh_metrics.loop_plays` (per-screen rotation count) and from `impressions` (multiplied audience figure). Used for DOOH and broadcast inventory where buyers reconcile against forecast `plays`.
+   * @minimum 0
+   */
+  plays?: number;
+  /**
+   * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
+   */
+  by_event_type?: {
+    event_type: EventType;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of events of this type
+     * @minimum 0
+     */
+    count: number;
+    /**
+     * Total monetary value of events of this type
+     * @minimum 0
+     */
+    value?: number;
+  }[];
+  /**
+   * Gross Rating Points delivered (for CPP)
+   * @minimum 0
+   */
+  grps?: number;
+  /**
+   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit. The measurement window for this value is declared in `reach_window`; when `reach_window` is omitted, the window is unspecified and buyers MUST NOT sum reach across reports (the value MAY be a daily snapshot, a cumulative total, or something else).
+   * @minimum 0
+   */
+  reach?: number;
+  /**
+   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
+   */
+  reach_unit?: ReachUnit;
+  /**
+   * Measurement window for the reported `reach` and `frequency` values in this row. Declares whether the values are a per-period snapshot, a trailing rolling window, or cumulative-to-date — without this declaration, buyers summing `reach` across rows (e.g., daily delivery reports) can silently double-count audiences. Sellers SHOULD populate this whenever `reach` is present.
+   */
+  reach_window?: {
+    /**
+     * Window semantics. `cumulative` — uniques since campaign start; the value is the total unique count to date and MUST NOT be summed across rows (each later row supersedes the earlier value). `period` — uniques within a single non-overlapping reporting period (e.g., a daily snapshot for a specific calendar day). Adjacent `period` rows do not share audiences by construction, but the same person MAY appear across multiple periods, so MUST NOT be summed across rows to compute campaign reach. `rolling` — uniques within a trailing window ending at the row's reporting timestamp (e.g., trailing-7-day reach). Adjacent rolling rows overlap and MUST NOT be summed; each row's value stands alone.
+     */
+    kind: 'cumulative' | 'period' | 'rolling';
+    /**
+     * Duration of the measurement window. REQUIRED when `kind` is `period` or `rolling` — declares the snapshot length (e.g., `{"interval": 1, "unit": "days"}` for a daily snapshot) or the trailing-window length (e.g., `{"interval": 7, "unit": "days"}` for trailing-7-day rolling reach). When `kind` is `cumulative`, this field is implicit (campaign-to-date) and SHOULD be omitted.
+     */
+    period?: Duration;
+  };
+  /**
+   * Average frequency per reach unit, measured over the window declared in `reach_window`. When `reach_unit` is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc. When `reach_window` is omitted, the window is unspecified — buyers MUST NOT compare or average frequency values across rows.
+   * @minimum 0
+   */
+  frequency?: number;
+  /**
+   * Audio/video quartile completion data
+   */
+  quartile_data?: {
+    /**
+     * 25% completion views
+     * @minimum 0
+     */
+    q1_views?: number;
+    /**
+     * 50% completion views
+     * @minimum 0
+     */
+    q2_views?: number;
+    /**
+     * 75% completion views
+     * @minimum 0
+     */
+    q3_views?: number;
+    /**
+     * 100% completion views
+     * @minimum 0
+     */
+    q4_views?: number;
+  };
+  /**
+   * DOOH-specific metrics (only included for DOOH campaigns)
+   */
+  dooh_metrics?: {
+    /**
+     * Number of times ad played in rotation
+     * @minimum 0
+     */
+    loop_plays?: number;
+    /**
+     * Number of unique screens displaying the ad
+     * @minimum 0
+     */
+    screens_used?: number;
+    /**
+     * Total display time in seconds
+     * @minimum 0
+     */
+    screen_time_seconds?: number;
+    /**
+     * Actual share of voice delivered (0.0 to 1.0)
+     * @minimum 0
+     * @maximum 1
+     */
+    sov_achieved?: number;
+    /**
+     * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
+     */
+    calculation_notes?: string;
+    /**
+     * Per-venue performance breakdown
+     */
+    venue_breakdown?: {
+      /**
+       * Venue identifier
+       */
+      venue_id: string;
+      /**
+       * Human-readable venue name
+       */
+      venue_name?: string;
+      /**
+       * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
+       */
+      venue_type?: string;
+      /**
+       * Impressions delivered at this venue
+       * @minimum 0
+       */
+      impressions: number;
+      /**
+       * Loop plays at this venue
+       * @minimum 0
+       */
+      loop_plays?: number;
+      /**
+       * Number of screens used at this venue
+       * @minimum 0
+       */
+      screens_used?: number;
+    }[];
+  };
+  /**
+   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — since duration is governed by the same viewability threshold (`standard`) and shares the same `measurable_impressions` denominator. Sellers SHOULD include `standard` whenever measured viewability values are reported because MRC and GroupM rows are not interchangeable.
+   */
+  viewability?: {
+    vendor?: BrandReference;
+    /**
+     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate` AND `viewed_seconds` — both metrics are computed over the same measurable population.
+     * @minimum 0
+     */
+    measurable_impressions?: number;
+    /**
+     * Impressions that met the viewability threshold defined by the measurement standard.
+     * @minimum 0
+     */
+    viewable_impressions?: number;
+    /**
+     * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
+     * @minimum 0
+     * @maximum 1
+     */
+    viewable_rate?: number;
+    /**
+     * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
+     * @minimum 0
+     */
+    viewed_seconds?: number;
+    standard?: ViewabilityStandard;
+  };
+  /**
+   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric. Maps to DBCFM KPI_INTERACTIONS (Interaktionen) in the Reporting/Performance block.
+   * @minimum 0
+   */
+  engagements?: number;
+  /**
+   * New followers, page likes, artist/podcast/channel follows, or free channel/feed subscribes attributed to this delivery. Paid subscriptions are conversion events with `event_type: subscribe`, not `follows`.
+   * @minimum 0
+   */
+  follows?: number;
+  /**
+   * Saves, bookmarks, playlist adds, pins attributed to this delivery.
+   * @minimum 0
+   */
+  saves?: number;
+  /**
+   * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
+   * @minimum 0
+   */
+  profile_visits?: number;
+  /**
+   * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
+   * @minimum 0
+   * @maximum 1
+   */
+  engagement_rate?: number;
+  /**
+   * Cost per click (spend / clicks)
+   * @minimum 0
+   */
+  cost_per_click?: number;
+  /**
+   * Cost per completed view (spend / completed_views). Primary CPCV pricing scalar for video/audio inventory; the package's `pricing_model` is `cpcv` when this field is the billing basis.
+   * @minimum 0
+   */
+  cost_per_completed_view?: number;
+  /**
+   * Cost per thousand impressions, computed as (spend / impressions) × 1000. Universal pricing scalar across CTV, display, mobile/web video, native, audio, and DOOH inventory; the package's `pricing_model` is `cpm` when this field is the billing basis. Field name aligns with the canonical `cpm` token in `enums/pricing-model.json` and `pricing-options/cpm-option.json` so buyers cross-walk pricing model → reported scalar without a translation table.
+   * @minimum 0
+   */
+  cpm?: number;
+  /**
+   * Audio/podcast downloads (IAB Podcast Measurement Technical Guidelines 2.x methodology). Distinct from `views` — for podcast inventory this is the count of podcast episode downloads; for streaming audio it is the count of stream starts that meet the platform's download threshold. Prefer this over `views` for audio inventory.
+   * @minimum 0
+   */
+  downloads?: number;
+  /**
+   * Items sold attributed to this delivery. Retail-media scalar distinct from `conversions` — a single conversion (transaction) may carry multiple `units_sold`. Used by retail media platforms where the buyer optimizes against unit movement, not transaction count. Attribution lookback windows are platform-specific (commonly 7/14/30 days, view-through and click-through variants); sellers SHOULD declare the window via `reporting_capabilities.measurement_windows` or `measurement_terms` rather than encoding it in this scalar.
+   * @minimum 0
+   */
+  units_sold?: number;
+  /**
+   * Units sold to first-time brand buyers (count, not rate). Retail-media scalar — the unit-volume parallel to the conversion-fraction `new_to_brand_rate`. Used by retail media platforms where new-customer acquisition unit volume is a primary KPI. Same attribution-window note as `units_sold` applies.
+   * @minimum 0
+   */
+  new_to_brand_units?: number;
+  /**
+   * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
+   */
+  by_action_source?: {
+    action_source: ActionSource;
+    /**
+     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
+     */
+    event_source_id?: string;
+    /**
+     * Number of conversions from this action source
+     * @minimum 0
+     */
+    count: number;
+    /**
+     * Total monetary value of conversions from this action source
+     * @minimum 0
+     */
+    value?: number;
+  }[];
+  /**
+   * Reported values for vendor-defined metrics that the product's `reporting_capabilities.vendor_metrics` declared. Each entry carries the vendor (BrandRef), the metric identifier within the vendor's vocabulary, the value, optional unit, and `measurable_impressions` as the coverage denominator — vendor measurement is rarely 100% of delivered impressions, since vendors only score impressions where their SDK fires or their panel matches. When a declared vendor metric is omitted from this array, buyers infer no measurement happened (no integration). One row per `(vendor.domain, vendor.brand_id, metric_id)` per reporting period — sellers MUST de-duplicate before emission and MUST NOT emit the same vendor metric twice; buyers MAY treat duplicate rows as a seller-side conformance bug. The structured `vendor_metric_values` array is the recommended path for vendor metrics; `additionalProperties: true` on this parent object is preserved so existing free-form vendor emissions remain conformant during migration.
+   */
+  vendor_metric_values?: VendorMetricValue[];
+}
+/**
+ * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
+ */
+export interface VendorMetricValue {
+  vendor: BrandReference;
+  metric_id: VendorMetricID;
+  /**
+   * The reported value. Unit semantics are vendor-defined — see `unit` field below and the vendor's `brand.json` measurement-agent documentation.
+   */
+  value: number;
+  /**
+   * Unit of the value. Free-form to accommodate the heterogeneity of vendor metrics (e.g., `score`, `seconds`, `persons`, `gCO2e`, `USD`, `lift_percent`). When the value is monetary, use the ISO 4217 code (e.g., `USD`, `EUR`); for non-monetary, use whatever the vendor publishes. Optional on every row — the canonical unit lives at the vendor's measurement-agent metric definition (`brand.json` `agents[type='measurement']`). When sellers populate it inline they SHOULD match the vendor's published unit; buyers MAY resolve from the vendor's measurement agent when this field is absent.
+   */
+  unit?: string;
+  /**
+   * Number of impressions in this reporting period that the vendor was able to measure. Coverage denominator — buyers compute coverage rate as `measurable_impressions / impressions`. When absent, coverage is unspecified — buyers MUST NOT compute a coverage rate or assume full coverage. When the vendor measured zero impressions but is integrated, set to 0 explicitly. When the entry is omitted from `vendor_metric_values` entirely, the buyer infers no measurement happened (no integration). This pattern parallels `viewability.measurable_impressions` (`delivery-metrics.json#/properties/viewability`), which has handled vendor coverage in the IAS/DV/MRC ecosystem for over a decade — same convention: absence is unknown, not full.
+   * @minimum 0
+   */
+  measurable_impressions?: number;
+  /**
+   * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
+   */
+  breakdown?: {};
 }
 /**
  * Single-format success response. Returned when the request used target_format_id.
@@ -11249,10 +11815,6 @@ export type GetRightsResponse = {
    */
   adcp_major_version?: number;
 } & (GetRightsSuccess | GetRightsError);
-/**
- * Pricing model (cpm, flat_rate, etc.)
- */
-export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
 export interface GetRightsSuccess {
   /**
    * Matching rights with pricing options, ranked by relevance
@@ -12006,6 +12568,86 @@ export interface VerifyBrandClaimSuccess {
    */
   context_note?: string;
   context?: ContextObject;
+  /**
+   * Payload-envelope JWS attesting the canonical success response for verify_brand_claim. The signed payload response MUST match the unsigned task-body fields on this response, excluding signed_response and protocol/version envelope fields.
+   */
+  signed_response: ResponsePayloadJWSEnvelope & {
+    payload?: {
+      task: 'verify_brand_claim';
+      response: SignedSuccessPayload;
+    };
+  };
+  ext?: ExtensionObject;
+}
+/**
+ * Decoded-payload JWS envelope for the closed designated-task response-signing profile. The protected member is the base64url-encoded JWS protected header; payload is the decoded signed payload that verifiers canonicalize with RFC 8785/JCS and base64url-encode before checking the ordinary JWS signature.
+ */
+export interface ResponsePayloadJWSEnvelope {
+  /**
+   * Base64url-encoded JWS protected header. The decoded header MUST include alg, kid, and typ: adcp-response-payload+jws, and MUST NOT include the RFC 7797 b64 header. Verifiers enforce the key purpose by resolving kid to a JWK with adcp_use: response-signing.
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  protected: string;
+  payload: ResponsePayload;
+  /**
+   * Base64url-encoded JWS signature over the protected header and canonicalized payload.
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  signature: string;
+}
+/**
+ * Decoded signed payload. Signers compute the JWS payload bytes from the RFC 8785/JCS canonicalization of this object.
+ */
+export interface ResponsePayload {
+  /**
+   * Type discriminator preventing cross-profile replay.
+   */
+  typ: 'adcp-response-payload+jws';
+  /**
+   * Designated task whose response payload is signed.
+   */
+  task: 'verify_brand_claim' | 'verify_brand_claims';
+  /**
+   * Brand tenant whose policy store produced the answer. The signer MUST derive this from server-side tenant resolution, not caller-supplied request fields.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  brand_domain: string;
+  /**
+   * Canonical URL of the responding brand agent entry whose response-signing key verifies this envelope.
+   */
+  agent_url: string;
+  /**
+   * sha256: prefix plus unpadded base64url SHA-256 of the canonical request-binding object for this call.
+   * @pattern ^sha256:[A-Za-z0-9_-]{43}$
+   */
+  request_hash: string;
+  /**
+   * Issued-at time as Unix epoch seconds.
+   * @minimum 0
+   */
+  iat: number;
+  /**
+   * Expiration time as Unix epoch seconds. Online verifiers reject envelopes after this time, allowing only implementation-defined clock skew.
+   * @minimum 0
+   */
+  exp: number;
+  /**
+   * Canonical task-body success response payload being attested. Any unsigned task-body fields on the outer response, excluding signed_response and protocol/version envelope fields, MUST match this object.
+   */
+  response: {};
+}
+/**
+ * Canonical task-body success payload signed inside signed_response.payload.response. Excludes protocol/version envelope fields and signed_response itself.
+ */
+export interface SignedSuccessPayload {
+  claim_type: 'subsidiary' | 'parent' | 'property' | 'trademark';
+  verification_status: VerificationStatus;
+  details?: {};
+  /**
+   * @maxLength 500
+   */
+  context_note?: string;
+  context?: ContextObject;
   ext?: ExtensionObject;
 }
 export interface VerifyBrandClaimError {
@@ -12098,6 +12740,15 @@ export interface VerifyBrandClaimsSuccess {
    */
   results: ResultEntry[];
   context?: ContextObject;
+  /**
+   * Payload-envelope JWS attesting the canonical bulk success response for verify_brand_claims. The signed payload response MUST match the unsigned task-body fields on this response, excluding signed_response and protocol/version envelope fields.
+   */
+  signed_response: ResponsePayloadJWSEnvelope & {
+    payload?: {
+      task: 'verify_brand_claims';
+      response: SignedSuccessPayload;
+    };
+  };
   ext?: ExtensionObject;
 }
 export interface VerifyBrandClaimsResultSuccess {
@@ -13565,7 +14216,7 @@ export type SignalTargetingExpression =
       max_value?: number;
     };
 /**
- * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined by a data provider's published adagents.json signal catalog, or scope 'signal_source' for a source-native signal that is not catalog-published. The selected product's inline Product.signal_targeting_options, get_signals feed, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
+ * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
 export type PackageSignalTargeting1 = SignalTargetingExpression;
 /**
@@ -14564,380 +15215,6 @@ export type CreativeVariant = DeliveryMetrics & {
   };
 };
 /**
- * Aggregate delivery metrics across all variants of this creative
- */
-export interface DeliveryMetrics {
-  /**
-   * Impressions delivered
-   * @minimum 0
-   */
-  impressions?: number;
-  /**
-   * Amount spent
-   * @minimum 0
-   */
-  spend?: number;
-  /**
-   * Total clicks
-   * @minimum 0
-   */
-  clicks?: number;
-  /**
-   * Click-through rate (clicks/impressions)
-   * @minimum 0
-   * @maximum 1
-   */
-  ctr?: number;
-  /**
-   * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
-   * @minimum 0
-   */
-  views?: number;
-  /**
-   * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
-   * @minimum 0
-   */
-  completed_views?: number;
-  /**
-   * Completion rate (completed_views/impressions)
-   * @minimum 0
-   * @maximum 1
-   */
-  completion_rate?: number;
-  /**
-   * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
-   * @minimum 0
-   */
-  conversions?: number;
-  /**
-   * Total monetary value of attributed conversions (in the reporting currency)
-   * @minimum 0
-   */
-  conversion_value?: number;
-  /**
-   * Return on ad spend (conversion_value / spend)
-   * @minimum 0
-   */
-  roas?: number;
-  /**
-   * Cost per conversion (spend / conversions)
-   * @minimum 0
-   */
-  cost_per_acquisition?: number;
-  /**
-   * Fraction of `conversions` (transactions) from first-time brand buyers, 0 = none, 1 = all. For retail-media unit-volume tracking of first-time buyers, see `new_to_brand_units` (count, not rate).
-   * @minimum 0
-   * @maximum 1
-   */
-  new_to_brand_rate?: number;
-  /**
-   * Leads generated (convenience alias for by_event_type where event_type='lead')
-   * @minimum 0
-   */
-  leads?: number;
-  /**
-   * Incremental sales lift attributed to the campaign — sales above the control/holdout baseline. Reported as a fraction (0.15 = 15% lift) or as an absolute value depending on seller convention. The seller's `attribution_methodology` qualifier (typically `deterministic_purchase` or `modeled`) and `attribution_window` qualifier on the matching `committed_metrics` entry disambiguate the methodology and window.
-   * @minimum 0
-   */
-  incremental_sales_lift?: number;
-  /**
-   * Brand lift — measured change in a brand metric (awareness, consideration, favorability, purchase intent, or ad recall) attributed to the campaign. Typically panel-based or survey-based. Reported as a fraction (0.05 = 5% lift). **Multidimensional in production** — Kantar, Upwave, Cint, DV all report each dimension separately with its own sample size and confidence interval. The dimension flows through `qualifier.lift_dimension` on `committed_metrics` / `metric_aggregates` (`awareness` | `consideration` | `favorability` | `purchase_intent` | `ad_recall`); rows under different dimensions are different surveyed outcomes and must not be combined. Use `attribution_methodology: 'panel_based'` qualifier when the underlying methodology is a panel.
-   * @minimum 0
-   */
-  brand_lift?: number;
-  /**
-   * Store visits attributed to ad exposure. Count of incremental visits over baseline. Typically uses location-data panel methodology (`attribution_methodology: 'panel_based'`) or deterministic loyalty-card match (`attribution_methodology: 'deterministic_purchase'`).
-   * @minimum 0
-   */
-  foot_traffic?: number;
-  /**
-   * Incremental conversions attributed to the campaign — conversions above the control/holdout baseline. Reported as a fraction (0.10 = 10% lift) or as an absolute count depending on seller convention. Distinct from `conversions` (raw count of attributed conversions); conversion_lift requires a control group and an incrementality methodology.
-   * @minimum 0
-   */
-  conversion_lift?: number;
-  /**
-   * Lift in brand search query volume attributed to the campaign — measured via search-data partnerships (Google, Microsoft) or survey methodology. Reported as a fraction (0.20 = 20% lift in branded search).
-   * @minimum 0
-   */
-  brand_search_lift?: number;
-  /**
-   * Number of times the ad creative was displayed on a DOOH screen or played in a loop. Raw play count before any impression multiplier is applied. Mirrors `forecastable-metric.json`'s `plays` token for forecast↔delivery reconciliation. Distinct from `dooh_metrics.loop_plays` (per-screen rotation count) and from `impressions` (multiplied audience figure). Used for DOOH and broadcast inventory where buyers reconcile against forecast `plays`.
-   * @minimum 0
-   */
-  plays?: number;
-  /**
-   * Conversion metrics broken down by event type. Spend-derived metrics (ROAS, CPA) are only available at the package/totals level since spend cannot be attributed to individual event types.
-   */
-  by_event_type?: {
-    event_type: EventType;
-    /**
-     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
-     */
-    event_source_id?: string;
-    /**
-     * Number of events of this type
-     * @minimum 0
-     */
-    count: number;
-    /**
-     * Total monetary value of events of this type
-     * @minimum 0
-     */
-    value?: number;
-  }[];
-  /**
-   * Gross Rating Points delivered (for CPP)
-   * @minimum 0
-   */
-  grps?: number;
-  /**
-   * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit. The measurement window for this value is declared in `reach_window`; when `reach_window` is omitted, the window is unspecified and buyers MUST NOT sum reach across reports (the value MAY be a daily snapshot, a cumulative total, or something else).
-   * @minimum 0
-   */
-  reach?: number;
-  /**
-   * Unit of measurement for the reach field. Aligns with the reach_unit declared on optimization goals and delivery forecasts. Required when reach is present to enable cross-platform comparison.
-   */
-  reach_unit?: ReachUnit;
-  /**
-   * Measurement window for the reported `reach` and `frequency` values in this row. Declares whether the values are a per-period snapshot, a trailing rolling window, or cumulative-to-date — without this declaration, buyers summing `reach` across rows (e.g., daily delivery reports) can silently double-count audiences. Sellers SHOULD populate this whenever `reach` is present.
-   */
-  reach_window?: {
-    /**
-     * Window semantics. `cumulative` — uniques since campaign start; the value is the total unique count to date and MUST NOT be summed across rows (each later row supersedes the earlier value). `period` — uniques within a single non-overlapping reporting period (e.g., a daily snapshot for a specific calendar day). Adjacent `period` rows do not share audiences by construction, but the same person MAY appear across multiple periods, so MUST NOT be summed across rows to compute campaign reach. `rolling` — uniques within a trailing window ending at the row's reporting timestamp (e.g., trailing-7-day reach). Adjacent rolling rows overlap and MUST NOT be summed; each row's value stands alone.
-     */
-    kind: 'cumulative' | 'period' | 'rolling';
-    /**
-     * Duration of the measurement window. REQUIRED when `kind` is `period` or `rolling` — declares the snapshot length (e.g., `{"interval": 1, "unit": "days"}` for a daily snapshot) or the trailing-window length (e.g., `{"interval": 7, "unit": "days"}` for trailing-7-day rolling reach). When `kind` is `cumulative`, this field is implicit (campaign-to-date) and SHOULD be omitted.
-     */
-    period?: Duration;
-  };
-  /**
-   * Average frequency per reach unit, measured over the window declared in `reach_window`. When `reach_unit` is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc. When `reach_window` is omitted, the window is unspecified — buyers MUST NOT compare or average frequency values across rows.
-   * @minimum 0
-   */
-  frequency?: number;
-  /**
-   * Audio/video quartile completion data
-   */
-  quartile_data?: {
-    /**
-     * 25% completion views
-     * @minimum 0
-     */
-    q1_views?: number;
-    /**
-     * 50% completion views
-     * @minimum 0
-     */
-    q2_views?: number;
-    /**
-     * 75% completion views
-     * @minimum 0
-     */
-    q3_views?: number;
-    /**
-     * 100% completion views
-     * @minimum 0
-     */
-    q4_views?: number;
-  };
-  /**
-   * DOOH-specific metrics (only included for DOOH campaigns)
-   */
-  dooh_metrics?: {
-    /**
-     * Number of times ad played in rotation
-     * @minimum 0
-     */
-    loop_plays?: number;
-    /**
-     * Number of unique screens displaying the ad
-     * @minimum 0
-     */
-    screens_used?: number;
-    /**
-     * Total display time in seconds
-     * @minimum 0
-     */
-    screen_time_seconds?: number;
-    /**
-     * Actual share of voice delivered (0.0 to 1.0)
-     * @minimum 0
-     * @maximum 1
-     */
-    sov_achieved?: number;
-    /**
-     * Per-row supplementary methodology notes for DOOH impression calculation (e.g., 'rotation-based; 6-second slot weighted by 70% audience overlap'). Free-form prose for context that doesn't fit the structured measurement-vendor surface. Canonical methodology declarations belong on the measurement vendor's `get_adcp_capabilities.measurement.metrics[]` block where they're discoverable once and inherited across delivery rows; this field is for row-specific context (a particular daypart's calculation, a venue-mix exception) rather than the seller's general methodology.
-     */
-    calculation_notes?: string;
-    /**
-     * Per-venue performance breakdown
-     */
-    venue_breakdown?: {
-      /**
-       * Venue identifier
-       */
-      venue_id: string;
-      /**
-       * Human-readable venue name
-       */
-      venue_name?: string;
-      /**
-       * Venue type (e.g., 'airport', 'transit', 'retail', 'billboard')
-       */
-      venue_type?: string;
-      /**
-       * Impressions delivered at this venue
-       * @minimum 0
-       */
-      impressions: number;
-      /**
-       * Loop plays at this venue
-       * @minimum 0
-       */
-      loop_plays?: number;
-      /**
-       * Number of screens used at this venue
-       * @minimum 0
-       */
-      screens_used?: number;
-    }[];
-  };
-  /**
-   * Viewability metrics. Viewable rate should be calculated as viewable_impressions / measurable_impressions (not total impressions), since some environments cannot measure viewability. Includes `viewed_seconds` — average in-view duration — since duration is governed by the same viewability threshold (`standard`) and shares the same `measurable_impressions` denominator. Sellers SHOULD include `standard` whenever measured viewability values are reported because MRC and GroupM rows are not interchangeable.
-   */
-  viewability?: {
-    vendor?: BrandReference;
-    /**
-     * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments). Coverage denominator for `viewable_rate` AND `viewed_seconds` — both metrics are computed over the same measurable population.
-     * @minimum 0
-     */
-    measurable_impressions?: number;
-    /**
-     * Impressions that met the viewability threshold defined by the measurement standard.
-     * @minimum 0
-     */
-    viewable_impressions?: number;
-    /**
-     * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
-     * @minimum 0
-     * @maximum 1
-     */
-    viewable_rate?: number;
-    /**
-     * Average in-view duration per measurable impression, in seconds. Reporting-side counterpart to the `viewed_seconds` optimization metric in `optimization-goal.json`. Computed over `measurable_impressions`, not total impressions — the same denominator as `viewable_rate`. The viewability `standard` governs the threshold (e.g., MRC's 50% pixels for 1s display / 2s video) that defines when an impression is in view and therefore when the clock is running. Sellers reporting against a `viewed_seconds` optimization goal MUST populate this field.
-     * @minimum 0
-     */
-    viewed_seconds?: number;
-    standard?: ViewabilityStandard;
-  };
-  /**
-   * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric. Maps to DBCFM KPI_INTERACTIONS (Interaktionen) in the Reporting/Performance block.
-   * @minimum 0
-   */
-  engagements?: number;
-  /**
-   * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
-   * @minimum 0
-   */
-  follows?: number;
-  /**
-   * Saves, bookmarks, playlist adds, pins attributed to this delivery.
-   * @minimum 0
-   */
-  saves?: number;
-  /**
-   * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
-   * @minimum 0
-   */
-  profile_visits?: number;
-  /**
-   * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
-   * @minimum 0
-   * @maximum 1
-   */
-  engagement_rate?: number;
-  /**
-   * Cost per click (spend / clicks)
-   * @minimum 0
-   */
-  cost_per_click?: number;
-  /**
-   * Cost per completed view (spend / completed_views). Primary CPCV pricing scalar for video/audio inventory; the package's `pricing_model` is `cpcv` when this field is the billing basis.
-   * @minimum 0
-   */
-  cost_per_completed_view?: number;
-  /**
-   * Cost per thousand impressions, computed as (spend / impressions) × 1000. Universal pricing scalar across CTV, display, mobile/web video, native, audio, and DOOH inventory; the package's `pricing_model` is `cpm` when this field is the billing basis. Field name aligns with the canonical `cpm` token in `enums/pricing-model.json` and `pricing-options/cpm-option.json` so buyers cross-walk pricing model → reported scalar without a translation table.
-   * @minimum 0
-   */
-  cpm?: number;
-  /**
-   * Audio/podcast downloads (IAB Podcast Measurement Technical Guidelines 2.x methodology). Distinct from `views` — for podcast inventory this is the count of podcast episode downloads; for streaming audio it is the count of stream starts that meet the platform's download threshold. Prefer this over `views` for audio inventory.
-   * @minimum 0
-   */
-  downloads?: number;
-  /**
-   * Items sold attributed to this delivery. Retail-media scalar distinct from `conversions` — a single conversion (transaction) may carry multiple `units_sold`. Used by retail media platforms where the buyer optimizes against unit movement, not transaction count. Attribution lookback windows are platform-specific (commonly 7/14/30 days, view-through and click-through variants); sellers SHOULD declare the window via `reporting_capabilities.measurement_windows` or `measurement_terms` rather than encoding it in this scalar.
-   * @minimum 0
-   */
-  units_sold?: number;
-  /**
-   * Units sold to first-time brand buyers (count, not rate). Retail-media scalar — the unit-volume parallel to the conversion-fraction `new_to_brand_rate`. Used by retail media platforms where new-customer acquisition unit volume is a primary KPI. Same attribution-window note as `units_sold` applies.
-   * @minimum 0
-   */
-  new_to_brand_units?: number;
-  /**
-   * Conversion metrics broken down by action source (website, app, in_store, etc.). Useful for omnichannel sellers where conversions occur across digital and physical channels.
-   */
-  by_action_source?: {
-    action_source: ActionSource;
-    /**
-     * Event source that produced these conversions (for disambiguation when multiple event sources are configured)
-     */
-    event_source_id?: string;
-    /**
-     * Number of conversions from this action source
-     * @minimum 0
-     */
-    count: number;
-    /**
-     * Total monetary value of conversions from this action source
-     * @minimum 0
-     */
-    value?: number;
-  }[];
-  /**
-   * Reported values for vendor-defined metrics that the product's `reporting_capabilities.vendor_metrics` declared. Each entry carries the vendor (BrandRef), the metric identifier within the vendor's vocabulary, the value, optional unit, and `measurable_impressions` as the coverage denominator — vendor measurement is rarely 100% of delivered impressions, since vendors only score impressions where their SDK fires or their panel matches. When a declared vendor metric is omitted from this array, buyers infer no measurement happened (no integration). One row per `(vendor.domain, vendor.brand_id, metric_id)` per reporting period — sellers MUST de-duplicate before emission and MUST NOT emit the same vendor metric twice; buyers MAY treat duplicate rows as a seller-side conformance bug. The structured `vendor_metric_values` array is the recommended path for vendor metrics; `additionalProperties: true` on this parent object is preserved so existing free-form vendor emissions remain conformant during migration.
-   */
-  vendor_metric_values?: VendorMetricValue[];
-}
-/**
- * A reported value for a vendor-defined metric, emitted in `delivery-metrics.json` `vendor_metric_values` parallel to standard scalars. Identifies the vendor (BrandRef), the metric name within that vendor's vocabulary, the value, and the coverage denominator (`measurable_impressions`) — vendor measurement is rarely 100% coverage. The `breakdown` slot accommodates vendors that emit structured payloads beyond a single scalar (panel demographic breakouts, co-view ratios, incremental decompositions). To add fields beyond what this schema defines, vendors place them inside `breakdown` rather than alongside the standard envelope.
- */
-export interface VendorMetricValue {
-  vendor: BrandReference;
-  metric_id: VendorMetricID;
-  /**
-   * The reported value. Unit semantics are vendor-defined — see `unit` field below and the vendor's `brand.json` measurement-agent documentation.
-   */
-  value: number;
-  /**
-   * Unit of the value. Free-form to accommodate the heterogeneity of vendor metrics (e.g., `score`, `seconds`, `persons`, `gCO2e`, `USD`, `lift_percent`). When the value is monetary, use the ISO 4217 code (e.g., `USD`, `EUR`); for non-monetary, use whatever the vendor publishes. Optional on every row — the canonical unit lives at the vendor's measurement-agent metric definition (`brand.json` `agents[type='measurement']`). When sellers populate it inline they SHOULD match the vendor's published unit; buyers MAY resolve from the vendor's measurement agent when this field is absent.
-   */
-  unit?: string;
-  /**
-   * Number of impressions in this reporting period that the vendor was able to measure. Coverage denominator — buyers compute coverage rate as `measurable_impressions / impressions`. When absent, coverage is unspecified — buyers MUST NOT compute a coverage rate or assume full coverage. When the vendor measured zero impressions but is integrated, set to 0 explicitly. When the entry is omitted from `vendor_metric_values` entirely, the buyer infers no measurement happened (no integration). This pattern parallels `viewability.measurable_impressions` (`delivery-metrics.json#/properties/viewability`), which has handled vendor coverage in the IAS/DV/MRC ecosystem for over a decade — same convention: absence is unknown, not full.
-   * @minimum 0
-   */
-  measurable_impressions?: number;
-  /**
-   * Optional structured payload for vendor metrics that don't fit a single scalar — panel demographic breakouts, co-view audience composition, incremental reach + frequency + lift decompositions. Free-form; the keys and value semantics are defined by the vendor (see the vendor's `brand.json` measurement-agent docs). Buyers MUST treat this object as opaque without consulting the vendor's documentation. Vendors place any fields beyond the standard envelope (e.g., confidence intervals, panel sizes) inside this object rather than at the top level.
-   */
-  breakdown?: {};
-}
-/**
  * Property where the artifact appears
  */
 export interface Identifier {
@@ -15385,6 +15662,7 @@ export interface CreativeFilters {
    * When true, return only creatives with dynamic variables (DCO). When false, return only static creatives.
    */
   has_variables?: boolean;
+  ext?: ExtensionObject;
 }
 
 // bundled/creative/list-creatives-response.json
@@ -16322,7 +16600,7 @@ export interface CreateMediaBuyRequest {
   plan_id?: string;
   account: AccountReference;
   /**
-   * ID of a proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array.
+   * ID of a committed proposal from get_products to execute. When provided with total_budget, the publisher converts the proposal's allocation percentages into packages automatically. Alternative to providing packages array. If the referenced proposal has proposal_status: 'draft', the seller MUST reject with PROPOSAL_NOT_COMMITTED; the buyer finalizes first via get_products refine action 'finalize'.
    */
   proposal_id?: string;
   /**
@@ -16448,23 +16726,24 @@ export interface PackageRequest {
    */
   adcp_major_version?: number;
   /**
-   * Product ID for this package
+   * Product ID for this package. Sellers MUST echo this value on every response package object that represents this requested package.
    */
   product_id: string;
   /**
-   * Legacy named-format selector. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and no 3.1+ format-option selector is present), defaults to all formats supported by the product.
+   * Legacy named-format selector. Array of format IDs that will be used for this package - must be supported by the product. If omitted (and no 3.1+ format-option selector or direct canonical selector is present), defaults to all formats supported by the product.
    *
    * Sellers comparing this selector to a product's `format_options[]` MUST first normalize each legacy `format_id` through the canonical mapping path (`canonical`, `v1_format_ref`, or registry projection). Exact `(agent_url, id)` comparison after projection is insufficient: a legacy fixed-size display ID can satisfy a canonical `image` product declaration with matching `width`/`height`. Product gating remains directional: if the product declares fixed dimensions or duration, the selected format must declare and match those constraints; an under-specified canonical request is not a wildcard for a fixed-size or fixed-duration product. Range constraints use containment, not overlap: a range-based request satisfies the product only when every value it permits falls within the product's accepted range.
    */
   format_ids?: FormatReferenceStructuredObject[];
   /**
-   * 3.1+ format-option selector. Array of structured format option references, each matching one of the target product's `format_options[]` entries. Publisher-catalog-backed options match by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match by `{ scope: "product", format_option_id }`. If omitted along with `format_ids`, all product formats are active.
+   * 3.1+ format-option selector. Array of structured format option references, each matching one of the target product's `format_options[]` entries. Publisher-catalog-backed options match by `{ scope: "publisher", publisher_domain, format_option_id }`; product-local options match by `{ scope: "product", format_option_id }`. If omitted along with `format_ids` and direct `format_kind`, all product formats are active.
    *
    * **Resolution rules (normative).**
    * - **Both `format_option_refs` and `format_ids` present.** `format_option_refs` wins; the seller routes by structured references and MUST NOT validate `format_ids` for consistency with the resolved declarations. The `format_ids` value is a legacy-compat hint for intermediaries on the wire path; the resolving seller ignores it.
    * - **`format_option_refs` only.** Seller looks up each entry against the package's target product `format_options[]` and uses the matching declaration (and that declaration's `v1_format_ref[]` when projecting to legacy named-format surfaces). This is the 3.1+ format-option authoring path. `scope: "product"` is scoped only by this target product; it is not a seller-wide identifier.
    * - **`format_ids` only.** Existing named-format behavior; unchanged.
-   * - **Neither.** Default — all formats supported by the product are active.
+   * - **`format_kind` only.** Direct canonical selector behavior; seller compares `{ format_kind, params }` against the product's `format_options[]` declarations using directional product satisfaction.
+   * - **None of `format_option_refs`, `format_ids`, or `format_kind`.** Default — all formats supported by the product are active.
    *
    * **Failure modes (normative).** Sellers MUST reject with `UNSUPPORTED_FEATURE` (with `field` pointing at the failing package and entry, e.g. `packages[0].format_option_refs[1]`) when:
    * - Any entry references a format option not present in the target product's `format_options[]`, OR
@@ -16478,6 +16757,11 @@ export interface PackageRequest {
    * **Dual emission.** Format-option-aware buyer SDKs targeting a heterogeneous seller population SHOULD emit `format_ids` alongside `format_option_refs` so legacy-format-only sellers — which ignore unknown fields per `additionalProperties: true` — still receive an explicit format set rather than silently defaulting to all formats supported by the product.
    */
   format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`. Shape follows the selected canonical's parameter vocabulary: dimensions (`width`, `height`, `sizes`), duration (`duration_ms_exact`, `duration_ms_range`), codecs, asset-source and slot narrowing, or other canonical-specific constraints. Omit when selecting by `format_option_refs` or `format_ids`; those selectors resolve their parameters from the product declaration or legacy catalog projection.
+   */
+  params?: {};
   /**
    * Budget allocation for this package in the media buy's currency
    * @minimum 0
@@ -16906,90 +17190,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
     /**
      * Cross-buy delivery aggregates partitioned by qualifier. Row-symmetric with `package.committed_metrics` and `by_package[].missing_metrics` — same atomic unit `(scope, metric_id, qualifier)` — so reconciliation collapses to a row-level join on the tuple. Granularity rule: one row per `(metric_id, full-qualifier-set)`, reported at the finest available granularity; buyers re-aggregate up if they want a coarser view. Used only for metrics with non-empty qualifier sets — unqualified metrics (`impressions`, `spend`, `media_buy_count`, etc.) remain at the top of `aggregated_totals`. **Mutual exclusion MUST**: for any `metric_id` appearing in `metric_aggregates`, the corresponding top-level scalar in `aggregated_totals` MUST be omitted (not zeroed) — avoids duplicate sources of truth. The qualifier vocabulary on this delivery surface is closed today (`additionalProperties: false`, same content as `committed_metrics.qualifier`) but is expected to **diverge from contract qualifier in future minors** as transparency disclosures buyers don't commit to ship delivery-only (e.g., `tracker_firing` pending #3832 resolution). Each row carries a `value` plus inlined per-metric component fields (e.g., `measurable_impressions` and `viewable_impressions` for `viewable_rate`; `spend` and `conversions` for `cost_per_acquisition`). Per-buy `totals` keeps its flat shape — each buy is single-qualifier by definition; only the aggregate spans qualifiers. **Qualifier-set drift across reports**: when a campaign gains a new qualifier mid-flight (e.g., adds `tracker_firing` partitioning in week 2), prior periods' rows remain valid at their original granularity; buyers SHOULD NOT retroactively repartition.
      */
-    metric_aggregates?: (
-      | {
-          /**
-           * Standard metric from the closed `available-metric.json` enum.
-           */
-          scope: 'standard';
-          metric_id: AvailableMetric;
-          /**
-           * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
-           */
-          qualifier?: {
-            viewability_standard?: ViewabilityStandard;
-            completion_source?: CompletionSource;
-            attribution_methodology?: AttributionMethodology;
-            attribution_window?: Duration;
-            lift_dimension?: LiftDimension;
-          };
-          /**
-           * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
-           */
-          value: number;
-          /**
-           * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
-           * @minimum 0
-           */
-          measurable_impressions?: number;
-          /**
-           * Component for `viewable_rate` (numerator).
-           * @minimum 0
-           */
-          viewable_impressions?: number;
-          /**
-           * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
-           * @minimum 0
-           */
-          impressions?: number;
-          /**
-           * Component for `completion_rate` (numerator).
-           * @minimum 0
-           */
-          completed_views?: number;
-          /**
-           * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
-           * @minimum 0
-           */
-          spend?: number;
-          /**
-           * Component for `cost_per_acquisition` and ROAS-family metrics.
-           * @minimum 0
-           */
-          conversions?: number;
-          /**
-           * Component for `roas` (numerator).
-           * @minimum 0
-           */
-          conversion_value?: number;
-          /**
-           * Component for `cost_per_click` and click-rate metrics.
-           * @minimum 0
-           */
-          clicks?: number;
-        }
-      | {
-          /**
-           * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
-           */
-          scope: 'vendor';
-          vendor: BrandReference;
-          metric_id: VendorMetricID;
-          /**
-           * Optional qualifier keys for vendor metrics that need disambiguation (rare today — most vendor methodologies are intrinsic to the metric definition).
-           */
-          qualifier?: {};
-          /**
-           * Aggregated vendor-attested value. Unit semantics defined by the vendor — see the vendor's measurement-agent metric definition.
-           */
-          value: number;
-          /**
-           * Coverage denominator — vendor measurement is rarely 100% of delivery (only impressions where the vendor's SDK fired or panel matched). Buyers compute coverage as `measurable_impressions / impressions`. Same convention as `vendor_metric_value.measurable_impressions`.
-           * @minimum 0
-           */
-          measurable_impressions?: number;
-        }
-    )[];
+    metric_aggregates?: DeliveryMetricAggregate[];
   };
   /**
    * Array of delivery data for media buys. When used in webhook notifications, may contain multiple media buys aggregated by publisher. When used in get_media_buy_delivery API responses, typically contains requested media buys.
@@ -17093,80 +17294,23 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Metrics that the binding reporting contract declared but that are NOT populated in this report. Reconciliation source: when `package.committed_metrics` is present, `missing_metrics` is computed against entries where `committed_at < reporting_period.end` — independent of subsequent product mutations and respecting the commitment timestamp on each entry (a metric committed mid-flight is only flagged missing in reports for periods after its commitment). When `package.committed_metrics` is absent, fall back to the product's current `reporting_capabilities.available_metrics` (no timestamp filter). Empty array (or absent) indicates clean delivery against the contract. Non-empty signals an accountability breach — the seller committed to the metric but did not produce the value here. Sellers MUST exclude metrics that are not yet measurable for the current `measurement_window` (e.g., post-IVT counts during the live window) — those will appear (or not) when a wider window supersedes this report via `supersedes_window`. Each entry uses an explicit `scope` discriminator: `standard` for entries from the closed `available-metric.json` enum, `vendor` for vendor-defined metrics anchored on a BrandRef. Symmetric with `committed_metrics`.
        */
-      missing_metrics?: (
-        | {
-            scope: 'standard';
-            metric_id: AvailableMetric;
-            /**
-             * Mirrors the qualifier on `committed_metrics` so the missing entry preserves the contract distinction (e.g., flagging MRC viewability as missing when only GroupM was reported, vendor-attested completion as missing when only seller-attested was reported, or deterministic_purchase attribution as missing when only probabilistic was reported). MUST match the qualifier on the corresponding `committed_metrics` entry the missing flag refers to.
-             */
-            qualifier?: {
-              viewability_standard?: ViewabilityStandard;
-              completion_source?: CompletionSource;
-              attribution_methodology?: AttributionMethodology;
-              attribution_window?: Duration;
-              lift_dimension?: LiftDimension;
-            };
-          }
-        | {
-            scope: 'vendor';
-            vendor: BrandReference;
-            metric_id: VendorMetricID;
-          }
-      )[];
+      missing_metrics?: MissingMetric[];
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
-      by_catalog_item?: (DeliveryMetrics & {
-        /**
-         * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
-         */
-        content_id?: string;
-        content_id_type?: ContentIDType;
-      })[];
+      by_catalog_item?: CatalogItemDeliveryMetrics[];
       /**
        * Metrics broken down by creative within this package. Available when the seller supports creative-level reporting.
        */
-      by_creative?: (DeliveryMetrics & {
-        /**
-         * Creative identifier matching the creative assignment
-         */
-        creative_id: string;
-        /**
-         * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
-         * @minimum 0
-         * @maximum 100
-         */
-        weight?: number;
-      })[];
+      by_creative?: CreativeDeliveryMetrics[];
       /**
        * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
        */
-      by_keyword?: (DeliveryMetrics & {
-        /**
-         * The targeted keyword
-         */
-        keyword?: string;
-        match_type?: MatchType;
-      })[];
+      by_keyword?: KeywordDeliveryMetrics[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
        */
-      by_geo?: (DeliveryMetrics & {
-        geo_level?: GeographicTargetingLevel;
-        /**
-         * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
-         */
-        system?: string;
-        /**
-         * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
-         */
-        geo_code?: string;
-        /**
-         * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
-         */
-        geo_name?: string;
-      })[];
+      by_geo?: GeoDeliveryMetrics[];
       /**
        * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
        */
@@ -17359,6 +17503,168 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
   ext?: ExtensionObject;
 };
 /**
+ * One cross-buy delivery aggregate partitioned by metric scope and qualifier. Row-symmetric with `package.committed_metrics` and delivery `missing_metrics` so buyers can reconcile by `(scope, metric_id, qualifier)`.
+ */
+export type DeliveryMetricAggregate =
+  | {
+      /**
+       * Standard metric from the closed `available-metric.json` enum.
+       */
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Qualifier keys disambiguating this row from sibling rows under the same `metric_id`. Symmetric with `committed_metrics.qualifier` today; expected to diverge in future minors as transparency disclosures buyers don't commit to ship delivery-only. Closed (`additionalProperties: false`) — new qualifier keys ship explicitly.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+      /**
+       * Aggregated metric value for this `(metric_id, qualifier)` partition. Heterogeneous by `metric_id` — rate metrics (`viewable_rate`, `completion_rate`) are 0.0–1.0; cost-per metrics (`cost_per_acquisition`, `cost_per_completed_view`) are currency amounts; count metrics (`impressions`, `clicks`) are non-negative integers as numbers; ratio metrics (`roas`) are non-negative numbers. Buyer agents MUST inspect `metric_id` before doing arithmetic — same dispatch convention as `committed_metrics`.
+       */
+      value: number;
+      /**
+       * Coverage denominator for verification metrics (e.g., `viewable_rate`). Buyers compute coverage as `measurable_impressions / impressions` from the partition.
+       * @minimum 0
+       */
+      measurable_impressions?: number;
+      /**
+       * Component for `viewable_rate` (numerator).
+       * @minimum 0
+       */
+      viewable_impressions?: number;
+      /**
+       * Component for rate metrics whose denominator is total impressions (e.g., `completion_rate`, `engagement_rate`).
+       * @minimum 0
+       */
+      impressions?: number;
+      /**
+       * Component for `completion_rate` (numerator).
+       * @minimum 0
+       */
+      completed_views?: number;
+      /**
+       * Component for cost-per metrics (denominator-ish; the cost half of the ratio).
+       * @minimum 0
+       */
+      spend?: number;
+      /**
+       * Component for `cost_per_acquisition` and ROAS-family metrics.
+       * @minimum 0
+       */
+      conversions?: number;
+      /**
+       * Component for `roas` (numerator).
+       * @minimum 0
+       */
+      conversion_value?: number;
+      /**
+       * Component for `cost_per_click` and click-rate metrics.
+       * @minimum 0
+       */
+      clicks?: number;
+    }
+  | {
+      /**
+       * Vendor-defined metric, identified by the tuple `(vendor, metric_id)`.
+       */
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+      /**
+       * Optional qualifier keys for vendor metrics that need disambiguation (rare today — most vendor methodologies are intrinsic to the metric definition).
+       */
+      qualifier?: {};
+      /**
+       * Aggregated vendor-attested value. Unit semantics defined by the vendor — see the vendor's measurement-agent metric definition.
+       */
+      value: number;
+      /**
+       * Coverage denominator — vendor measurement is rarely 100% of delivery (only impressions where the vendor's SDK fired or panel matched). Buyers compute coverage as `measurable_impressions / impressions`. Same convention as `vendor_metric_value.measurable_impressions`.
+       * @minimum 0
+       */
+      measurable_impressions?: number;
+    };
+/**
+ * One metric the binding reporting contract declared but that is not populated in a delivery report. Symmetric with `committed_metrics` and discriminated by `scope`.
+ */
+export type MissingMetric =
+  | {
+      scope: 'standard';
+      metric_id: AvailableMetric;
+      /**
+       * Mirrors the qualifier on `committed_metrics` so the missing entry preserves the contract distinction (e.g., flagging MRC viewability as missing when only GroupM was reported, vendor-attested completion as missing when only seller-attested was reported, or deterministic_purchase attribution as missing when only probabilistic was reported). MUST match the qualifier on the corresponding `committed_metrics` entry the missing flag refers to.
+       */
+      qualifier?: {
+        viewability_standard?: ViewabilityStandard;
+        completion_source?: CompletionSource;
+        attribution_methodology?: AttributionMethodology;
+        attribution_window?: Duration;
+        lift_dimension?: LiftDimension;
+      };
+    }
+  | {
+      scope: 'vendor';
+      vendor: BrandReference;
+      metric_id: VendorMetricID;
+    };
+/**
+ * Delivery metrics row for one catalog item within a package.
+ */
+export type CatalogItemDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
+   */
+  content_id?: string;
+  content_id_type?: ContentIDType;
+};
+/**
+ * Delivery metrics row for one creative within a package.
+ */
+export type CreativeDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Creative identifier matching the creative assignment
+   */
+  creative_id: string;
+  /**
+   * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
+   * @minimum 0
+   * @maximum 100
+   */
+  weight?: number;
+};
+/**
+ * Delivery metrics row for one keyword and match-type pair within a package.
+ */
+export type KeywordDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * The targeted keyword
+   */
+  keyword?: string;
+  match_type?: MatchType;
+};
+/**
+ * Delivery metrics row for one geographic area within a package.
+ */
+export type GeoDeliveryMetrics = DeliveryMetrics & {
+  geo_level?: GeographicTargetingLevel;
+  /**
+   * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+   */
+  system?: string;
+  /**
+   * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+   */
+  geo_code?: string;
+  /**
+   * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
+   */
+  geo_name?: string;
+};
+/**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
  */
 export interface GetMediaBuysRequest {
@@ -17524,8 +17830,9 @@ export interface GetMediaBuysResponseMediaBuy {
    * @format date-time
    */
   updated_at?: string;
+  context?: ContextObject;
   /**
-   * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_proposal / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
+   * Flat-vocabulary actions the buyer can perform on this media buy in its current state. Eliminates the need for agents to internalize the state machine — the seller declares what is permitted right now. Deprecated in favor of `available_actions[]`, which carries `mode` (self_serve / conditional_self_serve / requires_approval), optional SLA, and optional `terms_ref`. Sellers SHOULD populate both during the 3.x deprecation window; consumers MUST prefer `available_actions[]` when both are present. Removed in 4.0.
    */
   valid_actions?: MediaBuyValidAction[];
   /**
@@ -17584,7 +17891,7 @@ export interface PackageStatus {
    */
   package_id: string;
   /**
-   * Product identifier this package is purchased from
+   * Product identifier this package is purchased from. For packages created from an explicit create_media_buy package request, sellers MUST echo the request package's product_id on every response package object that represents that requested package.
    */
   product_id?: string;
   /**
@@ -17602,6 +17909,19 @@ export interface PackageStatus {
    * @minimum 0
    */
   bid_price?: number;
+  /**
+   * Legacy named-format IDs supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it, including dual-emission cases where another selector won precedence.
+   */
+  format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Structured 3.1+ format option references supplied for this package on create_media_buy. Sellers SHOULD echo this field whenever the request included it.
+   */
+  format_option_refs?: FormatOptionReference[];
+  format_kind?: CanonicalFormatKind;
+  /**
+   * Parameters for the direct canonical selector in `format_kind`, echoed from the create_media_buy request whenever the request included it. Requires `format_kind`.
+   */
+  params?: {};
   /**
    * Goal impression count for impression-based packages
    * @minimum 0
@@ -17647,6 +17967,7 @@ export interface PackageStatus {
    * @format date-time
    */
   creative_deadline?: string;
+  context?: ContextObject;
   /**
    * Approval status for each creative assigned to this package. Absent when no creatives have been assigned.
    */
@@ -17820,6 +18141,7 @@ export type GetProductsRequest = {
     | 'description'
     | 'publisher_properties'
     | 'channels'
+    | 'video_placement_types'
     | 'format_ids'
     | 'format_options'
     | 'placements'
@@ -17881,6 +18203,10 @@ export interface ProductFilters {
    * Filter by pricing availability and returned pricing options: true = products offering fixed pricing (at least one option with fixed_price), false = products offering auction pricing (at least one option without fixed_price). Products with both fixed and auction options match both true and false, but sellers MUST return only the pricing_options entries matching the requested pricing type so buyers can deterministically select from the returned options.
    */
   is_fixed_price?: boolean;
+  /**
+   * Filter by currencies the buyer can use for the media product transaction, using ISO 4217 currency codes. Products match when they offer at least one product-level pricing_options entry in one of the requested currencies and any seller-applied or otherwise mandatory product-scoped signal charges are satisfiable in one of those currencies or have no incremental price. Mandatory custom signal pricing without currency is not satisfiable for this filter unless the seller can truthfully treat it as having no incremental price. Sellers MUST return only product pricing_options entries whose currency is in this list so buyers can select deterministically from discovery. This filter does not require pruning optional signal or vendor add-on pricing; buyers should avoid optional add-ons priced only in unsupported currencies.
+   */
+  pricing_currencies?: string[];
   /**
    * Filter by specific format IDs
    */
@@ -17947,6 +18273,10 @@ export interface ProductFilters {
    */
   channels?: MediaChannel[];
   /**
+   * Filter video products by acceptable declared video placement types, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested video placement types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
+   */
+  video_placement_types?: VideoPlacementType[];
+  /**
    * @deprecated
    * Deprecated: Use trusted_match filter instead. Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
    */
@@ -17989,7 +18319,7 @@ export interface ProductFilters {
     system?: string;
   }[];
   /**
-   * Filter to products where the requested signals are buyer-selectable and jointly composable: the signals are available through inline signal_targeting_options and/or through get_signals for wholesale signal discovery, signal_targeting_allowed is true, and the requested set can coexist under the product's signal_targeting_rules. Each filter entry uses signal_ref, with deprecated signal_id accepted during the SignalRef migration window, and may include targeting_mode='include' or 'exclude' to require the product option or product rules to support that use. When targeting_mode is omitted, include is assumed. SignalRef scope 'product' is seller-local exact option matching only, not a portable semantic identifier across products or sellers; buyers wanting portable discovery should use scope 'data_provider' or get_signals. included_signals and deprecated bundled/non-selectable data_provider_signals do not satisfy this filter because they cannot be selected on create_media_buy.
+   * Filter to products where the requested signals are buyer-selectable and jointly composable: the signals are available through inline signal_targeting_options and/or through get_signals for wholesale products that allow signal targeting but omit inline options, signal_targeting_allowed is true, and the requested set can coexist under the product's signal_targeting_rules. Each filter entry uses signal_ref, with deprecated signal_id accepted during the SignalRef migration window, and may include targeting_mode='include' or 'exclude' to require the product option or product rules to support that use. When targeting_mode is omitted, include is assumed. SignalRef scope 'product' is seller-local exact option matching only, not a portable semantic identifier across products or sellers; buyers wanting portable discovery should use scope 'data_provider' or get_signals. included_signals and deprecated bundled/non-selectable data_provider_signals do not satisfy this filter because they cannot be selected on create_media_buy.
    */
   signal_targeting?: SignalTargeting[];
   /**
@@ -18124,6 +18454,7 @@ export interface ProductFilters {
     keyword: string;
     match_type?: MatchType;
   }[];
+  ext?: ExtensionObject;
 }
 /**
  * Filter to products from sellers supporting specific protocol features. Only features set to true are used for filtering.
@@ -18281,6 +18612,7 @@ export interface Event {
   user_match?: UserMatch;
   custom_data?: EventCustomData;
   action_source?: ActionSource;
+  surface?: EventSurface;
   /**
    * URL where the event occurred (required when action_source is 'website')
    */
@@ -18377,6 +18709,17 @@ export interface EventCustomData {
    */
   search_string?: string;
   /**
+   * Content progress percentage reached, primarily for `watch_milestone` events. Use 25, 50, 75, or 100 for quartiles, or another publisher-defined threshold. Do not use `value` for non-monetary progress.
+   * @minimum 0
+   * @maximum 100
+   */
+  progress_percent?: number;
+  /**
+   * Content progress duration reached in seconds, primarily for `watch_milestone` events. Use when the milestone is time-based rather than percentage-based.
+   * @minimum 0
+   */
+  progress_seconds?: number;
+  /**
    * Per-item details for e-commerce events
    */
   contents?: {
@@ -18399,6 +18742,44 @@ export interface EventCustomData {
      */
     brand?: string;
   }[];
+  ext?: ExtensionObject;
+}
+/**
+ * Optional structured surface context for the event, such as an owned channel, profile, feed, podcast, newsletter list, website, app, or store. Complements `action_source`; use it when optimization-relevant meaning would otherwise live only in platform-specific `ext` metadata.
+ */
+export interface EventSurface {
+  /**
+   * Generic surface category. `owned_property` covers durable creator or brand-controlled properties hosted by a platform, such as channels, profiles, feeds, lists, podcasts, or playlists.
+   */
+  category:
+    | 'owned_property'
+    | 'website'
+    | 'app'
+    | 'offline'
+    | 'phone_call'
+    | 'chat'
+    | 'email'
+    | 'in_store'
+    | 'system_generated'
+    | 'other';
+  /**
+   * Open vocabulary describing the kind of property, for example `channel`, `profile`, `feed`, `list`, `podcast`, `playlist`, or `newsletter`. Required by convention when `category` is `owned_property`; optional for other categories.
+   * @minLength 1
+   * @maxLength 128
+   */
+  property_type?: string;
+  /**
+   * Platform, publisher, or system namespace for the property, such as `video_platform`, `short_video_app`, `audio_service`, or a seller-defined namespace. This is intentionally not an enum.
+   * @minLength 1
+   * @maxLength 128
+   */
+  namespace?: string;
+  /**
+   * Optional identifier for the property within `namespace`.
+   * @minLength 1
+   * @maxLength 256
+   */
+  property_id?: string;
   ext?: ExtensionObject;
 }
 
@@ -18959,10 +19340,12 @@ export interface SyncEventSourcesRequest {
      * Event types this source handles (e.g. purchase, lead). If omitted, accepts all event types.
      */
     event_types?: EventType[];
+    action_source?: ActionSource;
     /**
      * Domains authorized to send events for this event source
      */
     allowed_domains?: string[];
+    surface?: EventSurface;
   }[];
   /**
    * When true, event sources not included in this sync will be removed
@@ -19014,6 +19397,7 @@ export interface SyncEventSourcesSuccess {
      */
     event_types?: EventType[];
     action_source?: ActionSource;
+    surface?: EventSurface;
     /**
      * Who manages this event source. 'buyer' = configured via this sync. 'seller' = always-on, managed by the seller (e.g. Amazon sales attribution for Amazon advertisers).
      */
@@ -19044,6 +19428,7 @@ export interface SyncEventSourcesSuccess {
      * Errors for this event source (only present when action='failed')
      */
     errors?: Error[];
+    ext?: ExtensionObject;
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -19193,7 +19578,7 @@ export interface UpdateMediaBuyRequest {
   ext?: ExtensionObject;
 }
 /**
- * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Fully-immutable fields (product_id, format_ids, format_option_refs, pricing_option_id) cannot appear in update payloads — schema-enforced via the `not` constraint at the root of this object. Pre-GA `capability_ids` is also rejected rather than accepted as an extension. The reporting contract field `committed_metrics` is append-only (sellers MUST accept new entries on update but reject attempts to modify or remove existing entries with validation_error per its own description).
+ * Package update configuration for update_media_buy. Identifies package by package_id and specifies fields to modify. Fields not present are left unchanged. Fully-immutable fields (product_id, format_ids, format_option_refs, format_kind, params, pricing_option_id) cannot appear in update payloads — schema-enforced via the `not` constraint at the root of this object. Pre-GA `capability_ids` is also rejected rather than accepted as an extension. The reporting contract field `committed_metrics` is append-only (sellers MUST accept new entries on update but reject attempts to modify or remove existing entries with validation_error per its own description).
  */
 export interface PackageUpdate {
   /**
@@ -20185,7 +20570,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
     idempotency: IdempotencySupported | IdempotencyUnsupported;
   };
   /**
-   * AdCP protocols this agent supports. Each value both (a) declares which tools the agent implements and (b) commits the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). The `measurement` protocol is in development — currently scoped to `get_adcp_capabilities` for catalog discovery; additional measurement tasks (reporting, attribution, etc.) and a baseline storyboard land in subsequent minors. Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
+   * AdCP protocols this agent supports. Stable values both (a) declare which tools the agent implements and (b) commit the agent to pass the baseline compliance storyboard at /compliance/{version}/protocols/{protocol}/ (with snake_case → kebab-case path mapping, e.g. media_buy → /compliance/.../protocols/media-buy/). The `measurement` protocol is experimental in 3.1 and currently scoped to `get_adcp_capabilities` catalog discovery; agents implementing it MUST also list `measurement.core` in `experimental_features`. Additional measurement tasks (reporting, attribution, etc.) and a baseline storyboard land in subsequent minors. Compliance testing support is declared separately via the `compliance_testing` capability block (below), not as a protocol claim.
    */
   supported_protocols: (
     | 'media_buy'
@@ -20234,7 +20619,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supported_pricing_models?: PricingModel[];
     /**
-     * Buying modes this seller supports on get_products. 'brief' (semantic discovery driven by the brief) is universally supported and implicit. 'wholesale' (raw wholesale product feed enumeration — caller omits brief and the seller returns the full priced product feed, paginated) is opt-in and SHOULD be declared explicitly so buyers can probe before issuing wholesale calls. 'refine' (iterate on prior products/proposals) is implicit when the seller declares supports_proposals or otherwise honors the refine array. Sellers MAY declare ['brief', 'wholesale'] to signal wholesale support; absent declaration is treated as ['brief'] for wholesale-feed probing purposes and sellers MAY return INVALID_REQUEST for wholesale calls they do not support. Symmetric with signals.discovery_modes.
+     * Buying modes this seller supports on get_products. 'brief' (semantic discovery driven by the brief) is universally supported and implicit. 'wholesale' (raw wholesale product feed enumeration — caller omits brief and the seller returns the full priced product feed, paginated) is opt-in and SHOULD be declared explicitly so buyers can probe before issuing wholesale calls. 'refine' lets buyers iterate on prior products/proposals and is also the vehicle for finalizing draft proposals when the seller returns them. Sellers MAY declare ['brief', 'wholesale'] to signal wholesale support; absent declaration is treated as ['brief'] for wholesale-feed probing purposes and sellers MAY return INVALID_REQUEST for wholesale calls they do not support. Symmetric with signals.discovery_modes.
      */
     buying_modes?: ('brief' | 'wholesale' | 'refine')[];
     /**
@@ -20246,7 +20631,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     offline_delivery_protocols?: CloudStorageProtocol[];
     /**
-     * Whether this seller commits to the proposal lifecycle on get_products: when called with buying_mode: 'brief' the seller will return at least one entry in proposals[]; when called with buying_mode: 'refine' + action: 'finalize' the seller will transition a proposal from draft to committed. A declaration of true is a commitment the seller will be graded against, not just a feature flag — sellers that decline a brief on policy grounds still owe a structured proposal-shaped rejection rather than an empty proposals[]. Most guaranteed-deal sellers (premium pubs, broadcast, CTV) declare true; auction-based PG, retail SKU, and quoted-rate direct-buy flows declare false. When false or absent, the seller serves products directly without proposal abstraction; conformance runners skip proposal-lifecycle storyboards.
+     * Conformance declaration that this seller supports the full proposal lifecycle on get_products: returned proposals are actionable, draft proposals can be finalized with buying_mode: 'refine' + action: 'finalize', and committed proposals can be executed via create_media_buy with proposal_id before expires_at. Buyers SHOULD NOT use this field to decide whether a specific returned proposal is executable; proposal_status is the per-proposal source of truth. A declaration of true opts the seller into proposal-lifecycle grading. When false or absent, conformance runners skip proposal-lifecycle storyboards, but buyers should still honor any proposals the seller actually returns.
      */
     supports_proposals?: boolean;
     /**
@@ -20577,7 +20962,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
    */
   signals?: {
     /**
-     * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for signal catalog definitions and to verify authorization.
+     * Data provider domains this signals agent is authorized to resell. Buyers should fetch each data provider's adagents.json for published signal definitions and to verify authorization.
      */
     data_provider_domains?: string[];
     /**
@@ -20589,7 +20974,8 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     features?: {
       /**
-       * Supports signals from data provider catalogs with structured signal_ref references
+       * @deprecated
+       * DEPRECATED. Legacy wire flag for structured signal_ref references to provider-published signal definitions. New agents SHOULD omit this flag; callers MUST NOT require it before using signal_ref with the Signals protocol.
        */
       catalog_signals?: boolean;
       [k: string]: boolean | undefined;
@@ -20887,7 +21273,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
     };
   };
   /**
-   * Measurement capability block. Presence indicates this agent computes one or more quantitative metrics about ad delivery, exposure, or effect, and is willing to be discovered as a measurement vendor. Returns metric definitions (this surface), not pricing/coverage (negotiated via `measurement_terms` on `create_media_buy`) or live values (returned per buy via `vendor_metric_values`). Modeled as a capability block (like `compliance_testing` and `webhook_signing`) rather than a `supported_protocols` value because measurement agents have one surface — this catalog — not a tool-set with mandatory tasks. AAO crawls each measurement agent's `metrics[]` on a TTL to populate the federated cross-vendor index. Same self-describing pattern as `governance.property_features[]`: agents own the catalog; the registry aggregates.
+   * Experimental measurement capability block. Presence indicates this agent computes one or more quantitative metrics about ad delivery, exposure, or effect, and is willing to be discovered as a measurement vendor. Agents implementing this block MUST list `measurement.core` in experimental_features. Returns metric definitions (this surface), not pricing/coverage (negotiated via `measurement_terms` on `create_media_buy`) or live values (returned per buy via `vendor_metric_values`). AAO crawls each measurement agent's `metrics[]` on a TTL to populate the federated cross-vendor index. Same self-describing pattern as `governance.property_features[]`: agents own the catalog; the registry aggregates.
    */
   measurement?: {
     /**
@@ -20945,29 +21331,9 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
    */
   compliance_testing?: {
     /**
-     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Values mirror the canonical scenario enum in compliance/comply-test-controller-request.json, excluding list_scenarios because that value is a discovery operation rather than a test capability. Callers can also use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
+     * Compliance testing scenarios this agent supports. Must be non-empty — at least one scenario. Values SHOULD include every canonical controller scenario the agent implements, excluding list_scenarios because that value is a discovery operation rather than a test capability. Values MAY also include implementation-specific scenarios. Callers can use comply_test_controller with scenario: 'list_scenarios' to discover supported scenarios at runtime.
      */
-    scenarios: (
-      | 'force_creative_status'
-      | 'force_account_status'
-      | 'force_media_buy_status'
-      | 'force_create_media_buy_arm'
-      | 'force_task_completion'
-      | 'force_creative_purge'
-      | 'force_session_status'
-      | 'simulate_delivery'
-      | 'simulate_budget_spend'
-      | 'seed_product'
-      | 'seed_pricing_option'
-      | 'seed_creative'
-      | 'seed_plan'
-      | 'seed_media_buy'
-      | 'seed_creative_format'
-      | 'seed_measurement_catalog'
-      | 'query_upstream_traffic'
-      | 'query_provenance_audit_observations'
-      | 'force_upstream_unavailable'
-    )[];
+    scenarios: string[];
   };
   /**
    * Optional — specialized compliance claims this agent supports. Values MUST be kebab-case enum IDs (e.g., 'creative-generative', 'sales-non-guaranteed'). An agent that implements a specialism's tools but omits its ID from this array will receive 'No applicable tracks found' from the compliance runner — tracks for that specialism are not evaluated even if every tool works. Omitting the field means the agent declares no specialism claims (it still passes the universal + domain-baseline storyboards implied by supported_protocols). Each specialism maps to a storyboard bundle at /compliance/{version}/specialisms/{id}/ that the AAO compliance runner executes to verify the claim. Each specialism rolls up to one of the protocols in supported_protocols — the runner rejects a specialism claim whose parent protocol is missing. Only list specialisms your agent actually implements — the AAO Verified badge enumerates which specialisms were demonstrably passed.
@@ -21085,7 +21451,7 @@ export interface IdempotencySupported {
   account_id_is_opaque?: boolean;
 }
 /**
- * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys by buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds and in_flight_max_seconds MUST be absent — they have no meaning without replay support.
+ * Seller does NOT honor idempotency_key replay protection — sending a key is a no-op, the seller will NOT return IDEMPOTENCY_CONFLICT or IDEMPOTENCY_EXPIRED, and a naive retry WILL double-process. Buyers MUST use natural-key checks (e.g., get_media_buys plus request context such as context.internal_campaign_id or package context such as context.buyer_ref) before retrying spend-committing operations against this seller. replay_ttl_seconds and in_flight_max_seconds MUST be absent — they have no meaning without replay support.
  */
 export interface IdempotencyUnsupported {
   /**
@@ -21418,6 +21784,41 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
+   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. When consent_basis or art9_basis is projected for another provider's signal, the value remains provider-declared signal-definition posture; sellers and federating agents MUST NOT substitute their own processing basis. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
+   */
+  fields?: (
+    | 'signal_ref'
+    | 'signal_id'
+    | 'signal_agent_segment_id'
+    | 'name'
+    | 'description'
+    | 'value_type'
+    | 'categories'
+    | 'range'
+    | 'signal_type'
+    | 'data_provider'
+    | 'coverage_percentage'
+    | 'deployments'
+    | 'pricing_options'
+    | 'taxonomy'
+    | 'data_sources'
+    | 'methodology'
+    | 'segmentation_criteria'
+    | 'criteria_url'
+    | 'refresh_cadence'
+    | 'lookback_window'
+    | 'onboarder'
+    | 'modeling'
+    | 'audience_expansion'
+    | 'device_expansion'
+    | 'countries'
+    | 'consent_basis'
+    | 'restricted_attributes'
+    | 'policy_categories'
+    | 'art9_basis'
+    | 'data_subject_rights'
+  )[];
+  /**
    * @deprecated
    * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
    * @minimum 1
@@ -21436,9 +21837,11 @@ export type GetSignalsRequest = {
   ext?: ExtensionObject;
 };
 /**
- * Types of signal catalogs available for audience targeting
+ * Commercial/provenance types for signals available for audience targeting
  */
-export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
+export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export type SignalCatalogType = SignalAvailabilityType;
 
 /**
  * Filters to refine signal discovery results
@@ -21447,7 +21850,7 @@ export interface SignalFilters {
   /**
    * Filter by catalog type
    */
-  catalog_types?: SignalCatalogType[];
+  catalog_types?: SignalAvailabilityType[];
   /**
    * Filter by specific data providers
    */
@@ -21469,6 +21872,7 @@ export interface SignalFilters {
    * @maximum 100
    */
   min_coverage_percentage?: number;
+  ext?: ExtensionObject;
 }
 
 // bundled/signals/get-signals-response.json
@@ -22499,6 +22903,14 @@ export interface AccountAuthorization {
 }
 
 
+// core/account-with-authorization.json
+/**
+ * List-accounts response item: the full Account object plus optional caller-specific authorization metadata. Named separately so SDKs can generate a stable response item type instead of inventing local wrappers for `Account` plus inline `authorization`.
+ */
+export type AccountWithAuthorization = Account & {
+  authorization?: AccountAuthorization;
+};
+
 // core/agent-encryption-key.json
 /**
  * X25519 public key for HPKE encryption. Used for TMPX exposure token encryption with HPKE mode_base.
@@ -22798,29 +23210,33 @@ export interface CanonicalProjectionReference {
   /**
    * When the v1 named format's slot shape differs from the canonical's default slots, this carries the override that the projected v2 declaration's `params.slots[]` should use. REPLACES (does not merge with) the canonical's default slots — projection-time semantics. The slot vocabulary follows `asset-group-vocabulary.json`. Asset IDs in the v1 format's `assets[*]` MUST resolve (directly or via the vocabulary's aliases) to the `asset_group_id` values declared here.
    */
-  slots_override?: {
-    /**
-     * Asset group identifier from `asset-group-vocabulary.json` (e.g., `generation_prompt`, `creative_brief`, `image_main`, `video_main`).
-     */
-    asset_group_id: string;
-    /**
-     * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
-     */
-    asset_type: string;
-    /**
-     * Whether the slot is required in the projected declaration.
-     */
-    required?: boolean;
-    /**
-     * Max character count for text slots.
-     * @minimum 1
-     */
-    max_chars?: number;
-    /**
-     * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
-     */
-    consumed_for_production?: boolean;
-  }[];
+  slots_override?: CanonicalProjectionSlotOverride[];
+}
+/**
+ * A single slot override used when projecting a legacy named format to a v2 canonical ProductFormatDeclaration. The override replaces the canonical format's default slot with an asset-group-vocabulary entry.
+ */
+export interface CanonicalProjectionSlotOverride {
+  /**
+   * Asset group identifier from `asset-group-vocabulary.json` (e.g., `generation_prompt`, `creative_brief`, `image_main`, `video_main`).
+   */
+  asset_group_id: string;
+  /**
+   * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
+   */
+  asset_type: string;
+  /**
+   * Whether the slot is required in the projected declaration.
+   */
+  required?: boolean;
+  /**
+   * Max character count for text slots.
+   * @minimum 1
+   */
+  max_chars?: number;
+  /**
+   * When false, slot is for moderation/review only and is NOT consumed by the seller's renderer (e.g., a brand-safety brief that informs review but doesn't appear in the rendered ad).
+   */
+  consumed_for_production?: boolean;
 }
 
 
@@ -24380,6 +24796,10 @@ export type PlacementDefinition = {
    * **Resolution scope is same-file only.** `format_option_id` resolves only within this file's top-level `formats[]`; cross-file references are not supported by design because same-file resolution keeps validation bounded and prevents a file from squatting on or narrowing another publisher's format_option_id. When `format_options[]` references a `format_option_id` not declared in the file's top-level `formats[]`, validators MUST surface this as `FORMAT_OPTION_UNRESOLVED` on the response `errors[]`. Buyers MUST fail closed for that placement (drop the format from the placement's accepted set) rather than silently dropping the placement or guessing intent.
    */
   format_options?: (FormatOptionReference | InlineDeclaration)[];
+  /**
+   * Declared video placement types for this publisher placement, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. Product-level placement declarations may narrow this set but SHOULD NOT broaden it. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  video_placement_types?: VideoPlacementType[];
   ext?: ExtensionObject;
 };
 /**
@@ -25630,7 +26050,7 @@ export interface SignalCoverageForecast {
   ext?: ExtensionObject;
 }
 
-// core/signal-definition.json
+// core/signal-definition-enrichment.json
 /**
  * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
  */
@@ -25645,13 +26065,215 @@ export type RestrictedAttribute =
   | 'biometric_data'
   | 'age'
   | 'familial_status';
-
 /**
- * Definition of a signal in a published adagents.json signal catalog. The catalog's publishing domain supplies the namespace, so this definition carries a local id rather than a signal_ref. Media-buy products reference this definition with signal_ref scope 'data_provider', data_provider_domain set to the catalog domain, and signal_id set to this id.
+ * Optional signal-definition enrichment fields that may be projected inline on signal listings when requested through get_signals.fields. This schema intentionally excludes signal identity and required definition fields so source-native, private, or compact listings can include typed partial disclosure without becoming a full adagents.json signal definition.
+ */
+export interface SignalDefinitionEnrichment {
+  /**
+   * Restricted attribute categories this signal touches.
+   */
+  restricted_attributes?: RestrictedAttribute[];
+  /**
+   * Policy categories this signal is sensitive for.
+   */
+  policy_categories?: string[];
+  /**
+   * Optional taxonomy metadata describing what this signal means in an external audience, content, retail-media, or provider-owned taxonomy.
+   */
+  taxonomy?: {
+    ref: string;
+    version?: string;
+    /**
+     * @minimum 1
+     */
+    segtax?: number;
+    etag?: string;
+    values: {
+      /**
+       * @minLength 1
+       */
+      id: string;
+      path?: string;
+      modifiers?: string[];
+    }[];
+    value_mappings?: {
+      value: string;
+      taxonomy_value_id: string;
+      path?: string;
+      modifiers?: string[];
+    }[];
+    parent_match_behavior?: 'exact_only' | 'descendants_supported' | 'unknown';
+  };
+  /**
+   * @maxLength 500
+   */
+  segmentation_criteria?: string;
+  criteria_url?: string;
+  data_sources?: (
+    | 'app_behavior'
+    | 'app_usage'
+    | 'web_usage'
+    | 'geo_location'
+    | 'email'
+    | 'tv_ott_or_stb_device'
+    | 'panel'
+    | 'online_ecommerce'
+    | 'credit_data'
+    | 'loyalty_card'
+    | 'transaction'
+    | 'online_survey'
+    | 'offline_survey'
+    | 'public_record_census'
+    | 'public_record_voter_file'
+    | 'public_record_other'
+    | 'offline_transaction'
+  )[];
+  methodology?: 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled';
+  audience_expansion?: boolean;
+  device_expansion?: boolean;
+  refresh_cadence?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  lookback_window?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  onboarder?: {
+    match_keys: (
+      | 'name'
+      | 'address'
+      | 'email'
+      | 'postal'
+      | 'lat_long'
+      | 'mobile_id'
+      | 'cookie_id'
+      | 'ip'
+      | 'customer_id'
+      | 'phone'
+    )[];
+    pre_onboarding_audience_expansion?: boolean;
+    pre_onboarding_device_expansion?: boolean;
+    pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
+  };
+  countries?: string[];
+  /**
+   * Data provider's declared GDPR Article 6 lawful basis or consent basis for the underlying signal definition, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own processing basis for the provider-declared basis.
+   */
+  consent_basis?: ConsentBasis[];
+  /**
+   * Data provider's declared GDPR Article 9 basis for the underlying signal definition when special-category data is involved and Article 9 applies, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own Article 9 basis for the provider-declared basis.
+   */
+  art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
+  modeling?: {
+    method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
+    seed_source: {
+      type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
+      /**
+       * Provider assertion that the seed source carries a signed attestation. Consumers MUST NOT treat this boolean alone as cryptographic proof.
+       */
+      provider_signed: boolean;
+    };
+    training_data_jurisdictions: string[];
+    ai_act_risk_class: 'minimal' | 'limited' | 'high_risk';
+    disclosure?: SignalModelingDisclosure;
+  };
+  /**
+   * Per-signal data-subject-rights routing. This is a contact/routing reference, not a machine-callable AdCP API.
+   */
+  data_subject_rights?: {
+    /**
+     * @maxLength 253
+     */
+    upstream_source_domain?: string;
+    channels: {
+      rights: ('access' | 'rectification' | 'erasure' | 'portability' | 'objection')[];
+      /**
+       * @pattern ^https:\/\/
+       */
+      url?: string;
+      /**
+       * @format email
+       */
+      email?: string;
+      languages?: string[];
+      countries?: string[];
+    }[];
+    /**
+     * @minimum 1
+     * @maximum 90
+     */
+    response_sla_days?: number;
+    /**
+     * @pattern ^https:\/\/
+     */
+    ccpa_opt_out_url?: string;
+  };
+  dts_compliant_version?: string;
+}
+/**
+ * Disclosure requirements and jurisdictional notes for modeled data signals. This schema is intentionally separate from core/provenance.json because creative provenance is about generated content, render guidance, and asset-level chain of custody, while signal modeling disclosure is about data-segment methodology and data-use transparency.
+ */
+export interface SignalModelingDisclosure {
+  /**
+   * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
+   */
+  required: boolean;
+  /**
+   * Jurisdictions where a modeling or AI-use disclosure applies.
+   */
+  jurisdictions?: {
+    /**
+     * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
+     */
+    country: string;
+    /**
+     * Provider-defined sub-national region code or name when the obligation is regional. No global canonical format is implied.
+     */
+    region?: string;
+    /**
+     * Provider-supplied regulation identifier for the disclosure obligation.
+     */
+    regulation: string;
+    /**
+     * Human-readable disclosure text or summary the provider expects buyers or reviewers to see.
+     */
+    disclosure_text?: string;
+    /**
+     * Optional URL to the provider's canonical disclosure or methodology page for this jurisdiction.
+     */
+    disclosure_url?: string;
+    /**
+     * Primary audience for this disclosure entry.
+     */
+    audience?: 'buyer' | 'data_subject' | 'regulator' | 'public';
+  }[];
+  /**
+   * Optional provider notes on how the disclosure should be interpreted. Informational only; buyers should not branch programmatically on this text.
+   * @maxLength 2000
+   */
+  notes?: string;
+}
+
+
+// core/signal-definition.json
+/**
+ * Definition of a signal in published adagents.json signals[]. The publishing domain supplies the namespace, so this definition carries a local id rather than a signal_ref. Media-buy products reference this definition with signal_ref scope 'data_provider', data_provider_domain set to the publishing domain, and signal_id set to this id. Some constraints use JSON Schema draft-07 conditional keywords such as if/then and contains; SDK generators that drop those keywords need equivalent runtime guards.
  */
 export interface SignalDefinition {
   /**
-   * Signal identifier within this published signal catalog
+   * Signal identifier within the publishing domain's adagents.json signals[]
    * @pattern ^[a-zA-Z0-9_-]+$
    */
   id: string;
@@ -25668,7 +26290,7 @@ export interface SignalDefinition {
   description?: string;
   value_type: SignalValueType;
   /**
-   * Tags for grouping and filtering signals within the catalog
+   * Tags for grouping and filtering this domain's published signal definitions
    */
   tags?: string[];
   /**
@@ -25700,8 +26322,271 @@ export interface SignalDefinition {
      */
     unit?: string;
   };
+  /**
+   * Optional taxonomy metadata describing what this signal means in an external audience, content, retail-media, or provider-owned taxonomy. Taxonomy metadata does not create a new value_type and does not change package targeting grammar: buyers still target the named signal according to value_type. When a taxonomy value is a parent node, parent/descendant expansion is seller behavior and must be declared through parent_match_behavior rather than assumed.
+   */
+  taxonomy?: {
+    /**
+     * URI identifying the taxonomy or taxonomy documentation.
+     */
+    ref: string;
+    /**
+     * Version identifier for the taxonomy when the taxonomy has versioned definitions.
+     */
+    version?: string;
+    /**
+     * OpenRTB segtax code when the taxonomy maps to an OpenRTB segment taxonomy.
+     * @minimum 1
+     */
+    segtax?: number;
+    /**
+     * Optional validator for custom taxonomy definitions so consumers can detect drift between signal publication and taxonomy resolution.
+     */
+    etag?: string;
+    /**
+     * Taxonomy node values that describe this signal. These are meaning/discovery metadata for the signal definition, not the values a buyer submits in package targeting expressions.
+     */
+    values: {
+      /**
+       * Taxonomy node identifier.
+       * @minLength 1
+       */
+      id: string;
+      /**
+       * Optional human-readable or taxonomy-native path for display and review.
+       */
+      path?: string;
+      /**
+       * Optional taxonomy-specific modifiers that qualify the node.
+       */
+      modifiers?: string[];
+    }[];
+    /**
+     * For categorical signals, maps package-targeting allowed_values[] strings to stable taxonomy node identifiers. The allowed_values[] strings remain the wire values buyers submit; this mapping explains how those strings resolve into the published taxonomy. Each value_mappings[].value SHOULD match one of the signal's allowed_values[] entries; JSON Schema draft-07 cannot enforce this cross-array constraint.
+     */
+    value_mappings?: {
+      /**
+       * Categorical value from allowed_values[].
+       */
+      value: string;
+      /**
+       * Taxonomy node identifier corresponding to this categorical value.
+       */
+      taxonomy_value_id: string;
+      /**
+       * Optional human-readable or taxonomy-native path for display and review.
+       */
+      path?: string;
+      /**
+       * Optional taxonomy-specific modifiers that qualify the mapped value.
+       */
+      modifiers?: string[];
+    }[];
+    /**
+     * Whether this signal definition supports treating a parent taxonomy node as matching descendant nodes for discovery/filtering or seller-side expansion. 'exact_only' means only explicitly listed node ids match. 'descendants_supported' means the seller can expand known, version-pinned parent nodes to descendants internally, typically by ORing the children in its execution system. 'unknown' means the provider has not declared parent-node behavior. This field is metadata about discovery/translation behavior, not a package targeting operator.
+     */
+    parent_match_behavior?: 'exact_only' | 'descendants_supported' | 'unknown';
+  };
+  /**
+   * Rules governing inclusion of identifiers in the segment. Aligns with IAB Data Transparency Standard audience criteria disclosure.
+   * @maxLength 500
+   */
+  segmentation_criteria?: string;
+  /**
+   * Optional URL to a longer-form methodology or criteria document. This is a disclosure pointer; buyers should not branch programmatically on the linked content.
+   */
+  criteria_url?: string;
+  /**
+   * Origin categories of the raw data used to compile the signal, aligned with IAB Data Transparency Standard source disclosure. Use 'panel' for respondent-panel or JIC-style audience sources. Offline and public-record sources require onboarder disclosure. Co-viewing projection and reconciliation of seller claims against a JIC or measurement vendor belong in measurement reporting/vendor metrics rather than package signal targeting.
+   */
+  data_sources?: (
+    | 'app_behavior'
+    | 'app_usage'
+    | 'web_usage'
+    | 'geo_location'
+    | 'email'
+    | 'tv_ott_or_stb_device'
+    | 'panel'
+    | 'online_ecommerce'
+    | 'credit_data'
+    | 'loyalty_card'
+    | 'transaction'
+    | 'online_survey'
+    | 'offline_survey'
+    | 'public_record_census'
+    | 'public_record_voter_file'
+    | 'public_record_other'
+    | 'offline_transaction'
+  )[];
+  /**
+   * How the signal's audience membership or attribute was determined. 'modeled' requires the modeling block.
+   */
+  methodology?: 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled';
+  /**
+   * Whether look-alike or similar-audience expansion was used to include additional identifiers. When true, modeling is required.
+   */
+  audience_expansion?: boolean;
+  /**
+   * Whether the signal was expanded deterministically across devices of the same user, household, or business. Probabilistic cross-device expansion is modeling and should use methodology 'modeled' or the modeling block.
+   */
+  device_expansion?: boolean;
+  /**
+   * Cadence at which the signal definition's underlying segment membership is refreshed.
+   */
+  refresh_cadence?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  /**
+   * Time window in which a qualifying event can occur for inclusion.
+   */
+  lookback_window?:
+    | 'intra_day'
+    | 'daily'
+    | 'weekly'
+    | 'monthly'
+    | 'bi_monthly'
+    | 'quarterly'
+    | 'bi_annually'
+    | 'annually';
+  /**
+   * Onboarder disclosure. Required when data_sources includes an offline_* or public_record_* source.
+   */
+  onboarder?: {
+    match_keys: (
+      | 'name'
+      | 'address'
+      | 'email'
+      | 'postal'
+      | 'lat_long'
+      | 'mobile_id'
+      | 'cookie_id'
+      | 'ip'
+      | 'customer_id'
+      | 'phone'
+    )[];
+    pre_onboarding_audience_expansion?: boolean;
+    pre_onboarding_device_expansion?: boolean;
+    pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
+  };
+  /**
+   * What kind of subject this signal characterizes.
+   */
+  subject_type?: 'individual' | 'household' | 'business' | 'contextual' | 'none';
+  /**
+   * How the subject is resolved at decision time.
+   */
+  resolution_method?:
+    | 'deterministic_id'
+    | 'probabilistic_device'
+    | 'browser'
+    | 'geographic'
+    | 'content_signal'
+    | 'mixed';
+  /**
+   * Identifier currencies analyzed to determine audience membership or attributes.
+   */
+  id_types?: ('cookie' | 'mobile_id' | 'platform_id' | 'user_enabled_id')[];
+  /**
+   * Context within which the audience attribute was determined. 'single_domain' requires originating_domain.
+   */
+  audience_scope?: 'single_domain' | 'cross_domain_owned' | 'cross_domain_unowned' | 'offline';
+  /**
+   * Domain of the digital property where the audience originates. Required when audience_scope is 'single_domain'.
+   */
+  originating_domain?: string;
+  /**
+   * ISO 3166-1 alpha-2 country codes where the signal is applicable. Sellers must not expose a signal for media buys in countries outside this list. Federating agents that surface a peer's signal MUST treat the peer-published list as an upper bound, re-check it against the buyer's intended deployment countries, and may apply only narrower local policy.
+   */
+  countries?: string[];
+  /**
+   * Declared GDPR Article 6 lawful basis or consent basis under which this signal's data is processed. For non-GDPR regimes, use countries, policy_categories, and disclosure fields to describe jurisdiction-specific obligations unless a future enum value applies.
+   */
+  consent_basis?: ConsentBasis[];
+  /**
+   * GDPR Article 9 basis when restricted_attributes is non-empty and the signal is used in jurisdictions where Article 9 applies. Required by policy for applicable use cases rather than universally required at schema level because sensitivity and lawful basis are jurisdiction-relative.
+   */
+  art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
+  /**
+   * Modeling disclosure for modeled data signals. Required when methodology is 'modeled' or audience_expansion is true. This describes data modeling and intentionally does not reuse creative provenance, which is content/render oriented.
+   */
+  modeling?: {
+    method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
+    seed_source: {
+      type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
+      /**
+       * Whether the seed source carries a signed attestation under one of the provider's published signing keys. This is a forward-looking claim until the consumer can resolve and verify the provider's applicable signing keys through the AdCP signing profile; consumers MUST NOT treat this boolean alone as cryptographic proof.
+       */
+      provider_signed: boolean;
+    };
+    /**
+     * ISO 3166-1 alpha-2 country codes where the model's training data was collected.
+     */
+    training_data_jurisdictions: string[];
+    /**
+     * EU AI Act risk classification self-declared by the provider. Prohibited-risk modeled signals must not be published as AdCP signal definitions.
+     */
+    ai_act_risk_class: 'minimal' | 'limited' | 'high_risk';
+    disclosure?: SignalModelingDisclosure;
+  };
+  /**
+   * Per-signal data-subject-rights routing. Inline on the signal because upstream source, rights routing, and response commitments can differ by segment or may be unavailable from a public provider document for custom/private signals. This is a contact/routing reference, not a machine-callable AdCP API.
+   */
+  data_subject_rights?: {
+    /**
+     * Domain of the upstream data source whose rights process these channels reach, when different from the publishing domain.
+     * @maxLength 253
+     */
+    upstream_source_domain?: string;
+    /**
+     * Rights request channels and the rights each channel supports. At least one declared channel MUST support one or more of access, erasure, or objection; schema validators enforce this with draft-07 contains, and consumers whose SDK drops contains need an equivalent runtime check.
+     */
+    channels: {
+      /**
+       * Rights supported by this channel.
+       */
+      rights: ('access' | 'rectification' | 'erasure' | 'portability' | 'objection')[];
+      /**
+       * HTTPS URL for submitting the rights request.
+       * @pattern ^https:\/\/
+       */
+      url?: string;
+      /**
+       * Email address for submitting the rights request.
+       * @format email
+       */
+      email?: string;
+      /**
+       * BCP 47 language tags supported by this channel.
+       */
+      languages?: string[];
+      /**
+       * ISO 3166-1 alpha-2 countries this channel serves, when the provider routes rights by country.
+       */
+      countries?: string[];
+    }[];
+    /**
+     * Maximum response time in days for rights requests handled through the declared rights channels. For provider-published signals, providers SHOULD avoid duplicating this field across every signal unless the value varies by signal or upstream source; consumers MAY also consult the provider's public privacy policy or registry disclosures when present.
+     * @minimum 1
+     * @maximum 90
+     */
+    response_sla_days?: number;
+    /**
+     * US-specific 'Do Not Sell or Share' opt-out URL where required.
+     * @pattern ^https:\/\/
+     */
+    ccpa_opt_out_url?: string;
+  };
+  /**
+   * IAB Data Transparency Standard version this signal definition self-attests as satisfying, when applicable.
+   */
+  dts_compliant_version?: string;
 }
-
 
 // core/signal-pricing-option.json
 /**
@@ -26241,7 +27126,7 @@ export interface WholesaleSignalObject {
    * @minLength 1
    */
   signal_agent_segment_id: string;
-  signal_type: SignalCatalogType;
+  signal_type: SignalAvailabilityType;
   /**
    * @minLength 1
    */
@@ -26655,6 +27540,7 @@ export type ErrorCode =
   | 'FORMAT_DECLARATION_V1_AMBIGUOUS'
   | 'FORMAT_OPTION_UNRESOLVED'
   | 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE'
+  | 'FORMAT_NOT_SUPPORTED'
   | 'PIXEL_TRACKER_LOSSY_DOWNGRADE'
   | 'PIXEL_TRACKER_UPGRADE_INFERRED'
   | 'STALE_RESPONSE';
@@ -26731,6 +27617,26 @@ export type GovernancePhase = 'purchase' | 'modification' | 'delivery';
  * Type of entry in task execution history
  */
 export type HistoryEntryType = 'request' | 'response';
+
+
+// enums/logo-slot.json
+/**
+ * Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.
+ */
+export type LogoSlot =
+  | 'logo_card_light'
+  | 'logo_card_dark'
+  | 'profile_mark'
+  | 'favicon'
+  | 'app_icon'
+  | 'social_profile_mark'
+  | 'nav_header'
+  | 'footer'
+  | 'email_header'
+  | 'watermark'
+  | 'ad_end_card'
+  | 'co_brand_lockup'
+  | 'marketplace_listing';
 
 
 // enums/metric-scope.json
@@ -27133,7 +28039,7 @@ export interface CanonicalFormatBase {
    * 2. **Adopter runtime gap** — the seller has declared the canonical in their catalog but their runtime doesn't yet honor it cleanly.
    * 3. **Custom shapes** — `format_kind: "custom"` is inherently experimental until the working group promotes a `format_shape` to a first-class canonical.
    *
-   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 6 IAB/VAST/DAAST re-encodings (`image`, `display_tag`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
+   * Replaces the earlier `status` enum (`stable | preview | deprecated`) + `runtime_status` enum (`stable | preview | declared_only`) — two axes with subtle overlap. The single boolean is what buyers actually care about: do I treat this as production-stable or as 'try at my own risk.' Sellers SHOULD set `experimental: true` on canonicals or product declarations that aren't yet production-ready, regardless of which axis (spec, runtime, custom) drives the experimentation. The 9 non-experimental canonicals at 3.1 GA (`image`, `html5`, `display_tag`, `image_carousel`, `video_hosted`, `video_vast`, `audio_hosted`, `audio_daast`, `native_in_feed`) default to non-experimental at the canonical level; sellers MAY still mark a specific product declaration experimental (e.g., a beta runtime path for an existing product).
    */
   experimental?: boolean;
   /**

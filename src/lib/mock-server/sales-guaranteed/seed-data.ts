@@ -51,7 +51,7 @@ export const NETWORKS: MockNetwork[] = [
   // sends payloads with these publisher domains. Without them, every
   // `_lookup/network` returns 404 and a blind agent has to invent a fallback
   // that contradicts the skill's "fail closed on 404" advice. Issue
-  // adcontextprotocol/adcp#3822. Until the storyboard runner exposes a
+  // adcontextprotocol/adcp#3821. Until the storyboard runner exposes a
   // setup phase that primes the upstream, we seed the fixture domains
   // here so blind agents can pass the traffic gate without contradiction.
   {
@@ -103,7 +103,7 @@ export const AD_UNITS: MockAdUnit[] = [
     environment: 'web',
     targetable: true,
   },
-  // Storyboard-fixture-aligned ad units (see NETWORKS comment + adcp#3822).
+  // Storyboard-fixture-aligned ad units (see NETWORKS comment + adcp#3821).
   {
     ad_unit_id: 'au_acmeoutdoor_billboards',
     name: 'Acme Outdoor — Programmatic DOOH Billboards',
@@ -165,7 +165,7 @@ export const PRODUCTS: MockProduct[] = [
     ad_unit_ids: ['au_us_display_300x250'],
     pricing: { model: 'cpm', cpm: 4.5, currency: 'USD' },
   },
-  // Storyboard-fixture-aligned products (see NETWORKS comment + adcp#3822).
+  // Storyboard-fixture-aligned products (see NETWORKS comment + adcp#3821).
   {
     product_id: 'acme_dooh_billboards_q2',
     name: 'Acme Outdoor — DOOH Billboards Q2',
