@@ -276,6 +276,7 @@ export interface StepInvariantsObject {
  *
  *   - `products[]`      → `seed_product`         — requires `product_id`
  *   - `pricing_options[]` → `seed_pricing_option` — requires `product_id` + `pricing_option_id`
+ *   - `creative_formats[]` → `seed_creative_format` — requires `format_id`
  *   - `creatives[]`     → `seed_creative`        — requires `creative_id`
  *   - `plans[]`         → `seed_plan`            — requires `plan_id`
  *   - `media_buys[]`    → `seed_media_buy`       — requires `media_buy_id`
@@ -291,6 +292,7 @@ export interface StepInvariantsObject {
 export interface StoryboardFixtures {
   products?: Array<Record<string, unknown> & { product_id?: string }>;
   pricing_options?: Array<Record<string, unknown> & { product_id?: string; pricing_option_id?: string }>;
+  creative_formats?: Array<Record<string, unknown> & { format_id?: string; fixture?: unknown }>;
   creatives?: Array<Record<string, unknown> & { creative_id?: string }>;
   plans?: Array<Record<string, unknown> & { plan_id?: string }>;
   media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
@@ -1727,6 +1729,13 @@ export type RunnerDetailedSkipReason =
    */
   | 'controller_seeding_failed'
   /**
+   * A generated pre-flight seed_* call targeted a scenario that the agent's
+   * comply_test_controller does not implement. Maps to canonical
+   * `not_applicable`: the seller cannot accept this storyboard's fixture
+   * setup, so the storyboard is out of scope rather than failed.
+   */
+  | 'fixture_seed_unsupported'
+  /**
    * A `requires_capability` predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
@@ -1764,6 +1773,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   oauth_not_advertised: 'not_applicable',
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
+  fixture_seed_unsupported: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',

@@ -773,6 +773,46 @@ describe('handleTestControllerRequest', () => {
       );
     });
 
+    it('same account can seed the same product_id with divergent fixtures when correlation_id differs', async () => {
+      const writes = [];
+      const store = {
+        async seedProduct(productId, fixture) {
+          writes.push({ productId, fixture });
+        },
+      };
+      const seedCache = createSeedFixtureCache();
+
+      const first = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          context: { correlation_id: 'storyboard_a--__seeding__' },
+          params: { product_id: 'p1', fixture: { x: 1 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(first.success, true);
+      assert.strictEqual(first.message, 'Fixture seeded');
+
+      const second = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          context: { correlation_id: 'storyboard_b--__seeding__' },
+          params: { product_id: 'p1', fixture: { x: 2 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(second.success, true);
+      assert.strictEqual(second.message, 'Fixture seeded');
+      assert.deepStrictEqual(
+        writes.map(w => w.fixture.x),
+        [1, 2]
+      );
+    });
+
     it('same account replaying with divergent fixture still returns INVALID_PARAMS', async () => {
       const store = {
         async seedProduct() {},

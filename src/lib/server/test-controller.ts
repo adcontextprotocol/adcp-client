@@ -776,9 +776,10 @@ function normalizeBuyerAgentSeedFixture(fixture: Record<string, unknown>): Recor
  * spec idempotency rules when a {@link SeedFixtureCache} is provided. */
 /**
  * Build the seed-cache key for a scenario. When `scope` is present (the
- * request's account / session scope), it's prefixed so two sandbox accounts
- * or sessions on one server can each seed the same fixture id with divergent
- * fixtures without colliding in the process-wide `SeedFixtureCache`.
+ * request's account / session / correlation scope), it's prefixed so two
+ * sandbox accounts, sessions, or storyboard runs on one server can each seed
+ * the same fixture id with divergent fixtures without colliding in the
+ * process-wide `SeedFixtureCache`.
  *
  * Without scope (legacy callers, or requests with no `account` envelope),
  * the unscoped key is used — preserving the pre-#1215 behavior. Adopters
@@ -796,6 +797,8 @@ function makeSeedCacheScope(input: Record<string, unknown>): string | undefined 
   if (context != null && typeof context === 'object') {
     const sessionId = (context as { session_id?: unknown }).session_id;
     if (typeof sessionId === 'string' && sessionId.length > 0) parts.push(`session:${sessionId}`);
+    const correlationId = (context as { correlation_id?: unknown }).correlation_id;
+    if (typeof correlationId === 'string' && correlationId.length > 0) parts.push(`correlation:${correlationId}`);
   }
 
   const account =
@@ -1280,11 +1283,11 @@ async function handleTestControllerRequestImpl(
       case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
       case SEED_SCENARIOS.SEED_MEASUREMENT_CATALOG:
       case SEED_SCENARIOS.SEED_BUYER_AGENT: {
-        // Seed-cache scope (issue #1215). Two sandbox accounts or sessions on
-        // one server can each seed the same fixture id with divergent fixtures;
-        // without a scope prefix the cache treats divergent replays as
-        // INVALID_PARAMS even when each scoped fixture is internally
-        // self-consistent. No resolver call here — test-controller is a
+        // Seed-cache scope (issues #1215/#2156). Two sandbox accounts,
+        // sessions, or storyboard correlation buckets on one server can each
+        // seed the same fixture id with divergent fixtures; without a scope
+        // prefix the cache treats divergent replays as INVALID_PARAMS even when
+        // each scoped fixture is internally self-consistent. No resolver call here — test-controller is a
         // generic helper that doesn't know about platform.accounts.resolve,
         // and read-time misalignment is fine because the cache only governs
         // idempotency, not user-visible state.
