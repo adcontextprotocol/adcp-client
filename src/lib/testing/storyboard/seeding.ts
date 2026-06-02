@@ -265,7 +265,15 @@ export async function runControllerSeeding(
       error = call.authoring_error;
     } else {
       try {
-        const raw = await callControllerRaw(client, { scenario: call.scenario, params: call.params }, options);
+        const raw = await callControllerRaw(
+          client,
+          {
+            scenario: call.scenario,
+            params: call.params,
+            context: { correlation_id: `${storyboard.id}--__seeding__` },
+          },
+          options
+        );
         const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
         if (raw.success && data?.success === true) {
           passed = true;

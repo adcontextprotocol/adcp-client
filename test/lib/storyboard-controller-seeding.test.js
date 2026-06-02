@@ -204,12 +204,13 @@ describe('runControllerSeeding', () => {
       },
     };
     const { client, calls } = makeMockClient(successResponse);
-    const result = await runControllerSeeding(client, storyboard, {}, {});
+    const result = await runControllerSeeding(client, storyboard, {}, { correlation_id: 'runner-context' });
     assert.ok(result, 'seeding result should exist');
     assert.strictEqual(calls.length, 3);
     for (const call of calls) {
       assert.strictEqual(call.name, 'comply_test_controller');
       assert.match(String(call.params.scenario), /seed_/);
+      assert.deepStrictEqual(call.params.context, { correlation_id: 'test_sb--__seeding__' });
     }
     assert.strictEqual(result.allPassed, true);
     assert.strictEqual(result.passedCount, 3);
@@ -220,6 +221,16 @@ describe('runControllerSeeding', () => {
       assert.strictEqual(step.passed, true);
       assert.strictEqual(step.task, 'comply_test_controller');
     }
+  });
+
+  test('uses a different seeding correlation id per storyboard', async () => {
+    const { client, calls } = makeMockClient(successResponse);
+    await runControllerSeeding(client, { ...storyboardWithFixtures, id: 'first_storyboard' }, {}, {});
+    await runControllerSeeding(client, { ...storyboardWithFixtures, id: 'second_storyboard' }, {}, {});
+    assert.deepStrictEqual(
+      calls.map(call => call.params.context?.correlation_id),
+      ['first_storyboard--__seeding__', 'second_storyboard--__seeding__']
+    );
   });
 
   test('failure path: controller returns an error for one seed — phase fails, allPassed is false', async () => {
@@ -336,6 +347,7 @@ describe('runStoryboard: controller seeding integration', () => {
     assert.strictEqual(seedCalls.length, 1, 'exactly one seed_product call');
     assert.strictEqual(seedCalls[0].params.scenario, 'seed_product');
     assert.strictEqual(seedCalls[0].params.params.product_id, 'sports_display');
+    assert.deepStrictEqual(seedCalls[0].params.context, { correlation_id: 'seed_runner_sb--__seeding__' });
     assert.ok(productCalls.length >= 1, 'real phase should run after seeding');
 
     const seedPhase = result.phases.find(p => p.phase_id === '__controller_seeding__');
