@@ -1546,6 +1546,11 @@ export interface AdcpServerConfig<TAccount = unknown> {
    */
   webhooks?: WebhooksConfig;
   /**
+   * Optional callback to customize how the response is enhanced.
+   * If not provided, no response enhancement will be performed.
+   */
+  responseEnhancer?: (response: McpToolResponse) => void;
+  /**
    * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
    * When set together with `capabilities.specialisms` containing
    * `signed-requests`, `serve()` mounts the verifier as `preTransport` so
@@ -2985,6 +2990,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     validation: validationConfig,
     credentialPolicy,
     testController: testControllerBridge,
+    responseEnhancer,
   } = config;
 
   // One-shot construction-time warn when `testController` is wired without
@@ -3459,6 +3465,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           injectEnvelopeStatusIntoResponse(response);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
+          if (responseEnhancer) {
+            responseEnhancer(response);
+          }
           return response;
         };
 
