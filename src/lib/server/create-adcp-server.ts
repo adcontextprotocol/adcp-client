@@ -1572,8 +1572,9 @@ export interface AdcpServerConfig<TAccount = unknown> {
    */
   webhooks?: WebhooksConfig;
   /**
-   * Optional callback to customize how the response is enhanced.
-   * If not provided, no response enhancement will be performed.
+   * Optional callback that can mutate MCP tool responses before they are
+   * returned. Runs for framework tools, custom tools, and generated discovery
+   * responses registered by `createAdcpServer`.
    */
   responseEnhancer?: (response: McpToolResponse) => void;
   /**
@@ -3512,6 +3513,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   const registeredToolNames = new Set<string>();
 
+  const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
+    responseEnhancer?.(response);
+    return response;
+  };
+
   // Collect all domain handlers into a flat toolName → handler map
   const domainGroups: [Record<string, Function> | undefined, HandlerEntry[]][] = [
     [config.mediaBuy as Record<string, Function> | undefined, MEDIA_BUY_ENTRIES],
@@ -3605,10 +3611,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           injectEnvelopeStatusIntoResponse(response);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
-          if (responseEnhancer) {
-            responseEnhancer(response);
-          }
-          return response;
+          return applyResponseEnhancer(response);
         };
 
         // --- Buyer-agent registry resolution (#1269 / #1292) ---
@@ -3829,12 +3832,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // path, which under-discloses when several vectors are
               // present together. Full list lives in
               // `details.credential_paths`.
-              return adcpError('PERMISSION_DENIED', {
-                message:
-                  'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
-                recovery: 'correctable',
-                details: { scope: 'credentials', credential_paths: blockedPaths },
-              });
+              return applyResponseEnhancer(
+                adcpError('PERMISSION_DENIED', {
+                  message:
+                    'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
+                  recovery: 'correctable',
+                  details: { scope: 'credentials', credential_paths: blockedPaths },
+                })
+              );
             }
           }
         }
@@ -3891,12 +3896,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 // signal; losing the diagnostic log is acceptable when
                 // the alternative is failing the request entirely.
               }
-              return adcpError('PERMISSION_DENIED', {
-                message:
-                  'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
-                recovery: 'terminal',
-                details: { scope: 'credentials' },
-              });
+              return applyResponseEnhancer(
+                adcpError('PERMISSION_DENIED', {
+                  message:
+                    'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
+                  recovery: 'terminal',
+                  details: { scope: 'credentials' },
+                })
+              );
             }
           }
         }
@@ -5117,10 +5124,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
       const wrappedHandler = (async (...args: unknown[]) => {
         try {
-          return await rawHandler(...args);
+          return applyResponseEnhancer(await rawHandler(...args));
         } catch (err) {
-          if (isThrownAdcpError(err)) return err;
-          if (err instanceof AdcpError) return projectThrownAdcpError(err);
+          if (isThrownAdcpError(err)) return applyResponseEnhancer(err);
+          if (err instanceof AdcpError) return applyResponseEnhancer(projectThrownAdcpError(err));
           throw err;
         }
       }) as Parameters<typeof server.registerTool>[2];
@@ -5316,7 +5323,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {
         (data as any).context = ctx;
       }
-      return capabilitiesResponse(data);
+      return applyResponseEnhancer(capabilitiesResponse(data));
     }) as Parameters<typeof server.registerTool>[2]
   );
   registeredToolNames.add('get_adcp_capabilities');
