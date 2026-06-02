@@ -459,10 +459,20 @@ export type {
   PreflightAllowed,
   PreflightDenial,
   PreflightDenied,
+  BuyerPropertyPolicy,
+  NormalizedPolicyDomain,
+  ProductPolicyProductLike,
+  ProductPropertyPolicyDiagnostic,
+  ProductPropertyPolicyDiagnosticCode,
+  ProductPropertyPolicyDiagnosticSeverity,
+  ProductPropertyPolicyMode,
+  ProductPropertyPolicySelectorBehavior,
+  ProductPropertyPolicyValidationResult,
   PreflightResult,
   ResolvedAction,
   SLAWindow,
   SlaWindow,
+  ValidateProductsAgainstPropertyPolicyOptions,
   UpdateFieldEntry,
   UpdateMediaBuyRequestLike,
 } from './media-buy';
@@ -492,8 +502,11 @@ export {
   getActionForMutation,
   getAvailableActions,
   getRollupParent,
+  ProductPropertyPolicyError,
+  normalizeDomainForPropertyPolicy,
   preflightUpdateMediaBuy,
   recoveryForModeMismatch,
+  validateProductsAgainstPropertyPolicy,
 } from './media-buy';
 export { InputRequiredError } from './core/TaskExecutor';
 

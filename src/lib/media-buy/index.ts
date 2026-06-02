@@ -23,6 +23,24 @@ export {
 } from './available-actions';
 
 export type {
+  BuyerPropertyPolicy,
+  NormalizedPolicyDomain,
+  ProductPolicyProductLike,
+  ProductPropertyPolicyDiagnostic,
+  ProductPropertyPolicyDiagnosticCode,
+  ProductPropertyPolicyDiagnosticSeverity,
+  ProductPropertyPolicyMode,
+  ProductPropertyPolicySelectorBehavior,
+  ProductPropertyPolicyValidationResult,
+  ValidateProductsAgainstPropertyPolicyOptions,
+} from './property-policy';
+export {
+  ProductPropertyPolicyError,
+  normalizeDomainForPropertyPolicy,
+  validateProductsAgainstPropertyPolicy,
+} from './property-policy';
+
+export type {
   DecomposedUpdateMediaBuy,
   DecomposedUpdateMediaBuyMutation,
   MediaBuyMutationDirection,
