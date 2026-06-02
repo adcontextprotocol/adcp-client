@@ -259,19 +259,16 @@ describe('Generated comply test controller types', () => {
     );
   });
 
-  test('Request has all scenario variants', () => {
+  test('Request scenario remains open-ended for additive controller scenarios', () => {
     const fs = require('fs');
     const path = require('path');
     const typesContent = fs.readFileSync(path.join(__dirname, '../../src/lib/types/tools.generated.ts'), 'utf8');
-    // The comply test controller uses a single request type with a scenario discriminant
+    // The comply test controller uses a single request type with an open-ended
+    // scenario string. Known scenarios are documented in the schema text, but
+    // adopters must also accept additive scenario strings from future releases.
     assert.ok(typesContent.includes('ComplyTestControllerRequest'));
-    assert.ok(typesContent.includes("'list_scenarios'"));
-    assert.ok(typesContent.includes("'force_creative_status'"));
-    assert.ok(typesContent.includes("'force_account_status'"));
-    assert.ok(typesContent.includes("'force_media_buy_status'"));
-    assert.ok(typesContent.includes("'force_session_status'"));
-    assert.ok(typesContent.includes("'simulate_delivery'"));
-    assert.ok(typesContent.includes("'simulate_budget_spend'"));
+    assert.ok(typesContent.includes('scenario: string;'));
+    assert.ok(typesContent.includes('Runners and sellers MUST accept unknown scenario strings'));
   });
 
   test('Response has all variant types', () => {

@@ -70,6 +70,10 @@ Cross-specialism dispatch: `brandRights.acquireRights` consults `campaignGoverna
 
 This is distinct from `decisioning-platform-multi-tenant.ts` which uses **host-routed** tenancy via `TenantRegistry` (different agentUrls per tenant). Both are valid; pick by deployment shape.
 
+### Multi-tenant (path-routed Express)
+
+`decisioning-platform-path-routed.ts` demonstrates the **path-routed** TenantRegistry model for existing Express apps that must keep legacy public paths such as `/storefront/:platformId/mcp`. The route resolves the tenant from the decoded path segment, creates a per-request `StreamableHTTPServerTransport`, stamps MCP `req.auth` from the app's existing auth middleware, and lets each platform's `accounts.resolve(ref, ctx)` scope buyer identity from `ctx.authInfo`.
+
 ### Agent testing (`comply_test_controller`)
 
 Start with `createComplyController` (`comply-controller-seller.ts`). Switch to `registerTestController` (`seller-test-controller.ts`) only when your domain state has internal structure that multiple production tools read from — i.e., when the adapter surface's one-method-per-scenario shape starts fighting the code you already have.

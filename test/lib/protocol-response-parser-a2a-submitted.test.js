@@ -525,7 +525,7 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
 
   test('A2A wrapped tasks/get adcp_version flows through submitted waitForCompletion metadata', async () => {
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return a2aWrappedCompletedArtifactData({
           status: 'completed',
           task_id: 'tk_poll_a2a',

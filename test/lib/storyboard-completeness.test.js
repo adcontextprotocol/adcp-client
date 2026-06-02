@@ -46,6 +46,9 @@ const HARNESS_TASKS = new Set([
   'expect_webhook',
   'expect_webhook_retry_keys_stable',
   'expect_webhook_signature_valid',
+  // Inbound webhook receiver conformance replays a fixture into the local
+  // receiver instead of invoking a seller protocol tool.
+  'replay_webhook_vector',
   'fetch_brand_jwks',
   'assert_jwks_purpose',
   'expect_rate_limit_not_replayed',

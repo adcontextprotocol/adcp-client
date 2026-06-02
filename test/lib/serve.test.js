@@ -23,7 +23,17 @@ function waitForListening(server) {
   });
 }
 
-describe('serve()', () => {
+function closeServer(server) {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    server.close(err => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+describe('serve()', { concurrency: false }, () => {
   let serve;
   let McpServer;
 
@@ -49,7 +59,7 @@ describe('serve()', () => {
     await makeRequest(port, '/mcp');
     assert.strictEqual(callCount, 2, 'factory should be called once per request');
 
-    server.close();
+    await closeServer(server);
   });
 
   test('matches path with trailing slash', async () => {
@@ -62,7 +72,7 @@ describe('serve()', () => {
     // Should not be 404 — it reached the MCP handler (may error, but not 404)
     assert.notStrictEqual(res.status, 404, '/mcp/ should match the mount path');
 
-    server.close();
+    await closeServer(server);
   });
 
   test('matches path with query string', async () => {
@@ -74,7 +84,7 @@ describe('serve()', () => {
     const res = await makeRequest(port, '/mcp?foo=bar');
     assert.notStrictEqual(res.status, 404, '/mcp?foo=bar should match the mount path');
 
-    server.close();
+    await closeServer(server);
   });
 
   test('returns 404 for non-matching paths', async () => {
@@ -86,7 +96,7 @@ describe('serve()', () => {
     const res = await makeRequest(port, '/other');
     assert.strictEqual(res.status, 404);
 
-    server.close();
+    await closeServer(server);
   });
 
   test('custom path option', async () => {
@@ -101,7 +111,7 @@ describe('serve()', () => {
     const found = await makeRequest(port, '/v1/agent');
     assert.notStrictEqual(found.status, 404, 'custom path should match');
 
-    server.close();
+    await closeServer(server);
   });
 
   test('onListening callback receives URL', async () => {
@@ -118,7 +128,7 @@ describe('serve()', () => {
     const port = server.address().port;
     assert.strictEqual(url, `http://localhost:${port}/mcp`);
 
-    server.close();
+    await closeServer(server);
   });
 
   test('invalid PORT env var throws', () => {
@@ -154,6 +164,6 @@ describe('serve()', () => {
     const body = JSON.parse(res.body);
     assert.strictEqual(body.error, 'Internal server error');
 
-    server.close();
+    await closeServer(server);
   });
 });

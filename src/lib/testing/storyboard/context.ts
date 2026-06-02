@@ -363,6 +363,8 @@ export function forwardAliasCache(from: StoryboardContext, to: StoryboardContext
  *     allocated when expanding `{{runner.webhook_url:<step_id>}}`.
  */
 export interface RunnerVariables {
+  /** Millisecond timestamp captured once at run start for deterministic enrichment. */
+  runStartMs?: number;
   /** Base URL of the runner's webhook receiver, when enabled. */
   webhookBase?: string;
   /** step_id → operation_id, filled lazily on expansion. */
@@ -380,6 +382,7 @@ export interface RunnerVariables {
 
 export function createRunnerVariables(opts: { webhookBase?: string } = {}): RunnerVariables {
   return {
+    runStartMs: Date.now(),
     ...(opts.webhookBase !== undefined && { webhookBase: opts.webhookBase }),
     stepOperationIds: new Map(),
     runState: new Map(),

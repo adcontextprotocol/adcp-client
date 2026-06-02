@@ -219,6 +219,47 @@ accounts: {
 }
 ```
 
+### Stateless BYOK provider auth
+
+For single-account API-key or bearer-token BYOK adapters, the provider
+credential can be the AdCP request credential for that endpoint. A caller
+presents the current provider key or OAuth access token as normal bearer
+request auth:
+
+```http
+Authorization: Bearer <provider_api_key_or_access_token>
+```
+
+This is the single-plane pattern for a seller agent that wraps one upstream
+provider account per credential: the seller agent authenticates the request
+with the caller-presented provider credential, derives the singleton account
+from that request auth, and uses the same request-local token for upstream API
+calls. No SDK-managed OAuth flow, refresh-token store, provider-token store,
+or callback route is required when the caller owns the provider credential
+lifecycle. If the provider credential can see multiple upstream accounts, use
+an explicit account roster pattern such as `createOAuthPassthroughResolver`
+instead of `'derived'`.
+
+Handlers with a resolved account should read the active token from
+`ctx.account.authInfo?.token`; refresh hooks update `account.authInfo`.
+Handlers without a resolved account can read the request token from
+`ctx.authInfo.token`. Use a stable non-secret identity for cache and
+idempotency scoping, such as `ctx.authInfo.credential.key_id` for API keys,
+`ctx.authInfo.credential.client_id` for OAuth, or an adopter-supplied
+`principal`. Do not store the raw token in `ctx_metadata`; keep it on request
+auth and re-read it per request.
+
+Treat both token paths as request-local. Do not copy provider tokens into
+persisted Account rows, `ctx_metadata`, `ctx.authInfo.extra`, request `ext` /
+body fields, or log lines. In dual-auth proxy deployments, keep the second
+credential request-local too; log only non-secret identifiers such as
+`key_id`, `client_id`, or `principal`.
+
+Only introduce a separate provider-auth channel when one request truly needs
+two credentials: one credential to authorize the caller to the AdCP agent and
+another credential to authorize the upstream provider tenant. That dual-auth
+proxy shape is optional; it is not the baseline BYOK model.
+
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
 

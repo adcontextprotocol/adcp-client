@@ -8,6 +8,7 @@
 
 import type { TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
+import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 
 // ────────────────────────────────────────────────────────────
 // Parsed storyboard structure (mirrors YAML schema)
@@ -275,6 +276,7 @@ export interface StepInvariantsObject {
  *
  *   - `products[]`      → `seed_product`         — requires `product_id`
  *   - `pricing_options[]` → `seed_pricing_option` — requires `product_id` + `pricing_option_id`
+ *   - `creative_formats[]` → `seed_creative_format` — requires `format_id`
  *   - `creatives[]`     → `seed_creative`        — requires `creative_id`
  *   - `plans[]`         → `seed_plan`            — requires `plan_id`
  *   - `media_buys[]`    → `seed_media_buy`       — requires `media_buy_id`
@@ -290,6 +292,7 @@ export interface StepInvariantsObject {
 export interface StoryboardFixtures {
   products?: Array<Record<string, unknown> & { product_id?: string }>;
   pricing_options?: Array<Record<string, unknown> & { product_id?: string; pricing_option_id?: string }>;
+  creative_formats?: Array<Record<string, unknown> & { format_id?: string; fixture?: unknown }>;
   creatives?: Array<Record<string, unknown> & { creative_id?: string }>;
   plans?: Array<Record<string, unknown> & { plan_id?: string }>;
   media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
@@ -433,6 +436,28 @@ export type StepAuthDirective =
        *   - `random_invalid_jwt` — three base64url segments; valid JSON header/payload, random signature.
        */
       value_strategy?: 'random_invalid_jwt';
+    }
+  | {
+      type: 'basic';
+      /** Pull the Basic credential object from the runtime test kit, e.g. `auth.basic`. */
+      from_test_kit?: string | boolean;
+      /** Explicit username. Mutually exclusive with `credentials`. */
+      username?: string;
+      /** Explicit password. Mutually exclusive with `credentials`. */
+      password?: string;
+      /** Unencoded `username:password` pair. Mutually exclusive with `username`/`password`. */
+      credentials?: string;
+      /** Nested Basic credential shape accepted for authoring parity with test kits. */
+      basic?: {
+        username?: string;
+        password?: string;
+        credentials?: string;
+      };
+      /**
+       * Runner-generated value. Current strategies:
+       *   - `random_invalid` — random username/password pair.
+       */
+      value_strategy?: 'random_invalid';
     };
 
 export interface StoryboardStep {
@@ -626,6 +651,8 @@ export interface StoryboardStep {
   /** When true (default) assert `idempotency_key` is present and pattern-valid. */
   expect_idempotency_key?: boolean;
   /** Optional webhook schema reference; validates the parsed body. */
+  webhook_payload_schema_ref?: string;
+  /** Back-compat alias for older local storyboards. Prefer `webhook_payload_schema_ref`. */
   response_schema_webhook_ref?: string;
   /**
    * Cap on the number of distinct logical webhook events (grouped by
@@ -647,6 +674,17 @@ export interface StoryboardStep {
   expect_min_deliveries?: number;
   /** Signature-tag sanity check for `expect_webhook_signature_valid`. Default `adcp/webhook-signing/v1`. */
   require_tag?: string;
+  // ──────────────────────────────────────────────────────────
+  // Webhook receiver replay step fields (only used when task is
+  // `replay_webhook_vector`). The runner sends a canonical webhook POST to
+  // a buyer/orchestrator receiver under test; it does not call the seller.
+  // ──────────────────────────────────────────────────────────
+  /** Compliance vector reference, e.g. `static/test-vectors/webhook-receiver-envelope.json#positive/foo`. */
+  vector_ref?: string;
+  /** Earlier step id that represents the same logical event retry. */
+  same_event_as?: string;
+  /** Expected receiver error label from the vector metadata, when present. */
+  expected_error?: string;
   /**
    * Fan-out spec for parallel-dispatch steps. When set, the runner fires
    * `count` concurrent dispatches of this step (single-process,
@@ -700,6 +738,25 @@ export type StoryboardValidationCheck =
   | 'envelope_field_value_or_absent'
   | 'field_value'
   | 'field_value_or_absent'
+  /**
+   * Assert that a string field in the task payload matches a JavaScript
+   * regular expression source declared in `pattern`. Fails when the path is
+   * missing, the value is not a string, the pattern is invalid, or the regex
+   * does not match. Failure output carries `expected: { pattern }` and
+   * `actual` as the observed value (or null when missing). Added for
+   * runner-output-contract v2.5.0.
+   */
+  | 'field_pattern'
+  /**
+   * Envelope-scoped `field_pattern`. The path resolves against the union of
+   * protocol-envelope fields (`status`, `task_id`, etc.) and string-valued
+   * version-envelope fields such as `adcp_version`. Runtime matching is the
+   * same as `field_pattern`; the distinct kind lets static linting validate
+   * against the envelope schemas instead of the task payload schema. Numeric
+   * envelope fields such as `adcp_major_version` should use
+   * `envelope_field_value`.
+   */
+  | 'envelope_field_pattern'
   // Wildcard-aware membership check. `path` may include `[*]` segments that
   // expand to every array element via `resolvePathAll`. Passes when ANY
   // resolved value matches `value` (or any of `allowed_values`). Lets
@@ -1026,6 +1083,8 @@ export interface StoryboardValidation {
   value?: unknown;
   /** Accepted values for list-match checks (passes if actual matches any). */
   allowed_values?: unknown[];
+  /** JavaScript regular expression source for field_pattern checks. */
+  pattern?: string;
   description: string;
   // ─── refs_resolve fields ───────────────────────────────────
   /** Source refs (the refs being checked). */
@@ -1466,6 +1525,26 @@ export interface StoryboardRunOptions extends TestOptions {
     public_url?: string;
   };
   /**
+   * Target receiver for `replay_webhook_vector` storyboards. This is separate
+   * from `webhook_receiver`: that option hosts a local receiver so the runner
+   * can observe seller-emitted webhooks, while this option points at the
+   * buyer/orchestrator receiver the runner should POST canonical vectors to.
+   */
+  webhook_replay_receiver?: {
+    /** Absolute URL of the receiver endpoint under test. */
+    url: string;
+    /** Extra headers to send on every replay. */
+    headers?: Record<string, string>;
+    /** Optional signing profile for raw-body verification tests. */
+    signing?: WebhookConformanceSigningOptions;
+    /** Request timeout in milliseconds. Defaults to 10000. */
+    timeoutMs?: number;
+    /** Optional root directory for resolving vector_ref file paths. */
+    vectorsRoot?: string;
+    /** Override fetch for tests or custom runtimes. */
+    fetchImpl?: typeof fetch;
+  };
+  /**
    * Test-kit contract ids that are in scope for this run. A step with
    * `requires_contract: <id>` grades `not_applicable` when the id is not
    * listed here. Storyboards that assert webhook behavior typically declare
@@ -1650,6 +1729,13 @@ export type RunnerDetailedSkipReason =
    */
   | 'controller_seeding_failed'
   /**
+   * A generated pre-flight seed_* call targeted a scenario that the agent's
+   * comply_test_controller does not implement. Maps to canonical
+   * `not_applicable`: the seller cannot accept this storyboard's fixture
+   * setup, so the storyboard is out of scope rather than failed.
+   */
+  | 'fixture_seed_unsupported'
+  /**
    * A `requires_capability` predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
@@ -1687,6 +1773,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   oauth_not_advertised: 'not_applicable',
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
+  fixture_seed_unsupported: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',

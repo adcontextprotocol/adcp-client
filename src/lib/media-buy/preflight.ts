@@ -650,7 +650,9 @@ export function recoveryForModeMismatch(
 ): ModeMismatchRecovery | undefined {
   const entry = currentlyAvailable.find(a => a.action === attemptedAction);
   if (!entry) return undefined;
-  switch (entry.mode) {
+  // `requires_proposal` was removed from the rc4+ mode enum in favor of
+  // REQUOTE_REQUIRED, but older 3.1 prerelease sellers can still emit it.
+  switch (entry.mode as MediaBuyActionMode | 'requires_proposal') {
     case 'requires_proposal':
       return {
         kind: 'createProposal',

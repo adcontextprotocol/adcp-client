@@ -210,6 +210,8 @@ describe('createA2AAdapter', () => {
       const card = await a2a.getAgentCard();
       const skillIds = card.skills.map(s => s.id);
       assert.ok(skillIds.includes('get_products'), 'ordinary AdCP tools remain advertised');
+      assert.ok(skillIds.includes('tasks/get'), 'A2A card advertises the spec slash task polling skill');
+      assert.ok(!skillIds.includes('tasks_get'), 'MCP-safe task polling alias is not advertised as an A2A skill');
       assert.ok(!skillIds.includes('comply_test_controller'), 'compliance controller is not public-card discoverable');
       assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from public card');
     });

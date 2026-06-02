@@ -19,11 +19,15 @@ import {
   mediaBuyResponse,
   deliveryResponse,
   serve,
+  DEFAULT_REPORTING_CAPABILITIES,
+} from '@adcp/sdk';
+import {
   GetProductsRequestSchema,
   CreateMediaBuyRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
-} from '@adcp/sdk';
-import type { Product, GetAdCPCapabilitiesResponse } from '@adcp/sdk';
+} from '@adcp/sdk/schemas';
+import type { Product, ServerPayload } from '@adcp/sdk';
+import type { GetAdCPCapabilitiesResponse } from '@adcp/sdk/types';
 
 // CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient
 // version lets intentionally-incomplete requests reach the handler so it can
@@ -56,6 +60,7 @@ const PRODUCTS: Product[] = [
         min_spend_per_package: 500,
       },
     ],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
   },
   {
     product_id: 'prod_video_pre_roll',
@@ -74,6 +79,7 @@ const PRODUCTS: Product[] = [
         min_spend_per_package: 1000,
       },
     ],
+    reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
   },
 ];
 
@@ -113,8 +119,8 @@ function createAgentServer() {
     const limited = checkRateLimit();
     if (limited) return limited;
 
-    const capabilities: GetAdCPCapabilitiesResponse = {
-      adcp: { major_versions: [3] },
+    const capabilities: ServerPayload<GetAdCPCapabilitiesResponse> = {
+      adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
       supported_protocols: ['media_buy'],
       media_buy: {
         features: {
@@ -139,7 +145,7 @@ function createAgentServer() {
   server.registerTool(
     'create_media_buy',
     { inputSchema: LenientCreateMediaBuyInput.shape },
-    async ({ buyer_ref, start_time, end_time, packages }) => {
+    async ({ start_time, end_time, packages }) => {
       const limited = checkRateLimit();
       if (limited) return limited;
 
@@ -193,10 +199,8 @@ function createAgentServer() {
 
       return mediaBuyResponse({
         media_buy_id: mediaBuyId,
-        buyer_ref,
         packages: (packages ?? []).map((pkg, i) => ({
           package_id: `pkg_${i}_${Date.now()}`,
-          buyer_ref: pkg.buyer_ref,
           product_id: pkg.product_id,
           pricing_option_id: pkg.pricing_option_id,
           budget: pkg.budget,

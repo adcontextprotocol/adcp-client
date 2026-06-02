@@ -22,6 +22,12 @@ const {
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function closeServer(server) {
+  return new Promise((resolve, reject) => {
+    server.close(err => (err ? reject(err) : resolve()));
+  });
+}
+
 describe('applyIdempotencyInvariant', () => {
   test('injects a UUID v4 on mutating tasks when the request omits one', () => {
     const result = applyIdempotencyInvariant({ name: 'p1' }, 'create_property_list', {});
@@ -89,7 +95,7 @@ describe('applyIdempotencyInvariant', () => {
  * fix, the server's required-field check would short-circuit and the
  * handler under test would never run.
  */
-describe('runStoryboard: idempotency_key invariant on the wire', () => {
+describe('runStoryboard: idempotency_key invariant on the wire', { concurrency: false }, () => {
   it('auto-injects idempotency_key on mutating steps whose sample_request omits it, including untyped tasks (acquire_rights) that fall through to executeTask', async () => {
     const seen = [];
     const server = http.createServer(async (req, res) => {
@@ -175,7 +181,7 @@ describe('runStoryboard: idempotency_key invariant on the wire', () => {
       const readOnly = seen.find(c => c.name === 'get_products');
       assert.strictEqual(readOnly.args.idempotency_key, undefined, 'read-only task must not receive idempotency_key');
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 
@@ -242,7 +248,7 @@ describe('runStoryboard: idempotency_key invariant on the wire', () => {
         'expect_error step on mutating task must still receive auto-injected idempotency_key'
       );
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 
@@ -310,7 +316,7 @@ describe('runStoryboard: idempotency_key invariant on the wire', () => {
         'omit_idempotency_key step must not receive auto-injected idempotency_key'
       );
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 
@@ -474,7 +480,7 @@ describe('defaultAuthHeadersForRawProbe', () => {
  * URL would indicate leakage; we assert by observing the SDK's failure shape
  * (no raw probe body ever lands).
  */
-describe('runStoryboard dispatch: A2A + omit_idempotency_key stays on SDK path', () => {
+describe('runStoryboard dispatch: A2A + omit_idempotency_key stays on SDK path', { concurrency: false }, () => {
   it('does not invoke the raw MCP probe for A2A steps', async () => {
     const mcpJsonRpcCallsSeen = [];
     const server = http.createServer(async (req, res) => {
@@ -541,7 +547,7 @@ describe('runStoryboard dispatch: A2A + omit_idempotency_key stays on SDK path',
         `A2A run must not emit MCP JSON-RPC tools/call; saw ${mcpJsonRpcCallsSeen.length}`
       );
     } finally {
-      server.close();
+      await closeServer(server);
     }
   });
 });

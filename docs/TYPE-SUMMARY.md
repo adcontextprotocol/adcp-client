@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-05-28
-> @adcp/sdk v8.1.0-beta.15
+> Generated at: 2026-06-01
+> @adcp/sdk v8.1.0-beta.19
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -879,6 +879,7 @@ _Request:_
   destinations: object[]
   countries: string[]
   filters: Signal Filters
+  fields: string[]
   max_results: integer
   pagination: Pagination Request
   if_wholesale_feed_version: string

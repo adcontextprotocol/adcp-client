@@ -117,7 +117,7 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     assert.deepEqual(mismatches, [], 'every Values element must validate against the parent schema property');
   });
 
-  it('compliance controller scenario arrays exactly match the Zod schema', async () => {
+  it('compliance controller scenario arrays follow the open-ended Zod schema', async () => {
     if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
     if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
 
@@ -140,16 +140,23 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
       if (def.type === 'array') return literalValues(def.element);
       if (def.type === 'union') return def.options.flatMap(literalValues);
       if (def.type === 'literal') return def.values.filter(v => typeof v === 'string');
+      if (def.type === 'string') return [];
       throw new Error(`unsupported schema type ${def.type}`);
     }
 
+    const requestScenarioValues = literalValues(schemas.ComplyTestControllerRequestSchema.shape.scenario);
+    const responseScenarioValues = literalValues(schemas.ListScenariosSuccessSchema.shape.scenarios);
     assert.deepEqual(
-      [...inlineEnums.ComplyTestControllerRequest_ScenarioValues].sort(),
-      literalValues(schemas.ComplyTestControllerRequestSchema.shape.scenario).sort()
+      inlineEnums.ComplyTestControllerRequest_ScenarioValues
+        ? [...inlineEnums.ComplyTestControllerRequest_ScenarioValues].sort()
+        : [],
+      requestScenarioValues.sort()
     );
     assert.deepEqual(
-      [...inlineEnums.ListScenariosSuccess_ScenariosValues].sort(),
-      literalValues(schemas.ListScenariosSuccessSchema.shape.scenarios).sort()
+      inlineEnums.ListScenariosSuccess_ScenariosValues
+        ? [...inlineEnums.ListScenariosSuccess_ScenariosValues].sort()
+        : [],
+      responseScenarioValues.sort()
     );
   });
 

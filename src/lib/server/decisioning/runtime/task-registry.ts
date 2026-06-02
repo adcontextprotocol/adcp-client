@@ -135,6 +135,14 @@ export interface TaskRegistry {
    * Used by test harnesses + `tasks/get` integration.
    */
   awaitTask(taskId: string): Promise<void>;
+
+  /**
+   * Optional test-harness flush. In-memory registries expose this so
+   * `AdcpServer.compliance.reset()` can clear hardcoded overrideTaskId
+   * records between repeated storyboard runs. Persistent registries should
+   * omit it unless they can safely flush their configured backend.
+   */
+  clear?(): void | Promise<void>;
 }
 
 export function createInMemoryTaskRegistry(): TaskRegistry {
@@ -213,6 +221,11 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     async awaitTask(taskId: string): Promise<void> {
       const pending = backgrounds.get(taskId);
       if (pending) await pending;
+    },
+
+    clear(): void {
+      tasks.clear();
+      backgrounds.clear();
     },
   };
 }

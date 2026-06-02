@@ -43,7 +43,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const SERVER_TASK_ID = 'tk_seller_assigned_42';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, _params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return { task: { status: 'completed', result: { ok: true } } };
       }
       // Initial submitted-arm response carries the seller's task handle.
@@ -67,7 +67,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const polledIds = [];
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         // Capture the id the SDK polls with — that's the regression
         // surface. Pre-fix it was the runner-side UUID; post-fix it
         // must be the seller's task handle.
@@ -95,7 +95,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     let trackedId;
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         trackedId = params?.taskId ?? params?.task_id;
         return { task: { status: 'working' } };
       }
@@ -116,7 +116,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     // so operators grepping for "task_id" / "spec violation" can
     // pinpoint the offending seller call.
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return { task: { status: 'completed', result: {} } };
       }
       return { status: 'submitted' }; // no task_id
@@ -149,7 +149,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const FLAT_TASK_ID = 'flat-task-id-should-be-ignored';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return { task: { status: 'completed', result: {} } };
       }
       // The wrapped envelope branch: `result.kind === 'task'` wins
@@ -178,7 +178,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const MCP_TASK_ID = 'mcp-structured-content-task-id';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return { task: { status: 'completed', result: {} } };
       }
       return { structuredContent: { status: 'submitted', task_id: MCP_TASK_ID } };
@@ -202,7 +202,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     let pollCount = 0;
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         polledIds.push(params?.taskId ?? params?.task_id);
         const state = sequence[Math.min(pollCount++, sequence.length - 1)];
         return state === 'completed'
@@ -235,7 +235,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     let nextSeller = SERVER_A;
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName, params) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         const id = params?.taskId ?? params?.task_id;
         if (id === SERVER_A) polledFor.A.push(id);
         if (id === SERVER_B) polledFor.B.push(id);
@@ -289,7 +289,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     };
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         return { task: { status: 'working' } };
       }
       return { status: 'submitted', task_id: SERVER_TASK_ID };
@@ -323,7 +323,7 @@ describe('SubmittedContinuation: server-assigned task_id plumbing (#966)', () =>
     const SERVER_TASK_ID = 'tk_error_path';
 
     ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
-      if (taskName === 'tasks/get') {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
         // Returns a failed task — within the poll loop's normal
         // failed-status handling path.
         return { task: { status: 'failed', error: 'simulated seller failure' } };

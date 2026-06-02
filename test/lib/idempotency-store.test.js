@@ -1,7 +1,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createIdempotencyStore, memoryBackend, hashPayload } = require('../../dist/lib/server/index.js');
+const {
+  createIdempotencyStore,
+  memoryBackend,
+  createLazyBackend,
+  hashPayload,
+} = require('../../dist/lib/server/index.js');
 
 function makeStore(opts = {}) {
   return createIdempotencyStore({
@@ -235,6 +240,122 @@ describe('createIdempotencyStore', () => {
   });
 });
 
+describe('createLazyBackend', () => {
+  it('resolves the backend on first operation', async () => {
+    let calls = 0;
+    const inner = memoryBackend({ sweepIntervalMs: 0 });
+    const backend = createLazyBackend(async () => {
+      calls += 1;
+      return inner;
+    });
+
+    assert.equal(calls, 0);
+    const expiresAt = futureSeconds();
+    await backend.put('p\u001fk', { payloadHash: 'hash', response: { ok: true }, expiresAt });
+    assert.equal(calls, 1);
+    assert.deepEqual(await backend.get('p\u001fk'), {
+      payloadHash: 'hash',
+      response: { ok: true },
+      expiresAt,
+    });
+  });
+
+  it('shares one factory invocation across concurrent first operations', async () => {
+    let calls = 0;
+    let releaseFactory;
+    const factoryReady = new Promise(resolve => {
+      releaseFactory = resolve;
+    });
+    const inner = memoryBackend({ sweepIntervalMs: 0 });
+    const backend = createLazyBackend(async () => {
+      calls += 1;
+      await factoryReady;
+      return inner;
+    });
+
+    const entry = { payloadHash: 'hash', response: 'cached', expiresAt: futureSeconds() };
+    const putA = backend.put('p\u001fk-a', entry);
+    const putB = backend.put('p\u001fk-b', entry);
+    await Promise.resolve();
+    assert.equal(calls, 1);
+    releaseFactory();
+    await Promise.all([putA, putB]);
+    assert.deepEqual(await backend.get('p\u001fk-a'), entry);
+    assert.deepEqual(await backend.get('p\u001fk-b'), entry);
+    assert.equal(calls, 1);
+  });
+
+  it('probe triggers resolution and delegates to the resolved backend', async () => {
+    let calls = 0;
+    let probes = 0;
+    const backend = createLazyBackend(async () => {
+      calls += 1;
+      return {
+        ...memoryBackend({ sweepIntervalMs: 0 }),
+        async probe() {
+          probes += 1;
+        },
+      };
+    });
+
+    await backend.probe();
+    assert.equal(calls, 1);
+    assert.equal(probes, 1);
+  });
+
+  it('close is safe before the factory has resolved', async () => {
+    let calls = 0;
+    const backend = createLazyBackend(async () => {
+      calls += 1;
+      return memoryBackend({ sweepIntervalMs: 0 });
+    });
+
+    await backend.close();
+    assert.equal(calls, 0);
+  });
+
+  it('does not expose clearAll by default at the store boundary', () => {
+    const backend = createLazyBackend(async () => memoryBackend({ sweepIntervalMs: 0 }));
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+
+    assert.equal(typeof backend.clearAll, 'undefined');
+    assert.equal(typeof store.clearAll, 'undefined');
+  });
+
+  it('delegates clearAll only when explicitly enabled', async () => {
+    const backend = createLazyBackend(async () => memoryBackend({ sweepIntervalMs: 0 }), { clearAll: true });
+    const store = createIdempotencyStore({ backend, ttlSeconds: 3600 });
+    const expiresAt = futureSeconds();
+
+    assert.equal(typeof backend.clearAll, 'function');
+    assert.equal(typeof store.clearAll, 'function');
+    await backend.put('p\u001fk', { payloadHash: 'hash', response: 'cached', expiresAt });
+    assert.deepEqual(await backend.get('p\u001fk'), { payloadHash: 'hash', response: 'cached', expiresAt });
+    await store.clearAll();
+    assert.equal(await backend.get('p\u001fk'), null);
+  });
+
+  it('retries factory resolution after a failed attempt', async () => {
+    let calls = 0;
+    const inner = memoryBackend({ sweepIntervalMs: 0 });
+    const backend = createLazyBackend(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('temporary redis bootstrap failure');
+      return inner;
+    });
+
+    await assert.rejects(() => backend.get('p\u001fk'), /failed to resolve idempotency backend/);
+    const expiresAt = futureSeconds();
+    await backend.put('p\u001fk', { payloadHash: 'hash', response: 'cached', expiresAt });
+    assert.equal(calls, 2);
+    assert.deepEqual(await backend.get('p\u001fk'), {
+      payloadHash: 'hash',
+      response: 'cached',
+      expiresAt,
+    });
+  });
+});
+
 describe('hashPayload', () => {
   it('strips exclusion fields before hashing', () => {
     const h1 = hashPayload({ idempotency_key: 'a', x: 1 });
@@ -260,6 +381,10 @@ describe('hashPayload', () => {
     );
   });
 });
+
+function futureSeconds() {
+  return Math.floor(Date.now() / 1000) + 3600;
+}
 
 describe('concurrent same-key claim race', () => {
   it('only one of N parallel checks wins the claim', async () => {

@@ -1,5 +1,12 @@
 // Unified Protocol Interface for AdCP
-export { callMCPTool, callMCPToolWithOAuth, connectMCP, closeMCPConnections, UnauthorizedError } from './mcp';
+export {
+  callMCPTool,
+  callMCPToolWithOAuth,
+  connectMCP,
+  closeMCPConnections,
+  closeOAuthConnections,
+  UnauthorizedError,
+} from './mcp';
 
 import { closeMCPConnections } from './mcp';
 import { closeA2AConnections } from './a2a';
@@ -51,6 +58,24 @@ import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from 
 import { withResponseSizeLimit } from './responseSizeLimit';
 
 export type VersionEnvelopeMode = 'auto' | 'none' | 'major-only';
+
+const nonInteractiveOAuthProviderCache = new WeakMap<
+  AgentConfig,
+  ReturnType<typeof createNonInteractiveOAuthProvider>
+>();
+
+function getNonInteractiveOAuthProvider(agent: AgentConfig): ReturnType<typeof createNonInteractiveOAuthProvider> {
+  let provider = nonInteractiveOAuthProviderCache.get(agent);
+  if (!provider) {
+    const storage = getAgentStorage(agent);
+    provider = createNonInteractiveOAuthProvider(agent, {
+      agentHint: agent.id,
+      storage,
+    });
+    nonInteractiveOAuthProviderCache.set(agent, provider);
+  }
+  return provider;
+}
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -245,6 +270,12 @@ export interface CallToolOptions {
    */
   adcpVersion?: string;
   /**
+   * Optional wire-only version override. Schema selection and client
+   * construction can remain pinned to `adcpVersion`; the request envelope is
+   * emitted for this release-precision line.
+   */
+  wireAdcpVersion?: string;
+  /**
    * Controls whether the SDK injects AdCP version envelope fields into the
    * outgoing request. Defaults to `auto`. 3.0 pins emit only the legacy
    * `adcp_major_version`; 3.1+ pins emit both the legacy major and exact
@@ -286,6 +317,7 @@ export class ProtocolClient {
       serverVersion,
       session,
       adcpVersion,
+      wireAdcpVersion,
       versionEnvelope: versionEnvelopeMode = 'auto',
       transport,
     } = options;
@@ -295,7 +327,11 @@ export class ProtocolClient {
     // `ProtocolClient.callTool` directly (test harnesses, the in-process
     // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
     // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
-    const versionEnvelope = buildVersionEnvelopeForMode(versionEnvelopeMode, adcpVersion, serverVersion);
+    const versionEnvelope = buildVersionEnvelopeForMode(
+      versionEnvelopeMode,
+      wireAdcpVersion ?? adcpVersion,
+      serverVersion
+    );
     // Enter the response-size-limit ALS slot once for this call. The slot is
     // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
     // cap applies regardless of which path (MCP / A2A / OAuth refresh) the
@@ -399,11 +435,7 @@ export class ProtocolClient {
             // and their refresh path is a secret re-exchange (handled above),
             // not the SDK's refresh_token grant.
             if (agent.oauth_tokens && !agent.oauth_client_credentials) {
-              const storage = getAgentStorage(agent);
-              const authProvider = createNonInteractiveOAuthProvider(agent, {
-                agentHint: agent.id,
-                storage,
-              });
+              const authProvider = getNonInteractiveOAuthProvider(agent);
               try {
                 return await callMCPToolWithOAuth({
                   agentUrl: agent.agent_uri,

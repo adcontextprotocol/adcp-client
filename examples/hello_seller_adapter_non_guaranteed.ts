@@ -478,6 +478,16 @@ const overrideKey = (networkCode: string, orderId: string): string => `${network
 // mock doesn't model these states upstream.
 const localBuyStatus = new Map<string, 'paused' | 'canceled'>();
 
+function asPackageContext(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function packageContextKey(account: Account<NetworkMeta>, mediaBuyId: string, packageId: string): string {
+  const mode = (account as Account<NetworkMeta> & { mode?: string }).mode ?? 'live';
+  const operator = account.operator ?? '';
+  return `${mode}::${account.id}::${operator}::${account.ctx_metadata.network_code}::${mediaBuyId}::${packageId}`;
+}
+
 class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, never>, NetworkMeta> {
   capabilities = {
     specialisms: ['sales-non-guaranteed'] as const,
@@ -713,18 +723,25 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // Project the response. The upstream order carries `line_items[]`
       // already (since we created them inline); each maps to a wire
       // `package`.
-      const packagesOut: CreateMediaBuySuccess['packages'] = (order.line_items ?? []).map((li, i) => ({
-        package_id: li.line_item_id,
-        product_id: li.product_id,
-        budget: li.budget,
-        // Re-thread the buyer's package_id if supplied — adopters who
-        // care about preserving buyer-side ids should round-trip them
-        // here. SWAP: persist the mapping.
-        ...(packagesRequest[i] !== undefined &&
-          (packagesRequest[i] as { buyer_ref?: string }).buyer_ref !== undefined && {
-            buyer_ref: (packagesRequest[i] as { buyer_ref?: string }).buyer_ref,
-          }),
-      }));
+      const packagesOut: CreateMediaBuySuccess['packages'] = (order.line_items ?? []).map((li, i) => {
+        const requestedPackage = packagesRequest[i] as { buyer_ref?: string; context?: unknown } | undefined;
+        const packageContext = asPackageContext(requestedPackage?.context);
+        if (packageContext) {
+          localPackageContexts.set(
+            packageContextKey(ctx.account, order.order_id, li.line_item_id),
+            structuredClone(packageContext) as Record<string, unknown>
+          );
+        }
+        return {
+          package_id: li.line_item_id,
+          product_id: li.product_id,
+          budget: li.budget,
+          // Re-thread buyer-side correlation fields. Production sellers
+          // persist this mapping with the line item.
+          ...(requestedPackage?.buyer_ref !== undefined && { buyer_ref: requestedPackage.buyer_ref }),
+          ...(packageContext !== undefined && { context: packageContext }),
+        };
+      });
 
       localBuyRevisions.set(overrideKey(networkCode, order.order_id), 1);
       return {
@@ -924,12 +941,20 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
             ...(o.updated_at !== undefined && { updated_at: o.updated_at }),
             ...(o.flight_start && { start_time: o.flight_start }),
             ...(o.flight_end && { end_time: o.flight_end }),
-            packages: lineItems.map(li => ({
-              package_id: li.line_item_id,
-              product_id: li.product_id,
-              budget: li.budget,
-              currency: o.currency,
-            })),
+            packages: lineItems.map(li => {
+              const storedContext = localPackageContexts.get(
+                packageContextKey(ctx.account, o.order_id, li.line_item_id)
+              );
+              const packageContext =
+                storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
+              return {
+                package_id: li.line_item_id,
+                product_id: li.product_id,
+                budget: li.budget,
+                currency: o.currency,
+                ...(packageContext !== undefined && { context: packageContext }),
+              };
+            }),
           };
         })
       );
@@ -1062,6 +1087,7 @@ const simulatedDelivery = new Map<
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
 const localBuyRevisions = new Map<string, number>();
+const localPackageContexts = new Map<string, Record<string, unknown>>();
 
 serve(
   ({ taskStore }) =>

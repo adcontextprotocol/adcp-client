@@ -1,5 +1,74 @@
 # Changelog
 
+## 8.1.0-beta.21
+
+### Patch Changes
+
+- 631b2a9: Deprecate schema re-exports from the root package and `@adcp/sdk/types` in favor of the dedicated `@adcp/sdk/schemas` subpath. This keeps backwards compatibility while documenting lower-footprint import paths for large TypeScript monorepos.
+- b2826bd: Capture a per-run storyboard clock and use it during request enrichment so stale media-buy fixture windows and generated fallback IDs stay deterministic across replay steps.
+
+## 8.1.0-beta.20
+
+### Minor Changes
+
+- 2e261c3: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.6.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, entity hydration metadata, and server wire field allowlists from the
+  rc6 protocol bundle.
+
+## 8.1.0-beta.19
+
+### Minor Changes
+
+- 84c3d94: Add `createLazyBackend()` for deferring idempotency backend construction until first use.
+
+### Patch Changes
+
+- 6293fd8: Document stateless BYOK provider auth for single-account adapters. Adds the single-plane Bearer pattern (provider credential presented as the AdCP request credential) to the bundled `BUILD-AN-AGENT.md` guide and the account-resolution guide, covering token read paths (`ctx.account.authInfo?.token` with `ctx.authInfo.token` fallback), non-secret identity for cache/idempotency scoping, request-local handling guardrails, and when a separate dual-auth provider channel is warranted. Also corrects the protocol auth note: SDK clients send `Authorization: Bearer <token>` with legacy `x-adcp-auth` as a compatibility fallback.
+- a3d1680: Fix the storyboard `create_media_buy` request builder so stale fixture `start_time` values and same-day fixture `end_time` values cannot resolve to an inverted media-buy window.
+- a6dde23: Avoid advertising the slash-based `tasks/get` compatibility alias as an MCP tool and poll MCP agents through the `tasks_get` alias. A2A callers and agent cards keep the spec `tasks/get` skill; the A2A adapter maps it to the server's `tasks_get` handler at lookup time.
+
+## 8.1.0-beta.18
+
+### Patch Changes
+
+- 448249c: Include `operation_id` in framework-emitted task webhook payloads and validate
+  push notification operation identifiers at the request boundary.
+
+## 8.1.0-beta.17
+
+### Minor Changes
+
+- a7d460d: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.2.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, and wire field allowlists from the 3.1 RC protocol bundle. Preserves
+  `SignalCatalogType` compatibility aliases across generated type, schema, and
+  enum entrypoints while adopting the renamed `SignalAvailabilityType` surface.
+
+- f325c11: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.4.
+
+  Regenerates TypeScript/Zod schemas, docs, manifest-derived constants, entity
+  hydration metadata, and server wire field allowlists from the rc4 protocol
+  bundle. Adds GitHub-dist fallback for schema syncs when the website mirror has
+  not yet published a signed protocol bundle, and keeps the media-buy mode
+  mismatch recovery path tolerant of older 3.1 prerelease sellers that still emit
+  `requires_proposal`.
+
+- e9638ae: Reuse authorization-code OAuth MCP sessions across related tool calls and export `closeOAuthConnections()` for scoped cleanup.
+- f9ed580: fix(storyboard): add regex-backed field pattern validations
+
+  Storyboard validations now support `field_pattern` and `envelope_field_pattern` checks for string fields, with consistent handling for missing fields, non-string values, invalid regex sources, conformance replay, and schema drift detection.
+
+- 2326b27: Expose typed webhook parse/verify results, add buyer webhook receiver conformance replay checks, and clarify delivery webhook envelope docs.
+
+### Patch Changes
+
+- 3300db7: Allow packaged catalog-era `adagents.json` schemas to validate community mirror catalogs with `authorized_agents: []`, while preserving the stricter non-empty authorization requirement for legacy authorization-only schema bundles.
+- 249604c: Fix external compliance/schema bundle handling by scoping schema roots per run, preloading async response refs for request validators, preserving hosted stable-line aliases on the wire, and exposing schema-root options through conformance fuzzing.
+- ceb8b80: Add storyboard runner support for step-level HTTP Basic auth directives.
+
 ## 8.1.0-beta.16
 
 ### Patch Changes

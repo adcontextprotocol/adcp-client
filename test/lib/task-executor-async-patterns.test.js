@@ -349,7 +349,7 @@ describe(
         };
 
         ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
-          if (taskName === 'tasks/get') {
+          if (taskName === 'tasks/get' || taskName === 'tasks_get') {
             return mockTaskStatus;
           } else {
             return mockSubmitResponse;

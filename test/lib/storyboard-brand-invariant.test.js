@@ -138,6 +138,16 @@ describe('applyBrandInvariant', () => {
         true,
         'get_products must declare brand at the request root (positive control)'
       );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('sync_creatives', 'brand'),
+        false,
+        'sync_creatives must not declare brand at the request root'
+      );
+      assert.strictEqual(
+        schemaAllowsTopLevelField('sync_creatives', 'account'),
+        true,
+        'sync_creatives must declare account at the request root'
+      );
     });
 
     test('skips top-level brand and synthetic account for sync_plans', () => {
@@ -157,6 +167,22 @@ describe('applyBrandInvariant', () => {
     test('injects top-level brand for get_products (positive control)', () => {
       const result = applyBrandInvariant({}, { brand: BRAND }, 'get_products');
       assert.deepStrictEqual(result.brand, BRAND, 'brand must be injected for get_products');
+    });
+
+    test('skips top-level brand but keeps account-scoped brand for sync_creatives (#3342)', () => {
+      const result = applyBrandInvariant(
+        {
+          account: { operator: 'pinnacle-agency.example' },
+          creatives: [{ creative_id: 'cr-1', assets: {} }],
+        },
+        { brand: BRAND },
+        'sync_creatives'
+      );
+      assert.strictEqual(result.brand, undefined, 'brand must not be injected for sync_creatives');
+      assert.deepStrictEqual(result.account, {
+        operator: 'pinnacle-agency.example',
+        brand: BRAND,
+      });
     });
   });
 
@@ -317,6 +343,104 @@ describe('runStoryboard: brand invariant on the wire', () => {
           `step ${call.name} brand not reachable from wire: top-level=${JSON.stringify(topBrand)} account.brand=${JSON.stringify(accountBrand)}`
         );
       }
+    } finally {
+      server.close();
+    }
+  });
+
+  it('does not bleed create_media_buy top-level brand into a later sync_creatives request (#3342)', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'sync_creatives_isolated_request_sb',
+        version: '1.0.0',
+        title: 'Sync creatives request isolation',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'media buy then creative sync',
+            steps: [
+              {
+                id: 'create_buy_no_creatives',
+                title: 'create buy carries top-level brand',
+                task: 'create_media_buy',
+                auth: 'none',
+                expect_error: true,
+                sample_request: {
+                  account: { brand: { domain: 'other.example' }, operator: 'pinnacle-agency.example' },
+                  brand: { domain: 'other.example' },
+                  start_time: '2026-06-01T00:00:00Z',
+                  end_time: '2026-06-08T00:00:00Z',
+                  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', pricing_option_id: 'cpm-1', budget: 1000 }],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+              {
+                id: 'supply_creatives',
+                title: 'sync creatives has no top-level brand',
+                task: 'sync_creatives',
+                auth: 'none',
+                expect_error: true,
+                sample_request: {
+                  account: { brand: { domain: 'other.example' }, operator: 'pinnacle-agency.example' },
+                  creatives: [
+                    {
+                      creative_id: 'cr-1',
+                      name: 'Creative 1',
+                      assets: {},
+                    },
+                  ],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        brand: BRAND,
+        agentTools: ['create_media_buy', 'sync_creatives'],
+        _profile: { name: 'Test', tools: ['create_media_buy', 'sync_creatives'] },
+        _client: {
+          getAgentInfo: async () => ({
+            name: 'Test',
+            tools: [{ name: 'create_media_buy' }, { name: 'sync_creatives' }],
+          }),
+        },
+      });
+
+      const createCall = seen.find(call => call.name === 'create_media_buy');
+      const syncCall = seen.find(call => call.name === 'sync_creatives');
+      assert.ok(createCall, `expected create_media_buy call; saw ${seen.map(call => call.name).join(', ')}`);
+      assert.ok(syncCall, `expected sync_creatives call; saw ${seen.map(call => call.name).join(', ')}`);
+      assert.deepStrictEqual(
+        createCall.args.brand,
+        BRAND,
+        'create_media_buy should retain schema-valid top-level brand'
+      );
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(syncCall.args, 'brand'),
+        false,
+        'sync_creatives must not receive top-level brand from prior step context'
+      );
+      assert.deepStrictEqual(syncCall.args.account.brand, BRAND, 'sync_creatives should carry brand through account');
     } finally {
       server.close();
     }

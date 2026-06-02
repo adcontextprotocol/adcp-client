@@ -220,13 +220,18 @@ describe('creative_approval webhook builders', () => {
 });
 
 describe('public type re-exports', () => {
-  it('UpdateRights and CreativeApproval types reachable via @adcp/sdk/types', async () => {
-    // The runtime types entrypoint re-exports schema bindings; the static
-    // type-only exports are validated at typecheck time. Smoke check that
-    // the entrypoint loads and the runtime Zod schemas are reachable.
+  it('UpdateRights and CreativeApproval types stay on @adcp/sdk/types while schemas move to @adcp/sdk/schemas', async () => {
+    // Static type-only exports are validated by the public barrel typecheck
+    // smoke tests. Runtime Zod schemas now live behind the schemas subpath so
+    // importing @adcp/sdk/types does not pull schemas.generated into tsc.
     const types = await import('../../dist/lib/types/index.js');
-    assert.ok(types.UpdateRightsRequestSchema, 'UpdateRightsRequestSchema reachable via /types');
-    assert.ok(types.CreativeApprovalRequestSchema, 'CreativeApprovalRequestSchema reachable via /types');
-    assert.ok(types.CreativeApprovalResponseSchema, 'CreativeApprovalResponseSchema reachable via /types');
+    const publicSchemas = await import('../../dist/lib/schemas/index.js');
+
+    assert.equal(types.UpdateRightsRequestSchema, undefined, 'UpdateRightsRequestSchema absent from /types');
+    assert.equal(types.CreativeApprovalRequestSchema, undefined, 'CreativeApprovalRequestSchema absent from /types');
+    assert.equal(types.CreativeApprovalResponseSchema, undefined, 'CreativeApprovalResponseSchema absent from /types');
+    assert.ok(publicSchemas.UpdateRightsRequestSchema, 'UpdateRightsRequestSchema reachable via /schemas');
+    assert.ok(publicSchemas.CreativeApprovalRequestSchema, 'CreativeApprovalRequestSchema reachable via /schemas');
+    assert.ok(publicSchemas.CreativeApprovalResponseSchema, 'CreativeApprovalResponseSchema reachable via /schemas');
   });
 });

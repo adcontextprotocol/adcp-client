@@ -59,6 +59,7 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
+import type { TaskRegistry } from './decisioning/runtime/task-registry';
 import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import {
@@ -1430,6 +1431,15 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Defaults to InMemoryStateStore. Use PostgresStateStore for production.
    */
   stateStore?: AdcpStateStore;
+
+  /**
+   * Task registry for async task lifecycle records.
+   *
+   * Usually supplied by `createAdcpServerFromPlatform`; low-level callers
+   * only need this when they want `compliance.reset()` to flush in-memory
+   * task records between repeated test runs.
+   */
+  taskRegistry?: TaskRegistry;
 
   // Domain handler groups — register only what you support
   mediaBuy?: MediaBuyHandlers<TAccount>;
@@ -3100,6 +3110,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     agentRegistry,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
     stateStore = DEFAULT_STATE_STORE,
+    taskRegistry,
     logger = noopLogger,
     capabilities: capConfig,
     idempotency: idempotencyConfig,
@@ -5362,6 +5373,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const storeWithClear = stateStore as unknown as { clear?: () => void };
       if (typeof storeWithClear.clear === 'function') storeWithClear.clear();
       if (idempotency && idempotency.clearAll) await idempotency.clearAll();
+      if (taskRegistry?.clear) await taskRegistry.clear();
     },
   };
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);

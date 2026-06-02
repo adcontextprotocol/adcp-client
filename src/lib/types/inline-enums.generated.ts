@@ -145,11 +145,6 @@ export const CanonicalFormatVASTVideo_VpaidVersionValues = ["1.0", "2.0"] as con
 /** single | CatalogFieldMapping.transform */
 export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean", "split"] as const;
 
-// ====== ComplyTestControllerRequest ======
-
-/** single | ComplyTestControllerRequest.scenario */
-export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_creative_purge", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "seed_measurement_catalog", "query_upstream_traffic", "query_provenance_audit_observations", "force_upstream_unavailable"] as const;
-
 // ====== ControllerError ======
 
 /** single | ControllerError.error */
@@ -215,6 +210,11 @@ export const Error_RecoveryValues = ["transient", "correctable", "terminal"] as 
 /** single | Error.source */
 export const Error_SourceValues = ["producer", "sdk"] as const;
 
+// ====== EventSurface ======
+
+/** single | EventSurface.category */
+export const EventSurface_CategoryValues = ["owned_property", "website", "app", "offline", "phone_call", "chat", "email", "in_store", "system_generated", "other"] as const;
+
 // ====== FeatureRequirement ======
 
 /** single | FeatureRequirement.if_not_covered */
@@ -265,7 +265,7 @@ export const GetProductsAsyncInputRequired_ReasonValues = ["CLARIFICATION_NEEDED
 /** single | GetProductsRequest.buying_mode */
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
-export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "format_ids", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_allowed", "signal_targeting_options", "signal_targeting_rules", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "format_ids", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_allowed", "signal_targeting_options", "signal_targeting_rules", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
 // ====== GetProductsResponse ======
 
@@ -276,6 +276,8 @@ export const GetProductsResponse_CacheScopeValues = ["public", "account"] as con
 
 /** single | GetSignalsRequest.discovery_mode */
 export const GetSignalsRequest_DiscoveryModeValues = ["brief", "wholesale"] as const;
+/** array of | GetSignalsRequest.fields */
+export const GetSignalsRequest_FieldsValues = ["signal_ref", "signal_id", "signal_agent_segment_id", "name", "description", "value_type", "categories", "range", "signal_type", "data_provider", "coverage_percentage", "deployments", "pricing_options", "taxonomy", "data_sources", "methodology", "segmentation_criteria", "criteria_url", "refresh_cadence", "lookback_window", "onboarder", "modeling", "audience_expansion", "device_expansion", "countries", "consent_basis", "restricted_attributes", "policy_categories", "art9_basis", "data_subject_rights"] as const;
 
 // ====== HTMLAssetRequirements ======
 
@@ -322,11 +324,6 @@ export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirro
 
 /** array of | ListCreativesRequest.fields */
 export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "status", "created_date", "updated_date", "tags", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
-
-// ====== ListScenariosSuccess ======
-
-/** array of | ListScenariosSuccess.scenarios */
-export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_creative_purge", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format", "seed_measurement_catalog", "query_upstream_traffic", "query_provenance_audit_observations", "force_upstream_unavailable"] as const;
 
 // ====== PackageSignalTargetingGroup ======
 
@@ -431,6 +428,11 @@ export const ReportingCapabilities_DateRangeSupportValues = ["date_range", "life
 /** single | ReportPlanOutcomeResponse.outcome_state */
 export const ReportPlanOutcomeResponse_OutcomeStateValues = ["accepted", "findings"] as const;
 
+// ====== ResponsePayload ======
+
+/** single | ResponsePayload.task */
+export const ResponsePayload_TaskValues = ["verify_brand_claim", "verify_brand_claims"] as const;
+
 // ====== RightsConstraint ======
 
 /** single | RightsConstraint.approval_status */
@@ -448,17 +450,44 @@ export const SignalCoverageForecast_BucketCompletenessValues = ["complete", "par
 /** single | SignalCoverageForecast.bucket_semantics */
 export const SignalCoverageForecast_BucketSemanticsValues = ["exclusive", "overlapping"] as const;
 
+// ====== SignalDefinition ======
+
+/** single | SignalDefinition.art9_basis */
+export const SignalDefinition_Art9BasisValues = ["explicit_consent", "manifestly_made_public", "substantial_public_interest", "vital_interests"] as const;
+/** single | SignalDefinition.audience_scope */
+export const SignalDefinition_AudienceScopeValues = ["single_domain", "cross_domain_owned", "cross_domain_unowned", "offline"] as const;
+/** array of | SignalDefinition.data_sources */
+export const SignalDefinition_DataSourcesValues = ["app_behavior", "app_usage", "web_usage", "geo_location", "email", "tv_ott_or_stb_device", "panel", "online_ecommerce", "credit_data", "loyalty_card", "transaction", "online_survey", "offline_survey", "public_record_census", "public_record_voter_file", "public_record_other", "offline_transaction"] as const;
+/** array of | SignalDefinition.id_types */
+export const SignalDefinition_IdTypesValues = ["cookie", "mobile_id", "platform_id", "user_enabled_id"] as const;
+/** single | SignalDefinition.lookback_window */
+export const SignalDefinition_LookbackWindowValues = ["intra_day", "daily", "weekly", "monthly", "bi_monthly", "quarterly", "bi_annually", "annually"] as const;
+/** single | SignalDefinition.methodology */
+export const SignalDefinition_MethodologyValues = ["observed", "declared", "derived", "inferred", "modeled"] as const;
+/** single | SignalDefinition.resolution_method */
+export const SignalDefinition_ResolutionMethodValues = ["deterministic_id", "probabilistic_device", "browser", "geographic", "content_signal", "mixed"] as const;
+/** single | SignalDefinition.subject_type */
+export const SignalDefinition_SubjectTypeValues = ["individual", "household", "business", "contextual", "none"] as const;
+
 // ====== SignalForecastDimension ======
 
 /** single | SignalForecastDimension.presence */
 export const SignalForecastDimension_PresenceValues = ["present", "absent"] as const;
 
+// ====== SignalSelectionGroupRule ======
+
+/** single | SignalSelectionGroupRule.selection_mode */
+export const SignalSelectionGroupRule_SelectionModeValues = ["optional", "required", "fixed"] as const;
+
 // ====== SignalTargetingRules ======
 
 /** single | SignalTargetingRules.resolution_model */
 export const SignalTargetingRules_ResolutionModelValues = ["direct_targeting", "seller_planned"] as const;
-/** single | SignalTargetingRules.selection_mode */
-export const SignalTargetingRules_SelectionModeValues = ["optional", "required", "fixed"] as const;
+
+// ====== SignedSuccessPayload ======
+
+/** single | SignedSuccessPayload.claim_type */
+export const SignedSuccessPayload_ClaimTypeValues = ["subsidiary", "parent", "property", "trademark"] as const;
 
 // ====== SIIdentity ======
 
@@ -523,10 +552,10 @@ export const VehicleItem_FuelTypeValues = ["gasoline", "diesel", "electric", "hy
 /** single | VehicleItem.transmission */
 export const VehicleItem_TransmissionValues = ["automatic", "manual", "cvt"] as const;
 
-// ====== VerifyBrandClaimsResultSuccess ======
+// ====== VendorMetricOptimizationSupportedMetric ======
 
-/** single | VerifyBrandClaimsResultSuccess.claim_type */
-export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = ["subsidiary", "parent", "property", "trademark"] as const;
+/** array of | VendorMetricOptimizationSupportedMetric.supported_targets */
+export const VendorMetricOptimizationSupportedMetric_SupportedTargetsValues = ["cost_per", "threshold_rate"] as const;
 
 // ====== VideoAsset ======
 
@@ -638,6 +667,9 @@ export const GetProductsInputRequired_ReasonValues = GetProductsAsyncInputRequir
 // --- GetSignalsResponse ---
 /** @deprecated use `GetProductsResponse_CacheScopeValues` — same literal set, GetSignalsResponse.cache_scope duplicates the canonical export. */
 export const GetSignalsResponse_CacheScopeValues = GetProductsResponse_CacheScopeValues;
+// --- MediaBuyDeliveryWebhookResult ---
+/** @deprecated use `GetMediaBuyDeliveryResponse_NotificationTypeValues` — same literal set, MediaBuyDeliveryWebhookResult.notification_type duplicates the canonical export. */
+export const MediaBuyDeliveryWebhookResult_NotificationTypeValues = GetMediaBuyDeliveryResponse_NotificationTypeValues;
 // --- PackageSignalTargetingGroup1 ---
 /** @deprecated use `PackageSignalTargetingGroup_OperatorValues` — same literal set, PackageSignalTargetingGroup1.operator duplicates the canonical export. */
 export const PackageSignalTargetingGroup1_OperatorValues = PackageSignalTargetingGroup_OperatorValues;
@@ -652,6 +684,26 @@ export const RawAttestation_PurposeValues = DigestAttestation_PurposeValues;
 // --- SearchBrandResult ---
 /** @deprecated use `GetBrandIdentitySuccess_KellerTypeValues` — same literal set, SearchBrandResult.keller_type duplicates the canonical export. */
 export const SearchBrandResult_KellerTypeValues = GetBrandIdentitySuccess_KellerTypeValues;
+// --- SignalDefinition ---
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinition.refresh_cadence duplicates the canonical export. */
+export const SignalDefinition_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
+// --- SignalDefinitionEnrichment ---
+/** @deprecated use `SignalDefinition_Art9BasisValues` — same literal set, SignalDefinitionEnrichment.art9_basis duplicates the canonical export. */
+export const SignalDefinitionEnrichment_Art9BasisValues = SignalDefinition_Art9BasisValues;
+/** @deprecated use `SignalDefinition_DataSourcesValues` — same literal set, SignalDefinitionEnrichment.data_sources duplicates the canonical export. */
+export const SignalDefinitionEnrichment_DataSourcesValues = SignalDefinition_DataSourcesValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.lookback_window duplicates the canonical export. */
+export const SignalDefinitionEnrichment_LookbackWindowValues = SignalDefinition_LookbackWindowValues;
+/** @deprecated use `SignalDefinition_MethodologyValues` — same literal set, SignalDefinitionEnrichment.methodology duplicates the canonical export. */
+export const SignalDefinitionEnrichment_MethodologyValues = SignalDefinition_MethodologyValues;
+/** @deprecated use `SignalDefinition_LookbackWindowValues` — same literal set, SignalDefinitionEnrichment.refresh_cadence duplicates the canonical export. */
+export const SignalDefinitionEnrichment_RefreshCadenceValues = SignalDefinition_LookbackWindowValues;
+// --- SignalSelectionGroupRule ---
+/** @deprecated use `FeatureRequirement_IfNotCoveredValues` — same literal set, SignalSelectionGroupRule.targeting_mode duplicates the canonical export. */
+export const SignalSelectionGroupRule_TargetingModeValues = FeatureRequirement_IfNotCoveredValues;
+// --- SignalTargetingRules ---
+/** @deprecated use `SignalSelectionGroupRule_SelectionModeValues` — same literal set, SignalTargetingRules.selection_mode duplicates the canonical export. */
+export const SignalTargetingRules_SelectionModeValues = SignalSelectionGroupRule_SelectionModeValues;
 // --- SyncCatalogsInputRequired ---
 /** @deprecated use `SyncCatalogsAsyncInputRequired_ReasonValues` — same literal set, SyncCatalogsInputRequired.reason duplicates the canonical export. */
 export const SyncCatalogsInputRequired_ReasonValues = SyncCatalogsAsyncInputRequired_ReasonValues;
@@ -661,9 +713,12 @@ export const SyncCreativesInputRequired_ReasonValues = SyncCreativesAsyncInputRe
 // --- UpdateMediaBuyInputRequired ---
 /** @deprecated use `UpdateMediaBuyAsyncInputRequired_ReasonValues` — same literal set, UpdateMediaBuyInputRequired.reason duplicates the canonical export. */
 export const UpdateMediaBuyInputRequired_ReasonValues = UpdateMediaBuyAsyncInputRequired_ReasonValues;
+// --- VerifyBrandClaimsResultSuccess ---
+/** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimsResultSuccess.claim_type duplicates the canonical export. */
+export const VerifyBrandClaimsResultSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;
 // --- VerifyBrandClaimSuccess ---
-/** @deprecated use `VerifyBrandClaimsResultSuccess_ClaimTypeValues` — same literal set, VerifyBrandClaimSuccess.claim_type duplicates the canonical export. */
-export const VerifyBrandClaimSuccess_ClaimTypeValues = VerifyBrandClaimsResultSuccess_ClaimTypeValues;
+/** @deprecated use `SignedSuccessPayload_ClaimTypeValues` — same literal set, VerifyBrandClaimSuccess.claim_type duplicates the canonical export. */
+export const VerifyBrandClaimSuccess_ClaimTypeValues = SignedSuccessPayload_ClaimTypeValues;
 // --- VideoAssetRequirements ---
 /** @deprecated use `CanonicalFormatHostedVideo_VideoCodecsValues` — same literal set, VideoAssetRequirements.codecs duplicates the canonical export. */
 export const VideoAssetRequirements_CodecsValues = CanonicalFormatHostedVideo_VideoCodecsValues;

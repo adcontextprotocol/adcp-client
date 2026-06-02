@@ -16,6 +16,7 @@ test('public barrels expose canonical format and payload helper types', () => {
     `
 import {
   CanonicalFormat,
+  createLazyBackend,
   ensureGetProductsCacheScope,
   type CanonicalFormatParams,
   type GetProductsResponse,
@@ -23,6 +24,8 @@ import {
   type SyncCreativesPayload,
 } from '@adcp/sdk';
 import type {
+  LazyBackendFactory,
+  LazyBackendOptions,
   ListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
@@ -31,10 +34,12 @@ import {
   type CanonicalRef,
   type CanonicalReferenceResolutionResult,
 } from '@adcp/sdk/v2/format-schema';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 import {
   AuthInvalidError,
   AuthMissingError,
   AuthRequiredError,
+  createLazyBackend as createServerLazyBackend,
 } from '@adcp/sdk/server';
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
@@ -53,6 +58,7 @@ const built = CanonicalFormat.nativeInFeed(
   { seller_preference: 'preferred', capability_id: 'native_feed' }
 );
 const builtKind: 'native_in_feed' = built.format_kind;
+const mediaBuyShape = CreateMediaBuyRequestSchema.shape;
 
 const syncError: SyncCreativesPayload = {
   errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
@@ -63,6 +69,16 @@ const acceptsListPayload = (_payload: ListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
 const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
+
+const lazyBackendFactory: LazyBackendFactory = async () => ({
+  async get() { return null; },
+  async putIfAbsent() { return true; },
+  async put() {},
+  async delete() {},
+});
+const lazyBackendOptions: LazyBackendOptions = { clearAll: false };
+const lazyBackend = createLazyBackend(lazyBackendFactory);
+const serverLazyBackend = createServerLazyBackend(lazyBackendFactory, lazyBackendOptions);
 
 const canonicalResolver = createCanonicalReferenceResolver();
 const canonicalRef: CanonicalRef = {
@@ -94,8 +110,12 @@ const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache
 
 void typedNative;
 void builtKind;
+void mediaBuyShape;
 void serverSyncError;
 void authErrors;
+void lazyBackend;
+void lazyBackendOptions;
+void serverLazyBackend;
 void scope;
 void required;
 void generatedScope;
@@ -121,6 +141,7 @@ void generatedInjectedScope;
             '@adcp/sdk/server': ['dist/lib/server/index'],
             '@adcp/sdk/types': ['dist/lib/types/index'],
             '@adcp/sdk/v2/format-schema': ['dist/lib/v2/format-schema/index'],
+            '@adcp/sdk/schemas': ['dist/lib/schemas/index'],
           },
         },
         files: ['public-barrel-smoke.ts'],
@@ -137,4 +158,20 @@ void generatedInjectedScope;
   });
 
   assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('schema exports stay behind @adcp/sdk/schemas', () => {
+  const root = require('../../dist/lib/index.js');
+  const types = require('../../dist/lib/types/index.js');
+  const schemas = require('../../dist/lib/schemas/index.js');
+
+  assert.strictEqual(root.CreateMediaBuyRequestSchema, undefined);
+  assert.strictEqual(root.TOOL_REQUEST_SCHEMAS, undefined);
+  assert.strictEqual(root.TOOL_RESPONSE_SCHEMAS, undefined);
+  assert.strictEqual(root.SyncCreativesItemSchema, undefined);
+  assert.strictEqual(types.CreateMediaBuyRequestSchema, undefined);
+  assert.ok(schemas.CreateMediaBuyRequestSchema);
+  assert.ok(schemas.TOOL_REQUEST_SCHEMAS.create_media_buy);
+  assert.ok(schemas.TOOL_RESPONSE_SCHEMAS.create_media_buy);
+  assert.ok(schemas.SyncCreativesItemSchema);
 });

@@ -29,7 +29,7 @@
  * @example
  * ```typescript
  * import { createClient } from 'redis';
- * import { createIdempotencyStore, redisBackend } from '@adcp/sdk/server';
+ * import { createIdempotencyStore, createLazyBackend, redisBackend } from '@adcp/sdk/server';
  *
  * const client = createClient({ url: process.env.REDIS_URL });
  * client.on('error', (err) => console.error('redis error', err));
@@ -37,6 +37,11 @@
  *
  * const store = createIdempotencyStore({
  *   backend: redisBackend(client),
+ *   ttlSeconds: 86400,
+ * });
+ *
+ * const lazyStore = createIdempotencyStore({
+ *   backend: createLazyBackend(async () => redisBackend(await getRedisClient(), { keyPrefix: 'adcp:idem:prod:' })),
  *   ttlSeconds: 86400,
  * });
  * ```

@@ -862,6 +862,162 @@ describe('storyboard runner: auth-override dispatch', () => {
     }
   });
 
+  it('step auth.type=basic sends Basic from test_kit.auth.basic credentials', async () => {
+    let seenAuth = null;
+    const server = http.createServer(async (req, res) => {
+      seenAuth = req.headers.authorization ?? null;
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { structuredContent: { context: rpc.params.arguments.context } },
+        })
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'basic_step_auth',
+        version: '1.0.0',
+        title: 'Basic auth step',
+        category: 'security',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'basic_path',
+            title: 'basic',
+            steps: [
+              {
+                id: 'probe_basic',
+                title: 'basic probe',
+                task: '$test_kit.auth.probe_task',
+                task_default: 'list_creatives',
+                auth: { type: 'basic', from_test_kit: 'auth.basic' },
+                sample_request: { context: { correlation_id: 'basic-step' } },
+                validations: [
+                  { check: 'http_status', value: 200, description: 'accepted' },
+                  {
+                    check: 'field_value',
+                    path: 'context.correlation_id',
+                    value: 'basic-step',
+                    description: 'context echoed',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['list_creatives'],
+        test_kit: {
+          auth: {
+            probe_task: 'list_creatives',
+            basic: { credentials: 'demo-user:demo-password' },
+          },
+        },
+        _profile: { name: 'T', tools: ['list_creatives'] },
+        _client: { getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }) },
+      });
+      assert.strictEqual(result.overall_passed, true, JSON.stringify(result.phases[0].steps[0]));
+      assert.strictEqual(seenAuth, `Basic ${Buffer.from('demo-user:demo-password').toString('base64')}`);
+      assert.doesNotMatch(seenAuth, /^Bearer /);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('step auth.type=basic supports explicit username/password and random-invalid credentials', async () => {
+    const observed = [];
+    const server = http.createServer(async (req, res) => {
+      observed.push(req.headers.authorization ?? null);
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const isFirst = observed.length === 1;
+      res.writeHead(isFirst ? 200 : 401, {
+        'content-type': 'application/json',
+        ...(isFirst ? {} : { 'www-authenticate': 'Basic realm="test"' }),
+      });
+      res.end(
+        JSON.stringify(
+          isFirst
+            ? { jsonrpc: '2.0', id: rpc.id, result: { structuredContent: { ok: true } } }
+            : { jsonrpc: '2.0', id: rpc.id, error: { code: -32001, message: 'unauthorized' } }
+        )
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'basic_step_auth_explicit',
+        version: '1.0.0',
+        title: 'Basic auth explicit',
+        category: 'security',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'basic_path',
+            title: 'basic',
+            optional: true,
+            steps: [
+              {
+                id: 'probe_basic',
+                title: 'basic probe',
+                task: 'list_creatives',
+                auth: { type: 'basic', username: 'direct-user', password: 'direct-password' },
+                validations: [{ check: 'http_status', value: 200, description: 'accepted' }],
+              },
+              {
+                id: 'probe_invalid_basic',
+                title: 'invalid basic probe',
+                task: 'list_creatives',
+                auth: { type: 'basic', value_strategy: 'random_invalid' },
+                expect_error: true,
+                validations: [
+                  { check: 'http_status_in', allowed_values: [401, 403], description: 'rejects invalid basic' },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['list_creatives'],
+        _profile: { name: 'T', tools: ['list_creatives'] },
+        _client: { getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }) },
+      });
+      assert.strictEqual(
+        result.phases[0].steps.every(step => step.passed),
+        true,
+        JSON.stringify(result.phases[0].steps)
+      );
+      assert.strictEqual(observed[0], `Basic ${Buffer.from('direct-user:direct-password').toString('base64')}`);
+      assert.match(observed[1], /^Basic /);
+      assert.doesNotMatch(observed[1], /^Bearer /);
+      const decodedInvalid = Buffer.from(observed[1].slice('Basic '.length), 'base64').toString('utf8');
+      assert.match(decodedInvalid, /^invalid-[0-9a-f]{64}:invalid-[0-9a-f]{64}$/);
+    } finally {
+      server.close();
+    }
+  });
+
   it('phase optional: true failures do not fail overall pass', async () => {
     // Three-step storyboard:
     //   Phase A (optional): one step that passes and contributes a flag,

@@ -18,6 +18,8 @@ const http = require('http');
 
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 describe('runStoryboard: sample_request envelope pass-through with a request builder', () => {
   it('forwards push_notification_config from sample_request into the outbound create_media_buy args', async () => {
     const seen = [];
@@ -92,6 +94,93 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
         schemes: ['HMAC-SHA256'],
         credentials: 'test-secret-min-32-characters-required',
       });
+    } finally {
+      server.close();
+    }
+  });
+
+  it('preserves the signal_owned activate_on_agent sample_request through runner dispatch (ADCP-4009)', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'signal_owned_activate_agent_passthrough_sb',
+        version: '1.0.0',
+        title: 'Signal owned activate_on_agent pass-through',
+        category: 'signal_owned',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'agent_activation',
+            title: 'Activate on a sales agent',
+            steps: [
+              {
+                id: 'activate_on_agent',
+                title: 'Activate owned signal on a sales agent',
+                task: 'activate_signal',
+                auth: 'none',
+                sample_request: {
+                  account: {
+                    brand: { domain: 'novamotors.example' },
+                    operator: 'pinnacle-agency.example',
+                  },
+                  signal_agent_segment_id: 'prism_cart_abandoner',
+                  pricing_option_id: 'po_prism_abandoner_cpm',
+                  destinations: [{ type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' }],
+                  idempotency_key: '$generate:uuid_v4#signal_owned_activate_agent',
+                  context: { correlation_id: 'signal_owned--activate_on_agent' },
+                  ext: { test_platform: { test_run: true } },
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        brand: { domain: 'novamotors.example' },
+        agentTools: ['activate_signal'],
+        _profile: { name: 'Test', tools: ['activate_signal'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'activate_signal' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 1, `expected 1 tool call, got ${seen.length}`);
+      const call = seen[0];
+      assert.strictEqual(call.name, 'activate_signal');
+      assert.deepStrictEqual(call.args.account, {
+        brand: { domain: 'novamotors.example' },
+        operator: 'pinnacle-agency.example',
+      });
+      assert.strictEqual(call.args.signal_agent_segment_id, 'prism_cart_abandoner');
+      assert.strictEqual(call.args.pricing_option_id, 'po_prism_abandoner_cpm');
+      assert.deepStrictEqual(call.args.destinations, [
+        { type: 'agent', agent_url: 'https://wonderstruck.salesagents.example' },
+      ]);
+      assert.match(
+        call.args.idempotency_key,
+        UUID_V4,
+        `idempotency_key must be resolved before dispatch, got: ${call.args.idempotency_key}`
+      );
+      assert.notStrictEqual(call.args.idempotency_key, '$generate:uuid_v4#signal_owned_activate_agent');
+      assert.deepStrictEqual(call.args.context, { correlation_id: 'signal_owned--activate_on_agent' });
+      assert.deepStrictEqual(call.args.ext, { test_platform: { test_run: true } });
     } finally {
       server.close();
     }

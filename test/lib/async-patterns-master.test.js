@@ -167,7 +167,7 @@ describe.skip('TaskExecutor Async Patterns - Master Test Suite', () => {
         if (taskName === 'continue_task') {
           // After input, go to working state
           return { status: 'working' };
-        } else if (taskName === 'tasks/get') {
+        } else if (taskName === 'tasks/get' || taskName === 'tasks_get') {
           // After working, complete
           return {
             task: {

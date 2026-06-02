@@ -30,6 +30,7 @@ import type {
   HttpProbeResult,
   RunnerExtractionRecord,
   RunnerRequestRecord,
+  SchemaValidationError,
   Storyboard,
   StoryboardContext,
   StoryboardRunOptions,
@@ -46,9 +47,12 @@ import { WebhookSignatureError } from '../../signing/errors';
 import { InMemoryReplayStore, type ReplayStore } from '../../signing/replay';
 import { InMemoryRevocationStore, type RevocationStore } from '../../signing/revocation';
 import type { RequestLike } from '../../signing/canonicalize';
+import { getSchemaValidatorByRef } from '../../validation/schema-loader';
+import { ADCP_VERSION } from '../../version';
 
 const RUN_STATE_REPLAY_KEY = '__webhook_signing_replay_store';
 const RUN_STATE_REVOCATION_KEY = '__webhook_signing_revocation_store';
+const SCHEMA_URL_BASE = 'https://adcontextprotocol.org';
 
 /**
  * Return a replay store that's shared for the rest of this run, so a
@@ -372,6 +376,9 @@ async function runExpectWebhook(
     );
   }
 
+  const schemaCheck = validateWebhookPayloadSchema(step, first);
+  if (schemaCheck && !schemaCheck.passed) return { validations: [schemaCheck], passed: false };
+
   if (checkIdempotency) {
     const idempotencyCheck = assertIdempotencyKey(first);
     if (idempotencyCheck) return { validations: [idempotencyCheck], passed: false };
@@ -392,6 +399,7 @@ async function runExpectWebhook(
 
   return {
     validations: [
+      ...(schemaCheck ? [schemaCheck] : []),
       {
         check: 'expect_webhook',
         passed: true,
@@ -626,6 +634,90 @@ function mapSignatureErrorCode(
 // ────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────
+
+function validateWebhookPayloadSchema(step: StoryboardStep, webhook: CapturedWebhook): ValidationResult | undefined {
+  const schemaRef = step.webhook_payload_schema_ref ?? step.response_schema_webhook_ref;
+  if (!schemaRef) return undefined;
+
+  const { schema_id, schema_url } = resolveWebhookSchemaIdentity(schemaRef);
+  const validator = getSchemaValidatorByRef(schemaRef);
+  if (!validator) {
+    return {
+      check: 'expect_webhook',
+      passed: false,
+      description: 'Webhook payload schema validation failed.',
+      error: `No webhook payload schema found for ${schemaRef}.`,
+      json_pointer: null,
+      expected: schema_id,
+      actual: { code: 'schema_violation', reason: 'schema_not_found', schema_ref: schemaRef },
+      schema_id,
+      schema_url,
+    };
+  }
+
+  const body = webhook.body;
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return {
+      check: 'expect_webhook',
+      passed: false,
+      description: 'Webhook payload schema validation failed.',
+      error: 'Webhook body was not a JSON object.',
+      json_pointer: null,
+      expected: schema_id,
+      actual: { code: 'schema_violation', reason: 'non_object_body', body },
+      schema_id,
+      schema_url,
+    };
+  }
+
+  const passed = validator(body);
+  if (passed) {
+    return {
+      check: 'expect_webhook',
+      passed: true,
+      description: `Webhook payload validates against ${schemaRef}.`,
+      json_pointer: null,
+      expected: schema_id,
+      actual: 'schema_valid',
+      schema_id,
+      schema_url,
+    };
+  }
+
+  const issues = (validator.errors ?? []).map(ajvErrorToSchemaError);
+  const firstIssue = issues[0];
+  return {
+    check: 'expect_webhook',
+    passed: false,
+    description: 'Webhook payload schema validation failed.',
+    error: firstIssue?.message ?? `Webhook body failed ${schemaRef}.`,
+    json_pointer: firstIssue?.instance_path ?? null,
+    expected: schema_id,
+    actual: { code: 'schema_violation', issues },
+    schema_id,
+    schema_url,
+  };
+}
+
+function resolveWebhookSchemaIdentity(schemaRef: string): { schema_id: string; schema_url: string } {
+  const trimmed = schemaRef.replace(/^\/+/, '');
+  const schemaId = `/schemas/${ADCP_VERSION}/${trimmed}`;
+  return { schema_id: schemaId, schema_url: `${SCHEMA_URL_BASE}${schemaId}` };
+}
+
+function ajvErrorToSchemaError(error: {
+  instancePath?: string;
+  schemaPath?: string;
+  keyword?: string;
+  message?: string;
+}): SchemaValidationError {
+  return {
+    instance_path: error.instancePath || '/',
+    schema_path: error.schemaPath || '#',
+    keyword: error.keyword || 'schema',
+    message: error.message || 'Webhook payload failed schema validation.',
+  };
+}
 
 function extractIdempotencyKey(webhook: CapturedWebhook): string | undefined {
   const body = webhook.body;
