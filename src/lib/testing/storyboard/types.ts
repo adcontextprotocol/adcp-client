@@ -180,6 +180,11 @@ export interface Storyboard {
    * field(s) into `params.fixture` verbatim.
    */
   fixtures?: StoryboardFixtures;
+  /**
+   * Initial context values declared by the storyboard YAML. Runner callers may
+   * override these defaults with `StoryboardRunOptions.context`.
+   */
+  context?: StoryboardContext;
   phases: StoryboardPhase[];
   /**
    * Cross-step assertions that apply to this storyboard. Every assertion

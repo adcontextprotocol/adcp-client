@@ -1993,7 +1993,8 @@ async function executeStoryboardPass(
     }
   }
 
-  let context: StoryboardContext = { ...options.context };
+  let context: StoryboardContext = { ...storyboard.context, ...options.context };
+  if (storyboard.context) forwardAliasCache(storyboard.context, context);
   if (options.context) forwardAliasCache(options.context, context);
   const contributions = new Set<string>();
   // First phase/step that contributed each flag. Branch-set post-pass reads
@@ -3049,7 +3050,9 @@ async function runMultiPass(
   // phase to its `phaseResults`, so the aggregated top-level counts reflect
   // a single seeding pass across the whole run.
   const preSeedClients = agentUrls.map(url => getOrCreateClientResolution(url, options).client);
-  const preSeedContext: StoryboardContext = { ...options.context };
+  const preSeedContext: StoryboardContext = { ...storyboard.context, ...options.context };
+  if (storyboard.context) forwardAliasCache(storyboard.context, preSeedContext);
+  if (options.context) forwardAliasCache(options.context, preSeedContext);
   const preSeededResult = await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
   const passes: StoryboardPassResult[] = [];
@@ -3297,7 +3300,8 @@ async function runStoryboardStepBody(
     profile = options._profile;
   }
 
-  const context: StoryboardContext = { ...options.context };
+  const context: StoryboardContext = { ...storyboard.context, ...options.context };
+  if (storyboard.context) forwardAliasCache(storyboard.context, context);
   if (options.context) forwardAliasCache(options.context, context);
 
   // `_webhookReceiver` is a test-only injection point; production callers
