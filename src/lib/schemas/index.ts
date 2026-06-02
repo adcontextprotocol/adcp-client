@@ -16,6 +16,8 @@
  *   - {@link TOOL_INPUT_SCHEMAS}: `toolName → full Zod schema` map for
  *     custom tools whose request schema is a union/intersection and cannot
  *     be represented as a raw shape without weakening validation.
+ *   - {@link TOOL_RESPONSE_SCHEMAS}: `toolName → full Zod response schema`
+ *     map for response validation and compliance tooling.
  *   - {@link customToolFor}: sugar for registering a single custom tool
  *     with type-safe `handler` params derived from the schema's shape.
  *   - {@link customToolForSchema}: same sugar for full Zod schemas.
@@ -45,6 +47,14 @@ import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 
 export * from '../types/schemas.generated';
 export { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
+export { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+export {
+  SyncCreativesItemSchema,
+  SyncCreativesSuccessStrictSchema,
+  SyncCreativesResponseStrictSchema,
+  SyncCreativesActionSchema,
+} from '../validation/sync-creatives';
+export type { SyncCreativesItem, SyncCreativesSuccessStrict } from '../validation/sync-creatives';
 
 type InputShape = Record<string, z.ZodType>;
 type InputSchema = z.ZodType;

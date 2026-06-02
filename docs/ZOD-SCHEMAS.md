@@ -9,7 +9,7 @@ npm install @adcp/sdk zod
 ```
 
 ```typescript
-import { MediaBuySchema, GetProductsRequestSchema } from '@adcp/sdk';
+import { MediaBuySchema, GetProductsRequestSchema } from '@adcp/sdk/schemas';
 
 // Validate data
 const result = MediaBuySchema.safeParse(data);
@@ -44,7 +44,7 @@ if (result.success) {
 ### API Request Validation
 
 ```typescript
-import { GetProductsRequestSchema } from '@adcp/sdk';
+import { GetProductsRequestSchema } from '@adcp/sdk/schemas';
 
 function callGetProducts(request: unknown) {
   const validated = GetProductsRequestSchema.parse(request);
@@ -55,7 +55,7 @@ function callGetProducts(request: unknown) {
 ### API Response Validation
 
 ```typescript
-import { GetProductsResponseSchema } from '@adcp/sdk';
+import { GetProductsResponseSchema } from '@adcp/sdk/schemas';
 
 async function fetchProducts() {
   const response = await agent.getProducts(request);
@@ -69,7 +69,7 @@ async function fetchProducts() {
 ```typescript
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CreateMediaBuyRequestSchema } from '@adcp/sdk';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 function MediaBuyForm() {
   const { register, handleSubmit } = useForm({
@@ -155,7 +155,8 @@ if (!result.success) {
 ## TypeScript Integration
 
 ```typescript
-import { MediaBuy, MediaBuySchema } from '@adcp/sdk';
+import type { MediaBuy } from '@adcp/sdk';
+import { MediaBuySchema } from '@adcp/sdk/schemas';
 import { z } from 'zod';
 
 type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
@@ -164,7 +165,7 @@ type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
 
 ## Platform Implementation
 
-If you're building a platform that **receives** AdCP tool calls (a seller/publisher), you need request types for your handler signatures and schemas for runtime validation. Both are exported from `@adcp/sdk`.
+If you're building a platform that **receives** AdCP tool calls (a seller/publisher), import request types for handler signatures from `@adcp/sdk` and schemas for runtime validation from `@adcp/sdk/schemas`.
 
 ### Naming Convention
 
@@ -199,9 +200,8 @@ import {
   CreateMediaBuyResponse,
   PackageRequest,
   TargetingOverlay,
-  // Zod schema for runtime validation
-  CreateMediaBuyRequestSchema,
 } from '@adcp/sdk';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
   // Validate and parse the incoming request
@@ -240,7 +240,7 @@ import {
   CreateMediaBuyRequestSchema,
   GetProductsRequestSchema,
   SyncCreativesRequestSchema,
-} from '@adcp/sdk';
+} from '@adcp/sdk/schemas';
 ```
 
 ## Example
@@ -258,7 +258,7 @@ When you `npm publish`, the package includes:
 @adcp/sdk/
   ├── dist/lib/types/schemas.generated.js  ← Zod schemas (compiled)
   ├── dist/lib/types/schemas.generated.d.ts ← Type definitions
-  └── dist/lib/index.js                    ← Re-exports schemas
+  └── dist/lib/schemas/index.js            ← Re-exports schemas
 ```
 
 ### What Downstream Users Get
@@ -267,7 +267,7 @@ When someone installs `@adcp/sdk`, they get:
 
 ```typescript
 // Works immediately after npm install
-import { MediaBuySchema } from '@adcp/sdk';
+import { MediaBuySchema } from '@adcp/sdk/schemas';
 
 const result = MediaBuySchema.safeParse(data);
 ```
@@ -302,7 +302,7 @@ npm install @adcp/sdk zod
 npm ls @adcp/sdk
 
 # Verify exports work
-node -e "console.log(require('@adcp/sdk').MediaBuySchema)"
+node -e "console.log(require('@adcp/sdk/schemas').MediaBuySchema)"
 ```
 
 ## Troubleshooting

@@ -49,13 +49,13 @@ Slices use kebab-case filenames matching the schema cache (`sync_accounts` → `
 
 ### TypeScript footprint in monorepos
 
-Large workspaces should keep the generated schema surface out of the default type-check path unless they actually need runtime Zod validators. The root `@adcp/sdk` export and `@adcp/sdk/types` still re-export schemas for backwards compatibility, but those compatibility exports are deprecated because they can pull the full generated schema declaration set into `tsc`.
+Large workspaces should keep the generated schema surface out of the default type-check path unless they actually need runtime Zod validators. The root `@adcp/sdk` export and `@adcp/sdk/types` do not re-export generated Zod schemas; import those schemas from `@adcp/sdk/schemas` so ordinary SDK imports avoid pulling the full generated schema declaration set into `tsc`.
 
 | Need                                          | Recommended import                                                                      |
 | --------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Client, server, signing, and response helpers | `@adcp/sdk`, `@adcp/sdk/client`, `@adcp/sdk/server`, or another focused runtime subpath |
 | One tool's request/response types             | `@adcp/sdk/types/<tool>` such as `@adcp/sdk/types/sync-accounts`                        |
-| Runtime Zod schemas and tool input shapes     | `@adcp/sdk/schemas`                                                                     |
+| Runtime Zod schemas and tool schema maps      | `@adcp/sdk/schemas`                                                                     |
 | Broad generated protocol type barrel          | `@adcp/sdk/types`                                                                       |
 
 For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.
@@ -361,7 +361,8 @@ Worked reference adapters live in `examples/hello_*` — pick the one whose spec
 **v5 lower-level API** (still fully supported as the substrate the v6 path calls into):
 
 ```typescript
-import { CreateMediaBuyRequest, CreateMediaBuyResponse, CreateMediaBuyRequestSchema } from '@adcp/sdk';
+import type { CreateMediaBuyRequest, CreateMediaBuyResponse } from '@adcp/sdk';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
   const request: CreateMediaBuyRequest = CreateMediaBuyRequestSchema.parse(rawParams);

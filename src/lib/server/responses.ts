@@ -21,7 +21,7 @@
  * ```typescript
  * import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
  * import { capabilitiesResponse, productsResponse, adcpError } from '@adcp/sdk/server';
- * import { GetProductsRequestSchema } from '@adcp/sdk';
+ * import { GetProductsRequestSchema } from '@adcp/sdk/schemas';
  *
  * const server = new McpServer({ name: 'My Agent', version: '1.0.0' });
  *
