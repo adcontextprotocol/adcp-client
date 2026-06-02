@@ -71,6 +71,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private readonly capabilityRefreshIntervalMs: number;
   private readonly errorHandler: ((error: Error) => void) | undefined;
   private startPromise: Promise<void> | null = null;
+  private startPromiseEpoch: number | null = null;
   private signalsQueryableWarned = false;
   private readonly processedWebhookKeys = new Set<string>();
   private readonly processedWebhookEventKeys = new Set<string>();
@@ -194,11 +195,16 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
    * equivalent to calling `refresh()` after a mode upgrade.
    */
   async start(): Promise<void> {
-    if (this.startPromise) return this.startPromise;
-    this.startPromise = this.startInner().finally(() => {
-      this.startPromise = null;
+    if (this.startPromise && this.startPromiseEpoch === this.lifecycleEpoch) return this.startPromise;
+    const promise = this.startInner().finally(() => {
+      if (this.startPromise === promise) {
+        this.startPromise = null;
+        this.startPromiseEpoch = null;
+      }
     });
-    return this.startPromise;
+    this.startPromise = promise;
+    this.startPromiseEpoch = this.lifecycleEpoch;
+    return promise;
   }
 
   private async startInner(): Promise<void> {

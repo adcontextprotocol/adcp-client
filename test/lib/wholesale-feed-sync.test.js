@@ -243,6 +243,33 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     sync.stop();
   });
 
+  test('start after stop during an in-flight bootstrap starts a fresh lifecycle', async () => {
+    const gate = deferred();
+    const { client, calls } = makeStubClient({
+      getProducts: async (_params, callNumber) => {
+        if (callNumber === 1) await gate.promise;
+        return makeProductsResult([makeProduct(`p${callNumber}`)], {
+          wholesale_feed_version: `products-v${callNumber}`,
+        });
+      },
+    });
+    const sync = new WholesaleFeedSync({ client, capabilityRefreshIntervalMs: 0 });
+
+    const firstStart = sync.start();
+    await waitFor(() => calls.getProducts.length === 1, 'expected first bootstrap to begin');
+    sync.stop();
+    const secondStart = sync.start();
+    await waitFor(() => calls.getProducts.length === 2, 'expected second bootstrap to begin');
+    gate.resolve();
+    await Promise.all([firstStart, secondStart]);
+
+    assert.strictEqual(sync.state, 'syncing');
+    assert.strictEqual(sync.products.count, 1);
+    assert.strictEqual(sync.products.get('p1'), undefined);
+    assert.strictEqual(sync.products.get('p2').name, 'Product p2');
+    sync.stop();
+  });
+
   test('stop during a mixed bootstrap preserves the previous indexes and version tokens', async () => {
     let phase = 'initial';
     const signalGate = deferred();
