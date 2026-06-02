@@ -319,13 +319,6 @@ export * from './asset-instances';
 // (e.g., SyncAccountsResponseRow.action) reachable to handler authors.
 export * from './sync-rows';
 
-/**
- * @deprecated Import Zod schemas from `@adcp/sdk/schemas` instead. This
- * compatibility re-export can force the full generated schema declaration set
- * into TypeScript programs that only need common SDK types.
- */
-export * from './schemas.generated';
-
 // Re-export const-array enum values (e.g., MediaChannelValues, PacingValues)
 // for consumers that need to enumerate or validate against the spec's
 // literal sets without re-deriving them from Zod schemas.

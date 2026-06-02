@@ -34,6 +34,7 @@ import {
   type CanonicalRef,
   type CanonicalReferenceResolutionResult,
 } from '@adcp/sdk/v2/format-schema';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 import {
   AuthInvalidError,
   AuthMissingError,
@@ -57,6 +58,7 @@ const built = CanonicalFormat.nativeInFeed(
   { seller_preference: 'preferred', capability_id: 'native_feed' }
 );
 const builtKind: 'native_in_feed' = built.format_kind;
+const mediaBuyShape = CreateMediaBuyRequestSchema.shape;
 
 const syncError: SyncCreativesPayload = {
   errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
@@ -108,6 +110,7 @@ const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache
 
 void typedNative;
 void builtKind;
+void mediaBuyShape;
 void serverSyncError;
 void authErrors;
 void lazyBackend;
@@ -138,6 +141,7 @@ void generatedInjectedScope;
             '@adcp/sdk/server': ['dist/lib/server/index'],
             '@adcp/sdk/types': ['dist/lib/types/index'],
             '@adcp/sdk/v2/format-schema': ['dist/lib/v2/format-schema/index'],
+            '@adcp/sdk/schemas': ['dist/lib/schemas/index'],
           },
         },
         files: ['public-barrel-smoke.ts'],
@@ -154,4 +158,20 @@ void generatedInjectedScope;
   });
 
   assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('schema exports stay behind @adcp/sdk/schemas', () => {
+  const root = require('../../dist/lib/index.js');
+  const types = require('../../dist/lib/types/index.js');
+  const schemas = require('../../dist/lib/schemas/index.js');
+
+  assert.strictEqual(root.CreateMediaBuyRequestSchema, undefined);
+  assert.strictEqual(root.TOOL_REQUEST_SCHEMAS, undefined);
+  assert.strictEqual(root.TOOL_RESPONSE_SCHEMAS, undefined);
+  assert.strictEqual(root.SyncCreativesItemSchema, undefined);
+  assert.strictEqual(types.CreateMediaBuyRequestSchema, undefined);
+  assert.ok(schemas.CreateMediaBuyRequestSchema);
+  assert.ok(schemas.TOOL_REQUEST_SCHEMAS.create_media_buy);
+  assert.ok(schemas.TOOL_RESPONSE_SCHEMAS.create_media_buy);
+  assert.ok(schemas.SyncCreativesItemSchema);
 });

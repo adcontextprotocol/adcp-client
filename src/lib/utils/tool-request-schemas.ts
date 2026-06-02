@@ -3,7 +3,7 @@
  *
  * Use with MCP SDK's server.registerTool() for type-safe tool registration:
  *
- *   import { TOOL_REQUEST_SCHEMAS } from '@adcp/sdk';
+ *   import { TOOL_REQUEST_SCHEMAS } from '@adcp/sdk/schemas';
  *   server.registerTool(
  *     'get_products',
  *     { inputSchema: TOOL_REQUEST_SCHEMAS.get_products.shape },

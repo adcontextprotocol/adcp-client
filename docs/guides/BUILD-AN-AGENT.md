@@ -567,7 +567,8 @@ See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generat
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServerFromPlatform` calls into this internally.
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/sdk';
+import { createTaskCapableServer, taskToolResponse } from '@adcp/sdk';
+import { GetSignalsRequestSchema } from '@adcp/sdk/schemas';
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('Agent Name', '1.0.0', { taskStore });
@@ -640,6 +641,7 @@ For async tools that need background processing, use `registerAdcpTaskTool()`:
 
 ```typescript
 import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
 
 const taskStore = new InMemoryTaskStore();
 
