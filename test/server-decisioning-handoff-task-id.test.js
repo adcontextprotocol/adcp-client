@@ -161,4 +161,46 @@ describe('createInMemoryTaskRegistry overrideTaskId collision guard (#1554)', ()
     const { taskId } = await registry.create({ tool: 't', accountId: 'a1' });
     assert.ok(taskId.startsWith('task_'));
   });
+
+  it('clear() removes existing tasks and preserves the registry instance', async () => {
+    const registry = createInMemoryTaskRegistry();
+    const registerBackground = registry._registerBackground;
+    await registry.create({ tool: 't', accountId: 'a1', overrideTaskId: 'task_clear' });
+    registry._registerBackground('task_clear', new Promise(() => {}));
+
+    registry.clear();
+
+    assert.strictEqual(registry._registerBackground, registerBackground);
+    assert.strictEqual(await registry.getTask('task_clear'), null);
+    await assert.doesNotReject(() => registry.create({ tool: 't', accountId: 'a1', overrideTaskId: 'task_clear' }));
+  });
+});
+
+describe('compliance.reset taskRegistry flush (#2154)', () => {
+  it('allows a forced task_id to be reused after compliance.reset()', async () => {
+    const FORCED_ID = 'task_reset-reusable-abc123';
+    const taskRegistry = createInMemoryTaskRegistry();
+    const platform = buildPlatform({
+      createMediaBuy: async (_req, ctx) =>
+        ctx.handoffToTask(async () => ({ media_buy_id: 'mb_reset', status: 'active' }), { task_id: FORCED_ID }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'test',
+      version: '0.0.1',
+      taskRegistry,
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const first = await dispatchCreate(server);
+    assert.strictEqual(first.structuredContent.task_id, FORCED_ID);
+    await server.awaitTask(FORCED_ID);
+    assert.ok(await taskRegistry.getTask(FORCED_ID), 'pre-reset task is present');
+
+    await server.compliance.reset();
+
+    assert.strictEqual(await taskRegistry.getTask(FORCED_ID), null, 'reset cleared task registry');
+    const second = await dispatchCreate(server);
+    assert.strictEqual(second.structuredContent.task_id, FORCED_ID);
+    assert.notStrictEqual(second.isError, true, JSON.stringify(second.structuredContent));
+  });
 });
