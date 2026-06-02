@@ -611,7 +611,7 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     sync.stop();
   });
 
-  test('version mismatch recovery fails after bounded retries when the feed version does not advance', async () => {
+  test('version mismatch recovery dedupes stale deliveries when the feed version does not advance', async () => {
     const { client, calls } = makeStubClient({
       capabilities: {
         wholesale_feed_versioning: { supported: true },
@@ -627,24 +627,22 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     sync.on('resyncing', ({ reason }) => reasons.push(reason));
 
     await sync.start();
-    await assert.rejects(
-      () =>
-        sync.applyWebhook(
-          makeWebhook(
-            makeEvent('product.updated', 'product', 'p1', {
-              product_id: 'p1',
-              product: makeProduct('p1', { name: 'Stale Webhook Product' }),
-              applies_to: { scope: 'public' },
-            }),
-            { version: 'v6', previous: 'v4' }
-          )
-        ),
-      /version mismatch recovery did not advance product wholesale_feed_version after 3 attempts/
+    const webhook = makeWebhook(
+      makeEvent('product.updated', 'product', 'p1', {
+        product_id: 'p1',
+        product: makeProduct('p1', { name: 'Stale Webhook Product' }),
+        applies_to: { scope: 'public' },
+      }),
+      { version: 'v6', previous: 'v4' }
     );
 
+    await sync.applyWebhook(webhook);
     assert.deepStrictEqual(reasons, ['version_mismatch']);
     assert.strictEqual(calls.getProducts.length, 4);
     assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+
+    await sync.applyWebhook(webhook);
+    assert.strictEqual(calls.getProducts.length, 4);
     sync.stop();
   });
 

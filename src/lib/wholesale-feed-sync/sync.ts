@@ -592,7 +592,6 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     epoch = this.lifecycleEpoch
   ): Promise<boolean> {
     this.emit('resyncing', { reason: 'version_mismatch' });
-    const feed = this.feedLabelForEvent(event);
     const beforeVersion = this.currentWholesaleFeedVersionForEvent(event);
     for (let attempt = 1; attempt <= VERSION_MISMATCH_RECOVERY_ATTEMPTS; attempt++) {
       const recovered = await this.bootstrap({ emitDiffs: true, epoch });
@@ -604,9 +603,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         if (!this.isLifecycleCurrent(epoch)) return false;
       }
     }
-    throw new Error(
-      `WholesaleFeedSync: version mismatch recovery did not advance ${feed} wholesale_feed_version after ${VERSION_MISMATCH_RECOVERY_ATTEMPTS} attempts.`
-    );
+    // At-least-once delivery can replay stale webhooks after the mirror has
+    // already caught up. If bounded conditional reads do not advance the
+    // opaque version token, acknowledge the delivery instead of poisoning
+    // the seller's retry queue.
+    return true;
   }
 
   // ====== Private: auto-poll mode version probe ======
@@ -678,12 +679,6 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     throw new Error(
       'WholesaleFeedSync: wholesale_feed.bulk_change payload missing or invalid required affected_entity_type.'
     );
-  }
-
-  private feedLabelForEvent(event: V31Beta.WholesaleFeedEvent): 'product' | 'signal' {
-    if (event.event_type.startsWith('product.')) return 'product';
-    if (event.event_type.startsWith('signal.')) return 'signal';
-    return this.bulkChangeAffectedEntityType(event);
   }
 
   private currentProductMetadata(): FeedMetadata {
