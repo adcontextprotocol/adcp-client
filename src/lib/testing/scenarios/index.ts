@@ -19,6 +19,7 @@ export {
   testCreativeInline,
   testCreativeReference,
   testSyncAudiences,
+  resolveAccountForMediaBuy,
   resolveAccountForAudiences,
   selectProduct,
   selectPricingOption,

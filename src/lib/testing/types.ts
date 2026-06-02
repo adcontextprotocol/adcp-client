@@ -198,6 +198,16 @@ export interface TestOptions {
   si_offering_id?: string;
   // For SI testing: initial conversation context
   si_context?: string;
+  /**
+   * Shared explicit account id for test scenarios that need an account-scoped
+   * request. Domain-specific account ids below take precedence when provided.
+   */
+  account_id?: string;
+  /**
+   * For media-buy testing: account ID to use with get_products,
+   * create_media_buy, sync_creatives, and related media-buy flows.
+   */
+  media_buy_account_id?: string;
   // For audience testing: account ID to use with sync_audiences
   audience_account_id?: string;
   // When true, use sandbox mode. For implicit accounts, uses the natural key with

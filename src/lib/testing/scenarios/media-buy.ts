@@ -74,6 +74,7 @@ export function buildCreateMediaBuyRequest(
   extras: {
     inline_creatives?: Record<string, unknown>[];
     creative_ids?: string[];
+    accountRef?: AccountReference;
   } = {}
 ): Record<string, unknown> {
   const minSpend = pricingOption.min_spend_per_package || 0;
@@ -107,8 +108,16 @@ export function buildCreateMediaBuyRequest(
     packageRequest.creative_ids = extras.creative_ids;
   }
 
+  const hasAccountRef = Object.prototype.hasOwnProperty.call(extras, 'accountRef');
+  const account = hasAccountRef ? extras.accountRef : resolveAccount(options);
+  if (!account) {
+    throw new Error(
+      'buildCreateMediaBuyRequest received accountRef: undefined. Resolve an account before building the request.'
+    );
+  }
+
   return {
-    account: resolveAccount(options),
+    account,
     brand: resolveBrand(options),
     start_time: startTime.toISOString(),
     end_time: endTime.toISOString(),
@@ -204,6 +213,27 @@ export async function testCreateMediaBuy(
     return { steps, profile };
   }
 
+  const { accountRef, steps: accountSteps } = await resolveAccountForMediaBuy(
+    options,
+    profile.tools,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+    async params => client.listAccounts(params as any) as Promise<TaskResult>,
+    getMediaBuyAccountResolutionHints(profile)
+  );
+  steps.push(...accountSteps);
+
+  if (!accountRef) {
+    steps.push({
+      step: 'Resolve account for media buy',
+      task: 'list_accounts',
+      passed: false,
+      duration_ms: 0,
+      error:
+        'No account available. Provide media_buy_account_id/account_id, use sandbox: true, or ensure list_accounts returns an account.',
+    });
+    return { steps, profile };
+  }
+
   // Get products
   const { result: productsResult } = await runStep<TaskResult>(
     'Fetch products for media buy',
@@ -213,6 +243,7 @@ export async function testCreateMediaBuy(
         buying_mode: 'brief',
         brief: options.brief || 'Looking for display advertising products',
         brand: resolveBrand(options),
+        account: accountRef,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
   );
@@ -254,7 +285,7 @@ export async function testCreateMediaBuy(
     return { steps, profile };
   }
 
-  const createRequest = buildCreateMediaBuyRequest(product, pricingOption, options);
+  const createRequest = buildCreateMediaBuyRequest(product, pricingOption, options, { accountRef });
 
   // Create the media buy
   const { result: createResult, step: createStep } = await runStep<TaskResult>(
@@ -712,6 +743,27 @@ export async function testCreativeSync(
     return { steps, profile };
   }
 
+  const { accountRef, steps: accountSteps } = await resolveAccountForMediaBuy(
+    options,
+    profile.tools,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
+    async params => client.listAccounts(params as any) as Promise<TaskResult>,
+    getMediaBuyAccountResolutionHints(profile)
+  );
+  steps.push(...accountSteps);
+
+  if (!accountRef) {
+    steps.push({
+      step: 'Resolve account for creative sync',
+      task: 'list_accounts',
+      passed: false,
+      duration_ms: 0,
+      error:
+        'No account available. Provide media_buy_account_id/account_id, use sandbox: true, or ensure list_accounts returns an account.',
+    });
+    return { steps, profile };
+  }
+
   // Get format info first
   let formatId: Record<string, unknown> = {
     agent_url: 'https://creative.adcontextprotocol.org',
@@ -761,7 +813,7 @@ export async function testCreativeSync(
     'sync_creatives',
     async () =>
       client.syncCreatives({
-        account: resolveAccount(options),
+        account: accountRef,
         creatives: [testCreative],
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional: test request bypasses strict typing
       } as any) as Promise<TaskResult>
@@ -1201,10 +1253,171 @@ export async function testCreativeReference(
 const TEST_HASHED_EMAIL = 'a' + '0'.repeat(63);
 const TEST_HASHED_PHONE = 'b' + '0'.repeat(63);
 
+interface MediaBuyAccountResolutionHints {
+  requireOperatorAuth?: boolean;
+}
+
+/**
+ * Resolve which account reference to use for media-buy and creative-library
+ * test calls.
+ *
+ * Priority: media_buy_account_id > account_id > explicit-account discovery >
+ * implicit/sandbox natural key. When account capabilities are unavailable,
+ * list_accounts support is treated as an explicit-account hint for backwards
+ * compatibility with older agents.
+ *
+ * Extracted for testability — the listAccounts callback abstracts the client call.
+ */
+export async function resolveAccountForMediaBuy(
+  options: TestOptions,
+  tools: string[],
+  listAccounts: (params: Record<string, unknown>) => Promise<TaskResult>,
+  hints: MediaBuyAccountResolutionHints = {}
+): Promise<{ accountRef: AccountReference | undefined; steps: TestStepResult[] }> {
+  const steps: TestStepResult[] = [];
+
+  const explicitAccountId = options.media_buy_account_id ?? options.account_id;
+  if (explicitAccountId) {
+    return { accountRef: { account_id: explicitAccountId }, steps };
+  }
+
+  const hasListAccounts = tools.includes('list_accounts');
+  const shouldDiscoverExplicitAccount = hasListAccounts && hints.requireOperatorAuth !== false;
+
+  if (options.sandbox && shouldDiscoverExplicitAccount) {
+    const { result: sandboxResult, step: sandboxStep } = await runStep<TaskResult>(
+      'Discover sandbox accounts for media buy',
+      'list_accounts',
+      async () => listAccounts({ sandbox: true, status: 'active' })
+    );
+
+    const sandboxData = sandboxResult?.success
+      ? (sandboxResult.data as unknown as ListAccountsResponse | undefined)
+      : undefined;
+    const selection = selectMediaBuyAccount(sandboxData?.accounts ?? [], options);
+    if (selection.accountRef) {
+      sandboxStep.details = selection.details;
+      steps.push(sandboxStep);
+      return { accountRef: selection.accountRef, steps };
+    }
+
+    sandboxStep.details = sandboxResult?.success
+      ? selection.details
+      : 'list_accounts failed; falling back to natural key';
+    if (hints.requireOperatorAuth === true || selection.ambiguous) {
+      sandboxStep.passed = false;
+    } else {
+      sandboxStep.passed = true;
+      sandboxStep.error = undefined;
+    }
+    steps.push(sandboxStep);
+    if (hints.requireOperatorAuth === true || selection.ambiguous) {
+      return { accountRef: undefined, steps };
+    }
+
+    const brand = resolveBrand(options);
+    return { accountRef: { brand, operator: brand.domain, sandbox: true }, steps };
+  }
+
+  if (options.sandbox) {
+    const brand = resolveBrand(options);
+    return { accountRef: { brand, operator: brand.domain, sandbox: true }, steps };
+  }
+
+  if (shouldDiscoverExplicitAccount) {
+    const { result: accountsResult, step: accountsStep } = await runStep<TaskResult>(
+      'Discover accounts for media buy',
+      'list_accounts',
+      async () => listAccounts({ status: 'active' })
+    );
+
+    if (accountsResult?.success && accountsResult?.data) {
+      const accountsData = accountsResult.data as unknown as ListAccountsResponse;
+      const selection = selectMediaBuyAccount(accountsData.accounts ?? [], options);
+      if (selection.accountRef) {
+        accountsStep.details = selection.details;
+        steps.push(accountsStep);
+        return { accountRef: selection.accountRef, steps };
+      }
+      accountsStep.details = selection.details;
+    } else {
+      accountsStep.details = 'list_accounts call failed';
+    }
+    steps.push(accountsStep);
+    return { accountRef: undefined, steps };
+  }
+
+  return { accountRef: resolveAccount(options), steps };
+}
+
+function getMediaBuyAccountResolutionHints(profile: AgentProfile): MediaBuyAccountResolutionHints {
+  const capabilities = profile.raw_capabilities;
+  if (!isRecord(capabilities) || !isRecord(capabilities.account)) {
+    return {};
+  }
+
+  const requireOperatorAuth = capabilities.account.require_operator_auth;
+  return typeof requireOperatorAuth === 'boolean' ? { requireOperatorAuth } : {};
+}
+
+function selectMediaBuyAccount(
+  accounts: ListAccountsResponse['accounts'],
+  options: TestOptions
+): { accountRef?: AccountReference; details: string; ambiguous?: boolean } {
+  const candidates = accounts.filter(
+    account =>
+      typeof account.account_id === 'string' &&
+      account.account_id.length > 0 &&
+      (account.status === undefined || account.status === 'active')
+  );
+  if (candidates.length === 0) {
+    return { details: 'list_accounts returned no active accounts with account_id' };
+  }
+
+  const brand = resolveBrand(options);
+  const brandMatches = candidates.filter(account => accountMatchesBrand(account, brand));
+  const selectable = brandMatches.length > 0 ? brandMatches : candidates;
+
+  if (selectable.length === 1) {
+    const accountId = selectable[0]!.account_id as string;
+    const matchSource = brandMatches.length === 1 ? 'brand-matched ' : '';
+    return {
+      accountRef: { account_id: accountId },
+      details: `Using ${matchSource}account: ${accountId}`,
+    };
+  }
+
+  const accountIds = selectable.map(account => account.account_id).join(', ');
+  return {
+    details: `list_accounts returned multiple matching accounts (${accountIds}); provide media_buy_account_id/account_id to disambiguate`,
+    ambiguous: true,
+  };
+}
+
+function accountMatchesBrand(
+  account: ListAccountsResponse['accounts'][number],
+  brand: ReturnType<typeof resolveBrand>
+) {
+  const accountBrand = account.brand;
+  if (!isRecord(accountBrand) || accountBrand.domain !== brand.domain) {
+    return false;
+  }
+
+  if (brand.brand_id && accountBrand.brand_id !== brand.brand_id) {
+    return false;
+  }
+
+  return typeof account.operator !== 'string' || account.operator === brand.domain;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Resolve which account reference to use for audience sync.
  *
- * Priority: explicit account_id > sandbox discovery > sandbox natural key > list_accounts discovery.
+ * Priority: audience_account_id > account_id > sandbox discovery > sandbox natural key > list_accounts discovery.
  *
  * Extracted for testability — the listAccounts callback abstracts the client call.
  */
@@ -1215,8 +1428,9 @@ export async function resolveAccountForAudiences(
 ): Promise<{ accountRef: AccountReference | undefined; steps: TestStepResult[] }> {
   const steps: TestStepResult[] = [];
 
-  if (options.audience_account_id) {
-    return { accountRef: { account_id: options.audience_account_id }, steps };
+  const explicitAccountId = options.audience_account_id ?? options.account_id;
+  if (explicitAccountId) {
+    return { accountRef: { account_id: explicitAccountId }, steps };
   }
 
   if (options.sandbox && tools.includes('list_accounts')) {

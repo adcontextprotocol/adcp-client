@@ -513,6 +513,7 @@ export {
   testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  resolveAccountForMediaBuy,
   resolveAccountForAudiences,
   testSchemaCompliance,
   testErrorCodes,
