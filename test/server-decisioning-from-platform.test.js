@@ -133,6 +133,42 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
   });
 
+  it('applies responseEnhancer to platform and generated discovery responses', async () => {
+    const enhancedStatuses = [];
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      responseEnhancer: response => {
+        enhancedStatuses.push(response.structuredContent?.status);
+        const first = Array.isArray(response.content) ? response.content[0] : undefined;
+        if (first && first.type === 'text' && typeof first.text === 'string') {
+          first.text = `${first.text}\n\nenhanced`;
+        }
+      },
+    });
+
+    const products = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'acc_test' },
+        },
+      },
+    });
+    const capabilities = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+
+    assert.match(products.content[0].text, /enhanced/);
+    assert.match(capabilities.content[0].text, /enhanced/);
+    assert.strictEqual(enhancedStatuses.length, 2);
+  });
+
   it('fails closed for auth-derived get_products responses missing cache_scope', async () => {
     let sawCtx;
     const base = buildPlatform();
@@ -3158,6 +3194,32 @@ describe('tasks_get wire tool (B9)', () => {
     assert.strictEqual(payload.status, 'completed');
     assert.strictEqual(payload.protocol, 'media-buy');
     assert.deepStrictEqual(payload.result, { media_buy_id: 'mb_42', status: 'active' });
+  });
+
+  it('applies responseEnhancer to the framework-owned tasks_get custom tool', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' })),
+      {
+        name: 'p',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        responseEnhancer: response => {
+          const first = Array.isArray(response.content) ? response.content[0] : undefined;
+          if (first && first.type === 'text' && typeof first.text === 'string') {
+            first.text = `${first.text}\n\nenhanced`;
+          }
+        },
+      }
+    );
+    const taskId = await createTask(server, 'acc_owner');
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'tasks_get', arguments: { task_id: taskId, account: { account_id: 'acc_owner' } } },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.match(result.content[0].text, /enhanced/);
+    assert.strictEqual(result.structuredContent.task_id, taskId);
   });
 
   it('returns failed task with top-level error per spec tasks-get-response.json', async () => {
