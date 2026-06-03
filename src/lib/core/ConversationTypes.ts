@@ -1,6 +1,11 @@
 // Core conversation types for ADCP client library
 // These types support the conversation and clarification pattern
 
+import type {
+  ProductPropertyPolicyDiagnostic,
+  ProductPropertyPolicyMode,
+} from '../media-buy/property-policy';
+
 /**
  * Represents a single message in a conversation with an agent
  */
@@ -411,6 +416,27 @@ export interface TaskResultMetadata {
    * configuration pin, when detecting same-major downshift.
    */
   adcpVersion?: string;
+  /**
+   * Buyer-side product property policy enforcement summary for `get_products`.
+   * Present when the client evaluates a configured product property policy or
+   * enforces the request's `property_list` reference against the response.
+   */
+  productPropertyPolicy?: {
+    mode: ProductPropertyPolicyMode;
+    ok: boolean;
+    accepted_count: number;
+    rejected_count: number;
+    flagged_count: number;
+    message?: string;
+    request_property_list?: {
+      list_id: string;
+      agent_url: string;
+      identifier_count?: number;
+      cache_valid_until?: string;
+      resolution_error?: string;
+    };
+    diagnostics: ProductPropertyPolicyDiagnostic[];
+  };
 }
 
 /** Fields shared across all TaskResult variants. */

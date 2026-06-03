@@ -206,6 +206,7 @@ export {
   UnsupportedFeatureError,
 } from './core/SingleAgentClient';
 export type {
+  ClientProductPropertyPolicy,
   SingleAgentClientConfig,
   VerifyAndParseWebhookOptions,
   WebhookParseErrorCode,

@@ -392,12 +392,26 @@ export async function withCachedConnection<T>(
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[],
   label: string,
-  fn: (client: MCPClient) => Promise<T>
+  fn: (client: MCPClient) => Promise<T>,
+  transportFetch?: typeof fetch
 ): Promise<T> {
   const signingContext = signingContextStorage.getStore();
-  const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey, authHeaders);
   const baseUrl = new URL(agentUrl);
 
+  if (transportFetch) {
+    const guardedClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, transportFetch);
+    try {
+      return await fn(guardedClient);
+    } finally {
+      try {
+        await guardedClient.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey, authHeaders);
   const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
 
   try {
@@ -497,7 +511,8 @@ export async function connectMCPWithFallback(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  transportFetch?: typeof fetch
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -506,7 +521,7 @@ export async function connectMCPWithFallback(
       'adcp.connection_label': label,
     },
     async () => {
-      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label);
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, transportFetch);
     }
   );
 }
@@ -515,14 +530,16 @@ async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  transportFetch?: typeof fetch
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
   // Wrap order (innermost → outermost): network → size-limit → signing → capture.
   // Size-limit applies to the raw network response so signing/capture see a
   // bounded body (capture clones via `response.clone()`, which would otherwise
   // buffer a hostile reply in memory).
-  const sizeLimited = wrapFetchWithSizeLimit((input, init) => fetch(input as any, init));
+  const networkFetch = transportFetch ?? ((input, init) => fetch(input as any, init));
+  const sizeLimited = wrapFetchWithSizeLimit(networkFetch);
   const baseFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
         upstream: sizeLimited,
@@ -531,7 +548,7 @@ async function connectMCPWithFallbackImpl(
       }) as typeof fetch)
     : sizeLimited;
   const transportOptions: StreamableHTTPClientTransportOptions = {
-    requestInit: { headers: authHeaders },
+    requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
     fetch: wrapFetchWithCapture(baseFetch),
   };
   let failedClient: MCPClient | undefined;
@@ -635,7 +652,7 @@ async function connectMCPWithFallbackImpl(
     const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
     await client.connect(
       new SSEClientTransport(url, {
-        requestInit: { headers: authHeaders },
+        requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
         fetch: wrapFetchWithCapture(baseFetch),
       })
     );
@@ -655,7 +672,8 @@ export async function callMCPTool(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  signingContext?: AgentSigningContext
+  signingContext?: AgentSigningContext,
+  transportFetch?: typeof fetch
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -665,7 +683,7 @@ export async function callMCPTool(
     },
     async () => {
       return signingContextStorage.run(signingContext, () =>
-        callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders)
+        callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, transportFetch)
       );
     }
   );
@@ -682,10 +700,11 @@ export async function callMCPToolRaw(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  signingContext?: AgentSigningContext
+  signingContext?: AgentSigningContext,
+  transportFetch?: typeof fetch
 ): Promise<unknown> {
   return signingContextStorage.run(signingContext, () =>
-    callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders)
+    callMCPToolRawImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, transportFetch)
   );
 }
 
@@ -695,7 +714,8 @@ async function callMCPToolImpl(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  transportFetch?: typeof fetch
 ): Promise<unknown> {
   // Inject trace context headers for distributed tracing
   const traceHeaders = injectTraceHeaders();
@@ -737,7 +757,8 @@ async function callMCPToolImpl(
     authHeaders,
     debugLogs,
     toolName,
-    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>
+    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>,
+    transportFetch
   );
 
   debugLogs.push({
@@ -759,7 +780,8 @@ async function callMCPToolRawImpl(
   args: Record<string, unknown>,
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  transportFetch?: typeof fetch
 ): Promise<unknown> {
   const traceHeaders = injectTraceHeaders();
   const authHeaders = {
@@ -769,7 +791,8 @@ async function callMCPToolRawImpl(
   };
 
   return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
-    client.callTool({ name: toolName, arguments: args })
+    client.callTool({ name: toolName, arguments: args }),
+    transportFetch
   );
 }
 

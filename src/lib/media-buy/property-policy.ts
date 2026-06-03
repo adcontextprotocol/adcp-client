@@ -3,6 +3,22 @@ export type ProductPropertyPolicyMode = 'audit' | 'filter' | 'reject_response';
 export type ProductPropertyPolicySelectorBehavior = 'allow' | 'flag' | 'reject';
 
 export interface BuyerPropertyPolicy {
+  /** Domains the buyer will accept in returned products. */
+  allowedDomains?: readonly string[];
+  /**
+   * Resolved property-list identifiers the buyer will accept in returned
+   * products. Domain identifiers are matched with AdCP property-list domain
+   * semantics (`example.com` matches `www.example.com` and `m.example.com`;
+   * `*.example.com` matches subdomains only).
+   */
+  allowedPropertyIdentifiers?: readonly ProductPropertyPolicyIdentifier[];
+  /**
+   * Require products to match the allowed domain/identifier set even when that
+   * set is empty. Used when a request property_list resolves successfully to
+   * zero identifiers; the safe interpretation is that no properties are
+   * eligible.
+   */
+  requireAllowedPropertyMatch?: boolean;
   /** Domains the buyer will not accept in returned products. */
   excludedDomains?: readonly string[];
   /** Publisher-scoped property IDs the buyer will not accept in returned products. */
@@ -38,10 +54,17 @@ export interface ProductPolicyProductLike {
   product_id?: unknown;
   id?: unknown;
   publisher_properties?: unknown;
+  property_targeting_allowed?: unknown;
   [key: string]: unknown;
 }
 
+export interface ProductPropertyPolicyIdentifier {
+  type: string;
+  value: string;
+}
+
 export type ProductPropertyPolicyDiagnosticCode =
+  | 'outside_property_list'
   | 'excluded_domain'
   | 'excluded_property_id'
   | 'missing_publisher_properties'
@@ -61,7 +84,10 @@ export interface ProductPropertyPolicyDiagnostic {
   publisher_property_index?: number;
   selection_type?: string;
   publisher_domain?: string;
+  publisher_domains?: string[];
   normalized_domain?: string;
+  normalized_domains?: string[];
+  matched_allowed_domain?: string;
   matched_excluded_domain?: string;
   property_ids?: string[];
   matched_property_ids?: string[];
@@ -101,6 +127,9 @@ export class ProductPropertyPolicyError<TProduct extends ProductPolicyProductLik
 }
 
 interface CompiledPropertyPolicy {
+  allowedDomains: NormalizedPolicyDomain[];
+  allowedPropertyIdentifiers: ProductPropertyPolicyIdentifier[];
+  requireAllowedPropertyMatch: boolean;
   excludedDomainsByComparable: Map<string, NormalizedPolicyDomain>;
   excludedPropertyIds: Set<string>;
   unknownSelectorBehavior: ProductPropertyPolicySelectorBehavior;
@@ -110,7 +139,13 @@ interface CompiledPropertyPolicy {
 interface ProductPublisherPropertySelectorLike {
   selection_type?: unknown;
   publisher_domain?: unknown;
+  publisher_domains?: unknown;
   property_ids?: unknown;
+}
+
+interface PublisherDomainCandidate {
+  raw: string;
+  path: string;
 }
 
 export function validateProductsAgainstPropertyPolicy<TProduct extends ProductPolicyProductLike>(
@@ -160,6 +195,12 @@ export function normalizeDomainForPropertyPolicy(value: string): NormalizedPolic
 }
 
 function compilePolicy(policy: BuyerPropertyPolicy): CompiledPropertyPolicy {
+  const allowedDomains: NormalizedPolicyDomain[] = [];
+  for (const domain of policy.allowedDomains ?? []) {
+    const normalized = normalizeDomainForPropertyPolicy(domain);
+    if (normalized) allowedDomains.push(normalized);
+  }
+
   const excludedDomainsByComparable = new Map<string, NormalizedPolicyDomain>();
   for (const domain of policy.excludedDomains ?? []) {
     const normalized = normalizeDomainForPropertyPolicy(domain);
@@ -167,6 +208,11 @@ function compilePolicy(policy: BuyerPropertyPolicy): CompiledPropertyPolicy {
   }
 
   return {
+    allowedDomains,
+    allowedPropertyIdentifiers: [...(policy.allowedPropertyIdentifiers ?? [])],
+    requireAllowedPropertyMatch:
+      policy.requireAllowedPropertyMatch ??
+      Boolean(policy.allowedDomains?.length || policy.allowedPropertyIdentifiers?.length),
     excludedDomainsByComparable,
     excludedPropertyIds: new Set(policy.excludedPropertyIds ?? []),
     unknownSelectorBehavior: policy.unknownSelectorBehavior ?? (policy.strict ? 'reject' : 'flag'),
@@ -194,9 +240,29 @@ function diagnosticsForProduct(
   }
 
   const diagnostics: ProductPropertyPolicyDiagnostic[] = [];
+  let hasEligibleSubsetSelector = false;
+  const requiresSubsetMatch = hasAllowedPropertyScope(policy) && product.property_targeting_allowed === true;
   publisherProperties.forEach((rawSelector, selectorIndex) => {
-    diagnostics.push(...diagnosticsForSelector(rawSelector, productIndex, selectorIndex, productId, policy));
+    diagnostics.push(
+      ...diagnosticsForSelector(rawSelector, productIndex, selectorIndex, productId, policy, {
+        enforceEveryDomainInAllowedScope: !requiresSubsetMatch,
+        enforceExclusions: !requiresSubsetMatch,
+      })
+    );
+    if (requiresSubsetMatch && selectorIsEligibleForSubsetTargeting(rawSelector, productIndex, selectorIndex, policy)) {
+      hasEligibleSubsetSelector = true;
+    }
   });
+  if (requiresSubsetMatch && !hasEligibleSubsetSelector) {
+    diagnostics.push({
+      code: 'outside_property_list',
+      severity: 'rejected',
+      message: 'Product has no buyer-eligible publisher properties inside the requested property list.',
+      product_index: productIndex,
+      product_id: productId,
+      path: `products[${productIndex}].publisher_properties`,
+    });
+  }
   return diagnostics;
 }
 
@@ -205,7 +271,8 @@ function diagnosticsForSelector(
   productIndex: number,
   selectorIndex: number,
   productId: string | undefined,
-  policy: CompiledPropertyPolicy
+  policy: CompiledPropertyPolicy,
+  options: { enforceEveryDomainInAllowedScope: boolean; enforceExclusions: boolean }
 ): ProductPropertyPolicyDiagnostic[] {
   const path = `products[${productIndex}].publisher_properties[${selectorIndex}]`;
   if (!rawSelector || typeof rawSelector !== 'object' || Array.isArray(rawSelector)) {
@@ -221,15 +288,36 @@ function diagnosticsForSelector(
 
   const selector = rawSelector as ProductPublisherPropertySelectorLike;
   const selectionType = typeof selector.selection_type === 'string' ? selector.selection_type : undefined;
-  const rawDomain = typeof selector.publisher_domain === 'string' ? selector.publisher_domain : undefined;
-  const normalizedDomain = rawDomain ? normalizeDomainForPropertyPolicy(rawDomain) : undefined;
+  const domainCandidates = publisherDomainCandidates(selector, path);
+  const normalizedDomains = domainCandidates
+    .map(candidate => ({ candidate, normalized: normalizeDomainForPropertyPolicy(candidate.raw) }))
+    .filter((entry): entry is { candidate: PublisherDomainCandidate; normalized: NormalizedPolicyDomain } =>
+      Boolean(entry.normalized)
+    );
   const diagnostics: ProductPropertyPolicyDiagnostic[] = [];
 
-  if (!rawDomain) {
+  if (selector.publisher_domains !== undefined) {
+    diagnostics.push({
+      code: 'unknown_selector',
+      severity: 'rejected',
+      message:
+        'Product publisher property selector uses publisher_domains, which is not valid on product publisher_properties.',
+      product_index: productIndex,
+      product_id: productId,
+      path,
+      publisher_property_index: selectorIndex,
+      selection_type: selectionType,
+      ...(typeof selector.publisher_domain === 'string' ? { publisher_domain: selector.publisher_domain } : {}),
+      publisher_domains: stringArray(selector.publisher_domains),
+    });
+  }
+
+  if (domainCandidates.length === 0) {
     diagnostics.push(
       ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
         code: 'unknown_selector',
-        message: 'Product publisher property selector is missing publisher_domain and cannot be evaluated confidently.',
+        message:
+          'Product publisher property selector is missing publisher_domain/publisher_domains and cannot be evaluated confidently.',
         product_index: productIndex,
         product_id: productId,
         path: `${path}.publisher_domain`,
@@ -239,35 +327,57 @@ function diagnosticsForSelector(
     );
   }
 
-  if (rawDomain && !normalizedDomain) {
+  for (const candidate of domainCandidates) {
+    const normalizedDomain = normalizeDomainForPropertyPolicy(candidate.raw);
+    if (normalizedDomain) continue;
     diagnostics.push(
       ...diagnosticForBehavior(policy.unknownSelectorBehavior, {
         code: 'malformed_publisher_domain',
-        message: 'Publisher property selector has a malformed publisher_domain and cannot be evaluated.',
+        message: 'Publisher property selector has a malformed publisher domain and cannot be evaluated.',
         product_index: productIndex,
         product_id: productId,
-        path: `${path}.publisher_domain`,
+        path: candidate.path,
         publisher_property_index: selectorIndex,
         selection_type: selectionType,
-        publisher_domain: rawDomain,
+        publisher_domain: candidate.raw,
       })
     );
   }
 
-  if (normalizedDomain) {
+  for (const { candidate, normalized: normalizedDomain } of normalizedDomains) {
+    const matchedAllowedDomain = matchedAllowedDomainForCandidate(normalizedDomain, policy);
+    if (options.enforceEveryDomainInAllowedScope && hasAllowedPropertyScope(policy) && !matchedAllowedDomain) {
+      diagnostics.push({
+        code: 'outside_property_list',
+        severity: 'rejected',
+        message: `Product includes publisher domain ${normalizedDomain.host} outside the requested property list.`,
+        product_index: productIndex,
+        product_id: productId,
+        path: candidate.path,
+        publisher_property_index: selectorIndex,
+        selection_type: selectionType,
+        publisher_domain: candidate.raw,
+        publisher_domains: domainCandidates.map(candidate => candidate.raw),
+        normalized_domain: normalizedDomain.host,
+        normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
+      });
+    }
+
     const excludedDomain = policy.excludedDomainsByComparable.get(normalizedDomain.comparable);
-    if (excludedDomain) {
+    if (options.enforceExclusions && excludedDomain) {
       diagnostics.push({
         code: 'excluded_domain',
         severity: 'rejected',
         message: `Product includes excluded publisher domain ${normalizedDomain.host}.`,
         product_index: productIndex,
         product_id: productId,
-        path: `${path}.publisher_domain`,
+        path: candidate.path,
         publisher_property_index: selectorIndex,
         selection_type: selectionType,
-        publisher_domain: rawDomain,
+        publisher_domain: candidate.raw,
+        publisher_domains: domainCandidates.map(candidate => candidate.raw),
         normalized_domain: normalizedDomain.host,
+        normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
         matched_excluded_domain: excludedDomain.host,
       });
     }
@@ -276,7 +386,7 @@ function diagnosticsForSelector(
   if (selectionType === 'by_id') {
     const propertyIds = stringArray(selector.property_ids);
     const matchedPropertyIds = propertyIds.filter(id => policy.excludedPropertyIds.has(id));
-    if (matchedPropertyIds.length > 0) {
+    if (options.enforceExclusions && matchedPropertyIds.length > 0) {
       diagnostics.push({
         code: 'excluded_property_id',
         severity: 'rejected',
@@ -286,8 +396,10 @@ function diagnosticsForSelector(
         path: `${path}.property_ids`,
         publisher_property_index: selectorIndex,
         selection_type: selectionType,
-        publisher_domain: rawDomain,
-        normalized_domain: normalizedDomain?.host,
+        publisher_domain: domainCandidates[0]?.raw,
+        publisher_domains: domainCandidates.map(candidate => candidate.raw),
+        normalized_domain: normalizedDomains[0]?.normalized.host,
+        normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
         property_ids: propertyIds,
         matched_property_ids: matchedPropertyIds,
       });
@@ -303,8 +415,10 @@ function diagnosticsForSelector(
         path,
         publisher_property_index: selectorIndex,
         selection_type: selectionType,
-        publisher_domain: rawDomain,
-        normalized_domain: normalizedDomain?.host,
+        publisher_domain: domainCandidates[0]?.raw,
+        publisher_domains: domainCandidates.map(candidate => candidate.raw),
+        normalized_domain: normalizedDomains[0]?.normalized.host,
+        normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
       })
     );
   } else if (selectionType !== 'all') {
@@ -317,13 +431,72 @@ function diagnosticsForSelector(
         path: `${path}.selection_type`,
         publisher_property_index: selectorIndex,
         selection_type: selectionType,
-        publisher_domain: rawDomain,
-        normalized_domain: normalizedDomain?.host,
+        publisher_domain: domainCandidates[0]?.raw,
+        publisher_domains: domainCandidates.map(candidate => candidate.raw),
+        normalized_domain: normalizedDomains[0]?.normalized.host,
+        normalized_domains: normalizedDomains.map(entry => entry.normalized.host),
       })
     );
   }
 
   return diagnostics;
+}
+
+function hasAllowedPropertyScope(policy: CompiledPropertyPolicy): boolean {
+  return policy.requireAllowedPropertyMatch;
+}
+
+function selectorIsEligibleForSubsetTargeting(
+  rawSelector: unknown,
+  productIndex: number,
+  selectorIndex: number,
+  policy: CompiledPropertyPolicy
+): boolean {
+  const path = `products[${productIndex}].publisher_properties[${selectorIndex}]`;
+  if (!rawSelector || typeof rawSelector !== 'object' || Array.isArray(rawSelector)) return false;
+  const selector = rawSelector as ProductPublisherPropertySelectorLike;
+  if (selector.publisher_domains !== undefined) return false;
+  if (selector.selection_type === 'by_tag') return false;
+  if (selector.selection_type !== 'all' && selector.selection_type !== 'by_id') return false;
+
+  const hasEligibleDomain = publisherDomainCandidates(selector, path).some(candidate => {
+    const normalized = normalizeDomainForPropertyPolicy(candidate.raw);
+    if (!normalized) return false;
+    if (hasAllowedPropertyScope(policy) && !matchedAllowedDomainForCandidate(normalized, policy)) return false;
+    return !policy.excludedDomainsByComparable.has(normalized.comparable);
+  });
+  if (!hasEligibleDomain) return false;
+
+  if (selector.selection_type !== 'by_id') return true;
+  const propertyIds = stringArray(selector.property_ids);
+  return propertyIds.length === 0 || propertyIds.some(id => !policy.excludedPropertyIds.has(id));
+}
+
+function matchedAllowedDomainForCandidate(
+  candidate: NormalizedPolicyDomain,
+  policy: CompiledPropertyPolicy
+): string | undefined {
+  const explicitDomain = policy.allowedDomains.find(allowed => propertyListDomainMatches(candidate.host, allowed.input));
+  if (explicitDomain) return explicitDomain.host;
+
+  for (const identifier of policy.allowedPropertyIdentifiers) {
+    if (identifier.type !== 'domain' && identifier.type !== 'subdomain') continue;
+    if (propertyListDomainMatches(candidate.host, identifier.value, identifier.type)) {
+      return identifier.value;
+    }
+  }
+  return undefined;
+}
+
+function publisherDomainCandidates(
+  selector: ProductPublisherPropertySelectorLike,
+  path: string
+): PublisherDomainCandidate[] {
+  const candidates: PublisherDomainCandidate[] = [];
+  if (typeof selector.publisher_domain === 'string') {
+    candidates.push({ raw: selector.publisher_domain, path: `${path}.publisher_domain` });
+  }
+  return candidates;
 }
 
 function diagnosticForBehavior(
@@ -373,6 +546,19 @@ function hasScheme(value: string): boolean {
 
 function comparableDomain(host: string): string {
   return host.startsWith('www.') ? host.slice(4) : host;
+}
+
+function propertyListDomainMatches(candidateValue: string, patternValue: string, type: string = 'domain'): boolean {
+  const candidate = normalizeDomainForPropertyPolicy(candidateValue)?.host;
+  const pattern = normalizeDomainForPropertyPolicy(patternValue)?.host;
+  if (!candidate || !pattern) return false;
+  if (candidate === pattern) return true;
+  if (type === 'subdomain') return false;
+  if (pattern.startsWith('*.')) {
+    const base = pattern.slice(2);
+    return candidate.endsWith(`.${base}`) && candidate !== base;
+  }
+  return candidate === `www.${pattern}` || candidate === `m.${pattern}`;
 }
 
 function isUsableHostname(host: string): boolean {

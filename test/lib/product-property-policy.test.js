@@ -86,6 +86,115 @@ describe('validateProductsAgainstPropertyPolicy', () => {
     assert.strictEqual(result.diagnostics[0].normalized_domain, 'ladbible.com');
   });
 
+  test('filters products outside resolved property-list identifiers', () => {
+    const result = validateProductsAgainstPropertyPolicy({
+      products: [
+        product({ product_id: 'prod_safe', publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.example.com' }] }),
+        product({
+          product_id: 'prod_ladbible',
+          publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.ladbible.com' }],
+        }),
+      ],
+      policy: {
+        allowedPropertyIdentifiers: [{ type: 'domain', value: 'example.com' }],
+        strict: true,
+      },
+      mode: 'filter',
+    });
+
+    assert.deepStrictEqual(
+      result.products.map(p => p.product_id),
+      ['prod_safe']
+    );
+    assert.strictEqual(result.diagnostics[0].code, 'outside_property_list');
+    assert.strictEqual(result.diagnostics[0].normalized_domain, 'www.ladbible.com');
+  });
+
+  test('allows subset-targetable products with a property-list intersection', () => {
+    const result = validateProductsAgainstPropertyPolicy({
+      products: [
+        product({
+          product_id: 'prod_subset_ok',
+          property_targeting_allowed: true,
+          publisher_properties: [
+            { selection_type: 'all', publisher_domain: 'www.example.com' },
+            { selection_type: 'all', publisher_domain: 'www.ladbible.com' },
+          ],
+        }),
+        product({
+          product_id: 'prod_all_or_nothing_rejected',
+          publisher_properties: [
+            { selection_type: 'all', publisher_domain: 'www.example.com' },
+            { selection_type: 'all', publisher_domain: 'www.ladbible.com' },
+          ],
+        }),
+      ],
+      policy: {
+        allowedPropertyIdentifiers: [{ type: 'domain', value: 'example.com' }],
+        strict: true,
+      },
+      mode: 'filter',
+    });
+
+    assert.deepStrictEqual(
+      result.products.map(p => p.product_id),
+      ['prod_subset_ok']
+    );
+    assert.strictEqual(result.diagnostics[0].product_id, 'prod_all_or_nothing_rejected');
+    assert.strictEqual(result.diagnostics[0].code, 'outside_property_list');
+  });
+
+  test('allows subset-targetable products with an eligible selector despite explicit exclusions', () => {
+    const result = validateProductsAgainstPropertyPolicy({
+      products: [
+        product({
+          product_id: 'prod_subset_ok',
+          property_targeting_allowed: true,
+          publisher_properties: [
+            { selection_type: 'all', publisher_domain: 'www.example.com' },
+            { selection_type: 'all', publisher_domain: 'www.ladbible.com' },
+          ],
+        }),
+        product({
+          product_id: 'prod_subset_rejected',
+          property_targeting_allowed: true,
+          publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.ladbible.com' }],
+        }),
+      ],
+      policy: {
+        allowedPropertyIdentifiers: [
+          { type: 'domain', value: 'example.com' },
+          { type: 'domain', value: 'ladbible.com' },
+        ],
+        excludedDomains: ['ladbible.com'],
+        strict: true,
+      },
+      mode: 'filter',
+    });
+
+    assert.deepStrictEqual(
+      result.products.map(p => p.product_id),
+      ['prod_subset_ok']
+    );
+    assert.strictEqual(result.diagnostics[0].product_id, 'prod_subset_rejected');
+    assert.strictEqual(result.diagnostics[0].code, 'outside_property_list');
+  });
+
+  test('rejects products when an enforced allowed property list is empty', () => {
+    const result = validateProductsAgainstPropertyPolicy({
+      products: [product({ product_id: 'prod_safe' })],
+      policy: {
+        allowedPropertyIdentifiers: [],
+        requireAllowedPropertyMatch: true,
+        strict: true,
+      },
+      mode: 'filter',
+    });
+
+    assert.deepStrictEqual(result.products, []);
+    assert.strictEqual(result.diagnostics[0].code, 'outside_property_list');
+  });
+
   test('rejects by_id selectors that include excluded property IDs', () => {
     const result = validateProductsAgainstPropertyPolicy({
       products: [
@@ -174,25 +283,56 @@ describe('validateProductsAgainstPropertyPolicy', () => {
     assert.strictEqual(rejected.diagnostics[0].severity, 'rejected');
   });
 
-  test('missing publisher_domain in a product selector is flagged by default and rejected in strict mode', () => {
+  test('compact publisher_domains selectors are malformed for product publisher_properties', () => {
     const products = [
       product({
         product_id: 'prod_compact_shape',
-        publisher_properties: [{ selection_type: 'all', publisher_domains: ['ladbible.com'] }],
+        publisher_properties: [{ selection_type: 'all', publisher_domains: ['example.com', 'ladbible.com'] }],
       }),
     ];
 
-    const flagged = validateProductsAgainstPropertyPolicy({
+    const result = validateProductsAgainstPropertyPolicy({
       products,
       policy: { excludedDomains: ['ladbible.com'] },
       mode: 'filter',
     });
     assert.deepStrictEqual(
-      flagged.products.map(p => p.product_id),
-      ['prod_compact_shape']
+      result.products.map(p => p.product_id),
+      []
     );
-    assert.strictEqual(flagged.diagnostics[0].code, 'unknown_selector');
-    assert.strictEqual(flagged.diagnostics[0].severity, 'flagged');
+    assert.strictEqual(result.diagnostics[0].code, 'unknown_selector');
+    assert.strictEqual(result.diagnostics[0].path, 'products[0].publisher_properties[0]');
+    assert.deepStrictEqual(result.diagnostics[0].publisher_domains, ['example.com', 'ladbible.com']);
+    assert.strictEqual(result.diagnostics[0].severity, 'rejected');
+
+    const rejected = validateProductsAgainstPropertyPolicy({
+      products,
+      policy: { strict: true },
+      mode: 'filter',
+    });
+    assert.deepStrictEqual(rejected.products, []);
+    assert.strictEqual(rejected.diagnostics[0].severity, 'rejected');
+  });
+
+  test('malformed compact publisher_domains selectors are rejected before forwarding', () => {
+    const products = [
+      product({
+        product_id: 'prod_compact_shape',
+        publisher_properties: [{ selection_type: 'all', publisher_domains: 'ladbible.com' }],
+      }),
+    ];
+
+    const rejectedByShape = validateProductsAgainstPropertyPolicy({
+      products,
+      policy: { excludedDomains: ['ladbible.com'] },
+      mode: 'filter',
+    });
+    assert.deepStrictEqual(
+      rejectedByShape.products.map(p => p.product_id),
+      []
+    );
+    assert.strictEqual(rejectedByShape.diagnostics[0].code, 'unknown_selector');
+    assert.strictEqual(rejectedByShape.diagnostics[0].severity, 'rejected');
 
     const rejected = validateProductsAgainstPropertyPolicy({
       products,

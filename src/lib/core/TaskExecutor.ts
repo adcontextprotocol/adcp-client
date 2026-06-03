@@ -364,6 +364,13 @@ export class TaskExecutor {
     return this.governanceMiddleware;
   }
 
+  getRequestParams(taskId: string): Record<string, unknown> | undefined {
+    const params = this.activeTasks.get(taskId)?.params;
+    return params && typeof params === 'object' && !Array.isArray(params)
+      ? (params as Record<string, unknown>)
+      : undefined;
+  }
+
   /**
    * Run the configured pre-send schema check against the user-facing request
    * shape. Callers invoke this on the unadapted (v3) params before any wire
