@@ -1,5 +1,31 @@
 # Changelog
 
+## 9.0.0-beta.22
+
+### Major Changes
+
+- c37142d: Remove generated Zod schema exports and tool schema maps from the root package
+  and `@adcp/sdk/types`. Import runtime schemas, `TOOL_REQUEST_SCHEMAS`, and
+  `TOOL_RESPONSE_SCHEMAS` from `@adcp/sdk/schemas` instead. This keeps ordinary
+  SDK imports from forcing the large generated schema declaration bundle into
+  TypeScript programs.
+
+### Minor Changes
+
+- 23df5f4: Add a buyer-side product property policy validator for auditing, filtering, or rejecting get_products responses against excluded publisher domains and property IDs.
+- fd485e3: Add an optional `responseEnhancer` callback to `createAdcpServer` and `createAdcpServerFromPlatform` for mutating MCP tool responses before they are returned.
+
+### Patch Changes
+
+- 75684ab: Flush in-memory task registries from compliance.reset() so repeated storyboard runs can reuse hardcoded task IDs.
+- fbb3804: Fix media-buy test scenarios to discover explicit seller accounts via `list_accounts` and reuse the resolved account for product discovery, media-buy creation, and creative sync.
+- 2d930f1: fix(testing): seed storyboard root context before applying caller overrides.
+
+  Refs #2099. The storyboard runner now uses top-level storyboard `context` defaults for full-run, multi-pass seeding, and single-step execution paths, while preserving `options.context` override behavior.
+
+- eb7ebac: Add storyboard-scoped correlation IDs and cache isolation to generated controller seeding calls, with unsupported seed scenarios graded as not applicable.
+- 6453cee: Harden WholesaleFeedSync lifecycle recovery by cancelling stale in-flight bootstraps after stop, committing feed indexes and version tokens atomically after successful bootstrap, and bounding version-mismatch repair retries.
+
 ## 8.1.0-beta.21
 
 ### Patch Changes
