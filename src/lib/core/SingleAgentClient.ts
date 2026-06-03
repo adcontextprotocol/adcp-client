@@ -9,6 +9,7 @@ import { isAdcpVersionSupported, resolveAdcpVersion } from '../utils/adcp-versio
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  PropertyListReference,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
   CreateMediaBuyRequest,
@@ -129,6 +130,16 @@ import {
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { getV25Adapter } from '../adapters/legacy/v2-5';
+import {
+  ProductPropertyPolicyError,
+  validateProductsAgainstPropertyPolicy,
+  type BuyerPropertyPolicy,
+  type ProductPolicyProductLike,
+  type ProductPropertyPolicyDiagnostic,
+  type ProductPropertyPolicyMode,
+  type ProductPropertyPolicyValidationResult,
+} from '../media-buy/property-policy';
+import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -176,6 +187,34 @@ type NormalizedWebhookPayload = {
   idempotency_key?: string;
   protocol?: 'mcp' | 'a2a';
 };
+
+export interface ClientProductPropertyPolicy extends BuyerPropertyPolicy {
+  /**
+   * Enforcement mode for completed `get_products` responses.
+   *
+   * - `filter` (default): remove rejected products before handlers/callers see them
+   * - `reject_response`: fail the task when any product violates the policy
+   * - `audit`: keep products but attach diagnostics
+   */
+  mode?: ProductPropertyPolicyMode;
+  /**
+   * When true, a `get_products` request carrying `property_list` is resolved
+   * and used as an allow-list for the returned products. Defaults to true.
+   */
+  enforceRequestPropertyList?: boolean;
+  /**
+   * Resolver options for request-derived property-list validation. The default
+   * uses the SDK's process-local resolved-list cache.
+   */
+  propertyListResolveOptions?: ResolveListOptions;
+  /**
+   * Message surfaced in debug logs and failed results when the policy rejects
+   * products.
+   *
+   * @default 'Property list not adhered to'
+   */
+  message?: string;
+}
 
 export type WebhookParseErrorCode =
   | 'webhook_signature_invalid'
@@ -425,6 +464,18 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * @default false
      */
     filterInvalidProducts?: boolean;
+    /**
+     * Buyer-side property policy applied to completed `get_products`
+     * responses before completion handlers and callers receive the product
+     * list. A request-level `property_list` is enforced automatically by
+     * default; set this to `false` only when the caller deliberately wants to
+     * trust seller-side filtering without SDK verification.
+     *
+     * Use this for brand/block-list rules such as excluding `ladbible.com`;
+     * domain matching normalizes `www.` aliases, so `www.ladbible.com`
+     * violates an exclusion for `ladbible.com`.
+     */
+    productPropertyPolicy?: ClientProductPropertyPolicy | false;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -497,6 +548,67 @@ function valueMatchesSchemaType(value: unknown, propSchema: unknown): boolean {
   return false;
 }
 
+function propertyListReferenceFromRequest(params: Record<string, unknown>): PropertyListReference | undefined {
+  const value = params.property_list;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const ref = value as Partial<PropertyListReference>;
+  if (typeof ref.agent_url !== 'string' || typeof ref.list_id !== 'string') return undefined;
+  return {
+    agent_url: ref.agent_url,
+    list_id: ref.list_id,
+    ...(typeof ref.auth_token === 'string' ? { auth_token: ref.auth_token } : {}),
+  };
+}
+
+function hasProductPropertyPolicyRules(policy: BuyerPropertyPolicy): boolean {
+  return Boolean(
+    policy.allowedDomains?.length ||
+    policy.allowedPropertyIdentifiers?.length ||
+    policy.requireAllowedPropertyMatch ||
+    policy.excludedDomains?.length ||
+    policy.excludedPropertyIds?.length ||
+    policy.strict ||
+    policy.unknownSelectorBehavior ||
+    policy.missingPublisherPropertiesBehavior
+  );
+}
+
+function comparablePropertyIdentifiers(
+  identifiers: readonly { type: string; value: string }[]
+): Array<{ type: string; value: string }> {
+  return identifiers
+    .filter(identifier => identifier.type === 'domain' || identifier.type === 'subdomain')
+    .map(identifier => ({ type: identifier.type, value: identifier.value }));
+}
+
+function unsupportedPropertyIdentifiers(
+  identifiers: readonly { type: string; value: string }[]
+): Array<{ type: string }> {
+  return identifiers
+    .filter(identifier => identifier.type !== 'domain' && identifier.type !== 'subdomain')
+    .map(identifier => ({ type: identifier.type }));
+}
+
+function sanitizeDiagnosticUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return 'invalid_url';
+  }
+}
+
+function propertyListResolutionErrorCode(err: unknown): string {
+  const message = err instanceof Error ? err.message : '';
+  if (/^property_list_[a-z_]+$/.test(message)) return message;
+  if (/^list_agent_url_[a-z_]+$/.test(message)) return message;
+  return 'property_list_resolution_failed';
+}
+
 export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
@@ -509,6 +621,7 @@ export class SingleAgentClient {
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
+  private readonly productPolicyRequestParamsByTask = new Map<string, Record<string, unknown>>();
   private readonly resolvedAdcpVersion: string;
 
   constructor(
@@ -1082,7 +1195,7 @@ export class SingleAgentClient {
   }
 
   private async dispatchParsedWebhook(parsed: WebhookParseSuccess): Promise<boolean> {
-    const metadata: WebhookMetadata = {
+    let metadata: WebhookMetadata = {
       operation_id: parsed.metadata.operationId,
       context_id: parsed.metadata.contextId,
       task_id: parsed.metadata.taskId,
@@ -1093,7 +1206,14 @@ export class SingleAgentClient {
       timestamp: parsed.metadata.timestamp || new Date().toISOString(),
       idempotency_key: parsed.metadata.idempotencyKey,
       protocol: parsed.protocol,
+      rawHTTPPayload: parsed.envelope,
     };
+    const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(
+      parsed.result as AdCPAsyncResponseData | undefined,
+      metadata
+    );
+    const webhookResult = policyDispatch.result;
+    metadata = policyDispatch.metadata;
 
     // Emit activity
     await this.config.onActivity?.({
@@ -1108,12 +1228,19 @@ export class SingleAgentClient {
       timestamp: metadata.timestamp,
     });
 
-    // Handle through async handler if configured
-    if (this.asyncHandler) {
-      await this.asyncHandler.handleWebhook({ result: parsed.result as AdCPAsyncResponseData | undefined, metadata });
+    if (policyDispatch.suppressHandler) {
+      this.forgetProductPolicyRequestParams(metadata);
       return true;
     }
 
+    // Handle through async handler if configured
+    if (this.asyncHandler) {
+      await this.asyncHandler.handleWebhook({ result: webhookResult, metadata });
+      this.forgetProductPolicyRequestParams(metadata);
+      return true;
+    }
+
+    this.forgetProductPolicyRequestParams(metadata);
     return false;
   }
 
@@ -1513,7 +1640,7 @@ export class SingleAgentClient {
       this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
     }
 
-    const result = await this.executor.executeTask<T>(
+    let result = await this.executor.executeTask<T>(
       agent,
       taskType,
       adaptedParams,
@@ -1536,6 +1663,10 @@ export class SingleAgentClient {
       result.data = this.normalizeResponseToV3(taskType, result.data) as T;
     }
 
+    result = this.wrapProductPolicySubmittedContinuation(result, taskType, normalizedParams);
+    this.rememberProductPolicyRequestParams(taskType, normalizedParams, result, options);
+    result = await this.applyProductPropertyPolicy(result, taskType, normalizedParams);
+
     // Call handler if task completed successfully and handler is configured
     if (result.status === 'completed' && result.success && this.asyncHandler) {
       const handler = this.config.handlers?.[handlerName] as
@@ -1555,6 +1686,354 @@ export class SingleAgentClient {
     }
 
     return result;
+  }
+
+  private async applyProductPropertyPolicy<T>(
+    result: TaskResult<T>,
+    taskType: string,
+    requestParams: Record<string, unknown>
+  ): Promise<TaskResult<T>> {
+    const policyConfig = this.config.validation?.productPropertyPolicy;
+    if (policyConfig === false || taskType !== 'get_products') return result;
+    if (!result.success || result.status !== 'completed' || !result.data) return result;
+
+    const response = result.data as unknown as GetProductsResponse;
+    if (!Array.isArray(response.products)) return result;
+
+    const requestPropertyList = propertyListReferenceFromRequest(requestParams);
+    const {
+      mode = 'filter',
+      message = 'Property list not adhered to',
+      enforceRequestPropertyList = true,
+      propertyListResolveOptions,
+      ...explicitPolicy
+    } = policyConfig || {};
+    const policy: BuyerPropertyPolicy = {
+      ...explicitPolicy,
+    };
+
+    let resolvedRequestPropertyList:
+      | {
+          listId: string;
+          agentUrl: string;
+          identifierCount: number;
+          cacheValidUntil?: string;
+        }
+      | undefined;
+
+    if (requestPropertyList && enforceRequestPropertyList) {
+      try {
+        const resolved = await resolvePropertyList(requestPropertyList, propertyListResolveOptions);
+        const comparableIdentifiers = comparablePropertyIdentifiers(resolved.identifiers);
+        const unsupportedIdentifiers = unsupportedPropertyIdentifiers(resolved.identifiers);
+        if (unsupportedIdentifiers.length > 0) {
+          throw new Error('property_list_unsupported_identifier_types');
+        }
+        if (comparableIdentifiers.length > 0 || resolved.identifiers.length === 0) {
+          policy.allowedPropertyIdentifiers = [...(policy.allowedPropertyIdentifiers ?? []), ...comparableIdentifiers];
+          policy.requireAllowedPropertyMatch = true;
+        }
+        policy.strict = policy.strict ?? true;
+        resolvedRequestPropertyList = {
+          listId: resolved.listId,
+          agentUrl: resolved.agentUrl,
+          identifierCount: resolved.identifiers.length,
+          ...(resolved.cacheValidUntil ? { cacheValidUntil: resolved.cacheValidUntil } : {}),
+        };
+      } catch (err) {
+        const errorCode = propertyListResolutionErrorCode(err);
+        const diagnosticAgentUrl = sanitizeDiagnosticUrl(requestPropertyList.agent_url);
+        return attachMatch({
+          success: false as const,
+          status: 'failed' as const,
+          data: response as unknown as T,
+          error: `${message}: could not resolve property_list ${requestPropertyList.list_id}`,
+          metadata: {
+            ...result.metadata,
+            status: 'failed',
+            productPropertyPolicy: {
+              mode,
+              ok: false,
+              accepted_count: 0,
+              rejected_count: response.products.length,
+              flagged_count: 0,
+              message,
+              diagnostics: [],
+              request_property_list: {
+                list_id: requestPropertyList.list_id,
+                agent_url: diagnosticAgentUrl,
+                resolution_error: errorCode,
+              },
+            },
+          },
+          conversation: result.conversation,
+          debug_logs: [
+            ...(result.debug_logs ?? []),
+            {
+              type: 'product_property_policy',
+              message,
+              mode,
+              ok: false,
+              request_property_list: {
+                list_id: requestPropertyList.list_id,
+                agent_url: diagnosticAgentUrl,
+                resolution_error: errorCode,
+              },
+            },
+          ],
+        });
+      }
+    }
+
+    if (!hasProductPropertyPolicyRules(policy)) return result;
+
+    let validation: ProductPropertyPolicyValidationResult<ProductPolicyProductLike>;
+    try {
+      validation = validateProductsAgainstPropertyPolicy({
+        products: response.products,
+        policy,
+        mode,
+      });
+    } catch (err) {
+      if (!(err instanceof ProductPropertyPolicyError)) throw err;
+      validation = err.result;
+    }
+
+    const summary = {
+      mode,
+      ok: validation.ok,
+      accepted_count: validation.acceptedProducts.length,
+      rejected_count: validation.rejectedProducts.length,
+      flagged_count: validation.flaggedProducts.length,
+      ...(validation.ok ? {} : { message }),
+      ...(resolvedRequestPropertyList
+        ? {
+            request_property_list: {
+              list_id: resolvedRequestPropertyList.listId,
+              agent_url: sanitizeDiagnosticUrl(resolvedRequestPropertyList.agentUrl),
+              identifier_count: resolvedRequestPropertyList.identifierCount,
+              ...(resolvedRequestPropertyList.cacheValidUntil
+                ? { cache_valid_until: resolvedRequestPropertyList.cacheValidUntil }
+                : {}),
+            },
+          }
+        : {}),
+      diagnostics: validation.diagnostics as ProductPropertyPolicyDiagnostic[],
+    };
+    result.metadata.productPropertyPolicy = summary;
+
+    if (validation.diagnostics.length > 0) {
+      result.debug_logs = [
+        ...(result.debug_logs ?? []),
+        {
+          type: 'product_property_policy',
+          message: validation.ok ? 'Product property policy evaluated' : message,
+          mode,
+          ok: validation.ok,
+          accepted_count: validation.acceptedProducts.length,
+          rejected_count: validation.rejectedProducts.length,
+          flagged_count: validation.flaggedProducts.length,
+          ...(summary.request_property_list ? { request_property_list: summary.request_property_list } : {}),
+          diagnostics: validation.diagnostics,
+        },
+      ];
+    }
+
+    if (mode === 'filter') {
+      result.data = {
+        ...(response as unknown as Record<string, unknown>),
+        products: validation.products,
+      } as T;
+      return result;
+    }
+
+    if (mode === 'reject_response' && !validation.ok) {
+      return attachMatch({
+        success: false as const,
+        status: 'failed' as const,
+        data: response as unknown as T,
+        error: message,
+        metadata: {
+          ...result.metadata,
+          status: 'failed',
+          productPropertyPolicy: summary,
+        },
+        conversation: result.conversation,
+        debug_logs: result.debug_logs,
+      });
+    }
+
+    return result;
+  }
+
+  private rememberProductPolicyRequestParams<T>(
+    taskType: string,
+    requestParams: Record<string, unknown>,
+    result: TaskResult<T>,
+    options?: TaskOptions
+  ): void {
+    if (taskType !== 'get_products') return;
+    if (result.status !== 'submitted' && result.status !== 'working') return;
+
+    const keys = new Set<string>();
+    if (result.metadata.taskId) keys.add(result.metadata.taskId);
+    if (result.metadata.contextId) keys.add(result.metadata.contextId);
+    if (result.metadata.serverTaskId) keys.add(result.metadata.serverTaskId);
+    if (options?.taskId) keys.add(options.taskId);
+    if (options?.contextId) keys.add(options.contextId);
+
+    for (const key of keys) {
+      this.productPolicyRequestParamsByTask.set(key, requestParams);
+    }
+  }
+
+  private forgetProductPolicyRequestParams(metadata: WebhookMetadata): void {
+    this.forgetProductPolicyRequestParamKeys([metadata.operation_id, metadata.task_id, metadata.context_id]);
+  }
+
+  private forgetProductPolicyRequestParamKeys(keys: Array<string | undefined>): void {
+    for (const key of keys) {
+      if (!key) continue;
+      this.productPolicyRequestParamsByTask.delete(key);
+    }
+  }
+
+  private wrapProductPolicySubmittedContinuation<T>(
+    result: TaskResult<T>,
+    taskType: string,
+    requestParams: Record<string, unknown>
+  ): TaskResult<T> {
+    if (taskType !== 'get_products' || result.status !== 'submitted' || !result.submitted) return result;
+
+    const submitted = result.submitted;
+    result.submitted = {
+      ...submitted,
+      track: async transport => {
+        const taskInfo = await submitted.track(transport);
+        const processed = await this.applyProductPropertyPolicyToTaskInfo(taskInfo, taskType, requestParams);
+        if (['completed', 'failed', 'rejected', 'canceled'].includes(processed.status)) {
+          this.forgetProductPolicyRequestParamKeys([
+            result.metadata.taskId,
+            result.metadata.serverTaskId,
+            processed.taskId,
+          ]);
+        }
+        return processed;
+      },
+      waitForCompletion: async (pollInterval, signal) => {
+        let completed = await submitted.waitForCompletion(pollInterval, signal);
+        if (completed.success && completed.data) {
+          completed.data = this.normalizeResponseToV3(taskType, completed.data) as T;
+        }
+        const processed = await this.applyProductPropertyPolicy(completed, taskType, requestParams);
+        if (processed.status === 'completed' || processed.status === 'failed') {
+          this.forgetProductPolicyRequestParamKeys([
+            result.metadata.taskId,
+            result.metadata.serverTaskId,
+            processed.metadata.taskId,
+            processed.metadata.serverTaskId,
+          ]);
+        }
+        return processed;
+      },
+    };
+
+    return result;
+  }
+
+  private async applyProductPropertyPolicyToTaskInfo(
+    taskInfo: TaskInfo,
+    taskType: string,
+    requestParams: Record<string, unknown>
+  ): Promise<TaskInfo> {
+    if (taskType !== 'get_products' || taskInfo.status !== 'completed' || !taskInfo.result) return taskInfo;
+
+    const policyResult = await this.applyProductPropertyPolicy(
+      attachMatch({
+        success: true as const,
+        status: 'completed' as const,
+        data: this.normalizeResponseToV3(taskType, taskInfo.result),
+        metadata: {
+          taskId: taskInfo.taskId,
+          taskName: taskInfo.taskType,
+          agent: { id: this.agent.id, name: this.agent.name, protocol: this.agent.protocol },
+          responseTimeMs: Math.max(0, Date.now() - taskInfo.createdAt),
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'completed',
+        },
+        debug_logs: [],
+      }),
+      taskType,
+      requestParams
+    );
+
+    if (policyResult.success) {
+      return { ...taskInfo, result: policyResult.data };
+    }
+
+    return {
+      ...taskInfo,
+      status: 'failed',
+      result: policyResult.data,
+      error: policyResult.error,
+      message: policyResult.error,
+    };
+  }
+
+  private productPolicyRequestParamsForWebhook(metadata: WebhookMetadata): Record<string, unknown> {
+    return (
+      this.executor.getRequestParams(metadata.operation_id) ??
+      this.executor.getRequestParams(metadata.task_id) ??
+      this.productPolicyRequestParamsByTask.get(metadata.operation_id) ??
+      this.productPolicyRequestParamsByTask.get(metadata.task_id) ??
+      (metadata.context_id ? this.productPolicyRequestParamsByTask.get(metadata.context_id) : undefined) ??
+      {}
+    );
+  }
+
+  private async applyProductPropertyPolicyToWebhookResult(
+    result: AdCPAsyncResponseData | undefined,
+    metadata: WebhookMetadata
+  ): Promise<{ result: AdCPAsyncResponseData | undefined; metadata: WebhookMetadata; suppressHandler: boolean }> {
+    if (metadata.task_type !== 'get_products' || metadata.status !== 'completed' || !result) {
+      return { result, metadata, suppressHandler: false };
+    }
+
+    const policyResult = await this.applyProductPropertyPolicy<AdCPAsyncResponseData>(
+      attachMatch({
+        success: true as const,
+        status: 'completed' as const,
+        data: result,
+        metadata: {
+          taskId: metadata.operation_id,
+          taskName: metadata.task_type,
+          agent: { id: this.agent.id, name: this.agent.name, protocol: this.agent.protocol },
+          responseTimeMs: 0,
+          timestamp: metadata.timestamp,
+          clarificationRounds: 0,
+          status: 'completed',
+        },
+        debug_logs: [],
+      }),
+      metadata.task_type,
+      this.productPolicyRequestParamsForWebhook(metadata)
+    );
+
+    const nextMetadata: WebhookMetadata = {
+      ...metadata,
+      status: policyResult.success ? metadata.status : 'failed',
+      ...(policyResult.error ? { message: policyResult.error } : {}),
+      ...(policyResult.metadata.productPropertyPolicy
+        ? { productPropertyPolicy: policyResult.metadata.productPropertyPolicy }
+        : {}),
+    };
+
+    return {
+      result: policyResult.data as AdCPAsyncResponseData | undefined,
+      metadata: nextMetadata,
+      suppressHandler: !policyResult.success,
+    };
   }
 
   /**
@@ -2503,7 +2982,7 @@ export class SingleAgentClient {
         this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
       }
 
-      const result = await this.executor.executeTask<T>(
+      let result = await this.executor.executeTask<T>(
         agent,
         taskName,
         adaptedParams,
@@ -2520,6 +2999,10 @@ export class SingleAgentClient {
       if (result.success && result.data) {
         result.data = this.normalizeResponseToV3(taskName, result.data) as T;
       }
+
+      result = this.wrapProductPolicySubmittedContinuation(result, taskName, normalizedParams);
+      this.rememberProductPolicyRequestParams(taskName, normalizedParams, result, options);
+      result = await this.applyProductPropertyPolicy(result, taskName, normalizedParams);
 
       return result;
     } catch (error) {

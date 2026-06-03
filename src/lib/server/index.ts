@@ -458,15 +458,25 @@ export type {
 } from './governance';
 
 export {
+  clearDefaultResolvedListCache,
+  createResolvedListCache,
+  DEFAULT_RESOLVE_LIST_PAGE_SIZE,
+  defaultResolvedListCache,
   resolvePropertyList,
   resolveCollectionList,
+  resolvedListCacheKey,
   matchesPropertyList,
   matchesCollectionList,
 } from './targeting-helpers';
 export type {
+  ResolvedListCache,
+  ResolvedListCacheEntry,
+  ResolvedListCacheValue,
+  ResolvedListKind,
   ResolvedPropertyList,
   ResolvedCollectionList,
   ResolvedCollection,
+  ResolveListCallTool,
   ResolveListOptions,
 } from './targeting-helpers';
 

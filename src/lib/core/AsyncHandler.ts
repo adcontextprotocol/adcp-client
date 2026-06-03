@@ -53,6 +53,7 @@ import type {
   UpdateMediaBuyAsyncWorking,
   UpdateMediaBuyResponse,
 } from '../types/core.generated';
+import type { TaskResultMetadata } from './ConversationTypes';
 import {
   CreateMediaBuyAsyncResponseData,
   GetProductsAsyncResponseData,
@@ -94,6 +95,12 @@ export interface WebhookMetadata {
    * as the canonical dedup key; see `AsyncHandlerConfig.webhookDedup`.
    */
   idempotency_key?: string;
+  /**
+   * Buyer-side product property policy evaluation for completed get_products
+   * webhooks. Present when the client filters, audits, or rejects a webhook
+   * result before dispatching it to handlers.
+   */
+  productPropertyPolicy?: TaskResultMetadata['productPropertyPolicy'];
 }
 
 /**
@@ -365,7 +372,7 @@ export class AsyncHandler {
       task_id: metadata.task_id,
       task_type: metadata.task_type,
       status: metadata.status,
-      payload: result,
+      payload: metadata.rawHTTPPayload?.result ?? result,
       timestamp: metadata.timestamp,
     });
 
