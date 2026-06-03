@@ -186,7 +186,7 @@ async function fetchResolvedPropertyList(
 ): Promise<ResolvedPropertyList> {
   const callTool = options.callTool ?? defaultResolveListCallTool;
   const identifiers: Identifier[] = [];
-  let listId = ref.list_id;
+  let listId: string;
   let cacheValidUntil: string | undefined;
   let missingCacheValidUntil = false;
   let cursor: string | undefined;
@@ -260,7 +260,7 @@ async function fetchResolvedCollectionList(
 ): Promise<ResolvedCollectionList> {
   const callTool = options.callTool ?? defaultResolveListCallTool;
   const collections: ResolvedCollection[] = [];
-  let listId = ref.list_id;
+  let listId: string;
   let cacheValidUntil: string | undefined;
   let missingCacheValidUntil = false;
   let cursor: string | undefined;
