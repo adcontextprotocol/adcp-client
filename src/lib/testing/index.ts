@@ -54,6 +54,7 @@ export {
   testSIHandoff,
   testCapabilityDiscovery,
   testSyncAudiences,
+  resolveAccountForMediaBuy,
   resolveAccountForAudiences,
   testSchemaCompliance,
   // State machine compliance
