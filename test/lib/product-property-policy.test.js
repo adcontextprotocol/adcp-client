@@ -89,7 +89,10 @@ describe('validateProductsAgainstPropertyPolicy', () => {
   test('filters products outside resolved property-list identifiers', () => {
     const result = validateProductsAgainstPropertyPolicy({
       products: [
-        product({ product_id: 'prod_safe', publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.example.com' }] }),
+        product({
+          product_id: 'prod_safe',
+          publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.example.com' }],
+        }),
         product({
           product_id: 'prod_ladbible',
           publisher_properties: [{ selection_type: 'all', publisher_domain: 'www.ladbible.com' }],

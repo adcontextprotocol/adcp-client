@@ -148,16 +148,22 @@ describe('resolvePropertyList cache', () => {
       };
     };
 
-    await resolvePropertyList({ agent_url: 'https://lists.example/mcp', list_id: 'pl-1', auth_token: 'token-a' }, {
-      cache,
-      now,
-      callTool,
-    });
-    await resolvePropertyList({ agent_url: 'https://lists.example/mcp', list_id: 'pl-1', auth_token: 'token-b' }, {
-      cache,
-      now,
-      callTool,
-    });
+    await resolvePropertyList(
+      { agent_url: 'https://lists.example/mcp', list_id: 'pl-1', auth_token: 'token-a' },
+      {
+        cache,
+        now,
+        callTool,
+      }
+    );
+    await resolvePropertyList(
+      { agent_url: 'https://lists.example/mcp', list_id: 'pl-1', auth_token: 'token-b' },
+      {
+        cache,
+        now,
+        callTool,
+      }
+    );
 
     expect(calls).toHaveLength(2);
   });
@@ -256,7 +262,10 @@ describe('resolvePropertyList cache', () => {
       /list_agent_url_insecure/
     );
     await expect(
-      resolvePropertyList({ agent_url: 'https://user:pass@lists.example/mcp?token=secret', list_id: 'pl-1' }, { callTool })
+      resolvePropertyList(
+        { agent_url: 'https://user:pass@lists.example/mcp?token=secret', list_id: 'pl-1' },
+        { callTool }
+      )
     ).rejects.toThrow(/list_agent_url_malformed/);
     expect(calls).toHaveLength(0);
   });

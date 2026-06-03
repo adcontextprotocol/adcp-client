@@ -1,10 +1,7 @@
 // Core conversation types for ADCP client library
 // These types support the conversation and clarification pattern
 
-import type {
-  ProductPropertyPolicyDiagnostic,
-  ProductPropertyPolicyMode,
-} from '../media-buy/property-policy';
+import type { ProductPropertyPolicyDiagnostic, ProductPropertyPolicyMode } from '../media-buy/property-policy';
 
 /**
  * Represents a single message in a conversation with an agent

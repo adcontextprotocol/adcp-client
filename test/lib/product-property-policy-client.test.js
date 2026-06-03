@@ -94,10 +94,7 @@ describe('client product property policy enforcement', () => {
       ['safe']
     );
     assert.strictEqual(result.metadata.productPropertyPolicy.rejected_count, 1);
-    assert.strictEqual(
-      result.metadata.productPropertyPolicy.diagnostics[0].matched_excluded_domain,
-      'ladbible.com'
-    );
+    assert.strictEqual(result.metadata.productPropertyPolicy.diagnostics[0].matched_excluded_domain, 'ladbible.com');
     assert.strictEqual(result.data.filter_diagnostics, undefined);
     assert.ok(result.debug_logs.some(entry => entry.type === 'product_property_policy'));
   });
@@ -123,7 +120,10 @@ describe('client product property policy enforcement', () => {
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.error, 'Property list not adhered to');
-    assert.deepStrictEqual(result.data.products.map(p => p.product_id), ['safe', 'blocked']);
+    assert.deepStrictEqual(
+      result.data.products.map(p => p.product_id),
+      ['safe', 'blocked']
+    );
     assert.strictEqual(result.metadata.productPropertyPolicy.rejected_count, 1);
     assert.deepStrictEqual(handlerCalls, []);
   });
@@ -191,7 +191,10 @@ describe('client product property policy enforcement', () => {
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.status, 'failed');
     assert.strictEqual(result.error, 'Property list not adhered to');
-    assert.deepStrictEqual(result.data.products.map(p => p.product_id), ['safe', 'blocked']);
+    assert.deepStrictEqual(
+      result.data.products.map(p => p.product_id),
+      ['safe', 'blocked']
+    );
     assert.strictEqual(result.metadata.productPropertyPolicy.request_property_list.list_id, 'cope_allowed_properties');
     assert.strictEqual(result.metadata.productPropertyPolicy.request_property_list.identifier_count, 1);
     assert.strictEqual(result.metadata.productPropertyPolicy.diagnostics[0].code, 'outside_property_list');
@@ -243,7 +246,10 @@ describe('client product property policy enforcement', () => {
 
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.status, 'failed');
-    assert.deepStrictEqual(result.data.products.map(p => p.product_id), ['app_product']);
+    assert.deepStrictEqual(
+      result.data.products.map(p => p.product_id),
+      ['app_product']
+    );
     assert.strictEqual(
       result.metadata.productPropertyPolicy.request_property_list.resolution_error,
       'property_list_unsupported_identifier_types'
@@ -324,7 +330,10 @@ describe('client product property policy enforcement', () => {
       handlerCalls[0].metadata.rawHTTPPayload.result.products.map(p => p.product_id),
       ['safe', 'blocked']
     );
-    assert.strictEqual(handlerCalls[0].metadata.productPropertyPolicy.request_property_list.list_id, 'cope_allowed_properties');
+    assert.strictEqual(
+      handlerCalls[0].metadata.productPropertyPolicy.request_property_list.list_id,
+      'cope_allowed_properties'
+    );
     assert.deepStrictEqual(listCalls, [
       {
         agentUrl: 'https://lists.example/mcp',
@@ -515,7 +524,10 @@ describe('client product property policy enforcement', () => {
       handlerCalls[0].response.products.map(p => p.product_id),
       ['safe']
     );
-    assert.strictEqual(handlerCalls[0].metadata.productPropertyPolicy.request_property_list.list_id, 'cope_allowed_properties');
+    assert.strictEqual(
+      handlerCalls[0].metadata.productPropertyPolicy.request_property_list.list_id,
+      'cope_allowed_properties'
+    );
 
     releaseInitialResponse();
     const submitted = await submittedPromise;
@@ -555,7 +567,10 @@ describe('client product property policy enforcement', () => {
       result.metadata.productPropertyPolicy.request_property_list.resolution_error,
       'list_agent_url_malformed'
     );
-    assert.strictEqual(result.metadata.productPropertyPolicy.request_property_list.agent_url, 'https://lists.example/mcp');
+    assert.strictEqual(
+      result.metadata.productPropertyPolicy.request_property_list.agent_url,
+      'https://lists.example/mcp'
+    );
     const policyLog = result.debug_logs.find(entry => entry.type === 'product_property_policy');
     assert.strictEqual(policyLog.request_property_list.resolution_error, 'list_agent_url_malformed');
   });

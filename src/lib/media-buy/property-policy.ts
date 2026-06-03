@@ -476,7 +476,9 @@ function matchedAllowedDomainForCandidate(
   candidate: NormalizedPolicyDomain,
   policy: CompiledPropertyPolicy
 ): string | undefined {
-  const explicitDomain = policy.allowedDomains.find(allowed => propertyListDomainMatches(candidate.host, allowed.input));
+  const explicitDomain = policy.allowedDomains.find(allowed =>
+    propertyListDomainMatches(candidate.host, allowed.input)
+  );
   if (explicitDomain) return explicitDomain.host;
 
   for (const identifier of policy.allowedPropertyIdentifiers) {

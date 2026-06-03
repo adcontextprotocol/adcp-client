@@ -790,8 +790,13 @@ async function callMCPToolRawImpl(
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
 
-  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
-    client.callTool({ name: toolName, arguments: args }),
+  return withCachedConnection(
+    agentUrl,
+    authToken,
+    authHeaders,
+    debugLogs,
+    toolName,
+    client => client.callTool({ name: toolName, arguments: args }),
     transportFetch
   );
 }

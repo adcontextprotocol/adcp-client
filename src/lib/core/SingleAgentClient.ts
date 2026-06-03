@@ -563,13 +563,13 @@ function propertyListReferenceFromRequest(params: Record<string, unknown>): Prop
 function hasProductPropertyPolicyRules(policy: BuyerPropertyPolicy): boolean {
   return Boolean(
     policy.allowedDomains?.length ||
-      policy.allowedPropertyIdentifiers?.length ||
-      policy.requireAllowedPropertyMatch ||
-      policy.excludedDomains?.length ||
-      policy.excludedPropertyIds?.length ||
-      policy.strict ||
-      policy.unknownSelectorBehavior ||
-      policy.missingPublisherPropertiesBehavior
+    policy.allowedPropertyIdentifiers?.length ||
+    policy.requireAllowedPropertyMatch ||
+    policy.excludedDomains?.length ||
+    policy.excludedPropertyIds?.length ||
+    policy.strict ||
+    policy.unknownSelectorBehavior ||
+    policy.missingPublisherPropertiesBehavior
   );
 }
 
@@ -581,7 +581,9 @@ function comparablePropertyIdentifiers(
     .map(identifier => ({ type: identifier.type, value: identifier.value }));
 }
 
-function unsupportedPropertyIdentifiers(identifiers: readonly { type: string; value: string }[]): Array<{ type: string }> {
+function unsupportedPropertyIdentifiers(
+  identifiers: readonly { type: string; value: string }[]
+): Array<{ type: string }> {
   return identifiers
     .filter(identifier => identifier.type !== 'domain' && identifier.type !== 'subdomain')
     .map(identifier => ({ type: identifier.type }));
@@ -1910,7 +1912,11 @@ export class SingleAgentClient {
         const taskInfo = await submitted.track(transport);
         const processed = await this.applyProductPropertyPolicyToTaskInfo(taskInfo, taskType, requestParams);
         if (['completed', 'failed', 'rejected', 'canceled'].includes(processed.status)) {
-          this.forgetProductPolicyRequestParamKeys([result.metadata.taskId, result.metadata.serverTaskId, processed.taskId]);
+          this.forgetProductPolicyRequestParamKeys([
+            result.metadata.taskId,
+            result.metadata.serverTaskId,
+            processed.taskId,
+          ]);
         }
         return processed;
       },
