@@ -947,17 +947,40 @@ const DEPRECATED_ENUM_VALUES: Record<string, string[]> = {
   'task-type': ['list_property_features', 'list_authorized_properties'],
 };
 
+// Compatibility enum additions for schema bundles that define async response
+// arms before the shared task-type enum catches up.
+const FORCED_ENUM_VALUES: Record<string, string[]> = {
+  'task-type': ['get_products'],
+};
+
 /**
  * Remove deprecated fields from a schema based on DEPRECATED_SCHEMA_FIELDS config
  * Also handles deprecated enum values
  */
 function removeDeprecatedFields(schema: any, schemaName: string): any {
-  // Handle deprecated enum values
   if (schema.enum && Array.isArray(schema.enum)) {
+    let cleaned: any | undefined;
+    const forcedEnumValues =
+      typeof schema.$id === 'string' && schema.$id.includes('3.1.0-rc.8')
+        ? FORCED_ENUM_VALUES[schemaName]
+        : undefined;
+    if (forcedEnumValues) {
+      cleaned = { ...(cleaned ?? schema) };
+      cleaned.enum = [...forcedEnumValues.filter(value => !cleaned.enum.includes(value)), ...cleaned.enum];
+      if (cleaned.enumDescriptions) {
+        cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
+        for (const value of forcedEnumValues) {
+          if (value === 'get_products' && cleaned.enumDescriptions[value] === undefined) {
+            cleaned.enumDescriptions[value] = 'Media-buy domain: Discover or curate advertising products';
+          }
+        }
+      }
+    }
+    // Handle deprecated enum values
     const enumValuesToRemove = DEPRECATED_ENUM_VALUES[schemaName];
     if (enumValuesToRemove) {
-      const cleaned = { ...schema };
-      cleaned.enum = schema.enum.filter((v: string) => !enumValuesToRemove.includes(v));
+      cleaned = { ...(cleaned ?? schema) };
+      cleaned.enum = cleaned.enum.filter((v: string) => !enumValuesToRemove.includes(v));
       // Also clean enumDescriptions if present
       if (cleaned.enumDescriptions) {
         cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
@@ -965,8 +988,8 @@ function removeDeprecatedFields(schema: any, schemaName: string): any {
           delete cleaned.enumDescriptions[value];
         }
       }
-      return cleaned;
     }
+    if (cleaned) return cleaned;
   }
 
   const fieldsToRemove = DEPRECATED_SCHEMA_FIELDS[schemaName];

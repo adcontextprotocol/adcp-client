@@ -7883,6 +7883,7 @@ export interface Property {
  * Type of AdCP operation that triggered this webhook. Enables webhook handlers to route to appropriate processing logic.
  */
 export type TaskType =
+  | 'get_products'
   | 'create_media_buy'
   | 'update_media_buy'
   | 'media_buy_delivery'

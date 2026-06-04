@@ -23237,6 +23237,7 @@ export interface GetTaskStatusRequest {
  * Type of AdCP operation
  */
 export type TaskType =
+  | 'get_products'
   | 'create_media_buy'
   | 'update_media_buy'
   | 'media_buy_delivery'

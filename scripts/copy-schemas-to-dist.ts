@@ -137,6 +137,65 @@ function relaxAdagentsAuthorizedAgentsMinItems(schemaRoot: string): void {
   );
 }
 
+function patchRc8GetProductsTaskType(schemaRoot: string): void {
+  const submittedPath = path.join(schemaRoot, 'media-buy', 'get-products-async-response-submitted.json');
+  const taskTypePath = path.join(schemaRoot, 'enums', 'task-type.json');
+  if (!existsSync(submittedPath) || !existsSync(taskTypePath)) return;
+
+  const schema = JSON.parse(readFileSync(taskTypePath, 'utf8'));
+  if (typeof schema.$id !== 'string' || !schema.$id.includes('3.1.0-rc.8')) return;
+  if (!Array.isArray(schema.enum) || schema.enum.includes('get_products')) return;
+
+  schema.enum = ['get_products', ...schema.enum];
+  if (schema.enumDescriptions && typeof schema.enumDescriptions === 'object') {
+    schema.enumDescriptions = {
+      get_products: 'Media-buy domain: Discover or curate advertising products',
+      ...schema.enumDescriptions,
+    };
+  }
+  writeFileSync(taskTypePath, `${JSON.stringify(schema, null, 2)}\n`);
+  patchInlineTaskTypeEnums(schemaRoot);
+  console.log(
+    `[copy-schemas-to-dist] added get_products to task-type enum in ${taskTypePath} ` +
+      `(rc8 async get_products response declares poll/webhook support)`
+  );
+}
+
+function patchInlineTaskTypeEnums(root: string): void {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const abs = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      patchInlineTaskTypeEnums(abs);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+
+    let changed = false;
+    const schema = JSON.parse(readFileSync(abs, 'utf8'));
+    const visit = (value: unknown): void => {
+      if (value == null || typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+        return;
+      }
+      const node = value as Record<string, unknown>;
+      if (
+        Array.isArray(node.enum) &&
+        node.enum.includes('create_media_buy') &&
+        node.enum.includes('get_signals') &&
+        node.enum.includes('acquire_rights') &&
+        !node.enum.includes('get_products')
+      ) {
+        node.enum = ['get_products', ...node.enum];
+        changed = true;
+      }
+      for (const child of Object.values(node)) visit(child);
+    };
+    visit(schema);
+    if (changed) writeFileSync(abs, `${JSON.stringify(schema, null, 2)}\n`);
+  }
+}
+
 function main(): void {
   const repoRoot = path.resolve(__dirname, '..');
   const cacheRoot = path.join(repoRoot, 'schemas', 'cache');
@@ -202,6 +261,7 @@ function main(): void {
       },
     });
     relaxAdagentsAuthorizedAgentsMinItems(destRoot);
+    patchRc8GetProductsTaskType(destRoot);
     const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
   }

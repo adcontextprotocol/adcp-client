@@ -2154,6 +2154,7 @@ function genericResponse(toolName: string, data: object, summary?: string): McpT
 }
 
 const ADCP_TASK_TYPES = new Set<TaskType>([
+  'get_products',
   'create_media_buy',
   'update_media_buy',
   'media_buy_delivery',
@@ -2179,6 +2180,7 @@ const ADCP_TASK_TYPES = new Set<TaskType>([
 ]);
 
 const PROTOCOL_TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
+  get_products: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
   media_buy_delivery: 'media-buy',

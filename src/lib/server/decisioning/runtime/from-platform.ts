@@ -2717,6 +2717,36 @@ function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): str
   return `account:${accountId}`;
 }
 
+function hasPushNotificationConfig(params: unknown): boolean {
+  return params != null && typeof params === 'object' && 'push_notification_config' in params;
+}
+
+function rejectHandRolledSubmitted(result: unknown): void {
+  // Catch the most common LLM-scaffolded mistake: hand-rolling a
+  // `{status: 'submitted', task_id: '...'}` envelope instead of returning
+  // `ctx.handoffToTask(fn)`. The framework owns the submitted envelope —
+  // adopters either return the sync-success arm or a TaskHandoff marker.
+  // A bare submitted-shape return here would slip past dispatch and fail
+  // response-schema validation downstream with a generic shape error;
+  // pointing at the right SDK primitive up-front saves the debug round-trip.
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    (result as { status?: unknown }).status === 'submitted' &&
+    'task_id' in (result as object)
+  ) {
+    throw new Error(
+      `Specialism handler returned a hand-rolled \`{status: 'submitted', task_id}\` ` +
+        `envelope. The framework owns the submitted envelope — return ` +
+        `\`ctx.handoffToTask(async (taskCtx) => { ... })\` from the handler ` +
+        `and the framework will issue the task_id, persist the handoff, and ` +
+        `wrap the wire envelope. Returning a bare submitted shape skips the ` +
+        `task registry and the buyer ends up polling a task_id the framework ` +
+        `never registered.`
+    );
+  }
+}
+
 /**
  * Route a unified-shape return value: if it's a `TaskHandoff` marker,
  * dispatch through `dispatchHitl`; otherwise pass through the sync
@@ -2757,29 +2787,7 @@ async function routeIfHandoff<TInner, TWire>(
       options?.task_id
     );
   }
-  // Catch the most common LLM-scaffolded mistake: hand-rolling a
-  // `{status: 'submitted', task_id: '...'}` envelope instead of returning
-  // `ctx.handoffToTask(fn)`. The framework owns the submitted envelope —
-  // adopters either return the sync-success arm or a TaskHandoff marker.
-  // A bare submitted-shape return here would slip past dispatch and fail
-  // response-schema validation downstream with a generic shape error;
-  // pointing at the right SDK primitive up-front saves the debug round-trip.
-  if (
-    result != null &&
-    typeof result === 'object' &&
-    (result as { status?: unknown }).status === 'submitted' &&
-    'task_id' in (result as object)
-  ) {
-    throw new Error(
-      `Specialism handler returned a hand-rolled \`{status: 'submitted', task_id}\` ` +
-        `envelope. The framework owns the submitted envelope — return ` +
-        `\`ctx.handoffToTask(async (taskCtx) => { ... })\` from the handler ` +
-        `and the framework will issue the task_id, persist the handoff, and ` +
-        `wrap the wire envelope. Returning a bare submitted shape skips the ` +
-        `task registry and the buyer ends up polling a task_id the framework ` +
-        `never registered.`
-    );
-  }
+  rejectHandRolledSubmitted(result);
   const projected = await project(result);
   if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
     // Auto-emit completion webhook on sync-success arm — fire-and-forget.
@@ -3983,6 +3991,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
+            const buyingMode = (params as { buying_mode?: string }).buying_mode;
+            if (buyingMode === 'wholesale' && hasPushNotificationConfig(params)) {
+              throw new AdcpError('INVALID_REQUEST', {
+                message:
+                  'get_products buying_mode=wholesale is synchronous and does not support push_notification_config; use incomplete[] for partial feed results.',
+                field: 'push_notification_config',
+                recovery: 'correctable',
+              });
+            }
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
@@ -3996,7 +4013,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             >;
             let result: GetProductsPayload | TaskHandoff<GetProductsPayload>;
             if (proposalManager) {
-              const buyingMode = (params as { buying_mode?: string }).buying_mode;
               const useRefine =
                 buyingMode === 'refine' &&
                 proposalManager.capabilities.refine === true &&
@@ -4007,12 +4023,58 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             } else {
               result = await sales!.getProducts!(params, reqCtx);
             }
+            const projectProducts = async (terminalResult: GetProductsPayload) => {
+              // Auto-store products: persist each Product's wire shape +
+              // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
+              // calls referencing product_id can hydrate the full Product
+              // automatically (publisher sees `req.packages[i].product`).
+              await autoStoreResources(
+                ctxMetadataStore,
+                reqCtx.account?.id,
+                'product',
+                (terminalResult as { products?: readonly unknown[] })?.products,
+                'product_id',
+                logger
+              );
+              // v1.5 seam: persist proposals[] as DRAFT records (with
+              // typed recipes pulled from Product.implementation_config)
+              // so subsequent finalize / create_media_buy can hydrate.
+              if (proposalStore) {
+                await maybePersistDraftAfterGetProducts({
+                  response: terminalResult,
+                  store: proposalStore,
+                  ctx: reqCtx as unknown as { account: { id: string } },
+                });
+              }
+              return terminalResult;
+            };
+            const isHandoff = isTaskHandoff<GetProductsPayload>(result);
+            if (buyingMode === 'wholesale' && isHandoff) {
+              throw new AdcpError('INVALID_REQUEST', {
+                message:
+                  'get_products buying_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
+                field: 'buying_mode',
+                recovery: 'correctable',
+              });
+            }
+            if (!isHandoff && push.url === undefined) {
+              rejectHandRolledSubmitted(result);
+              return projectProducts(result as GetProductsPayload);
+            }
+            const accountId = reqCtx.account?.id;
+            if (accountId === undefined) {
+              throw new AdcpError('INVALID_REQUEST', {
+                message: 'Async get_products and push_notification_config require account-scoped discovery.',
+                field: 'account',
+                recovery: 'correctable',
+              });
+            }
             return routeIfHandoff(
               taskRegistry,
               {
                 tool: 'get_products',
-                accountId: reqCtx.account.id,
-                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+                accountId,
+                ownerScope: taskOwnerScopeFor(ctx, accountId),
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
@@ -4022,31 +4084,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 logger,
               },
               result,
-              async terminalResult => {
-                // Auto-store products: persist each Product's wire shape +
-                // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
-                // calls referencing product_id can hydrate the full Product
-                // automatically (publisher sees `req.packages[i].product`).
-                await autoStoreResources(
-                  ctxMetadataStore,
-                  reqCtx.account?.id,
-                  'product',
-                  (terminalResult as { products?: readonly unknown[] })?.products,
-                  'product_id',
-                  logger
-                );
-                // v1.5 seam: persist proposals[] as DRAFT records (with
-                // typed recipes pulled from Product.implementation_config)
-                // so subsequent finalize / create_media_buy can hydrate.
-                if (proposalStore) {
-                  await maybePersistDraftAfterGetProducts({
-                    response: terminalResult,
-                    store: proposalStore,
-                    ctx: reqCtx as unknown as { account: { id: string } },
-                  });
-                }
-                return terminalResult;
-              }
+              projectProducts
             );
           },
           r => r
@@ -4637,16 +4675,69 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
+          const discoveryMode = (params as { discovery_mode?: string }).discovery_mode;
+          if (discoveryMode === 'wholesale' && hasPushNotificationConfig(params)) {
+            throw new AdcpError('INVALID_REQUEST', {
+              message:
+                'get_signals discovery_mode=wholesale is synchronous and does not support push_notification_config; use incomplete[] for partial feed results.',
+              field: 'push_notification_config',
+              recovery: 'correctable',
+            });
+          }
           const push = extractPushConfig(params, logger, {
             allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
           });
           const result = await signals.getSignals(params, reqCtx);
+          const projectSignals = async (terminalResult: import('../specialisms/signals').GetSignalsPayload) => {
+            // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
+            // objects), not bare strings — but the helper's truncation-detection
+            // is purely length-based, so the object element type is irrelevant.
+            warnIfTruncatedMultiIdResponse(
+              'getSignals',
+              'signal_ids',
+              (params as { signal_ids?: readonly unknown[] }).signal_ids,
+              (terminalResult as { signals?: readonly unknown[] })?.signals,
+              logger
+            );
+            // Auto-store signals so subsequent activate_signal can hydrate
+            // `req.signal` from the publisher's prior catalog entry.
+            await autoStoreResources(
+              ctxMetadataStore,
+              reqCtx.account?.id,
+              'signal',
+              (terminalResult as { signals?: readonly unknown[] })?.signals,
+              'signal_agent_segment_id',
+              logger
+            );
+            return terminalResult;
+          };
+          const isHandoff = isTaskHandoff<import('../specialisms/signals').GetSignalsPayload>(result);
+          if (discoveryMode === 'wholesale' && isHandoff) {
+            throw new AdcpError('INVALID_REQUEST', {
+              message:
+                'get_signals discovery_mode=wholesale must return synchronously; use incomplete[] for partial feed results.',
+              field: 'discovery_mode',
+              recovery: 'correctable',
+            });
+          }
+          if (!isHandoff && push.url === undefined) {
+            rejectHandRolledSubmitted(result);
+            return projectSignals(result as import('../specialisms/signals').GetSignalsPayload);
+          }
+          const accountId = reqCtx.account?.id;
+          if (accountId === undefined) {
+            throw new AdcpError('INVALID_REQUEST', {
+              message: 'Async get_signals and push_notification_config require account-scoped discovery.',
+              field: 'account',
+              recovery: 'correctable',
+            });
+          }
           return routeIfHandoff(
             taskRegistry,
             {
               tool: 'get_signals',
-              accountId: reqCtx.account.id,
-              ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+              accountId,
+              ownerScope: taskOwnerScopeFor(ctx, accountId),
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
@@ -4656,29 +4747,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
               logger,
             },
             result,
-            async terminalResult => {
-              // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
-              // objects), not bare strings — but the helper's truncation-detection
-              // is purely length-based, so the object element type is irrelevant.
-              warnIfTruncatedMultiIdResponse(
-                'getSignals',
-                'signal_ids',
-                (params as { signal_ids?: readonly unknown[] }).signal_ids,
-                (terminalResult as { signals?: readonly unknown[] })?.signals,
-                logger
-              );
-              // Auto-store signals so subsequent activate_signal can hydrate
-              // `req.signal` from the publisher's prior catalog entry.
-              await autoStoreResources(
-                ctxMetadataStore,
-                reqCtx.account?.id,
-                'signal',
-                (terminalResult as { signals?: readonly unknown[] })?.signals,
-                'signal_agent_segment_id',
-                logger
-              );
-              return terminalResult;
-            }
+            projectSignals
           );
         },
         r => r
