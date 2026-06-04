@@ -68,6 +68,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
 
   // brand
   get_brand_identity: 'brand',
+  search_brands: 'brand',
   get_rights: 'brand',
   acquire_rights: 'brand',
 
@@ -76,14 +77,14 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
   get_media_buy_delivery: 'media-buy',
+  sync_event_sources: 'media-buy',
   sync_audiences: 'media-buy',
+  sync_catalogs: 'media-buy',
+  log_event: 'media-buy',
   sync_accounts: 'media-buy',
   list_accounts: 'media-buy',
   get_account_financials: 'media-buy',
   report_usage: 'media-buy',
-  log_event: 'media-buy',
-  sync_event_sources: 'media-buy',
-  sync_catalogs: 'media-buy',
   provide_performance_feedback: 'media-buy',
   get_media_buys: 'media-buy',
 };

@@ -3243,6 +3243,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.7');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -3293,6 +3294,83 @@ describe('tasks_get wire tool (B9)', () => {
       releaseTask();
       if (taskId) await server.awaitTask(taskId);
     }
+  });
+
+  it('sanitizes AUTHORIZATION_REQUIRED task errors before polling exposes them', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => {
+        throw new AdcpError('AUTHORIZATION_REQUIRED', {
+          message: 'TikTok publisher identity authorization required',
+          details: {
+            missing_connections: [
+              {
+                provider: 'tiktok',
+                connection_type: 'publisher_identity',
+                status: 'missing',
+                authorization_url: 'https://seller.example/connect/tiktok',
+                access_token: 'tok_secret',
+                resource_ref: {
+                  identity_id: 'creator_456',
+                  private_note: 'internal',
+                },
+              },
+            ],
+            authorization_url: 'https://seller.example/connect',
+            refresh_token: 'refresh_secret',
+            tenant_id: 'tenant_secret',
+          },
+        });
+      }),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+
+    const submitted = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111113',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_owner' },
+        },
+      },
+    });
+    const taskId = submitted.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const status = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, account: { account_id: 'acc_owner' } },
+      },
+    });
+    assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
+    const error = status.structuredContent.error;
+    assert.strictEqual(error.code, 'AUTHORIZATION_REQUIRED');
+    assert.strictEqual(error.details.authorization_url, 'https://seller.example/connect');
+    assert.equal(error.details.refresh_token, undefined);
+    assert.equal(error.details.tenant_id, undefined);
+    assert.equal(error.details.missing_connections[0].access_token, undefined);
+    assert.equal(error.details.missing_connections[0].resource_ref.private_note, undefined);
+
+    const legacyStatus = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: { task_id: taskId, account: { account_id: 'acc_owner' } },
+      },
+    });
+    assert.notStrictEqual(legacyStatus.isError, true, JSON.stringify(legacyStatus.structuredContent));
+    const legacyError = legacyStatus.structuredContent.error;
+    assert.strictEqual(legacyError.code, 'AUTHORIZATION_REQUIRED');
+    assert.strictEqual(legacyError.details.authorization_url, 'https://seller.example/connect');
+    assert.equal(legacyError.details.details, undefined);
+    assert.equal(legacyError.details.refresh_token, undefined);
+    assert.equal(legacyError.details.missing_connections[0].access_token, undefined);
   });
 
   it('applies responseEnhancer to the framework-owned tasks_get custom tool', async () => {

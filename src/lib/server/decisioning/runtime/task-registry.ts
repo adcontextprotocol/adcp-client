@@ -48,6 +48,8 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
   tool: string;
   /** Account that started the task — sessionKey-like for cross-request scoping. */
   accountId: string;
+  /** Tenant/principal owner scope used with accountId for list/read isolation. */
+  ownerScope?: string;
   /** Current lifecycle state — full AdCP-spec `task-status` enum. */
   status: TaskStatus;
   /** Status message on the final arm (`error.message` on failed). */
@@ -76,6 +78,14 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
 
 export interface TaskRegistryListOptions {
   accountId: string;
+  /**
+   * Caller ownership scope derived from buyer agent, credential, session,
+   * or the single-principal account fallback. Optional for source
+   * compatibility with older custom registries, but buyer-visible protocol
+   * task tools pass it whenever they can identify a caller and built-in
+   * registries fail closed when it is absent.
+   */
+  ownerScope?: string;
 }
 
 export interface TaskRegistryListResult<TResult = unknown> {
@@ -101,6 +111,7 @@ export interface TaskRegistry {
   create(opts: {
     tool: string;
     accountId: string;
+    ownerScope?: string;
     hasWebhook?: boolean;
     overrideTaskId?: string;
   }): Promise<{ taskId: string }>;
@@ -113,6 +124,12 @@ export interface TaskRegistry {
    * reconciliation must use this scoped surface, never the transport-level
    * MCP TaskStore, because MCP task records do not carry AdCP ownership,
    * protocol, or tool metadata.
+   *
+   * Multi-tenant deployments that share an AdCP account across principals
+   * must persist and filter by `ownerScope`. Rows without `ownerScope` are
+   * treated as legacy account-scoped rows: built-in registries return them
+   * only for the account-fallback owner scope (`account:${accountId}`), not
+   * for credential-, agent-, or session-scoped callers.
    */
   list?(opts: TaskRegistryListOptions): Promise<TaskRegistryListResult>;
 
@@ -169,6 +186,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     async create(opts: {
       tool: string;
       accountId: string;
+      ownerScope?: string;
       hasWebhook?: boolean;
       overrideTaskId?: string;
     }): Promise<{ taskId: string }> {
@@ -181,6 +199,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
         taskId,
         tool: opts.tool,
         accountId: opts.accountId,
+        ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
         status: 'submitted',
         ...(opts.hasWebhook && { hasWebhook: true }),
         createdAt: now,
@@ -195,8 +214,14 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
     },
 
     async list(opts: TaskRegistryListOptions): Promise<TaskRegistryListResult> {
+      if (opts.ownerScope === undefined) return { tasks: [] };
       return {
-        tasks: Array.from(tasks.values()).filter(record => record.accountId === opts.accountId),
+        tasks: Array.from(tasks.values()).filter(
+          record =>
+            record.accountId === opts.accountId &&
+            (record.ownerScope === opts.ownerScope ||
+              (record.ownerScope === undefined && opts.ownerScope === `account:${opts.accountId}`))
+        ),
       };
     },
 

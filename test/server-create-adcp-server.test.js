@@ -379,6 +379,23 @@ describe('createAdcpServer', () => {
       assert.ok(caps.supported_protocols.includes('sponsored_intelligence'));
     });
 
+    it('promotes explicitly declared measurement capabilities into supported_protocols', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        capabilities: {
+          overrides: {
+            measurement: { metrics: [] },
+            experimental_features: ['measurement.core'],
+          },
+        },
+      });
+      const caps = await callTool(server, 'get_adcp_capabilities', {});
+      assert.ok(caps.supported_protocols.includes('measurement'));
+      assert.deepStrictEqual(caps.measurement, { metrics: [] });
+      assert.deepStrictEqual(caps.experimental_features, ['measurement.core']);
+    });
+
     it('includes media_buy features', async () => {
       const server = createAdcpServer({
         name: 'Test',
@@ -752,6 +769,27 @@ describe('createAdcpServer', () => {
       assert.strictEqual(result.isError, true);
       assert.strictEqual(result.structuredContent.creatives, undefined, 'Success-only field absent on Error arm');
       assert.strictEqual(result.structuredContent.errors[0].code, 'AUTHENTICATION_FAILED');
+    });
+
+    it('returns response validation errors for malformed handler-returned errors[] arms', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { responses: 'strict' },
+        creative: {
+          syncCreatives: async () => ({
+            errors: ['refresh_token=sekret'],
+          }),
+        },
+      });
+      const result = await callToolRaw(server, 'sync_creatives', {
+        account: { account_id: 'a1' },
+        creatives: [],
+        idempotency_key: '11111111-1111-1111-1111-111111111111',
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      assert.ok(!JSON.stringify(result.structuredContent).includes('sekret'));
     });
 
     it('handler that returns Success arm still gets response-builder defaults', async () => {
@@ -1437,10 +1475,10 @@ describe('createAdcpServer', () => {
   });
 
   describe('protocol task tools', () => {
-    it('registers and serves get_task_status/list_tasks without exposing raw MCP task-store records', async () => {
+    it('does not expose raw MCP task-store records through AdCP task tools', async () => {
       const taskStore = new InMemoryTaskStore();
       try {
-        const rawMcpTask = await taskStore.createTask(
+        await taskStore.createTask(
           { ttl: null },
           'req_1',
           { method: 'tools/call', params: { name: 'custom_long_running' } },
@@ -1448,40 +1486,235 @@ describe('createAdcpServer', () => {
         );
         const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskStore });
         const tools = registeredTools(server);
-        assert.ok(tools.includes('get_task_status'));
-        assert.ok(tools.includes('list_tasks'));
-
-        const listed = await callToolRaw(server, 'list_tasks', {});
-        assert.notStrictEqual(listed.isError, true);
-        assert.deepStrictEqual(listed.structuredContent.tasks, []);
-        assert.deepStrictEqual(listed.structuredContent.pagination, {
-          has_more: false,
-          total_count: 0,
-        });
-
-        const missing = await callToolRaw(server, 'get_task_status', { task_id: rawMcpTask.taskId });
-        assert.strictEqual(missing.isError, true);
-        assert.strictEqual(missing.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+        assert.ok(!tools.includes('get_task_status'));
+        assert.ok(!tools.includes('list_tasks'));
       } finally {
         taskStore.cleanup();
       }
     });
 
+    it('does not require custom AdCP task registries to implement list', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry: {
+          async create() {
+            return { taskId: 'task_1' };
+          },
+          async getTask() {
+            return null;
+          },
+          async complete() {},
+          async fail() {},
+          async updateProgress() {},
+          _registerBackground() {},
+          async awaitTask() {},
+        },
+      });
+
+      const tools = registeredTools(server);
+      assert.ok(tools.includes('get_task_status'));
+      assert.ok(!tools.includes('list_tasks'));
+    });
+
+    it('does not register rc.7 task tools for older AdCP schema pins', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        adcpVersion: '3.0.12',
+        taskRegistry,
+      });
+      const tools = registeredTools(server);
+      assert.ok(!tools.includes('get_task_status'));
+      assert.ok(!tools.includes('list_tasks'));
+    });
+
+    it('registers rc.7 task tools for the release-precision 3.1-rc.7 pin', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        adcpVersion: '3.1-rc.7',
+        taskRegistry,
+      });
+      const tools = registeredTools(server);
+      assert.ok(tools.includes('get_task_status'));
+      assert.ok(tools.includes('list_tasks'));
+    });
+
+    it('validates rc.7 task tool requests on the built server', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        validation: { requests: 'strict' },
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: 'task_1',
+        include_result: 'yes',
+      });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+
+      const listed = await callToolRaw(server, 'list_tasks', {
+        filters: { has_webhook: 'true' },
+      });
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+
+      const badAccount = await callToolRaw(server, 'get_task_status', {
+        task_id: 'task_1',
+        account: { account_id: 123 },
+      });
+      assert.strictEqual(badAccount.isError, true);
+      assert.strictEqual(badAccount.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+
+      const badListAccount = await callToolRaw(server, 'list_tasks', {
+        account: { foo: 'bar' },
+      });
+      assert.strictEqual(badListAccount.isError, true);
+      assert.strictEqual(badListAccount.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    });
+
+    it('validates the task-query account extension even when request validation is off', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'account:acct_1',
+      });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        validation: { requests: 'off' },
+        resolveAccount: async () => ({ id: 'acct_1' }),
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: owned.taskId,
+        account: { nope: 'x' },
+      });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+
+      const listed = await callToolRaw(server, 'list_tasks', {
+        account: { account_id: 123 },
+        filters: { task_ids: [owned.taskId] },
+      });
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    });
+
+    it('rejects include_history on rc.7 task polling aliases because history is not stored', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'account:acct_1',
+      });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccount: async () => ({ id: 'acct_1' }),
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: owned.taskId,
+        include_history: true,
+        account: { account_id: 'acct_1' },
+      });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.match(status.structuredContent.adcp_error.message, /include_history/);
+
+      const listed = await callToolRaw(server, 'list_tasks', {
+        include_history: true,
+        account: { account_id: 'acct_1' },
+      });
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.match(listed.structuredContent.adcp_error.message, /include_history/);
+    });
+
+    it('validates rc.7 task tool responses on the built server', async () => {
+      const invalidTask = {
+        taskId: 'task_invalid_status',
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+        status: 'not-a-real-status',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        updatedAt: '2026-05-01T00:01:00.000Z',
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { responses: 'strict' },
+        taskRegistry: {
+          async create() {
+            return { taskId: invalidTask.taskId };
+          },
+          async getTask(taskId) {
+            return taskId === invalidTask.taskId ? invalidTask : null;
+          },
+          async list() {
+            return { tasks: [invalidTask] };
+          },
+          async complete() {},
+          async fail() {},
+          async updateProgress() {},
+          _registerBackground() {},
+          async awaitTask() {},
+        },
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: invalidTask.taskId }, buyerOne);
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+
+      const listed = await callToolRaw(server, 'list_tasks', {}, buyerOne);
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+    });
+
     it('answers get_task_status/list_tasks from the scoped AdCP task registry only', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
-      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1', hasWebhook: true });
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+        hasWebhook: true,
+      });
       await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
-      const other = await taskRegistry.create({ tool: 'activate_signal', accountId: 'acct_2' });
+      const other = await taskRegistry.create({
+        tool: 'activate_signal',
+        accountId: 'acct_2',
+        ownerScope: 'api_key:buyer-2',
+      });
 
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
         taskRegistry,
-        resolveAccountFromAuth: async ctx => ({ id: ctx.authInfo?.clientId === 'buyer-1' ? 'acct_1' : 'acct_2' }),
+        resolveAccountFromAuth: async ctx => ({
+          id:
+            ctx.authInfo?.credential?.kind === 'api_key' && ctx.authInfo.credential.key_id === 'buyer-1'
+              ? 'acct_1'
+              : 'acct_2',
+        }),
       });
 
-      const buyerOne = { authInfo: { token: 'tok_1', clientId: 'buyer-1', scopes: [] } };
-      const buyerTwo = { authInfo: { token: 'tok_2', clientId: 'buyer-2', scopes: [] } };
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+      const buyerTwo = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-2' } } };
 
       const status = await callTool(
         server,
@@ -1494,6 +1727,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'creative');
       assert.strictEqual(status.has_webhook, true);
+      assert.strictEqual(status.adcp_version, '3.1-rc.7');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -1505,7 +1739,7 @@ describe('createAdcpServer', () => {
         server,
         'list_tasks',
         {
-          filters: { protocols: ['creative'], statuses: ['completed'], has_webhook: true },
+          filters: { protocols: ['creative'], statuses: ['completed'], context_contains: 'cr_1', has_webhook: true },
           pagination: { max_results: 1 },
         },
         buyerOne
@@ -1518,6 +1752,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
+      assert.strictEqual(listed.adcp_version, '3.1-rc.7');
 
       const buyerTwoList = await callTool(
         server,
@@ -1527,6 +1762,441 @@ describe('createAdcpServer', () => {
       );
       assert.strictEqual(buyerTwoList.tasks.length, 1);
       assert.strictEqual(buyerTwoList.tasks[0].task_id, other.taskId);
+
+      const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
+      assert.strictEqual(badCursor.isError, true);
+      assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.1-rc.7');
+
+      const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
+      const opaque = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+        overrideTaskId: opaqueTaskId,
+      });
+      await taskRegistry.complete(opaque.taskId, { creatives: [{ creative_id: 'cr_opaque' }] });
+      const opaqueStatus = await callTool(server, 'get_task_status', { task_id: opaqueTaskId }, buyerOne);
+      assert.strictEqual(opaqueStatus.task_id, opaqueTaskId);
+
+      const tooManyTaskIds = await callToolRaw(
+        server,
+        'list_tasks',
+        { filters: { task_ids: Array.from({ length: 101 }, (_, i) => `task_${i}`) } },
+        buyerOne
+      );
+      assert.strictEqual(tooManyTaskIds.isError, true);
+      assert.strictEqual(tooManyTaskIds.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    });
+
+    it('uses the rc.7 task protocol map for media-buy event task filters', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_event_sources',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+      });
+      await taskRegistry.complete(owned.taskId, { event_sources: [{ event_source_id: 'evt_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const status = await callTool(server, 'get_task_status', { task_id: owned.taskId }, buyerOne);
+      assert.strictEqual(status.protocol, 'media-buy');
+
+      const mediaBuy = await callTool(server, 'list_tasks', { filters: { protocol: 'media-buy' } }, buyerOne);
+      assert.strictEqual(mediaBuy.tasks.length, 1);
+      assert.strictEqual(mediaBuy.tasks[0].task_id, owned.taskId);
+
+      const measurement = await callTool(server, 'list_tasks', { filters: { protocol: 'measurement' } }, buyerOne);
+      assert.deepStrictEqual(measurement.tasks, []);
+    });
+
+    it('does not leak tasks between credentials that resolve to the same account', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_shared',
+        ownerScope: 'api_key:buyer-1',
+      });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_shared' }),
+      });
+      const buyerTwo = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-2' } } };
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, buyerTwo);
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+
+      const listed = await callTool(server, 'list_tasks', { filters: { task_ids: [owned.taskId] } }, buyerTwo);
+      assert.deepStrictEqual(listed.tasks, []);
+    });
+
+    it('uses sessionKey ahead of shared credentials for task alias ownership', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const channelA = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_shared',
+        ownerScope: 'session:channel-a',
+      });
+      await taskRegistry.complete(channelA.taskId, { creatives: [{ creative_id: 'cr_a' }] });
+      const channelB = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_shared',
+        ownerScope: 'session:channel-b',
+      });
+      await taskRegistry.complete(channelB.taskId, { creatives: [{ creative_id: 'cr_b' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_shared' }),
+        resolveSessionKey: async ({ params }) => params?.context?.publisher_account_id,
+      });
+      const sharedCredential = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const owned = await callTool(
+        server,
+        'get_task_status',
+        { task_id: channelA.taskId, context: { publisher_account_id: 'channel-a' } },
+        sharedCredential
+      );
+      assert.strictEqual(owned.task_id, channelA.taskId);
+
+      const crossSession = await callToolRaw(
+        server,
+        'get_task_status',
+        { task_id: channelA.taskId, context: { publisher_account_id: 'channel-b' } },
+        sharedCredential
+      );
+      assert.strictEqual(crossSession.isError, true);
+      assert.strictEqual(crossSession.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+
+      const listed = await callTool(
+        server,
+        'list_tasks',
+        {
+          filters: { task_ids: [channelA.taskId, channelB.taskId] },
+          context: { publisher_account_id: 'channel-b' },
+        },
+        sharedCredential
+      );
+      assert.deepStrictEqual(
+        listed.tasks.map(task => task.task_id),
+        [channelB.taskId]
+      );
+    });
+
+    it('filters list_tasks datetime boundaries by instant, not lexicographic string order', async () => {
+      const tasks = [
+        {
+          taskId: 'task_equal_boundary',
+          tool: 'sync_creatives',
+          accountId: 'acct_1',
+          ownerScope: 'api_key:buyer-1',
+          status: 'completed',
+          createdAt: '2026-05-01T05:00:00.000Z',
+          updatedAt: '2026-05-01T05:00:00.000Z',
+          result: { creatives: [{ creative_id: 'cr_equal' }] },
+        },
+        {
+          taskId: 'task_after_boundary',
+          tool: 'sync_creatives',
+          accountId: 'acct_1',
+          ownerScope: 'api_key:buyer-1',
+          status: 'completed',
+          createdAt: '2026-05-01T05:01:00.000Z',
+          updatedAt: '2026-05-01T05:01:00.000Z',
+          result: { creatives: [{ creative_id: 'cr_after' }] },
+        },
+      ];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry: {
+          async create() {
+            return { taskId: 'unused' };
+          },
+          async getTask(taskId) {
+            return tasks.find(task => task.taskId === taskId) ?? null;
+          },
+          async list() {
+            return { tasks };
+          },
+          async complete() {},
+          async fail() {},
+          async updateProgress() {},
+          _registerBackground() {},
+          async awaitTask() {},
+        },
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const listed = await callTool(
+        server,
+        'list_tasks',
+        { filters: { created_after: '2026-05-01T00:00:00-05:00' } },
+        buyerOne
+      );
+      assert.deepStrictEqual(
+        listed.tasks.map(task => task.task_id),
+        ['task_after_boundary']
+      );
+    });
+
+    it('defensively rechecks owner scope after custom taskRegistry.list results', async () => {
+      const task = {
+        taskId: 'task_owned_by_buyer_1',
+        tool: 'sync_creatives',
+        accountId: 'acct_shared',
+        ownerScope: 'api_key:buyer-1',
+        status: 'completed',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        updatedAt: '2026-05-01T00:01:00.000Z',
+        result: { creatives: [{ creative_id: 'cr_1' }] },
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry: {
+          async create() {
+            return { taskId: task.taskId };
+          },
+          async getTask(taskId) {
+            return taskId === task.taskId ? task : null;
+          },
+          async list() {
+            return { tasks: [task] };
+          },
+          async complete() {},
+          async fail() {},
+          async updateProgress() {},
+          _registerBackground() {},
+          async awaitTask() {},
+        },
+        resolveAccountFromAuth: async () => ({ id: 'acct_shared' }),
+      });
+      const buyerTwo = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-2' } } };
+
+      const listed = await callTool(server, 'list_tasks', { filters: { task_ids: [task.taskId] } }, buyerTwo);
+      assert.deepStrictEqual(listed.tasks, []);
+    });
+
+    it('does not ignore explicit task-query accounts when explicit resolution is unavailable', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_auth',
+        ownerScope: 'api_key:buyer-1',
+      });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_auth' }),
+      });
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const status = await callToolRaw(
+        server,
+        'get_task_status',
+        { task_id: owned.taskId, account: { account_id: 'acct_other' } },
+        buyerOne
+      );
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+
+      const listed = await callToolRaw(
+        server,
+        'list_tasks',
+        { account: { account_id: 'acct_other' }, filters: { task_ids: [owned.taskId] } },
+        buyerOne
+      );
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    });
+
+    it('serves legacy ownerless task records only through account-fallback scope', async () => {
+      const task = {
+        taskId: 'task_legacy_ownerless',
+        tool: 'sync_creatives',
+        accountId: 'acct_legacy',
+        status: 'completed',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        updatedAt: '2026-05-01T00:01:00.000Z',
+        result: { creatives: [{ creative_id: 'cr_legacy' }] },
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry: {
+          async create() {
+            return { taskId: task.taskId };
+          },
+          async getTask(taskId) {
+            return taskId === task.taskId ? task : null;
+          },
+          async list() {
+            return { tasks: [task] };
+          },
+          async complete() {},
+          async fail() {},
+          async updateProgress() {},
+          _registerBackground() {},
+          async awaitTask() {},
+        },
+        resolveAccount: async ref => ({ id: ref.account_id }),
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: task.taskId,
+        account: { account_id: 'acct_legacy' },
+      });
+      assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
+      assert.strictEqual(status.structuredContent.task_id, task.taskId);
+
+      const listed = await callTool(server, 'list_tasks', {
+        account: { account_id: 'acct_legacy' },
+        filters: { task_ids: [task.taskId] },
+      });
+      assert.strictEqual(listed.tasks.length, 1);
+      assert.strictEqual(listed.tasks[0].task_id, task.taskId);
+
+      const credentialScoped = await callToolRaw(
+        server,
+        'get_task_status',
+        {
+          task_id: task.taskId,
+          account: { account_id: 'acct_legacy' },
+        },
+        { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } }
+      );
+      assert.strictEqual(credentialScoped.isError, true);
+      assert.strictEqual(credentialScoped.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+    });
+
+    it('applies authInfo credential scanning to protocol task aliases', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({
+        tool: 'sync_creatives',
+        accountId: 'acct_1',
+        ownerScope: 'api_key:buyer-1',
+      });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true },
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const extra = {
+        authInfo: {
+          credential: { kind: 'api_key', key_id: 'buyer-1' },
+          extra: { upstream_access_token: 'sekret' },
+        },
+      };
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.7');
+
+      const listed = await callToolRaw(server, 'list_tasks', {}, extra);
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.1-rc.7');
+
+      const contextLeak = await callToolRaw(
+        server,
+        'get_task_status',
+        { task_id: owned.taskId, context: { upstream_access_token: 'sekret-context' } },
+        { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } }
+      );
+      assert.strictEqual(contextLeak.isError, true);
+      assert.strictEqual(contextLeak.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+      assert.strictEqual(contextLeak.structuredContent.context, undefined);
+      assert.ok(!JSON.stringify(contextLeak).includes('sekret-context'));
+    });
+
+    it('fails closed when task polling has no account scope', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const other = await taskRegistry.create({ tool: 'activate_signal', accountId: 'acct_2' });
+      const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskRegistry });
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId, include_result: true });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+
+      const listed = await callTool(server, 'list_tasks', { filters: { task_ids: [owned.taskId, other.taskId] } });
+      assert.deepStrictEqual(listed.tasks, []);
+    });
+
+    it('returns ACCOUNT_NOT_FOUND for explicit nonexistent task-query accounts', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccount: async () => null,
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: owned.taskId,
+        account: { account_id: 'missing' },
+      });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+
+      const listed = await callToolRaw(server, 'list_tasks', {
+        account: { account_id: 'missing' },
+        filters: { task_ids: [owned.taskId] },
+      });
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    });
+
+    it('applies responseEnhancer once on protocol task account-resolution errors', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
+      let enhancerCalls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccount: async () => {
+          throw new Error('account-db-down');
+        },
+        responseEnhancer: response => {
+          enhancerCalls += 1;
+          response.structuredContent = {
+            ...(response.structuredContent ?? {}),
+            enhancer_calls: enhancerCalls,
+          };
+        },
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', {
+        task_id: owned.taskId,
+        account: { account_id: 'acct_1' },
+      });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+      assert.strictEqual(status.structuredContent.enhancer_calls, 1);
+      assert.strictEqual(enhancerCalls, 1);
     });
   });
 
@@ -1556,7 +2226,7 @@ describe('createAdcpServer', () => {
   });
 
   describe('eventTracking domain', () => {
-    it('registers event tracking tools in their own domain', () => {
+    it('registers event tracking tools in their own domain without advertising experimental measurement', async () => {
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
@@ -1572,6 +2242,10 @@ describe('createAdcpServer', () => {
       assert.ok(tools.includes('log_event'));
       assert.ok(tools.includes('sync_audiences'));
       assert.ok(tools.includes('sync_catalogs'));
+
+      const caps = await callTool(server, 'get_adcp_capabilities', {});
+      assert.ok(caps.supported_protocols.includes('media_buy'));
+      assert.ok(!caps.supported_protocols.includes('measurement'));
     });
   });
 

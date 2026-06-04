@@ -202,6 +202,10 @@ describe('TASK_FEATURE_MAP', () => {
     assert.ok(TASK_FEATURE_MAP.sync_audiences.includes('media_buy'));
   });
 
+  test('maps sync_catalogs to media_buy', () => {
+    assert.ok(TASK_FEATURE_MAP.sync_catalogs.includes('media_buy'));
+  });
+
   test('maps event tracking tasks to conversion_tracking', () => {
     for (const task of ['sync_event_sources', 'log_event']) {
       assert.ok(TASK_FEATURE_MAP[task].includes('conversion_tracking'), `${task} should require conversion_tracking`);
@@ -228,6 +232,12 @@ describe('TASK_FEATURE_MAP', () => {
     );
   });
 
+  test('maps creative-only tasks to creative protocol', () => {
+    for (const task of ['build_creative', 'list_transformers', 'preview_creative']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('creative'), `${task} should require creative`);
+    }
+  });
+
   test('maps signals tasks to signals protocol', () => {
     for (const task of ['get_signals', 'activate_signal']) {
       assert.ok(TASK_FEATURE_MAP[task].includes('signals'), `${task} should require signals`);
@@ -244,6 +254,12 @@ describe('TASK_FEATURE_MAP', () => {
     for (const task of ['list_content_standards', 'calibrate_content']) {
       assert.ok(TASK_FEATURE_MAP[task].includes('governance'), `${task} should require governance`);
       assert.ok(TASK_FEATURE_MAP[task].includes('content_standards'), `${task} should require content_standards`);
+    }
+  });
+
+  test('maps brand tasks to brand protocol', () => {
+    for (const task of ['get_brand_identity', 'search_brands', 'get_rights', 'acquire_rights', 'update_rights']) {
+      assert.ok(TASK_FEATURE_MAP[task].includes('brand'), `${task} should require brand`);
     }
   });
 

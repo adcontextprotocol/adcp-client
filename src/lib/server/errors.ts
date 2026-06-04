@@ -209,6 +209,10 @@ export function applyAdcpErrorAllowlist(code: string, payload: Record<string, un
   return out as unknown as AdcpErrorPayload;
 }
 
+export function sanitizeStructuredAdcpError<T extends { code: string; message: string }>(error: T): T {
+  return applyAdcpErrorAllowlist(error.code, error as unknown as Record<string, unknown>) as unknown as T;
+}
+
 function sanitizeAdcpErrorDetails(code: string, payload: Record<string, unknown>): Record<string, unknown> {
   if (code !== 'AUTHORIZATION_REQUIRED' || payload.details === undefined) return payload;
 

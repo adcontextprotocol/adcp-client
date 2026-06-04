@@ -22,7 +22,8 @@ export type AdcpProtocol =
   | 'sponsored_intelligence'
   | 'trusted_match'
   | 'compliance_testing'
-  | 'brand';
+  | 'brand'
+  | 'measurement';
 
 /**
  * Media buy features available on the agent
@@ -244,6 +245,9 @@ export const MEDIA_BUY_TOOLS = [
   'get_media_buy_delivery',
   'provide_performance_feedback',
   'sync_audiences',
+  'sync_event_sources',
+  'sync_catalogs',
+  'log_event',
 ] as const;
 
 export const SIGNALS_TOOLS = ['get_signals', 'activate_signal'] as const;
@@ -302,7 +306,13 @@ export const COMPLIANCE_TOOLS = ['comply_test_controller'] as const;
 // POSTs to the `approval_webhook` URL returned by `acquire_rights`), not an
 // MCP/A2A tool the seller exposes. Adopters wire it via their HTTP server
 // using `BrandRightsPlatform.reviewCreativeApproval`.
-export const BRAND_RIGHTS_TOOLS = ['get_brand_identity', 'get_rights', 'acquire_rights', 'update_rights'] as const;
+export const BRAND_RIGHTS_TOOLS = [
+  'get_brand_identity',
+  'search_brands',
+  'get_rights',
+  'acquire_rights',
+  'update_rights',
+] as const;
 
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 
@@ -684,6 +694,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
 
   // Audience management
   sync_audiences: ['media_buy', 'audience_targeting'],
+  sync_catalogs: ['media_buy'],
 
   // Event tracking / conversion
   sync_event_sources: ['media_buy', 'conversion_tracking'],
@@ -695,6 +706,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
 
   // Creative protocol
   build_creative: ['creative'],
+  list_transformers: ['creative'],
   preview_creative: ['creative'],
 
   // Governance protocol
@@ -735,8 +747,10 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
 
   // Brand rights protocol
   get_brand_identity: ['brand'],
+  search_brands: ['brand'],
   get_rights: ['brand'],
   acquire_rights: ['brand'],
+  update_rights: ['brand'],
 };
 
 /**

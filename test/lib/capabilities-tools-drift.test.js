@@ -88,6 +88,12 @@ describe('capabilities.ts: tool arrays drift against manifest.json', () => {
     );
   });
 
+  it('BRAND_RIGHTS_TOOLS includes every brand task type from rc.7', () => {
+    for (const tool of ['get_brand_identity', 'search_brands', 'get_rights', 'acquire_rights']) {
+      assert.ok(BRAND_RIGHTS_TOOLS.includes(tool), `BRAND_RIGHTS_TOOLS must include ${tool}`);
+    }
+  });
+
   it('PROTOCOL_TOOLS contains exactly the manifest tools whose protocol === "protocol"', () => {
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
     const manifestProtocolTools = Object.entries(manifest.tools)

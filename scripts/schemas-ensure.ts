@@ -17,7 +17,7 @@
  * No CI-time cost: CI's explicit `sync-schemas:all` populates both
  * caches before tests run, so this guard is a no-op there.
  */
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
@@ -35,8 +35,7 @@ function hasCurrentV3Cache(): boolean {
 }
 
 function hasStableV30Cache(): boolean {
-  if (!existsSync(CACHE_ROOT)) return false;
-  return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(e => e.isDirectory() && /^3\.0\.\d+$/.test(e.name));
+  return existsSync(path.join(CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
 }
 
 function hasV25Cache(): boolean {
