@@ -91,6 +91,7 @@
     "python-reference-seller-interop",
     "quiet-tasks-get-mcp",
     "rate-limit-trip-observer",
+    "rc-seven-task-auth",
     "reference-seller-matrix",
     "reference-seller-typescript-row",
     "registry-client-hardening",
