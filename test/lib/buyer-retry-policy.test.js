@@ -168,6 +168,43 @@ describe('decideRetry — operator-grade defaults', () => {
         assert.equal(d.reason, 'auth');
       });
     }
+
+    it('AUTHORIZATION_REQUIRED preserves sanitized handoff details for UX routing', () => {
+      const d = decideRetry(
+        err('AUTHORIZATION_REQUIRED', {
+          details: {
+            missing_connections: [
+              {
+                provider: 'tiktok',
+                connection_type: 'publisher_identity',
+                status: 'missing',
+                resource_ref: {
+                  identity_id: 'creator_456',
+                  private_note: 'internal only',
+                },
+                authorization_url: 'https://seller.example/connections/tiktok/creator_456',
+                authorization_instructions: 'Connect @acme in TikTok Business Center, then retry.',
+                access_token: 'tok_secret',
+              },
+            ],
+            authorization_url: 'https://seller.example/connections',
+            refresh_token: 'refresh_secret',
+            tenant_id: 'tenant_secret',
+          },
+        })
+      );
+
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'auth');
+      assert.equal(d.authorization_url, 'https://seller.example/connections');
+      assert.ok(Array.isArray(d.missing_connections));
+      assert.equal(d.missing_connections[0].provider, 'tiktok');
+      assert.equal(d.missing_connections[0].authorization_url, 'https://seller.example/connections/tiktok/creator_456');
+      assert.equal(d.missing_connections[0].access_token, undefined);
+      assert.equal(d.missing_connections[0].resource_ref.private_note, undefined);
+      assert.equal(d.details.refresh_token, undefined);
+      assert.equal(d.details.tenant_id, undefined);
+    });
   });
 
   describe('AUTH_INVALID escalates as terminal (no SSO retry-storm — adcp#3730)', () => {

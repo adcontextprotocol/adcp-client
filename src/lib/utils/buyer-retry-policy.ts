@@ -19,6 +19,7 @@
  */
 
 import type { AdcpStructuredError, ErrorCode } from '../server/decisioning/async-outcome';
+import { applyAdcpErrorAllowlist } from '../server/errors';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -79,6 +80,18 @@ export type RetryDecision =
         | 'unknown'; // non-standard code, no policy override — buyer surfaces to user
       /** Human-facing message. Mirrors `error.message`. */
       message: string;
+      /**
+       * Safe code-specific details for UX routing. Currently populated for
+       * `AUTHORIZATION_REQUIRED` after the same allowlist/sanitizer used on
+       * server error envelopes.
+       */
+      details?: Record<string, unknown>;
+      /** Convenience mirror of `details.missing_connections` for auth UX handoffs. */
+      missing_connections?: unknown[];
+      /** Convenience auth URL, from top-level details or the first missing connection that provides one. */
+      authorization_url?: string;
+      /** Convenience auth instructions, from top-level details or the first missing connection that provides them. */
+      authorization_instructions?: string;
     };
 
 /**
@@ -363,6 +376,47 @@ function clampDelayMs(
   return Math.min(MAX_DELAY_MS, fallbackMs);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function authorizationRequiredEscalationContext(
+  error: AdcpStructuredError
+): Partial<Extract<RetryDecision, { action: 'escalate' }>> {
+  if (error.code !== 'AUTHORIZATION_REQUIRED' || error.details === undefined) return {};
+
+  const sanitized = applyAdcpErrorAllowlist('AUTHORIZATION_REQUIRED', {
+    code: error.code,
+    message: error.message,
+    recovery: error.recovery,
+    details: error.details,
+  });
+  const details = sanitized.details;
+  if (!isRecord(details)) return {};
+
+  const missingConnections = Array.isArray(details.missing_connections) ? details.missing_connections : undefined;
+  const firstMissing = missingConnections?.find(isRecord);
+  const authorizationUrl =
+    typeof details.authorization_url === 'string'
+      ? details.authorization_url
+      : typeof firstMissing?.authorization_url === 'string'
+        ? firstMissing.authorization_url
+        : undefined;
+  const authorizationInstructions =
+    typeof details.authorization_instructions === 'string'
+      ? details.authorization_instructions
+      : typeof firstMissing?.authorization_instructions === 'string'
+        ? firstMissing.authorization_instructions
+        : undefined;
+
+  return {
+    details,
+    ...(missingConnections !== undefined && { missing_connections: missingConnections }),
+    ...(authorizationUrl !== undefined && { authorization_url: authorizationUrl }),
+    ...(authorizationInstructions !== undefined && { authorization_instructions: authorizationInstructions }),
+  };
+}
+
 function applyPolicy(
   policy: CodePolicy | undefined,
   error: AdcpStructuredError,
@@ -400,7 +454,12 @@ function applyPolicy(
   }
 
   if (policy.action === 'escalate') {
-    return { action: 'escalate', reason: policy.escalateReason, message: error.message };
+    return {
+      action: 'escalate',
+      reason: policy.escalateReason,
+      message: error.message,
+      ...authorizationRequiredEscalationContext(error),
+    };
   }
 
   if (attempt >= policy.attemptCap) {
