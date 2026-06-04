@@ -3786,7 +3786,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
     }
 
-    if (resolveAccountFromAuth) {
+    const accountRef = params.account;
+    if (accountRef != null && resolveAccount) {
+      try {
+        const account = await resolveAccount(accountRef as AccountReference, {
+          toolName: toolName as AdcpServerToolName,
+          authInfo: ctx.authInfo,
+          ...(ctx.agent != null && { agent: ctx.agent }),
+          input: params,
+        });
+        if (account != null) ctx.account = account;
+      } catch (err) {
+        if (isThrownAdcpError(err)) return { error: applyResponseEnhancer(err) };
+        if (err instanceof AdcpError) return { error: applyResponseEnhancer(projectThrownAdcpError(err)) };
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Account resolution failed', { tool: toolName, error: reason });
+        return {
+          error: applyResponseEnhancer(
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Account resolution failed',
+              ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+            })
+          ),
+        };
+      }
+    } else if (resolveAccountFromAuth) {
       try {
         const account = await resolveAccountFromAuth({
           toolName,
