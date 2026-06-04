@@ -1908,17 +1908,32 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
   { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
   { numbered: 'CreateMediaBuySubmitted1', base: 'CreateMediaBuySubmitted' },
-  ...Array.from({ length: 10 }, (_, index) => index + 2).flatMap(suffix => [
-    { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
-    { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },
-    { numbered: `AssetVariant${suffix}`, base: 'AssetVariant' },
-  ]),
 ];
+
+const JSTS_REPEATED_UNDER_RESOLUTION_BASES = ['VASTAsset', 'DAASTAsset', 'AssetVariant'] as const;
+
+function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
+  const exportedTypes = collectExportedTypeNames(typeDefinitions);
+  const aliases = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(alias => [alias.numbered, alias]));
+
+  for (const base of JSTS_REPEATED_UNDER_RESOLUTION_BASES) {
+    if (!exportedTypes.has(base)) continue;
+    const numberedPattern = new RegExp(`^${base}(\\d+)$`);
+    for (const name of exportedTypes) {
+      const match = name.match(numberedPattern);
+      if (!match || Number(match[1]) < 2) continue;
+      aliases.set(name, { numbered: name, base });
+    }
+  }
+
+  return [...aliases.values()];
+}
 
 export function applyKnownJstsAliases(typeDefinitions: string): string {
   const lines = typeDefinitions.split('\n');
-  const targetNames = new Set(JSTS_UNDER_RESOLUTION_ALIASES.map(a => a.numbered));
-  const baseByNumbered = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(a => [a.numbered, a.base]));
+  const aliases = buildKnownJstsAliases(typeDefinitions);
+  const targetNames = new Set(aliases.map(a => a.numbered));
+  const baseByNumbered = new Map(aliases.map(a => [a.numbered, a.base]));
   const aliasedNames = new Set<string>();
 
   const outputLines: string[] = [];
