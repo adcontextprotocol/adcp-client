@@ -170,8 +170,8 @@ export interface ForceCreateMediaBuyArmParams {
 }
 
 export interface ForceGetProductsArmParams {
-  arm: 'submitted' | 'input-required';
-  task_id?: string;
+  arm: 'submitted';
+  task_id: string;
   message?: string;
 }
 

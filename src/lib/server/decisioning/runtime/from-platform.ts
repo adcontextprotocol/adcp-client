@@ -2718,7 +2718,11 @@ function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): str
 }
 
 function hasPushNotificationConfig(params: unknown): boolean {
-  return params != null && typeof params === 'object' && 'push_notification_config' in params;
+  return (
+    params != null &&
+    typeof params === 'object' &&
+    (params as { push_notification_config?: unknown }).push_notification_config !== undefined
+  );
 }
 
 function rejectHandRolledSubmitted(result: unknown): void {

@@ -752,6 +752,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(result.structuredContent.status, 'submitted');
     assert.ok(result.structuredContent.task_id.startsWith('task_'));
     assert.strictEqual(result.structuredContent.task_id, capturedTaskId);
+    assert.strictEqual(result.structuredContent.products, undefined);
+    assert.strictEqual(result.structuredContent.proposals, undefined);
 
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);
@@ -795,6 +797,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(result.structuredContent.status, 'submitted');
     assert.ok(result.structuredContent.task_id.startsWith('task_'));
     assert.strictEqual(result.structuredContent.task_id, capturedTaskId);
+    assert.strictEqual(result.structuredContent.signals, undefined);
 
     const taskId = result.structuredContent.task_id;
     await server.awaitTask(taskId);
@@ -843,6 +846,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     assert.strictEqual(submitted.structuredContent.status, 'submitted');
     const taskId = submitted.structuredContent.task_id;
+    assert.strictEqual(submitted.structuredContent.products, undefined);
+    assert.strictEqual(submitted.structuredContent.proposals, undefined);
 
     const status = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -896,6 +901,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     assert.strictEqual(emits.length, 1, 'one get_products webhook emitted on terminal completion');
     assert.strictEqual(emits[0].payload.task_type, 'get_products');
+    assert.strictEqual(emits[0].payload.task_id, taskId);
     assert.strictEqual(emits[0].payload.protocol, 'media-buy');
     assert.strictEqual(emits[0].payload.status, 'completed');
     assert.strictEqual(emits[0].payload.operation_id, 'op_products_async');
@@ -907,7 +913,12 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assertMcpWebhookPayloadValid(emits[0].payload);
   });
 
-  it('async getSignals remains visible via protocol task tools', async () => {
+  it('async getSignals is visible via task tools and emits terminal webhook', async () => {
+    let releaseTask;
+    const unblockTask = new Promise(resolve => {
+      releaseTask = resolve;
+    });
+    const emits = [];
     const platform = {
       ...buildHitlPlatform(),
       sales: undefined,
@@ -917,9 +928,12 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       },
       signals: {
         getSignals: async (_req, ctx) =>
-          ctx.handoffToTask(async () => ({
-            signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
-          })),
+          ctx.handoffToTask(async () => {
+            await unblockTask;
+            return {
+              signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+            };
+          }),
         activateSignal: async () => ({ deployments: [] }),
       },
     };
@@ -927,26 +941,88 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       name: 'signals-hitl',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'strict' },
+      taskWebhookEmitter: {
+        emit: async params => {
+          emits.push(params);
+          return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+        },
+      },
     });
 
-    const submitted = await dispatchGetSignals(server);
+    const submitted = await dispatchGetSignals(server, {
+      push_notification_config: {
+        url: 'https://buyer.example.com/signals-webhook',
+        token: 'signals-webhook-token-1234',
+        operation_id: 'op_signals_async',
+      },
+    });
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
     const taskId = submitted.structuredContent.task_id;
-    await server.awaitTask(taskId);
+    assert.strictEqual(submitted.structuredContent.signals, undefined);
 
-    const status = await server.dispatchTestRequest({
+    const pending = await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
         name: 'get_task_status',
         arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
       },
     });
-    assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
-    assert.strictEqual(status.structuredContent.task_type, 'get_signals');
-    assert.strictEqual(status.structuredContent.protocol, 'signals');
-    assert.strictEqual(status.structuredContent.status, 'completed');
-    assert.deepStrictEqual(status.structuredContent.result, {
+    assert.notStrictEqual(pending.isError, true, JSON.stringify(pending.structuredContent));
+    assert.strictEqual(pending.structuredContent.task_type, 'get_signals');
+    assert.strictEqual(pending.structuredContent.protocol, 'signals');
+    assert.strictEqual(pending.structuredContent.status, 'submitted');
+    assert.strictEqual(pending.structuredContent.has_webhook, true);
+    assert.strictEqual(pending.structuredContent.result, undefined);
+
+    const listed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_tasks',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          filters: { task_ids: [taskId], task_type: 'get_signals', has_webhook: true },
+        },
+      },
+    });
+    assert.notStrictEqual(listed.isError, true, JSON.stringify(listed.structuredContent));
+    assert.deepStrictEqual(
+      listed.structuredContent.tasks.map(task => ({
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status: task.status,
+        has_webhook: task.has_webhook,
+      })),
+      [{ task_id: taskId, task_type: 'get_signals', status: 'submitted', has_webhook: true }]
+    );
+
+    releaseTask();
+    await server.awaitTask(taskId);
+
+    const completed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(completed.isError, true, JSON.stringify(completed.structuredContent));
+    assert.strictEqual(completed.structuredContent.task_type, 'get_signals');
+    assert.strictEqual(completed.structuredContent.protocol, 'signals');
+    assert.strictEqual(completed.structuredContent.status, 'completed');
+    assert.deepStrictEqual(completed.structuredContent.result, {
       signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
     });
+    assert.strictEqual(emits.length, 1, 'one get_signals webhook emitted on terminal completion');
+    assert.strictEqual(emits[0].payload.task_type, 'get_signals');
+    assert.strictEqual(emits[0].payload.task_id, taskId);
+    assert.strictEqual(emits[0].payload.protocol, 'signals');
+    assert.strictEqual(emits[0].payload.status, 'completed');
+    assert.strictEqual(emits[0].payload.operation_id, 'op_signals_async');
+    assert.strictEqual(emits[0].payload.token, 'signals-webhook-token-1234');
+    assert.deepStrictEqual(emits[0].payload.result, {
+      signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+    });
+    assertMcpWebhookPayloadValid(emits[0].payload);
   });
 
   it('rejects async discovery when account is omitted', async () => {
@@ -1029,6 +1105,15 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(productsHandoff.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     assert.strictEqual(productsHandoff.structuredContent.adcp_error.field, 'buying_mode');
 
+    const productsUndefinedPush = await dispatchGetProducts(productsServer, {
+      buying_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: undefined,
+    });
+    assert.strictEqual(productsUndefinedPush.isError, true);
+    assert.strictEqual(productsUndefinedPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(productsUndefinedPush.structuredContent.adcp_error.field, 'buying_mode');
+
     let signalHandlerCalls = 0;
     const signalsPlatform = {
       ...buildHitlPlatform(),
@@ -1061,6 +1146,15 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(signalsHandoff.isError, true);
     assert.strictEqual(signalsHandoff.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     assert.strictEqual(signalsHandoff.structuredContent.adcp_error.field, 'discovery_mode');
+
+    const signalsUndefinedPush = await dispatchGetSignals(signalsServer, {
+      discovery_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: undefined,
+    });
+    assert.strictEqual(signalsUndefinedPush.isError, true);
+    assert.strictEqual(signalsUndefinedPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signalsUndefinedPush.structuredContent.adcp_error.field, 'discovery_mode');
   });
 
   it('createMediaBuy returning ctx.handoffToTask: submitted envelope, background completes terminal state', async () => {

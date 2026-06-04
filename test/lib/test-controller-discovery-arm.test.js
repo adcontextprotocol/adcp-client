@@ -21,7 +21,7 @@ describe('async discovery controller extension scenarios', () => {
     ]);
   });
 
-  test('dispatches force_get_products_arm submitted and input-required directives', async () => {
+  test('dispatches force_get_products_arm submitted directives', async () => {
     const seen = [];
     const store = {
       async forceGetProductsArm(params) {
@@ -38,18 +38,10 @@ describe('async discovery controller extension scenarios', () => {
         message: 'queued for curation',
       },
     });
-    const inputRequired = await handleTestControllerRequest(store, {
-      scenario: DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM,
-      params: { arm: 'input-required', message: 'budget needed' },
-    });
 
     assert.equal(submitted.success, true);
     assert.deepEqual(submitted.forced, { arm: 'submitted', task_id: 'task_products_async_1' });
-    assert.equal(inputRequired.success, true);
-    assert.deepEqual(seen, [
-      { arm: 'submitted', task_id: 'task_products_async_1', message: 'queued for curation' },
-      { arm: 'input-required', task_id: undefined, message: 'budget needed' },
-    ]);
+    assert.deepEqual(seen, [{ arm: 'submitted', task_id: 'task_products_async_1', message: 'queued for curation' }]);
   });
 
   test('validates discovery arm directive params', async () => {
@@ -66,7 +58,7 @@ describe('async discovery controller extension scenarios', () => {
       scenario: DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM,
       params: { arm: 'submitted' },
     });
-    const productsUnexpectedTaskId = await handleTestControllerRequest(store, {
+    const productsWrongArm = await handleTestControllerRequest(store, {
       scenario: DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM,
       params: { arm: 'input-required', task_id: 'task_not_allowed' },
     });
@@ -81,8 +73,8 @@ describe('async discovery controller extension scenarios', () => {
 
     assert.equal(productsMissingTaskId.success, false);
     assert.equal(productsMissingTaskId.error, 'INVALID_PARAMS');
-    assert.equal(productsUnexpectedTaskId.success, false);
-    assert.equal(productsUnexpectedTaskId.error, 'INVALID_PARAMS');
+    assert.equal(productsWrongArm.success, false);
+    assert.equal(productsWrongArm.error, 'INVALID_PARAMS');
     assert.equal(signalsWrongArm.success, false);
     assert.equal(signalsWrongArm.error, 'INVALID_PARAMS');
     assert.equal(signalsMissingTaskId.success, false);

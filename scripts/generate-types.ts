@@ -953,6 +953,29 @@ const FORCED_ENUM_VALUES: Record<string, string[]> = {
   'task-type': ['get_products'],
 };
 
+const FORCED_ENUM_SCHEMA_VERSION: Record<string, string> = {
+  'task-type': '3.1.0-rc.8',
+};
+
+function forcedEnumValuesForSchema(schema: any, schemaName: string): string[] | undefined {
+  const forcedEnumValues = FORCED_ENUM_VALUES[schemaName];
+  if (!forcedEnumValues) return undefined;
+
+  const requiredVersion = FORCED_ENUM_SCHEMA_VERSION[schemaName];
+  const schemaId = typeof schema.$id === 'string' ? schema.$id : '';
+  if (requiredVersion && schemaId.includes(requiredVersion)) {
+    return forcedEnumValues;
+  }
+
+  if (requiredVersion && getCachedAdCPVersion() === requiredVersion) {
+    throw new Error(
+      `Expected ${schemaName} enum shim for AdCP ${requiredVersion} to apply, but schema $id was ${schemaId || '(missing)'}.`
+    );
+  }
+
+  return undefined;
+}
+
 /**
  * Remove deprecated fields from a schema based on DEPRECATED_SCHEMA_FIELDS config
  * Also handles deprecated enum values
@@ -960,13 +983,16 @@ const FORCED_ENUM_VALUES: Record<string, string[]> = {
 function removeDeprecatedFields(schema: any, schemaName: string): any {
   if (schema.enum && Array.isArray(schema.enum)) {
     let cleaned: any | undefined;
-    const forcedEnumValues =
-      typeof schema.$id === 'string' && schema.$id.includes('3.1.0-rc.8')
-        ? FORCED_ENUM_VALUES[schemaName]
-        : undefined;
+    const forcedEnumValues = forcedEnumValuesForSchema(schema, schemaName);
     if (forcedEnumValues) {
+      const missingForcedValues = forcedEnumValues.filter(value => !schema.enum.includes(value));
+      if (missingForcedValues.length === 0) {
+        throw new Error(
+          `Expected ${schemaName} enum shim to add ${forcedEnumValues.join(', ')}, but no values were missing.`
+        );
+      }
       cleaned = { ...schema };
-      cleaned.enum = [...forcedEnumValues.filter(value => !cleaned.enum.includes(value)), ...cleaned.enum];
+      cleaned.enum = [...missingForcedValues, ...cleaned.enum];
       if (cleaned.enumDescriptions) {
         cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
         for (const value of forcedEnumValues) {

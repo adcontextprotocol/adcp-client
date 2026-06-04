@@ -283,12 +283,12 @@ export interface TestControllerStore {
 
   /**
    * Register a directive shaping the next `get_products` call from this
-   * authenticated sandbox account into the requested async arm. Extension
+   * authenticated sandbox account into the submitted async arm. Extension
    * scenario for async discovery storyboard prep (adcp#5342).
    */
   forceGetProductsArm?(params: {
-    arm: 'submitted' | 'input-required';
-    task_id?: string;
+    arm: 'submitted';
+    task_id: string;
     message?: string;
   }): Promise<ForcedDirectiveSuccess>;
 
@@ -1265,28 +1265,19 @@ async function handleTestControllerRequestImpl(
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
         }
         const arm = params?.arm;
-        if (arm !== 'submitted' && arm !== 'input-required') {
-          return controllerError(
-            'INVALID_PARAMS',
-            "force_get_products_arm requires params.arm = 'submitted' or 'input-required'"
-          );
+        if (arm !== 'submitted') {
+          return controllerError('INVALID_PARAMS', "force_get_products_arm requires params.arm = 'submitted'");
         }
-        if (arm === 'submitted' && !params?.task_id) {
+        if (!params?.task_id) {
           return controllerError(
             'INVALID_PARAMS',
             "force_get_products_arm with arm='submitted' requires params.task_id"
           );
         }
-        if (arm === 'input-required' && params?.task_id !== undefined) {
-          return controllerError(
-            'INVALID_PARAMS',
-            "force_get_products_arm with arm='input-required' must not include params.task_id"
-          );
-        }
         return wrapStoreSuccess(
           await store.forceGetProductsArm({
             arm,
-            task_id: params?.task_id as string | undefined,
+            task_id: params.task_id as string,
             message: params?.message as string | undefined,
           })
         );
