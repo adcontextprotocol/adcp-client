@@ -40,6 +40,17 @@ import type { CursorPage, CursorRequest } from './pagination';
 import type { AdcpStructuredError } from './async-outcome';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 
+export const ACCOUNT_AUTHORIZATION_WIRE_KEYS = [
+  'allowed_tasks',
+  'field_scopes',
+  'scope_name',
+  'read_only',
+] as const satisfies readonly (keyof AccountAuthorization)[];
+
+type MissingAccountAuthorizationWireKey = Exclude<keyof AccountAuthorization, (typeof ACCOUNT_AUTHORIZATION_WIRE_KEYS)[number]>;
+const ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE: Record<MissingAccountAuthorizationWireKey, never> = {};
+void ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE;
+
 type WireNotificationConfig = Omit<NotificationConfig, 'authentication'> & {
   authentication?: Omit<NonNullable<NotificationConfig['authentication']>, 'credentials'>;
 };

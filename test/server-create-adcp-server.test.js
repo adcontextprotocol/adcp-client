@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
+const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
 const { adcpError } = require('../dist/lib/server/errors');
 
 // These tests exercise envelope wrapping, state-store propagation, and
@@ -1431,6 +1432,62 @@ describe('createAdcpServer', () => {
       const caps = await callTool(server, 'get_adcp_capabilities', {});
       assert.deepStrictEqual(caps.supported_protocols, []);
       assert.deepStrictEqual(caps.adcp.major_versions, [3]);
+    });
+  });
+
+  describe('protocol task tools', () => {
+    it('registers and serves get_task_status/list_tasks on a built server', async () => {
+      const taskStore = new InMemoryTaskStore();
+      try {
+        const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskStore });
+        const tools = registeredTools(server);
+        assert.ok(tools.includes('get_task_status'));
+        assert.ok(tools.includes('list_tasks'));
+
+        const listed = await callToolRaw(server, 'list_tasks', {});
+        assert.notStrictEqual(listed.isError, true);
+        assert.deepStrictEqual(listed.structuredContent.tasks, []);
+        assert.deepStrictEqual(listed.structuredContent.pagination, {
+          has_more: false,
+          total_count: 0,
+        });
+
+        const missing = await callToolRaw(server, 'get_task_status', { task_id: 'task_missing' });
+        assert.strictEqual(missing.isError, true);
+        assert.strictEqual(missing.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+      } finally {
+        taskStore.cleanup();
+      }
+    });
+
+    it('answers get_task_status/list_tasks from the shared MCP task store', async () => {
+      const taskStore = new InMemoryTaskStore();
+      try {
+        const task = await taskStore.createTask({ ttl: null });
+        const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskStore });
+
+        const status = await callTool(server, 'get_task_status', {
+          task_id: task.taskId,
+          context: { trace_id: 'trace_1' },
+        });
+        assert.strictEqual(status.task_id, task.taskId);
+        assert.strictEqual(status.status, 'working');
+        assert.strictEqual(status.task_type, 'create_media_buy');
+        assert.strictEqual(status.protocol, 'media-buy');
+        assert.strictEqual(status.created_at, task.createdAt);
+        assert.strictEqual(status.updated_at, task.lastUpdatedAt);
+        assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
+
+        const listed = await callTool(server, 'list_tasks', {
+          filters: { task_ids: [task.taskId], status: 'working' },
+        });
+        assert.strictEqual(listed.query_summary.returned, 1);
+        assert.strictEqual(listed.tasks.length, 1);
+        assert.strictEqual(listed.tasks[0].task_id, task.taskId);
+        assert.strictEqual(listed.tasks[0].status, 'working');
+      } finally {
+        taskStore.cleanup();
+      }
     });
   });
 

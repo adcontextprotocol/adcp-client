@@ -3,7 +3,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { toWireAccount, toWireSyncAccountRow } = require('../dist/lib/server/decisioning/account');
+const {
+  ACCOUNT_AUTHORIZATION_WIRE_KEYS,
+  toWireAccount,
+  toWireSyncAccountRow,
+} = require('../dist/lib/server/decisioning/account');
+const { AccountAuthorizationSchema } = require('../dist/lib/types/schemas.generated');
 
 const baseAccount = () => ({
   id: 'acc_42',
@@ -14,6 +19,10 @@ const baseAccount = () => ({
 });
 
 describe('toWireAccount', () => {
+  it('keeps the account authorization projection key set aligned with the generated schema', () => {
+    assert.deepEqual([...ACCOUNT_AUTHORIZATION_WIRE_KEYS].sort(), Object.keys(AccountAuthorizationSchema.shape).sort());
+  });
+
   it('renames id → account_id and strips framework-internal fields', () => {
     const wire = toWireAccount(baseAccount());
     assert.equal(wire.account_id, 'acc_42');

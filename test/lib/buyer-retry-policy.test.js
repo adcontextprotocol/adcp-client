@@ -139,7 +139,13 @@ describe('decideRetry — operator-grade defaults', () => {
   });
 
   describe('commercial-relationship signals escalate (do NOT auto-tweak)', () => {
-    for (const code of ['POLICY_VIOLATION', 'COMPLIANCE_UNSATISFIED', 'GOVERNANCE_DENIED', 'CREATIVE_REJECTED']) {
+    for (const code of [
+      'POLICY_VIOLATION',
+      'COMPLIANCE_UNSATISFIED',
+      'GOVERNANCE_DENIED',
+      'CREATIVE_REJECTED',
+      'UNPRICEABLE_OUTPUT',
+    ]) {
       it(`${code} → escalate (commercial)`, () => {
         const d = decideRetry(err(code));
         assert.equal(d.action, 'escalate');

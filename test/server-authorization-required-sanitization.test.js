@@ -48,6 +48,8 @@ describe('AUTHORIZATION_REQUIRED detail sanitization', () => {
     const error = response.structuredContent.adcp_error;
     assert.equal(error.code, 'AUTHORIZATION_REQUIRED');
     assert.equal(error.field, 'creatives[0].assets[0].url');
+    assert.ok(error.details && typeof error.details === 'object', 'sanitized details must remain present');
+    assert.ok(Array.isArray(error.details.missing_connections), 'missing_connections must remain present');
     assert.equal(error.details.refresh_token, undefined);
     assert.equal(error.details.tenant_id, undefined);
 
@@ -70,6 +72,7 @@ describe('AUTHORIZATION_REQUIRED detail sanitization', () => {
     });
 
     const textError = JSON.parse(response.content[0].text).adcp_error;
+    assert.ok(textError.details && typeof textError.details === 'object', 'text fallback must retain sanitized details');
     assert.deepEqual(textError.details, error.details);
   });
 
@@ -80,6 +83,8 @@ describe('AUTHORIZATION_REQUIRED detail sanitization', () => {
       details: unsafeAuthorizationDetails(),
     });
 
+    assert.ok(filtered.details && typeof filtered.details === 'object', 'allowlisted envelope must retain sanitized details');
+    assert.ok(Array.isArray(filtered.details.missing_connections), 'missing_connections must remain present');
     assert.equal(filtered.details.refresh_token, undefined);
     assert.equal(filtered.details.missing_connections[0].access_token, undefined);
     assert.equal(filtered.details.missing_connections[0].resource_ref.private_note, undefined);

@@ -54,7 +54,7 @@ import {
   type AdcpServer,
   type AdcpServerInternal,
 } from './adcp-server';
-import { createTaskCapableServer } from './tasks';
+import { createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
@@ -182,6 +182,8 @@ import type {
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
+  GetTaskStatusRequestSchema,
+  ListTasksRequestSchema,
   ListCreativeFormatsRequestSchema,
   ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
@@ -249,6 +251,8 @@ import type {
   UpdateMediaBuyResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
+  GetTaskStatusResponse,
+  ListTasksResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
   ListTransformersResponse,
@@ -310,6 +314,10 @@ import type {
   CalibrateContentResponse,
   ValidateContentDeliveryResponse,
   GetMediaBuyArtifactsResponse,
+  ListTasksRequest,
+  TaskStatus,
+  TaskType,
+  AdCPProtocol as WireAdcpProtocol,
 } from '../types/tools.generated';
 
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
@@ -543,6 +551,16 @@ export interface AdcpToolMap {
     params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
     result: ServerPayload<ProvidePerformanceFeedbackSuccess>;
     response: ProvidePerformanceFeedbackResponse;
+  };
+  get_task_status: {
+    params: z.input<typeof GetTaskStatusRequestSchema>;
+    result: ServerPayload<GetTaskStatusResponse>;
+    response: GetTaskStatusResponse;
+  };
+  list_tasks: {
+    params: z.input<typeof ListTasksRequestSchema>;
+    result: ServerPayload<ListTasksResponse>;
+    response: ListTasksResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
@@ -2130,6 +2148,141 @@ function genericResponse(toolName: string, data: object, summary?: string): McpT
   };
 }
 
+type SdkTaskRecord = NonNullable<Awaited<ReturnType<TaskStore['getTask']>>>;
+
+const ADCP_TASK_TYPES = new Set<TaskType>([
+  'create_media_buy',
+  'update_media_buy',
+  'media_buy_delivery',
+  'sync_creatives',
+  'activate_signal',
+  'get_signals',
+  'create_property_list',
+  'update_property_list',
+  'get_property_list',
+  'list_property_lists',
+  'delete_property_list',
+  'sync_accounts',
+  'get_account_financials',
+  'get_creative_delivery',
+  'sync_event_sources',
+  'sync_audiences',
+  'sync_catalogs',
+  'log_event',
+  'get_brand_identity',
+  'search_brands',
+  'get_rights',
+  'acquire_rights',
+]);
+
+const TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
+  create_media_buy: 'media-buy',
+  update_media_buy: 'media-buy',
+  media_buy_delivery: 'media-buy',
+  sync_creatives: 'creative',
+  get_creative_delivery: 'creative',
+  activate_signal: 'signals',
+  get_signals: 'signals',
+  sync_accounts: 'media-buy',
+  get_account_financials: 'media-buy',
+  sync_event_sources: 'measurement',
+  sync_audiences: 'measurement',
+  sync_catalogs: 'measurement',
+  log_event: 'measurement',
+  get_brand_identity: 'brand',
+  search_brands: 'brand',
+  get_rights: 'brand',
+  acquire_rights: 'brand',
+  create_property_list: 'governance',
+  update_property_list: 'governance',
+  get_property_list: 'governance',
+  list_property_lists: 'governance',
+  delete_property_list: 'governance',
+};
+
+function mapSdkTaskStatus(status: SdkTaskRecord['status']): TaskStatus {
+  if (status === 'input_required') return 'input-required';
+  if (status === 'cancelled') return 'canceled';
+  return status as TaskStatus;
+}
+
+function readTaskType(task: SdkTaskRecord): TaskType {
+  const taskLike = task as unknown as Record<string, unknown>;
+  const raw = taskLike.task_type ?? taskLike.taskType ?? taskLike.tool_name ?? taskLike.toolName;
+  return typeof raw === 'string' && ADCP_TASK_TYPES.has(raw as TaskType) ? (raw as TaskType) : 'create_media_buy';
+}
+
+function readTaskProtocol(task: SdkTaskRecord, taskType: TaskType): WireAdcpProtocol {
+  const raw = (task as unknown as Record<string, unknown>).protocol;
+  if (
+    raw === 'media-buy' ||
+    raw === 'signals' ||
+    raw === 'governance' ||
+    raw === 'creative' ||
+    raw === 'brand' ||
+    raw === 'sponsored-intelligence' ||
+    raw === 'measurement'
+  ) {
+    return raw;
+  }
+  return TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
+}
+
+function toProtocolTaskStatus(task: SdkTaskRecord): Omit<GetTaskStatusResponse, 'result'> {
+  const taskType = readTaskType(task);
+  const protocol = readTaskProtocol(task, taskType);
+  const status = mapSdkTaskStatus(task.status);
+  return {
+    task_id: task.taskId,
+    task_type: taskType,
+    protocol,
+    status,
+    created_at: task.createdAt,
+    updated_at: task.lastUpdatedAt,
+    ...(status === 'completed' || status === 'failed' || status === 'canceled'
+      ? { completed_at: task.lastUpdatedAt }
+      : {}),
+    ...(task.statusMessage !== undefined
+      ? { error: { code: status === 'failed' ? 'TASK_FAILED' : 'TASK_STATUS_MESSAGE', message: task.statusMessage } }
+      : {}),
+  };
+}
+
+function toProtocolTaskListItem(task: SdkTaskRecord): ListTasksResponse['tasks'][number] {
+  const taskType = readTaskType(task);
+  const protocol = readTaskProtocol(task, taskType);
+  const status = mapSdkTaskStatus(task.status);
+  return {
+    task_id: task.taskId,
+    task_type: taskType,
+    domain: protocol === 'signals' ? 'signals' : 'media-buy',
+    status,
+    created_at: task.createdAt,
+    updated_at: task.lastUpdatedAt,
+    ...(status === 'completed' || status === 'failed' || status === 'canceled'
+      ? { completed_at: task.lastUpdatedAt }
+      : {}),
+  };
+}
+
+function taskMatchesFilters(task: SdkTaskRecord, filters: ListTasksRequest['filters']): boolean {
+  if (!isPlainObject(filters)) return true;
+  const item = toProtocolTaskListItem(task);
+  const protocol = readTaskProtocol(task, item.task_type);
+  if (typeof filters.protocol === 'string' && protocol !== filters.protocol) return false;
+  if (Array.isArray(filters.protocols) && !filters.protocols.includes(protocol)) return false;
+  if (typeof filters.status === 'string' && item.status !== filters.status) return false;
+  if (Array.isArray(filters.statuses) && !filters.statuses.includes(item.status)) return false;
+  if (typeof filters.task_type === 'string' && item.task_type !== filters.task_type) return false;
+  if (Array.isArray(filters.task_types) && !filters.task_types.includes(item.task_type)) return false;
+  if (Array.isArray(filters.task_ids) && !filters.task_ids.includes(item.task_id)) return false;
+  if (typeof filters.created_after === 'string' && item.created_at <= filters.created_after) return false;
+  if (typeof filters.created_before === 'string' && item.created_at >= filters.created_before) return false;
+  if (typeof filters.updated_after === 'string' && item.updated_at <= filters.updated_after) return false;
+  if (typeof filters.updated_before === 'string' && item.updated_at >= filters.updated_before) return false;
+  return true;
+}
+
 function wrapBuildCreative(data: any, summary?: string): McpToolResponse {
   if ('creative_manifests' in data) {
     return buildCreativeMultiResponse(data, summary);
@@ -2160,6 +2313,10 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
+
+  // Protocol
+  get_task_status: { wrap: null, annotations: RO },
+  list_tasks: { wrap: null, annotations: RO },
 
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
@@ -3489,8 +3646,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolvedInstructions = undefined;
   }
 
+  const mcpTaskStore = taskStore ?? new InMemoryTaskStore();
   const server = createTaskCapableServer(name, version, {
-    taskStore,
+    taskStore: mcpTaskStore,
     taskMessageQueue,
     instructions: resolvedInstructions,
   });
@@ -5098,6 +5256,92 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       registeredToolNames.add(toolName);
     }
   }
+
+  server.registerTool(
+    'get_task_status',
+    {
+      inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+      annotations: RO,
+    },
+    (async (params: any) => {
+      const taskId = typeof params?.task_id === 'string' ? params.task_id : '';
+      const task = taskId ? await mcpTaskStore.getTask(taskId) : null;
+      if (task == null) {
+        return applyResponseEnhancer(
+          adcpError('REFERENCE_NOT_FOUND', {
+            message: taskId ? `Task ${taskId} not found` : 'Task not found',
+            field: 'task_id',
+          })
+        );
+      }
+
+      const response: GetTaskStatusResponse = toProtocolTaskStatus(task);
+      if (params?.include_result === true && response.status === 'completed') {
+        try {
+          const result = await mcpTaskStore.getTaskResult(task.taskId);
+          if (isPlainObject(result.structuredContent)) {
+            response.result = result.structuredContent as GetTaskStatusResponse['result'];
+          }
+        } catch {
+          // Result storage is optional in the MCP task store; status-only
+          // polling still succeeds when a completed task has no result body.
+        }
+      }
+      if (isPlainObject(params?.context)) response.context = params.context;
+      return applyResponseEnhancer(genericResponse('get_task_status', response));
+    }) as Parameters<typeof server.registerTool>[2]
+  );
+  registeredToolNames.add('get_task_status');
+
+  server.registerTool(
+    'list_tasks',
+    {
+      inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+      annotations: RO,
+    },
+    (async (params: any) => {
+      const cursor =
+        params?.pagination && typeof params.pagination === 'object' && typeof params.pagination.cursor === 'string'
+          ? params.pagination.cursor
+          : undefined;
+      let listed: Awaited<ReturnType<TaskStore['listTasks']>>;
+      try {
+        listed = await mcpTaskStore.listTasks(cursor);
+      } catch (err) {
+        return applyResponseEnhancer(
+          adcpError('INVALID_PARAMS', {
+            message: err instanceof Error ? err.message : 'Invalid task list cursor',
+            field: 'pagination.cursor',
+          })
+        );
+      }
+
+      const filteredTasks = listed.tasks.filter(task => taskMatchesFilters(task, params?.filters));
+      const tasks = filteredTasks.map(toProtocolTaskListItem);
+      const status_breakdown = tasks.reduce<Record<string, number>>((counts, task) => {
+        counts[task.status] = (counts[task.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const response: ListTasksResponse = {
+        status: 'completed',
+        query_summary: {
+          total_matching: tasks.length,
+          returned: tasks.length,
+          status_breakdown,
+          filters_applied: isPlainObject(params?.filters) ? Object.keys(params.filters) : [],
+        },
+        tasks,
+        pagination: {
+          has_more: listed.nextCursor !== undefined,
+          ...(listed.nextCursor !== undefined && { cursor: listed.nextCursor }),
+          total_count: tasks.length,
+        },
+      };
+      if (isPlainObject(params?.context)) response.context = params.context;
+      return applyResponseEnhancer(genericResponse('list_tasks', response));
+    }) as Parameters<typeof server.registerTool>[2]
+  );
+  registeredToolNames.add('list_tasks');
 
   // ─── Custom tools ──────────────────────────────────────────
   // Seller extensions outside AdcpToolMap. No idempotency / governance /
