@@ -4,6 +4,14 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { adcpError, applyAdcpErrorAllowlist } = require('../dist/lib/server/errors');
+const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
+
+async function callToolRaw(server, toolName, params) {
+  return server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: toolName, arguments: params ?? {} },
+  });
+}
 
 const unsafeAuthorizationDetails = () => ({
   missing_connections: [
@@ -72,7 +80,10 @@ describe('AUTHORIZATION_REQUIRED detail sanitization', () => {
     });
 
     const textError = JSON.parse(response.content[0].text).adcp_error;
-    assert.ok(textError.details && typeof textError.details === 'object', 'text fallback must retain sanitized details');
+    assert.ok(
+      textError.details && typeof textError.details === 'object',
+      'text fallback must retain sanitized details'
+    );
     assert.deepEqual(textError.details, error.details);
   });
 
@@ -83,10 +94,51 @@ describe('AUTHORIZATION_REQUIRED detail sanitization', () => {
       details: unsafeAuthorizationDetails(),
     });
 
-    assert.ok(filtered.details && typeof filtered.details === 'object', 'allowlisted envelope must retain sanitized details');
+    assert.ok(
+      filtered.details && typeof filtered.details === 'object',
+      'allowlisted envelope must retain sanitized details'
+    );
     assert.ok(Array.isArray(filtered.details.missing_connections), 'missing_connections must remain present');
     assert.equal(filtered.details.refresh_token, undefined);
     assert.equal(filtered.details.missing_connections[0].access_token, undefined);
     assert.equal(filtered.details.missing_connections[0].resource_ref.private_note, undefined);
+  });
+
+  it('sanitizes typed errors[] arms before synthesizing the adcp_error envelope', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      creative: {
+        syncCreatives: async () => ({
+          errors: [
+            {
+              code: 'AUTHORIZATION_REQUIRED',
+              message: 'Connect the TikTok creator identity before boosting this post.',
+              details: unsafeAuthorizationDetails(),
+            },
+          ],
+        }),
+      },
+    });
+
+    const response = await callToolRaw(server, 'sync_creatives', { creatives: [] });
+    assert.equal(response.isError, true);
+
+    const payloadError = response.structuredContent.errors[0];
+    assert.equal(payloadError.code, 'AUTHORIZATION_REQUIRED');
+    assert.ok(payloadError.details && typeof payloadError.details === 'object', 'payload details must remain present');
+    assert.equal(payloadError.details.refresh_token, undefined);
+    assert.equal(payloadError.details.tenant_id, undefined);
+    assert.equal(payloadError.details.missing_connections[0].access_token, undefined);
+    assert.equal(payloadError.details.missing_connections[0].resource_ref.private_note, undefined);
+
+    const envelopeError = response.structuredContent.adcp_error;
+    assert.ok(
+      envelopeError.details && typeof envelopeError.details === 'object',
+      'envelope details must remain present'
+    );
+    assert.deepEqual(envelopeError.details, payloadError.details);
+    assert.doesNotMatch(JSON.stringify(response.structuredContent), /secret_should_not_cross_wire|internal_tenant_1/);
   });
 });

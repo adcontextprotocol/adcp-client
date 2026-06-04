@@ -595,8 +595,14 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // Hand-authored sample_request can exercise slot-specific briefs, target
     // format overrides, or multi-format requests — honor it when present.
     const format = selectFormat(context);
+    const sample = step.sample_request;
+    const hasPluralTargets =
+      sample !== undefined &&
+      typeof sample === 'object' &&
+      !Array.isArray(sample) &&
+      Array.isArray((sample as Record<string, unknown>).target_format_ids);
     return {
-      target_format_id: format?.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID,
+      ...(hasPluralTargets ? {} : { target_format_id: format?.format_id ?? context.format_id ?? UNKNOWN_FORMAT_ID }),
       brand: resolveBrand(options),
       message: 'Create a test advertisement for an e-commerce brand promoting a summer sale.',
       quality: 'draft',

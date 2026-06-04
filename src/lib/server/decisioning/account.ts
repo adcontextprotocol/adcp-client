@@ -47,7 +47,10 @@ export const ACCOUNT_AUTHORIZATION_WIRE_KEYS = [
   'read_only',
 ] as const satisfies readonly (keyof AccountAuthorization)[];
 
-type MissingAccountAuthorizationWireKey = Exclude<keyof AccountAuthorization, (typeof ACCOUNT_AUTHORIZATION_WIRE_KEYS)[number]>;
+type MissingAccountAuthorizationWireKey = Exclude<
+  keyof AccountAuthorization,
+  (typeof ACCOUNT_AUTHORIZATION_WIRE_KEYS)[number]
+>;
 const ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE: Record<MissingAccountAuthorizationWireKey, never> = {};
 void ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE;
 

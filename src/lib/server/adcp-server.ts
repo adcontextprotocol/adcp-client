@@ -111,6 +111,7 @@ export interface AdcpAuthInfo {
  */
 export interface AdcpTestRequestExtras {
   authInfo?: AdcpAuthInfo;
+  sessionId?: string;
 }
 
 /**
@@ -538,10 +539,11 @@ export function wrapMcpServer(
     },
   };
   const dispatch = async (request: AdcpTestRequest, extras?: AdcpTestRequestExtras): Promise<AdcpTestResponse> => {
-    const extra: { signal: AbortSignal; authInfo?: AdcpTestRequestExtras['authInfo'] } = {
+    const extra: { signal: AbortSignal; authInfo?: AdcpTestRequestExtras['authInfo']; sessionId?: string } = {
       signal: new AbortController().signal,
     };
     if (extras?.authInfo) extra.authInfo = extras.authInfo;
+    if (extras?.sessionId) extra.sessionId = extras.sessionId;
 
     if (request.method === 'tools/call') {
       const params = (request.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };

@@ -59,7 +59,7 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
-import type { TaskRegistry } from './decisioning/runtime/task-registry';
+import type { TaskRecord, TaskRegistry } from './decisioning/runtime/task-registry';
 import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import {
@@ -2148,8 +2148,6 @@ function genericResponse(toolName: string, data: object, summary?: string): McpT
   };
 }
 
-type SdkTaskRecord = NonNullable<Awaited<ReturnType<TaskStore['getTask']>>>;
-
 const ADCP_TASK_TYPES = new Set<TaskType>([
   'create_media_buy',
   'update_media_buy',
@@ -2200,75 +2198,62 @@ const TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
   delete_property_list: 'governance',
 };
 
-function mapSdkTaskStatus(status: SdkTaskRecord['status']): TaskStatus {
-  if (status === 'input_required') return 'input-required';
-  if (status === 'cancelled') return 'canceled';
-  return status as TaskStatus;
+function readRegistryTaskType(task: TaskRecord): TaskType | undefined {
+  return ADCP_TASK_TYPES.has(task.tool as TaskType) ? (task.tool as TaskType) : undefined;
 }
 
-function readTaskType(task: SdkTaskRecord): TaskType {
-  const taskLike = task as unknown as Record<string, unknown>;
-  const raw = taskLike.task_type ?? taskLike.taskType ?? taskLike.tool_name ?? taskLike.toolName;
-  return typeof raw === 'string' && ADCP_TASK_TYPES.has(raw as TaskType) ? (raw as TaskType) : 'create_media_buy';
-}
-
-function readTaskProtocol(task: SdkTaskRecord, taskType: TaskType): WireAdcpProtocol {
-  const raw = (task as unknown as Record<string, unknown>).protocol;
-  if (
-    raw === 'media-buy' ||
-    raw === 'signals' ||
-    raw === 'governance' ||
-    raw === 'creative' ||
-    raw === 'brand' ||
-    raw === 'sponsored-intelligence' ||
-    raw === 'measurement'
-  ) {
-    return raw;
-  }
-  return TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
-}
-
-function toProtocolTaskStatus(task: SdkTaskRecord): Omit<GetTaskStatusResponse, 'result'> {
-  const taskType = readTaskType(task);
-  const protocol = readTaskProtocol(task, taskType);
-  const status = mapSdkTaskStatus(task.status);
+function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefined {
+  const taskType = readRegistryTaskType(task);
+  if (taskType === undefined) return undefined;
+  const protocol = TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
   return {
     task_id: task.taskId,
     task_type: taskType,
     protocol,
-    status,
+    status: task.status as TaskStatus,
     created_at: task.createdAt,
-    updated_at: task.lastUpdatedAt,
-    ...(status === 'completed' || status === 'failed' || status === 'canceled'
-      ? { completed_at: task.lastUpdatedAt }
+    updated_at: task.updatedAt,
+    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+      ? { completed_at: task.updatedAt }
       : {}),
-    ...(task.statusMessage !== undefined
-      ? { error: { code: status === 'failed' ? 'TASK_FAILED' : 'TASK_STATUS_MESSAGE', message: task.statusMessage } }
-      : {}),
+    ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
+    ...(task.progress !== undefined ? { progress: task.progress } : {}),
+    ...(task.error !== undefined
+      ? { error: task.error as GetTaskStatusResponse['error'] }
+      : task.statusMessage !== undefined
+        ? {
+            error: {
+              code: task.status === 'failed' ? 'TASK_FAILED' : 'TASK_STATUS_MESSAGE',
+              message: task.statusMessage,
+            },
+          }
+        : {}),
   };
 }
 
-function toProtocolTaskListItem(task: SdkTaskRecord): ListTasksResponse['tasks'][number] {
-  const taskType = readTaskType(task);
-  const protocol = readTaskProtocol(task, taskType);
-  const status = mapSdkTaskStatus(task.status);
+function toProtocolTaskListItem(task: TaskRecord): ListTasksResponse['tasks'][number] | undefined {
+  const taskType = readRegistryTaskType(task);
+  if (taskType === undefined) return undefined;
+  const protocol = TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
   return {
     task_id: task.taskId,
     task_type: taskType,
     domain: protocol === 'signals' ? 'signals' : 'media-buy',
-    status,
+    status: task.status as TaskStatus,
     created_at: task.createdAt,
-    updated_at: task.lastUpdatedAt,
-    ...(status === 'completed' || status === 'failed' || status === 'canceled'
-      ? { completed_at: task.lastUpdatedAt }
+    updated_at: task.updatedAt,
+    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+      ? { completed_at: task.updatedAt }
       : {}),
+    ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
   };
 }
 
-function taskMatchesFilters(task: SdkTaskRecord, filters: ListTasksRequest['filters']): boolean {
+function taskMatchesFilters(task: TaskRecord, filters: ListTasksRequest['filters']): boolean {
   if (!isPlainObject(filters)) return true;
   const item = toProtocolTaskListItem(task);
-  const protocol = readTaskProtocol(task, item.task_type);
+  if (item === undefined) return false;
+  const protocol = TASK_TYPE_TO_PROTOCOL[item.task_type] ?? 'media-buy';
   if (typeof filters.protocol === 'string' && protocol !== filters.protocol) return false;
   if (Array.isArray(filters.protocols) && !filters.protocols.includes(protocol)) return false;
   if (typeof filters.status === 'string' && item.status !== filters.status) return false;
@@ -2280,7 +2265,53 @@ function taskMatchesFilters(task: SdkTaskRecord, filters: ListTasksRequest['filt
   if (typeof filters.created_before === 'string' && item.created_at >= filters.created_before) return false;
   if (typeof filters.updated_after === 'string' && item.updated_at <= filters.updated_after) return false;
   if (typeof filters.updated_before === 'string' && item.updated_at >= filters.updated_before) return false;
+  if (typeof filters.has_webhook === 'boolean' && (task.hasWebhook === true) !== filters.has_webhook) return false;
+  if (typeof filters.context_contains === 'string' && filters.context_contains.length > 0) {
+    const haystack = JSON.stringify({
+      task_id: task.taskId,
+      task_type: task.tool,
+      result: task.result,
+      error: task.error,
+      progress: task.progress,
+    });
+    if (!haystack.includes(filters.context_contains)) return false;
+  }
   return true;
+}
+
+function compareProtocolTaskItems(
+  left: ListTasksResponse['tasks'][number],
+  right: ListTasksResponse['tasks'][number],
+  sort: ListTasksRequest['sort']
+): number {
+  const field = isPlainObject(sort) && typeof sort.field === 'string' ? sort.field : 'created_at';
+  const direction = isPlainObject(sort) && sort.direction === 'asc' ? 'asc' : 'desc';
+  const multiplier = direction === 'asc' ? 1 : -1;
+  let result = 0;
+  if (field === 'updated_at') result = left.updated_at.localeCompare(right.updated_at);
+  else if (field === 'status') result = left.status.localeCompare(right.status);
+  else if (field === 'task_type') result = left.task_type.localeCompare(right.task_type);
+  else if (field === 'protocol') {
+    const leftProtocol = TASK_TYPE_TO_PROTOCOL[left.task_type] ?? 'media-buy';
+    const rightProtocol = TASK_TYPE_TO_PROTOCOL[right.task_type] ?? 'media-buy';
+    result = leftProtocol.localeCompare(rightProtocol);
+  } else {
+    result = left.created_at.localeCompare(right.created_at);
+  }
+  return result === 0 ? left.task_id.localeCompare(right.task_id) * multiplier : result * multiplier;
+}
+
+function parseTaskListCursor(cursor: unknown): number | undefined {
+  if (cursor === undefined) return undefined;
+  if (typeof cursor !== 'string' || !/^(0|[1-9]\d*)$/.test(cursor)) {
+    throw new Error('Invalid task list cursor');
+  }
+  return Number.parseInt(cursor, 10);
+}
+
+function taskListPageSize(pagination: unknown): number {
+  if (!isPlainObject(pagination) || typeof pagination.max_results !== 'number') return 50;
+  return Math.min(Math.max(Math.floor(pagination.max_results), 1), 100);
 }
 
 function wrapBuildCreative(data: any, summary?: string): McpToolResponse {
@@ -2583,6 +2614,21 @@ function isErrorArm(value: unknown): value is { errors: unknown[]; context?: unk
   return true;
 }
 
+function sanitizePayloadError(value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const code = value.code;
+  if (typeof code !== 'string') return value;
+  return applyAdcpErrorAllowlist(code, value);
+}
+
+function sanitizePayloadErrors(sc: Record<string, unknown>): boolean {
+  if (!Array.isArray(sc.errors)) return false;
+  const sanitized = sc.errors.map(sanitizePayloadError);
+  const changed = sanitized.some((value, index) => value !== (sc.errors as unknown[])[index]);
+  if (changed) sc.errors = sanitized;
+  return changed;
+}
+
 /**
  * Wrap a Submitted envelope returned directly by a handler. Skips the
  * Success-builder defaults (`revision`, `confirmed_at`, `valid_actions`)
@@ -2606,7 +2652,8 @@ function wrapSubmittedEnvelope(value: { status: 'submitted'; task_id: string; me
  * `response-validation: strict` consistent across both error paths.
  */
 function wrapErrorArm(value: { errors: unknown[] }): McpToolResponse {
-  const firstError = value.errors[0] as { code?: unknown; message?: unknown } | undefined;
+  const sanitizedErrors = value.errors.map(sanitizePayloadError);
+  const firstError = sanitizedErrors[0] as { code?: unknown; message?: unknown } | undefined;
   const summary =
     firstError && typeof firstError === 'object'
       ? `${typeof firstError.code === 'string' ? firstError.code : 'ERROR'}: ${typeof firstError.message === 'string' ? firstError.message : 'operation failed'}`
@@ -2614,7 +2661,7 @@ function wrapErrorArm(value: { errors: unknown[] }): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary }],
     isError: true,
-    structuredContent: value as unknown as Record<string, unknown>,
+    structuredContent: { ...value, errors: sanitizedErrors } as unknown as Record<string, unknown>,
   };
 }
 
@@ -2754,6 +2801,7 @@ function enrichErrorTwoLayer(
   const envValid = env != null && typeof env === 'object' && typeof env.code === 'string';
   const payloadList = sc.errors;
   const payloadValid = Array.isArray(payloadList) && payloadList.length > 0;
+  if (payloadValid && sanitizePayloadErrors(sc)) syncContentJsonText(response, sc);
 
   // Path A: envelope present, payload missing → synthesise payload-layer
   // `errors[]` from the envelope. The `adcpError()` builder always lands
@@ -2769,7 +2817,7 @@ function enrichErrorTwoLayer(
   // the first payload item. `wrapErrorArm()` lands here when adopters
   // return a typed Error arm directly.
   if (!envValid && payloadValid) {
-    const first = (payloadList as unknown[])[0];
+    const first = (sc.errors as unknown[])[0];
     if (first && typeof first === 'object') {
       const projected = projectPayloadErrorToEnvelope(first as Record<string, unknown>);
       // Only stamp the envelope if the payload's first item carries the
@@ -3684,6 +3732,93 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
     responseEnhancer?.(response);
     return response;
+  };
+
+  const resolveTaskQueryAccountId = async (
+    params: Record<string, unknown>,
+    extra: any,
+    toolName: 'get_task_status' | 'list_tasks'
+  ): Promise<{ accountId?: string; error?: McpToolResponse }> => {
+    const ctx: HandlerContext<TAccount> = { store: stateStore };
+    if (extra?.authInfo) {
+      const authInfo = extra.authInfo as ResolvedAuthInfo;
+      ctx.authInfo = authInfo;
+      const inboundCredential = authInfo.extra?.credential;
+      if (inboundCredential !== undefined && authInfo.credential === undefined) {
+        authInfo.credential = inboundCredential as ResolvedAuthInfo['credential'];
+      }
+    }
+
+    if (agentRegistry !== undefined) {
+      try {
+        const resolved = await agentRegistry.resolve({
+          ...(ctx.authInfo?.credential !== undefined && { credential: ctx.authInfo.credential }),
+          ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
+          input: params,
+        });
+        if (resolved != null) {
+          if (resolved.status === 'suspended' || resolved.status === 'blocked') {
+            return {
+              error: applyResponseEnhancer(
+                adcpError(resolved.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_BLOCKED', {
+                  message:
+                    resolved.status === 'suspended'
+                      ? 'Buyer agent is suspended. Contact the seller to restore access.'
+                      : 'Buyer agent is blocked.',
+                  recovery: 'terminal',
+                })
+              ),
+            };
+          }
+          ctx.agent = resolved;
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Buyer-agent registry resolution failed', { tool: toolName, error: reason });
+        return {
+          error: applyResponseEnhancer(
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Buyer-agent registry resolution failed',
+              ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+            })
+          ),
+        };
+      }
+    }
+
+    if (resolveAccountFromAuth) {
+      try {
+        const account = await resolveAccountFromAuth({
+          toolName,
+          authInfo: ctx.authInfo,
+          ...(ctx.agent != null && { agent: ctx.agent }),
+          input: params,
+        });
+        if (account != null) ctx.account = account;
+      } catch (err) {
+        if (isThrownAdcpError(err)) return { error: applyResponseEnhancer(err) };
+        if (err instanceof AdcpError) return { error: applyResponseEnhancer(projectThrownAdcpError(err)) };
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
+        return {
+          error: applyResponseEnhancer(
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Account resolution failed',
+              ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+            })
+          ),
+        };
+      }
+    }
+
+    const accountLike = ctx.account as { id?: unknown; account_id?: unknown } | undefined;
+    const accountId =
+      typeof accountLike?.id === 'string'
+        ? accountLike.id
+        : typeof accountLike?.account_id === 'string'
+          ? accountLike.account_id
+          : undefined;
+    return { accountId };
   };
 
   // Collect all domain handlers into a flat toolName → handler map
@@ -5263,10 +5398,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       inputSchema: PASSTHROUGH_INPUT_SCHEMA,
       annotations: RO,
     },
-    (async (params: any) => {
+    (async (params: any, extra: any) => {
       const taskId = typeof params?.task_id === 'string' ? params.task_id : '';
-      const task = taskId ? await mcpTaskStore.getTask(taskId) : null;
-      if (task == null) {
+      const { accountId, error } = await resolveTaskQueryAccountId(params ?? {}, extra, 'get_task_status');
+      if (error) return error;
+      const task =
+        taskId && accountId !== undefined && taskRegistry !== undefined ? await taskRegistry.getTask(taskId) : null;
+      if (task == null || task.accountId !== accountId) {
         return applyResponseEnhancer(
           adcpError('REFERENCE_NOT_FOUND', {
             message: taskId ? `Task ${taskId} not found` : 'Task not found',
@@ -5275,17 +5413,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         );
       }
 
-      const response: GetTaskStatusResponse = toProtocolTaskStatus(task);
+      const response = toProtocolTaskStatus(task);
+      if (response === undefined) {
+        return applyResponseEnhancer(
+          adcpError('REFERENCE_NOT_FOUND', {
+            message: taskId ? `Task ${taskId} not found` : 'Task not found',
+            field: 'task_id',
+          })
+        );
+      }
       if (params?.include_result === true && response.status === 'completed') {
-        try {
-          const result = await mcpTaskStore.getTaskResult(task.taskId);
-          if (isPlainObject(result.structuredContent)) {
-            response.result = result.structuredContent as GetTaskStatusResponse['result'];
-          }
-        } catch {
-          // Result storage is optional in the MCP task store; status-only
-          // polling still succeeds when a completed task has no result body.
-        }
+        response.result = task.result as GetTaskStatusResponse['result'];
       }
       if (isPlainObject(params?.context)) response.context = params.context;
       return applyResponseEnhancer(genericResponse('get_task_status', response));
@@ -5299,14 +5437,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       inputSchema: PASSTHROUGH_INPUT_SCHEMA,
       annotations: RO,
     },
-    (async (params: any) => {
-      const cursor =
-        params?.pagination && typeof params.pagination === 'object' && typeof params.pagination.cursor === 'string'
-          ? params.pagination.cursor
-          : undefined;
-      let listed: Awaited<ReturnType<TaskStore['listTasks']>>;
+    (async (params: any, extra: any) => {
+      const { accountId, error } = await resolveTaskQueryAccountId(params ?? {}, extra, 'list_tasks');
+      if (error) return error;
+      let cursorStart = 0;
       try {
-        listed = await mcpTaskStore.listTasks(cursor);
+        cursorStart =
+          parseTaskListCursor(isPlainObject(params?.pagination) ? params.pagination.cursor : undefined) ?? 0;
       } catch (err) {
         return applyResponseEnhancer(
           adcpError('INVALID_PARAMS', {
@@ -5316,25 +5453,46 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         );
       }
 
+      const listed =
+        accountId !== undefined && taskRegistry?.list !== undefined
+          ? await taskRegistry.list({ accountId })
+          : { tasks: [] };
       const filteredTasks = listed.tasks.filter(task => taskMatchesFilters(task, params?.filters));
-      const tasks = filteredTasks.map(toProtocolTaskListItem);
-      const status_breakdown = tasks.reduce<Record<string, number>>((counts, task) => {
+      const sortedTasks = filteredTasks
+        .map(toProtocolTaskListItem)
+        .filter((task): task is ListTasksResponse['tasks'][number] => task !== undefined)
+        .sort((left, right) => compareProtocolTaskItems(left, right, params?.sort));
+      const pageSize = taskListPageSize(params?.pagination);
+      const tasks = sortedTasks.slice(cursorStart, cursorStart + pageSize);
+      const nextOffset = cursorStart + tasks.length;
+      const hasMore = nextOffset < sortedTasks.length;
+      const status_breakdown = sortedTasks.reduce<Record<string, number>>((counts, task) => {
         counts[task.status] = (counts[task.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const domain_breakdown = sortedTasks.reduce<Record<string, number>>((counts, task) => {
+        counts[task.domain] = (counts[task.domain] ?? 0) + 1;
         return counts;
       }, {});
       const response: ListTasksResponse = {
         status: 'completed',
         query_summary: {
-          total_matching: tasks.length,
+          total_matching: sortedTasks.length,
           returned: tasks.length,
+          domain_breakdown,
           status_breakdown,
           filters_applied: isPlainObject(params?.filters) ? Object.keys(params.filters) : [],
+          sort_applied: {
+            field:
+              isPlainObject(params?.sort) && typeof params.sort.field === 'string' ? params.sort.field : 'created_at',
+            direction: isPlainObject(params?.sort) && params.sort.direction === 'asc' ? 'asc' : 'desc',
+          },
         },
         tasks,
         pagination: {
-          has_more: listed.nextCursor !== undefined,
-          ...(listed.nextCursor !== undefined && { cursor: listed.nextCursor }),
-          total_count: tasks.length,
+          has_more: hasMore,
+          ...(hasMore && { cursor: String(nextOffset) }),
+          total_count: sortedTasks.length,
         },
       };
       if (isPlainObject(params?.context)) response.context = params.context;

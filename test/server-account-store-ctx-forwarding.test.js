@@ -376,7 +376,10 @@ describe('Issue #1310 — accounts.list receives ResolveContext', () => {
     assert.equal(error.details.missing_connections[0].connection_type, 'publisher_identity');
     assert.equal(error.details.missing_connections[0].status, 'missing');
     assert.equal(error.details.missing_connections[0].resource_ref.identity_id, 'creator_456');
-    assert.equal(error.details.missing_connections[0].authorization_url, 'https://seller.example/connections/tiktok/creator_456');
+    assert.equal(
+      error.details.missing_connections[0].authorization_url,
+      'https://seller.example/connections/tiktok/creator_456'
+    );
   });
 });
 

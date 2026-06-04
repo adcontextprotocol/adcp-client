@@ -4,6 +4,7 @@ const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/crea
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
+const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
 const { adcpError } = require('../dist/lib/server/errors');
 
 // These tests exercise envelope wrapping, state-store propagation, and
@@ -32,8 +33,8 @@ function createAdcpServer(config) {
 // the internal SDK handle (package-private) since there's no public
 // synchronous equivalent and this file is inside our own package.
 
-async function callTool(server, toolName, params) {
-  const raw = await callToolRaw(server, toolName, params);
+async function callTool(server, toolName, params, extras) {
+  const raw = await callToolRaw(server, toolName, params, extras);
   return raw.structuredContent;
 }
 
@@ -1436,9 +1437,15 @@ describe('createAdcpServer', () => {
   });
 
   describe('protocol task tools', () => {
-    it('registers and serves get_task_status/list_tasks on a built server', async () => {
+    it('registers and serves get_task_status/list_tasks without exposing raw MCP task-store records', async () => {
       const taskStore = new InMemoryTaskStore();
       try {
+        const rawMcpTask = await taskStore.createTask(
+          { ttl: null },
+          'req_1',
+          { method: 'tools/call', params: { name: 'custom_long_running' } },
+          'session_1'
+        );
         const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskStore });
         const tools = registeredTools(server);
         assert.ok(tools.includes('get_task_status'));
@@ -1452,7 +1459,7 @@ describe('createAdcpServer', () => {
           total_count: 0,
         });
 
-        const missing = await callToolRaw(server, 'get_task_status', { task_id: 'task_missing' });
+        const missing = await callToolRaw(server, 'get_task_status', { task_id: rawMcpTask.taskId });
         assert.strictEqual(missing.isError, true);
         assert.strictEqual(missing.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
       } finally {
@@ -1460,34 +1467,66 @@ describe('createAdcpServer', () => {
       }
     });
 
-    it('answers get_task_status/list_tasks from the shared MCP task store', async () => {
-      const taskStore = new InMemoryTaskStore();
-      try {
-        const task = await taskStore.createTask({ ttl: null });
-        const server = createAdcpServer({ name: 'Test', version: '1.0.0', taskStore });
+    it('answers get_task_status/list_tasks from the scoped AdCP task registry only', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1', hasWebhook: true });
+      await taskRegistry.complete(owned.taskId, { creatives: [{ creative_id: 'cr_1' }] });
+      const other = await taskRegistry.create({ tool: 'activate_signal', accountId: 'acct_2' });
 
-        const status = await callTool(server, 'get_task_status', {
-          task_id: task.taskId,
-          context: { trace_id: 'trace_1' },
-        });
-        assert.strictEqual(status.task_id, task.taskId);
-        assert.strictEqual(status.status, 'working');
-        assert.strictEqual(status.task_type, 'create_media_buy');
-        assert.strictEqual(status.protocol, 'media-buy');
-        assert.strictEqual(status.created_at, task.createdAt);
-        assert.strictEqual(status.updated_at, task.lastUpdatedAt);
-        assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async ctx => ({ id: ctx.authInfo?.clientId === 'buyer-1' ? 'acct_1' : 'acct_2' }),
+      });
 
-        const listed = await callTool(server, 'list_tasks', {
-          filters: { task_ids: [task.taskId], status: 'working' },
-        });
-        assert.strictEqual(listed.query_summary.returned, 1);
-        assert.strictEqual(listed.tasks.length, 1);
-        assert.strictEqual(listed.tasks[0].task_id, task.taskId);
-        assert.strictEqual(listed.tasks[0].status, 'working');
-      } finally {
-        taskStore.cleanup();
-      }
+      const buyerOne = { authInfo: { token: 'tok_1', clientId: 'buyer-1', scopes: [] } };
+      const buyerTwo = { authInfo: { token: 'tok_2', clientId: 'buyer-2', scopes: [] } };
+
+      const status = await callTool(
+        server,
+        'get_task_status',
+        { task_id: owned.taskId, include_result: true, context: { trace_id: 'trace_1' } },
+        buyerOne
+      );
+      assert.strictEqual(status.task_id, owned.taskId);
+      assert.strictEqual(status.status, 'completed');
+      assert.strictEqual(status.task_type, 'sync_creatives');
+      assert.strictEqual(status.protocol, 'creative');
+      assert.strictEqual(status.has_webhook, true);
+      assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
+      assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
+
+      const crossTenant = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, buyerTwo);
+      assert.strictEqual(crossTenant.isError, true);
+      assert.strictEqual(crossTenant.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+
+      const listed = await callTool(
+        server,
+        'list_tasks',
+        {
+          filters: { protocols: ['creative'], statuses: ['completed'], has_webhook: true },
+          pagination: { max_results: 1 },
+        },
+        buyerOne
+      );
+      assert.strictEqual(listed.query_summary.total_matching, 1);
+      assert.strictEqual(listed.query_summary.returned, 1);
+      assert.deepStrictEqual(listed.query_summary.status_breakdown, { completed: 1 });
+      assert.strictEqual(listed.tasks.length, 1);
+      assert.strictEqual(listed.tasks[0].task_id, owned.taskId);
+      assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
+      assert.strictEqual(listed.tasks[0].has_webhook, true);
+      assert.strictEqual(listed.pagination.total_count, 1);
+
+      const buyerTwoList = await callTool(
+        server,
+        'list_tasks',
+        { filters: { task_ids: [owned.taskId, other.taskId] } },
+        buyerTwo
+      );
+      assert.strictEqual(buyerTwoList.tasks.length, 1);
+      assert.strictEqual(buyerTwoList.tasks[0].task_id, other.taskId);
     });
   });
 

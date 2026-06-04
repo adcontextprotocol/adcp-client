@@ -273,6 +273,17 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       return rowToRecord<TResult>(rows[0] as unknown as DbTaskRow);
     },
 
+    async list(listOpts: { accountId: string }): Promise<{ tasks: TaskRecord[] }> {
+      const { rows } = await pool.query(
+        `SELECT task_id, tool, account_id, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+         FROM ${table}
+         WHERE account_id = $1
+         ORDER BY created_at DESC, task_id DESC`,
+        [listOpts.accountId]
+      );
+      return { tasks: rows.map(row => rowToRecord(row as unknown as DbTaskRow)) };
+    },
+
     async complete<TResult>(taskId: string, result: TResult): Promise<void> {
       const json = safeStringify(result, taskId);
       assertResultSize(json, taskId);
