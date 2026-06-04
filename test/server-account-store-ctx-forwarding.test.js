@@ -11,6 +11,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
+const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 
 const sampleAgent = () => ({
@@ -90,6 +91,15 @@ const dispatchList = (server, authInfo) =>
     {
       method: 'tools/call',
       params: { name: 'list_accounts', arguments: {} },
+    },
+    authInfo ? { authInfo } : undefined
+  );
+
+const dispatchSyncCreatives = (server, args, authInfo) =>
+  server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: { name: 'sync_creatives', arguments: args },
     },
     authInfo ? { authInfo } : undefined
   );
@@ -196,6 +206,180 @@ describe('Issue #1310 — accounts.list receives ResolveContext', () => {
     });
     await dispatchList(server);
     assert.ok(captures.listFilter, 'first arg must be the filter, ctx must come second');
+  });
+
+  it('list_accounts surfaces advertiser and publisher-identity authorization side by side', async () => {
+    const captures = {};
+    const server = createAdcpServerFromPlatform(
+      buildPlatform(captures, {
+        accounts: {
+          resolve: async ref => ({
+            id: ref?.account_id ?? 'tiktok_ads_123',
+            name: 'TikTok Ads Account',
+            status: 'active',
+            ctx_metadata: {},
+            authInfo: { kind: 'oauth' },
+          }),
+          list: async (_filter, ctx) => {
+            captures.listCtx = ctx;
+            return {
+              items: [
+                {
+                  id: 'tiktok_ads_123',
+                  name: 'Acme TikTok Ads',
+                  status: 'active',
+                  account_scope: 'brand',
+                  brand: { domain: 'acme.example' },
+                  operator: 'acme.example',
+                  authorization: {
+                    allowed_tasks: ['list_accounts', 'get_products', 'create_media_buy', 'sync_creatives'],
+                    scope_name: 'custom:tiktok_ads_manager',
+                  },
+                  ctx_metadata: {},
+                  authInfo: { kind: 'oauth' },
+                },
+                {
+                  id: 'tiktok_creator_456',
+                  name: '@acme TikTok Creator Identity',
+                  status: 'active',
+                  account_scope: 'brand',
+                  brand: { domain: 'acme.example' },
+                  operator: 'acme.example',
+                  authorization: {
+                    allowed_tasks: ['list_accounts', 'sync_creatives'],
+                    field_scopes: {
+                      sync_creatives: ['account', 'creatives', 'idempotency_key'],
+                    },
+                    scope_name: 'custom:tiktok_publisher_identity',
+                    read_only: false,
+                  },
+                  ctx_metadata: {
+                    provider: 'tiktok',
+                    connection_type: 'publisher_identity',
+                    identity_id: 'creator_456',
+                  },
+                  authInfo: { kind: 'oauth' },
+                },
+              ],
+              nextCursor: null,
+            };
+          },
+        },
+      }),
+      {
+        name: 'tiktok-account-authz',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await dispatchList(server, { kind: 'oauth', clientId: 'buyer-agent' });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+
+    const accounts = result.structuredContent.accounts;
+    assert.equal(accounts.length, 2);
+    assert.deepEqual(
+      accounts.map(a => a.account_id),
+      ['tiktok_ads_123', 'tiktok_creator_456']
+    );
+    assert.equal(accounts[0].authorization.scope_name, 'custom:tiktok_ads_manager');
+    assert.deepEqual(accounts[0].authorization.allowed_tasks, [
+      'list_accounts',
+      'get_products',
+      'create_media_buy',
+      'sync_creatives',
+    ]);
+    assert.equal(accounts[1].authorization.scope_name, 'custom:tiktok_publisher_identity');
+    assert.deepEqual(accounts[1].authorization.allowed_tasks, ['list_accounts', 'sync_creatives']);
+    assert.deepEqual(accounts[1].authorization.field_scopes.sync_creatives, [
+      'account',
+      'creatives',
+      'idempotency_key',
+    ]);
+    assert.equal('ctx_metadata' in accounts[1], false, 'adapter metadata must not leak on list_accounts');
+    assert.equal(captures.listCtx.authInfo.clientId, 'buyer-agent');
+  });
+
+  it('sync_creatives reports missing publisher identity authorization as AUTHORIZATION_REQUIRED', async () => {
+    const captures = {};
+    const server = createAdcpServerFromPlatform(
+      buildPlatform(captures, {
+        accounts: {
+          resolve: async ref => ({
+            id: ref?.account_id ?? 'tiktok_ads_123',
+            name: 'Acme TikTok Ads',
+            status: 'active',
+            ctx_metadata: {},
+            authInfo: { kind: 'oauth' },
+          }),
+          list: async () => ({ items: [], nextCursor: null }),
+        },
+        sales: {
+          getProducts: async () => ({ products: [] }),
+          createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+          updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+          syncCreatives: async () => {
+            throw new AdcpError('AUTHORIZATION_REQUIRED', {
+              message: 'Connect the TikTok creator identity before boosting this post.',
+              field: 'creatives[0].assets[0].url',
+              details: {
+                missing_connections: [
+                  {
+                    provider: 'tiktok',
+                    connection_type: 'publisher_identity',
+                    required_for: ['sync_creatives'],
+                    scope: 'identity',
+                    status: 'missing',
+                    resource_ref: {
+                      identity_id: 'creator_456',
+                      handle: '@acme',
+                      post_url: 'https://www.tiktok.com/@acme/video/123',
+                    },
+                    authorization_url: 'https://seller.example/connections/tiktok/creator_456',
+                    authorization_instructions: 'Connect @acme in TikTok Business Center, then retry.',
+                  },
+                ],
+              },
+            });
+          },
+          getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        },
+      }),
+      {
+        name: 'tiktok-publisher-authz',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await dispatchSyncCreatives(
+      server,
+      {
+        account: { account_id: 'tiktok_ads_123' },
+        idempotency_key: '33333333-3333-3333-3333-333333333333',
+        creatives: [
+          {
+            creative_id: 'cr_boost_1',
+            assets: [{ asset_type: 'url', url: 'https://www.tiktok.com/@acme/video/123' }],
+          },
+        ],
+      },
+      { kind: 'oauth', clientId: 'buyer-agent' }
+    );
+
+    assert.equal(result.isError, true);
+    const error = result.structuredContent.adcp_error;
+    assert.equal(error.code, 'AUTHORIZATION_REQUIRED');
+    assert.equal(error.recovery, 'correctable');
+    assert.equal(error.field, 'creatives[0].assets[0].url');
+    assert.equal(error.details.missing_connections[0].provider, 'tiktok');
+    assert.equal(error.details.missing_connections[0].connection_type, 'publisher_identity');
+    assert.equal(error.details.missing_connections[0].status, 'missing');
+    assert.equal(error.details.missing_connections[0].resource_ref.identity_id, 'creator_456');
+    assert.equal(
+      error.details.missing_connections[0].authorization_url,
+      'https://seller.example/connections/tiktok/creator_456'
+    );
   });
 });
 

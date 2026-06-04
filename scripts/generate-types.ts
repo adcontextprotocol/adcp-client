@@ -1399,6 +1399,33 @@ function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   return output;
 }
 
+function addCanonicalToolTypeAliases(typeDefinitions: string, tools: ToolDefinition[]): string {
+  let output = typeDefinitions;
+  const exportedTypes = collectExportedTypeNames(output);
+  const aliases: string[] = [];
+
+  const addAlias = (canonical: string) => {
+    if (exportedTypes.has(canonical)) return;
+
+    const candidates = [...exportedTypes].filter(name => new RegExp(`^${canonical}[A-Z]\\w+$`).test(name));
+    if (candidates.length !== 1) return;
+
+    aliases.push(`export type ${canonical} = ${candidates[0]};`);
+    exportedTypes.add(canonical);
+  };
+
+  for (const tool of tools) {
+    const baseName = methodNameToTypeName(tool.methodName);
+    addAlias(`${baseName}Request`);
+    addAlias(`${baseName}Response`);
+  }
+
+  if (aliases.length === 0) return output;
+
+  output += `\n// Canonical tool aliases for schemas whose titles include domain qualifiers.\n${aliases.join('\n')}\n`;
+  return output;
+}
+
 async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set<string> = new Set()) {
   console.log('🔧 Generating tool parameter and response types...');
 
@@ -1876,20 +1903,37 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'PackageSignalTargetingGroup1', base: 'PackageSignalTargetingGroup' },
   { numbered: 'LegacyManifestNamedFormatReference1', base: 'LegacyManifestNamedFormatReference' },
   { numbered: 'ManifestCanonicalFormatKind1', base: 'ManifestCanonicalFormatKind' },
+  { numbered: 'LegacyManifestNamedFormatReference2', base: 'LegacyManifestNamedFormatReference' },
+  { numbered: 'ManifestCanonicalFormatKind2', base: 'ManifestCanonicalFormatKind' },
   { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
   { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
   { numbered: 'CreateMediaBuySubmitted1', base: 'CreateMediaBuySubmitted' },
-  ...Array.from({ length: 6 }, (_, index) => index + 2).flatMap(suffix => [
-    { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
-    { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },
-    { numbered: `AssetVariant${suffix}`, base: 'AssetVariant' },
-  ]),
 ];
+
+const JSTS_REPEATED_UNDER_RESOLUTION_BASES = ['VASTAsset', 'DAASTAsset', 'AssetVariant'] as const;
+
+function buildKnownJstsAliases(typeDefinitions: string): Array<{ numbered: string; base: string }> {
+  const exportedTypes = collectExportedTypeNames(typeDefinitions);
+  const aliases = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(alias => [alias.numbered, alias]));
+
+  for (const base of JSTS_REPEATED_UNDER_RESOLUTION_BASES) {
+    if (!exportedTypes.has(base)) continue;
+    const numberedPattern = new RegExp(`^${base}(\\d+)$`);
+    for (const name of exportedTypes) {
+      const match = name.match(numberedPattern);
+      if (!match || Number(match[1]) < 2) continue;
+      aliases.set(name, { numbered: name, base });
+    }
+  }
+
+  return [...aliases.values()];
+}
 
 export function applyKnownJstsAliases(typeDefinitions: string): string {
   const lines = typeDefinitions.split('\n');
-  const targetNames = new Set(JSTS_UNDER_RESOLUTION_ALIASES.map(a => a.numbered));
-  const baseByNumbered = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(a => [a.numbered, a.base]));
+  const aliases = buildKnownJstsAliases(typeDefinitions);
+  const targetNames = new Set(aliases.map(a => a.numbered));
+  const baseByNumbered = new Map(aliases.map(a => [a.numbered, a.base]));
   const aliasedNames = new Set<string>();
 
   const outputLines: string[] = [];
@@ -2675,7 +2719,10 @@ async function generateTypes() {
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes));
+  const processedToolTypes = addCanonicalToolTypeAliases(
+    applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)),
+    tools
+  );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');

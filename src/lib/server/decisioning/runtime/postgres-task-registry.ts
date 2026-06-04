@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   task_id         TEXT PRIMARY KEY,
   tool            TEXT NOT NULL,
   account_id      TEXT NOT NULL,
+  owner_scope     TEXT,
   status          TEXT NOT NULL DEFAULT 'submitted',
   status_message  TEXT,
   result          JSONB,
@@ -179,6 +180,12 @@ CREATE INDEX IF NOT EXISTS idx_${table}_account_id
 
 CREATE INDEX IF NOT EXISTS idx_${table}_status_created
   ON ${table}(status, created_at);
+
+ALTER TABLE ${table}
+  ADD COLUMN IF NOT EXISTS owner_scope TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_${table}_owner_account
+  ON ${table}(owner_scope, account_id);
 `.trim();
 }
 
@@ -186,6 +193,7 @@ interface DbTaskRow {
   task_id: string;
   tool: string;
   account_id: string;
+  owner_scope: string | null;
   status: TaskStatus;
   status_message: string | null;
   result: unknown;
@@ -201,6 +209,7 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
     taskId: row.task_id,
     tool: row.tool,
     accountId: row.account_id,
+    ...(row.owner_scope ? { ownerScope: row.owner_scope } : {}),
     status: row.status,
     ...(row.status_message !== null && { statusMessage: row.status_message }),
     ...(row.result !== null && row.result !== undefined && { result: row.result as TResult }),
@@ -249,13 +258,20 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     async create(createOpts: {
       tool: string;
       accountId: string;
+      ownerScope?: string;
       hasWebhook?: boolean;
       overrideTaskId?: string;
     }): Promise<{ taskId: string }> {
       const taskId = createOpts.overrideTaskId ?? `task_${randomUUID()}`;
       const result = await pool.query(
-        `INSERT INTO ${table} (task_id, tool, account_id, status, has_webhook) VALUES ($1, $2, $3, 'submitted', $4) ON CONFLICT (task_id) DO NOTHING`,
-        [taskId, createOpts.tool, createOpts.accountId, createOpts.hasWebhook === true]
+        `INSERT INTO ${table} (task_id, tool, account_id, owner_scope, status, has_webhook) VALUES ($1, $2, $3, $4, 'submitted', $5) ON CONFLICT (task_id) DO NOTHING`,
+        [
+          taskId,
+          createOpts.tool,
+          createOpts.accountId,
+          createOpts.ownerScope ?? `account:${createOpts.accountId}`,
+          createOpts.hasWebhook === true,
+        ]
       );
       if ((result.rowCount ?? 0) === 0) {
         throw new Error(`task_id already registered: ${taskId}`);
@@ -265,12 +281,24 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
 
     async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
       const { rows } = await pool.query(
-        `SELECT task_id, tool, account_id, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
          FROM ${table} WHERE task_id = $1`,
         [taskId]
       );
       if (rows.length === 0) return null;
       return rowToRecord<TResult>(rows[0] as unknown as DbTaskRow);
+    },
+
+    async list(listOpts: { accountId: string; ownerScope?: string }): Promise<{ tasks: TaskRecord[] }> {
+      if (listOpts.ownerScope === undefined) return { tasks: [] };
+      const { rows } = await pool.query(
+        `SELECT task_id, tool, account_id, owner_scope, status, status_message, result, error, progress, has_webhook, created_at, updated_at
+         FROM ${table}
+         WHERE account_id = $1 AND (owner_scope = $2 OR (owner_scope IS NULL AND $2 = $3))
+         ORDER BY created_at DESC, task_id DESC`,
+        [listOpts.accountId, listOpts.ownerScope, `account:${listOpts.accountId}`]
+      );
+      return { tasks: rows.map(row => rowToRecord(row as unknown as DbTaskRow)) };
     },
 
     async complete<TResult>(taskId: string, result: TResult): Promise<void> {

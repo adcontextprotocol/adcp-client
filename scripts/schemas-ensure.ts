@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Idempotent guard for the schema cache. Tests load schemas from
- * `schemas/cache/{3.0.x,v2.5}/` (gitignored, populated by
+ * `schemas/cache/{current,3.0.x,v2.5}/` (gitignored, populated by
  * `npm run sync-schemas:all`). Fresh clones, branch switches that wipe
  * the cache, and `git clean -fdx` all leave a dev environment that
  * silently fails ~9 test suites with "AdCP schema data for version 'v2.5'
@@ -17,42 +17,49 @@
  * No CI-time cost: CI's explicit `sync-schemas:all` populates both
  * caches before tests run, so this guard is a no-op there.
  */
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
 const REPO_ROOT = path.join(__dirname, '..');
 const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
+const STABLE_3_0_SCHEMA_VERSION = '3.0.12';
 
-function hasV3Cache(): boolean {
-  if (!existsSync(CACHE_ROOT)) return false;
-  // Any `<major>.<minor>.<patch>` directory under cache satisfies the v3
-  // bundle — `sync-schemas` writes the exact upstream version, currently
-  // 3.1.0-beta.3, but pin updates land here without needing a script change.
-  return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(
-    e => e.isDirectory() && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(e.name)
-  );
+function currentAdcpVersion(): string {
+  return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
+}
+
+function hasCurrentV3Cache(): boolean {
+  const current = currentAdcpVersion();
+  return existsSync(path.join(CACHE_ROOT, current));
+}
+
+function hasStableV30Cache(): boolean {
+  return existsSync(path.join(CACHE_ROOT, STABLE_3_0_SCHEMA_VERSION));
 }
 
 function hasV25Cache(): boolean {
   return existsSync(path.join(CACHE_ROOT, 'v2.5'));
 }
 
-const v3Ok = hasV3Cache();
+const currentV3Ok = hasCurrentV3Cache();
+const stableV30Ok = hasStableV30Cache();
 const v25Ok = hasV25Cache();
 
-if (v3Ok && v25Ok) process.exit(0);
+if (currentV3Ok && stableV30Ok && v25Ok) process.exit(0);
 
 // Only sync what's missing — each sync fetches a tarball, so resyncing
 // a populated cache is ~3s of needless network call.
 const scripts: string[] = [];
-if (!v3Ok) scripts.push('sync-schemas');
+if (!currentV3Ok) scripts.push('sync-schemas');
+if (!stableV30Ok) scripts.push(`sync-schemas -- ${STABLE_3_0_SCHEMA_VERSION}`);
 if (!v25Ok) scripts.push('sync-schemas:v2.5');
 
 console.log(`[schemas:ensure] Missing schema cache; running: ${scripts.join(', ')}`);
 
 for (const script of scripts) {
-  const result = spawnSync('npm', ['run', script], {
+  const [name, ...args] = script.split(' ');
+  const result = spawnSync('npm', ['run', name!, ...args], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
   });

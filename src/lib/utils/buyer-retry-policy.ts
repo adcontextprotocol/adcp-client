@@ -19,6 +19,7 @@
  */
 
 import type { AdcpStructuredError, ErrorCode } from '../server/decisioning/async-outcome';
+import { applyAdcpErrorAllowlist } from '../server/errors';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -79,6 +80,18 @@ export type RetryDecision =
         | 'unknown'; // non-standard code, no policy override — buyer surfaces to user
       /** Human-facing message. Mirrors `error.message`. */
       message: string;
+      /**
+       * Safe code-specific details for UX routing. Currently populated for
+       * `AUTHORIZATION_REQUIRED` after the same allowlist/sanitizer used on
+       * server error envelopes.
+       */
+      details?: Record<string, unknown>;
+      /** Convenience mirror of `details.missing_connections` for auth UX handoffs. */
+      missing_connections?: unknown[];
+      /** Convenience auth URL, from top-level details or the first missing connection that provides one. */
+      authorization_url?: string;
+      /** Convenience auth instructions, from top-level details or the first missing connection that provides them. */
+      authorization_instructions?: string;
     };
 
 /**
@@ -177,6 +190,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // Budget — adjust and retry.
   BUDGET_TOO_LOW: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
   BUDGET_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
+  BUDGET_CAP_REACHED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
   AUDIENCE_TOO_SMALL: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
 
   // Validation / state — read issues[] and patch.
@@ -197,6 +211,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
 
   // Creative deadline — buyer can re-negotiate or surface to user.
   CREATIVE_DEADLINE_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
+  CREATIVE_INACCESSIBLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
 
   // Account state — operator must resolve.
   // ACCOUNT_AMBIGUOUS: spec says "pass explicit account_id" but the agent
@@ -236,6 +251,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   AUTH_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
   AUTH_MISSING: { action: 'escalate', escalateReason: 'auth' },
   AUTH_INVALID: { action: 'escalate', escalateReason: 'terminal' },
+  AUTHORIZATION_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
   PERMISSION_DENIED: { action: 'escalate', escalateReason: 'auth' },
 
   // Agent-status terminals — adcp#3906 consolidates the 3.0.5 placeholder
@@ -264,6 +280,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
 
   // Creative value rejection — commercial signal; don't auto-tweak.
   CREATIVE_VALUE_NOT_ALLOWED: { action: 'escalate', escalateReason: 'commercial' },
+  EVALUATOR_AGENT_NOT_ACCEPTED: { action: 'escalate', escalateReason: 'commercial' },
 
   // Brand required — validation; patch and retry.
   BRAND_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
@@ -311,6 +328,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_OPTION_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_NOT_SUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  UNPRICEABLE_OUTPUT: { action: 'escalate', escalateReason: 'commercial' },
   PRIVATE_FIELD_IN_PUBLIC_PLACEMENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'capability' },
 
@@ -327,6 +345,13 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // payload still populated. No retry — surface the advisory to operator
   // and consume the payload as if it were fresh.
   STALE_RESPONSE: { action: 'escalate', escalateReason: 'terminal' },
+
+  // Creative/catalog input correction.
+  SIGNAL_TARGETING_INCOMPATIBLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  FEED_FETCH_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  INVALID_FEED_FORMAT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  ITEM_VALIDATION_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  CATALOG_LIMIT_EXCEEDED: { action: 'escalate', escalateReason: 'commercial' },
 };
 
 // ---------------------------------------------------------------------------
@@ -349,6 +374,47 @@ function clampDelayMs(
     return Math.min(MAX_DELAY_MS, fallbackMs * Math.pow(2, Math.max(0, attempt - 1)));
   }
   return Math.min(MAX_DELAY_MS, fallbackMs);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function authorizationRequiredEscalationContext(
+  error: AdcpStructuredError
+): Partial<Extract<RetryDecision, { action: 'escalate' }>> {
+  if (error.code !== 'AUTHORIZATION_REQUIRED' || error.details === undefined) return {};
+
+  const sanitized = applyAdcpErrorAllowlist('AUTHORIZATION_REQUIRED', {
+    code: error.code,
+    message: error.message,
+    recovery: error.recovery,
+    details: error.details,
+  });
+  const details = sanitized.details;
+  if (!isRecord(details)) return {};
+
+  const missingConnections = Array.isArray(details.missing_connections) ? details.missing_connections : undefined;
+  const firstMissing = missingConnections?.find(isRecord);
+  const authorizationUrl =
+    typeof details.authorization_url === 'string'
+      ? details.authorization_url
+      : typeof firstMissing?.authorization_url === 'string'
+        ? firstMissing.authorization_url
+        : undefined;
+  const authorizationInstructions =
+    typeof details.authorization_instructions === 'string'
+      ? details.authorization_instructions
+      : typeof firstMissing?.authorization_instructions === 'string'
+        ? firstMissing.authorization_instructions
+        : undefined;
+
+  return {
+    details,
+    ...(missingConnections !== undefined && { missing_connections: missingConnections }),
+    ...(authorizationUrl !== undefined && { authorization_url: authorizationUrl }),
+    ...(authorizationInstructions !== undefined && { authorization_instructions: authorizationInstructions }),
+  };
 }
 
 function applyPolicy(
@@ -388,7 +454,12 @@ function applyPolicy(
   }
 
   if (policy.action === 'escalate') {
-    return { action: 'escalate', reason: policy.escalateReason, message: error.message };
+    return {
+      action: 'escalate',
+      reason: policy.escalateReason,
+      message: error.message,
+      ...authorizationRequiredEscalationContext(error),
+    };
   }
 
   if (attempt >= policy.attemptCap) {

@@ -3,7 +3,12 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { toWireAccount, toWireSyncAccountRow } = require('../dist/lib/server/decisioning/account');
+const {
+  ACCOUNT_AUTHORIZATION_WIRE_KEYS,
+  toWireAccount,
+  toWireSyncAccountRow,
+} = require('../dist/lib/server/decisioning/account');
+const { AccountAuthorizationSchema } = require('../dist/lib/types/schemas.generated');
 
 const baseAccount = () => ({
   id: 'acc_42',
@@ -14,6 +19,10 @@ const baseAccount = () => ({
 });
 
 describe('toWireAccount', () => {
+  it('keeps the account authorization projection key set aligned with the generated schema', () => {
+    assert.deepEqual([...ACCOUNT_AUTHORIZATION_WIRE_KEYS].sort(), Object.keys(AccountAuthorizationSchema.shape).sort());
+  });
+
   it('renames id → account_id and strips framework-internal fields', () => {
     const wire = toWireAccount(baseAccount());
     assert.equal(wire.account_id, 'acc_42');
@@ -249,6 +258,28 @@ describe('toWireAccount', () => {
       const wire = toWireAccount({ ...baseAccount(), reporting_bucket });
       assert.deepEqual(wire.reporting_bucket, reporting_bucket);
     });
+
+    it('projects caller-specific authorization metadata', () => {
+      const authorization = {
+        allowed_tasks: ['list_accounts', 'sync_creatives', 'create_media_buy'],
+        field_scopes: {
+          create_media_buy: ['account', 'brand', 'packages', 'idempotency_key'],
+        },
+        scope_name: 'custom:tiktok_boosting',
+        access_token: 'secret_should_not_cross_wire',
+      };
+      const wire = toWireAccount({
+        ...baseAccount(),
+        authorization,
+      });
+      assert.deepEqual(wire.authorization, {
+        allowed_tasks: ['list_accounts', 'sync_creatives', 'create_media_buy'],
+        field_scopes: {
+          create_media_buy: ['account', 'brand', 'packages', 'idempotency_key'],
+        },
+        scope_name: 'custom:tiktok_boosting',
+      });
+    });
   });
 
   it('projects billing_proxy, sandbox, ext when set', () => {
@@ -375,6 +406,31 @@ describe('toWireSyncAccountRow', () => {
     assert.equal(wire.sandbox, false);
   });
 
+  it('projects caller-specific authorization metadata', () => {
+    const authorization = {
+      allowed_tasks: ['list_accounts', 'sync_accounts', 'sync_creatives'],
+      field_scopes: {
+        sync_creatives: ['account', 'creatives', 'idempotency_key'],
+      },
+      scope_name: 'custom:tiktok_publisher_identity',
+      read_only: false,
+      refresh_token: 'secret_should_not_cross_wire',
+    };
+    const wire = toWireSyncAccountRow({
+      ...baseRow(),
+      account_id: 'tiktok_creator_456',
+      authorization,
+    });
+    assert.deepEqual(wire.authorization, {
+      allowed_tasks: ['list_accounts', 'sync_accounts', 'sync_creatives'],
+      field_scopes: {
+        sync_creatives: ['account', 'creatives', 'idempotency_key'],
+      },
+      scope_name: 'custom:tiktok_publisher_identity',
+      read_only: false,
+    });
+  });
+
   it('omits all optional fields when source carries only the required four', () => {
     const wire = toWireSyncAccountRow(baseRow());
     for (const k of [
@@ -387,6 +443,7 @@ describe('toWireSyncAccountRow', () => {
       'rate_card',
       'payment_terms',
       'credit_limit',
+      'authorization',
       'errors',
       'warnings',
       'sandbox',

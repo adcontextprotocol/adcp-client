@@ -312,7 +312,7 @@
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
     "sync-schemas:3.1-beta": "tsx scripts/sync-3-1-beta-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.0.12 && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
@@ -460,5 +460,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.1.0-rc.6"
+  "adcp_version": "3.1.0-rc.7"
 }

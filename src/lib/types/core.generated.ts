@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.6
-// Generated at: 2026-06-01T00:31:48.140Z
+// Generated AdCP core types from official schemas v3.1.0-rc.7
+// Generated at: 2026-06-04T12:59:08.032Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -120,6 +120,9 @@ export type ImpairmentReasonCode =
   | 'pii_audit_failed'
   | 'seller_removed'
   | 'content_rejected'
+  | 'identity_authorization_revoked'
+  | 'identity_authorization_expired'
+  | 'source_private'
   | 'source_offline'
   | 'property_depublished';
 /**
@@ -150,7 +153,15 @@ export type CatalogType =
 /**
  * Format of the external feed at url. Required when url points to a non-AdCP feed (e.g., Google Merchant Center XML, Meta Product Catalog). Omit for offering-type catalogs where the feed is native AdCP JSON.
  */
-export type FeedFormat = 'google_merchant_center' | 'facebook_catalog' | 'shopify' | 'linkedin_jobs' | 'custom';
+export type FeedFormat =
+  | 'google_merchant_center'
+  | 'facebook_catalog'
+  | 'shopify'
+  | 'linkedin_jobs'
+  | 'tiktok_shop'
+  | 'pinterest_catalog'
+  | 'openai_product_feed'
+  | 'custom';
 /**
  * How often the platform should re-fetch the feed from url. Only applicable when url is provided. Platforms may use this as a hint for polling schedules.
  */
@@ -2035,7 +2046,7 @@ export interface PackageSignalTargeting {
    */
   pricing_option_id?: string;
   /**
-   * Optional opaque seller execution handle for this signal. Omit when signal_ref is sufficient for the seller to resolve the signal. Include only when the product option exposes a separate runtime or activation handle that differs from the named signal reference.
+   * Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the product option exposes a separate runtime or activation handle, and pass it verbatim. Buyers SHOULD prefer an exposed segment handle over reconstructing condition identity from categorical values because the handle can carry provider namespace and methodology distinctions.
    */
   signal_agent_segment_id?: string;
   activation_key?: ActivationKey;
@@ -2236,7 +2247,7 @@ export type CreativeAsset = {
   format_kind?: CanonicalFormatKind;
   format_option_ref?: FormatOptionReference;
   /**
-   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   * Assets required by the format, keyed by asset_id or canonical asset_group_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema, including reference assets such as `published_post` when a product accepts already-published post references.
    */
   assets: {
     /**
@@ -2284,7 +2295,7 @@ export type CreativeAsset = {
    */
   placement_ids?: string[];
   /**
-   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   * Industry-standard or market-specific identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). In broadcast and scheduled audio/video buying, these identifiers tie the creative to rotation instructions, clearance records, and traffic systems. A creative may have multiple identifiers when different systems reference the same asset. Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -2308,6 +2319,7 @@ export type AssetVariant =
   | MarkdownAsset
   | BriefAsset
   | CatalogAsset
+  | PublishedPostAsset
   | CardAsset
   | PixelTrackerAsset
   | VASTTrackerAsset
@@ -2514,7 +2526,12 @@ export type UniversalMacro =
   | 'PROGRAM_ID'
   | 'DESTINATION_ID'
   | 'CREATIVE_VARIANT_ID'
-  | 'APP_ITEM_ID';
+  | 'APP_ITEM_ID'
+  | 'ITEM_NAME'
+  | 'ITEM_DESCRIPTION'
+  | 'ITEM_TAGLINE'
+  | 'ITEM_PRICE'
+  | 'ITEM_PRICE_CURRENCY';
 /**
  * Expected content type of webhook response
  */
@@ -2610,11 +2627,11 @@ export type MarkdownFlavor = 'commonmark' | 'gfm';
 /**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
-export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
+export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'suspended' | 'rejected' | 'archived';
 /**
- * Industry-standard identifier types for advertising creatives. These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ * Industry-standard or market-specific identifier types for advertising creatives. These identifiers are managed by external registries or clearance bodies and are used across the supply chain to track and reference specific creative assets. This enum is intentionally closed: add a PR for additional shared identifier schemes rather than using an escape hatch.
  */
-export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock';
+export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock' | 'idcrea';
 /**
  * Video asset with URL and technical specifications including audio track properties
  */
@@ -3208,6 +3225,77 @@ export interface CatalogAsset {
   asset_type: 'catalog';
 }
 /**
+ * Reference to an already-published post on a publisher, creator, or social platform. The buyer supplies a reference to the existing post; the seller resolves, authorizes, reviews, and serves the referenced post according to the target product's format declaration. This asset is for post references, not uploaded bytes and not catalog rows.
+ */
+export interface PublishedPostAsset {
+  /**
+   * Discriminator identifying this as a published-post reference asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'published_post';
+  /**
+   * Canonical URL for the published post. Preferred when the platform exposes a stable public or authenticated URL.
+   */
+  post_url?: string;
+  /**
+   * Optional platform or publisher namespace for the referenced post. Informational unless the seller's product declaration or platform extension narrows the accepted values.
+   */
+  platform?: string;
+  /**
+   * Optional platform-native post identifier when a URL alone is not stable or not available. Buyers SHOULD include `platform` when using `platform_post_id` without `post_url`, unless the product or format declaration already narrows the platform. Platform-specific identifier semantics belong in platform_extensions; this field is only an opaque reference.
+   */
+  platform_post_id?: string;
+  /**
+   * Optional identity hint for the authoring handle/page/channel that owns the post. Sellers MUST verify authorization from platform state; buyers MUST NOT use this object as proof of authorization.
+   */
+  identity_ref?: {
+    /**
+     * Human-readable handle or username when available.
+     */
+    handle?: string;
+    /**
+     * URL for the authoring profile, page, or channel.
+     */
+    profile_url?: string;
+    /**
+     * Opaque platform-native identity identifier.
+     */
+    platform_identity_id?: string;
+  };
+  /**
+   * When the referenced post was originally published, if known.
+   * @format date-time
+   */
+  published_at?: string;
+  /**
+   * Server-emitted, seller-observed authorization state for the referenced post or identity. Sellers MAY return this object on read surfaces. On write requests, sellers MUST ignore buyer-supplied `reference_authorization.status` and other authorization-state claims unless a platform extension explicitly defines a signed proof shape and the seller verifies that proof.
+   */
+  reference_authorization?: {
+    /**
+     * Current seller-observed authorization state. `authorized`: seller can serve the referenced post. `pending`: additional creator/account action is required. `expired` or `revoked`: authorization previously existed but no longer permits serving. `not_required`: the seller can legally and technically serve without a separate identity authorization. `unknown`: seller has not checked or cannot disclose the state.
+     */
+    status: 'authorized' | 'pending' | 'expired' | 'revoked' | 'not_required' | 'unknown';
+    /**
+     * When the seller last checked the authorization state.
+     * @format date-time
+     */
+    checked_at?: string;
+    /**
+     * When the authorization expires, if the platform exposes an expiry.
+     * @format date-time
+     */
+    expires_at?: string;
+    /**
+     * Optional URL the buyer or creator can use to complete authorization.
+     */
+    authorization_url?: string;
+    /**
+     * Human-readable instructions for completing or restoring authorization.
+     */
+    authorization_instructions?: string;
+  };
+  provenance?: Provenance;
+}
+/**
  * A single card in a multi-card creative (image_carousel, future composed carousels). Carries: `media` (an image OR video asset), optional `headline` (short text), optional `description` (longer text), optional `cta` (call-to-action label), optional `landing_page_url` (url asset with `url_type: "clickthrough"`).
  *
  * Covers the multi-card patterns across Meta carousel, Pinterest sponsored pin, Snap Collection, TikTok carousel, and AI-surface result cards. The two-field text shape (`headline` + `description`) reflects how almost every adopter splits short labels from longer copy; Pinterest pin description and Meta per-card description both go in `description`.
@@ -3399,12 +3487,12 @@ export interface DAASTTrackerAsset {
   provenance?: Provenance;
 }
 /**
- * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
+ * An industry-standard or market-specific identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). These identifiers are managed by external registries or clearance bodies and used across the supply chain to track and reference specific creative assets. Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
  */
 export interface IndustryIdentifier {
   type: CreativeIdentifierType;
   /**
-   * The identifier value (e.g., 'ABCD1234000H' for Ad-ID)
+   * The identifier value (e.g., 'ABCD1234000H' for Ad-ID). Preserve the value exactly as the traffic or clearance system expects it.
    * @maxLength 64
    */
   value: string;
@@ -3424,7 +3512,7 @@ export interface LegacyCreativeNamedFormatReference {
   format_id: FormatReferenceStructuredObject;
   format_option_ref?: FormatOptionReference;
   /**
-   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   * Assets required by the format, keyed by asset_id or canonical asset_group_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema, including reference assets such as `published_post` when a product accepts already-published post references.
    */
   assets: {
     /**
@@ -3472,7 +3560,7 @@ export interface LegacyCreativeNamedFormatReference {
    */
   placement_ids?: string[];
   /**
-   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   * Industry-standard or market-specific identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). In broadcast and scheduled audio/video buying, these identifiers tie the creative to rotation instructions, clearance records, and traffic systems. A creative may have multiple identifiers when different systems reference the same asset. Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -3492,7 +3580,7 @@ export interface CreativeCanonicalFormatKind {
   format_kind: CanonicalFormatKind;
   format_option_ref?: FormatOptionReference;
   /**
-   * Assets required by the format, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   * Assets required by the format, keyed by asset_id or canonical asset_group_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1` like carousel `cards` or responsive_creative `headlines`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema, including reference assets such as `published_post` when a product accepts already-published post references.
    */
   assets: {
     /**
@@ -3540,7 +3628,7 @@ export interface CreativeCanonicalFormatKind {
    */
   placement_ids?: string[];
   /**
-   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
+   * Industry-standard or market-specific identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). In broadcast and scheduled audio/video buying, these identifiers tie the creative to rotation instructions, clearance records, and traffic systems. A creative may have multiple identifiers when different systems reference the same asset. Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -3593,6 +3681,14 @@ export type Product = {
      * Declared video placement types that may be included in this product, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Use on OLV, CTV, and other video products when buyers need to distinguish instream, accompanying-content, interstitial, and standalone/no-content inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `video_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
      */
     video_placement_types?: VideoPlacementType[];
+    /**
+     * Declared sponsored-placement types that may be included in this product, distinguishing where catalog-driven retail-media placements render on the retailer surface (sponsored search, sponsored display, or sponsored native). Use on retail-media products when buyers need to distinguish search-keyed, display, and native in-grid sponsored inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `sponsored_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+     */
+    sponsored_placement_types?: SponsoredPlacementType[];
+    /**
+     * Declared social-placement surfaces that may be included in this product, distinguishing the in-app surface where social placements render (feed, stories, short_video, explore, or search). Use on social products when buyers need to distinguish feed, story, short-video, and discovery surfaces. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `social_placement_surfaces`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+     */
+    social_placement_surfaces?: SocialPlacementSurface[];
     delivery_type: DeliveryType;
     exclusivity?: Exclusivity;
     /**
@@ -3991,7 +4087,7 @@ export type MediaChannel =
  *
  * **Closed-set semantics (normative).** `format_options[]` is the closed set of accepted formats for this product. Sellers MUST reject `create_media_buy` requests targeting any `format_kind` (or format option reference) not present in this list — typically with `UNSUPPORTED_FEATURE` or a seller-specific code; the rejection is structural, not negotiable. `seller_preference` modulates *within* the accepted set (a soft ranking hint between equally-acceptable options), it is NOT an enforcement axis. A product wanting to say 'this format is the only one that works' lists exactly that one entry in `format_options[]`; everything else falls outside the set and is rejected by the closed-set rule.
  *
- * **Format matching vs satisfaction (normative).** Legacy named formats MUST be normalized to canonical declarations before comparison; do not exact-match raw `(agent_url, id)` pairs once a `format_id` has been projected through `canonical`, `v1_format_ref`, or the canonical mapping registry. Equivalence matching can treat a legacy fixed-size display ID and `format_kind: "image"` with matching `width`/`height` as the same underlying shape. Product satisfaction is stricter and directional: when this declaration specifies fixed constraints such as `width`, `height`, `duration_ms_exact`, or a duration range, a buyer request or creative manifest MUST declare and satisfy those constraints. A broad request with no dimensions or duration does not satisfy a fixed-size or fixed-duration product; a broad product MAY accept a more specific creative unless another product constraint excludes it. Range constraints use containment: a range-based request satisfies this declaration only when every value it permits falls within this declaration's accepted range; overlap alone is insufficient. An exact value satisfies a range when the exact value falls inside it.
+ * **Format matching vs satisfaction (normative).** Legacy named formats MUST be normalized to canonical declarations before comparison; do not exact-match raw `(agent_url, id)` pairs once a `format_id` has been projected through `canonical`, `v1_format_ref`, or the canonical mapping registry. Equivalence matching can treat a legacy fixed-size display ID and `format_kind: "image"` with matching `width`/`height` as the same underlying shape. Product satisfaction is stricter and directional: when this declaration specifies fixed constraints such as `width`, `height`, `duration_ms_exact`, or `duration_ms_range`, a buyer request or creative manifest MUST declare and satisfy those constraints. A broad request with no dimensions or duration does not satisfy a fixed-size or fixed-duration product; a broad product MAY accept a more specific creative unless another product constraint excludes it. Duration precedence is `duration_ms_exact` > `duration_ms_range`. Range constraints use containment: a range-based request satisfies this declaration only when every value it permits falls within this declaration's accepted range; overlap alone is insufficient. An exact value satisfies a range when the exact value falls inside the accepted interval. For hosted audio/video, a null range endpoint is unbounded: [null, 60000] means up to 60s, and [15000, null] means at least 15s; [null, null] is invalid because at least one endpoint must be bounded.
  *
  * **Custom format_kind** (`format_kind: "custom"`): for adopter-defined shapes that don't fit the 12 canonicals (multi-placement takeover, roadblock, branded content, cross-screen sponsorship, sponsorship lockup, newsletter sponsorship, AR lens, playable, live event sponsorship). When `format_kind` is `custom`, the declaration MUST carry `format_shape` (recognized global pattern from the [format-shape vocabulary registry](/schemas/core/format-shape-vocabulary.json)) AND `format_schema` (URI+digest reference to a fetchable schema describing the actual `params` and `slots`). Buyer agents fetch the schema, validate manifests structurally, and reason about manifests without per-seller integration code. See [adcp#3666](https://github.com/adcontextprotocol/adcp/issues/3666) for the canonical promotion queue.
  */
@@ -4133,6 +4229,14 @@ export type CanonicalFormatImage = SizeModeMutex & {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
@@ -4210,18 +4314,19 @@ export type CanonicalFormatImage = SizeModeMutex & {
    */
   cta_values?: string[];
   /**
-   * Where the rendered asset bytes come from. Single shared enum across all canonicals (`image`, `video_hosted`, `audio_hosted` — replaces the earlier per-canonical `image_source` / `video_source` / `audio_source` fields). `buyer_uploaded` (default): buyer ships a pre-rendered asset. `publisher_host_recorded`: publisher's host records the asset (audio-specific; podcast host-read pattern). `seller_pre_rendered_from_brief`: buyer ships a brief plus structured copy; seller renders ONE asset at sync_creatives or build_creative time (generative-DSP pattern). `seller_human_designed`: seller's design team renders manually from a brief. `agent_synthesized`: AI synthesis pipeline; pair with `synthesis_nondeterministic: true` when the platform cannot guarantee in-spec output (Veo/Sora/Imagen-class).
+   * Where the rendered asset bytes come from. Single shared enum across all canonicals (`image`, `video_hosted`, `audio_hosted` — replaces the earlier per-canonical `image_source` / `video_source` / `audio_source` fields). `buyer_uploaded` (default): buyer ships a pre-rendered asset. `publisher_host_recorded`: publisher's host records the asset (audio-specific; podcast host-read pattern). `seller_pre_rendered_from_brief`: buyer ships a brief plus structured copy; seller renders ONE asset at sync_creatives or build_creative time (generative-DSP pattern). `seller_human_designed`: seller's design team renders manually from a brief. `agent_synthesized`: AI synthesis pipeline; pair with `synthesis_nondeterministic: true` when the platform cannot guarantee in-spec output (Veo/Sora/Imagen-class). `publisher_owned_reference`: buyer references an existing post or publisher-owned object via a `published_post` slot; the seller resolves and serves the referenced content after authorization/review rather than receiving uploaded bytes.
    *
-   * Not every value is meaningful on every canonical — `publisher_host_recorded` is audio-specific; on `image` or `video_hosted` it has no defined behavior. Adopters MUST select a value appropriate to the canonical's asset type. The `slots` declaration is the binding contract for what the buyer ships; `asset_source` is informational and lets buyers understand the production model when picking products.
+   * Not every value is meaningful on every canonical — `publisher_host_recorded` is audio-specific; on `image` or `video_hosted` it has no defined behavior. `publisher_owned_reference` is meaningful only when the product's `slots` declaration accepts a reference asset such as `published_post`. Adopters MUST select a value appropriate to the canonical's asset type. The `slots` declaration is the binding contract for what the buyer ships; `asset_source` is informational and lets buyers understand the production model when picking products.
    */
   asset_source?:
     | 'buyer_uploaded'
     | 'publisher_host_recorded'
     | 'seller_pre_rendered_from_brief'
     | 'seller_human_designed'
-    | 'agent_synthesized';
+    | 'agent_synthesized'
+    | 'publisher_owned_reference';
   /**
-   * Whether the product accepts buyer-uploaded assets. When `rejected`, the buyer cannot ship pre-rendered bytes directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the asset. Combined with `asset_source`, lets a product declare 'I produce assets from briefs and refuse buyer uploads' (asset_source=`seller_pre_rendered_from_brief`, buyer_asset_acceptance=`rejected`).
+   * Whether the product accepts buyer-uploaded assets. When `rejected`, the buyer cannot ship pre-rendered bytes directly — they must use build_creative (or sync_creatives with brief inputs or reference assets) so the seller produces or resolves the asset. Combined with `asset_source`, lets a product declare 'I produce assets from briefs and refuse buyer uploads' (asset_source=`seller_pre_rendered_from_brief`, buyer_asset_acceptance=`rejected`) or 'I accept existing post references, not uploaded bytes' (asset_source=`publisher_owned_reference`, buyer_asset_acceptance=`rejected`).
    */
   buyer_asset_acceptance?: 'accepted' | 'rejected';
 };
@@ -4286,6 +4391,14 @@ export type CanonicalFormatHTML5Banner = SizeModeMutex & {
    * Default slots for html5 canonical. Buyer ships a zip bundle plus optional backup image (required when `backup_image_required: true`) and clickthrough URL. The zip's entry point is typically `index.html`; click handling uses the `clickTag` (or `clickTAG`) macro substituted by the seller at serve time.
    */
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -4443,6 +4556,14 @@ export type CanonicalFormatDisplayTag = SizeModeMutex & {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
@@ -4567,11 +4688,27 @@ export type Placement = {
    * Declared video placement types for this product placement, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
    */
   video_placement_types?: VideoPlacementType[];
+  /**
+   * Declared sponsored-placement types for this product placement, distinguishing where the catalog-driven retail-media placement renders on the retailer surface. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  sponsored_placement_types?: SponsoredPlacementType[];
+  /**
+   * Declared social-placement surfaces for this product placement, distinguishing the in-app surface where the social placement renders. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  social_placement_surfaces?: SocialPlacementSurface[];
 };
 /**
  * Declared video placement classification for OLV and other video inventory, using the IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native value names. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
  */
 export type VideoPlacementType = 'instream' | 'accompanying_content' | 'interstitial' | 'standalone';
+/**
+ * Declared sponsored-placement classification for catalog-driven retail-media inventory, distinguishing where the sponsored placement renders on the retailer surface. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+ */
+export type SponsoredPlacementType = 'sponsored_search' | 'sponsored_display' | 'sponsored_native';
+/**
+ * Declared social-placement surface classification for social inventory, distinguishing the in-app surface where a social placement renders. Values name the semantic surface, not platform brands. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+ */
+export type SocialPlacementSurface = 'feed' | 'stories' | 'short_video' | 'explore' | 'search';
 /**
  * Type of inventory delivery
  */
@@ -4813,7 +4950,7 @@ export type ProductSignalTargetingOption = {
     max: number;
   };
   /**
-   * Optional opaque seller execution handle for this signal. Omit when signal_ref is sufficient for the seller to resolve the signal. Include only when the seller exposes a distinct runtime or activation handle that buyers must echo in packages[].targeting_overlay.signal_targeting_groups.groups[].signals[].signal_agent_segment_id.
+   * Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the seller exposes a distinct runtime or activation handle that buyers must echo in packages[].targeting_overlay.signal_targeting_groups.groups[].signals[].signal_agent_segment_id. Buyers SHOULD echo this handle verbatim rather than reconstructing identity from categorical values; providers MAY namespace handles so cross-provider identity stays legible without a shared taxonomy registry.
    */
   signal_agent_segment_id?: string;
   /**
@@ -4845,6 +4982,10 @@ export type VendorPricingOption = {
    * Opaque identifier for this pricing option, unique within the vendor agent. Pass this in report_usage to identify which pricing option was applied.
    */
   pricing_option_id: string;
+  /**
+   * Creative transformers only: scopes this pricing option to specific output formats, so one transformer can price different outputs differently (e.g. a multi-publisher template charging per publisher format). When present, the option applies only to leaves whose format matches one of these; an unscoped option (this field absent) is the default for any output. A build targeting an output that matches no scoped option AND has no unscoped default is rejected with UNPRICEABLE_OUTPUT — never billed at a guessed rate (no silent fallback). Inert for non-creative vendors (signals/governance), which omit it.
+   */
+  applies_to_output_format_ids?: FormatReferenceStructuredObject[];
 } & VendorPricing;
 /**
  * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
@@ -4966,6 +5107,77 @@ export interface Responsive {
 export interface None {
   [k: string]: unknown | undefined;
 }
+/**
+ * A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+ */
+export interface DownstreamConnectionRequirement {
+  /**
+   * Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.
+   */
+  provider?: string;
+  /**
+   * Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity.
+   */
+  connection_type: 'advertiser_account' | 'publisher_identity' | 'post_authorization';
+  /**
+   * Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.
+   */
+  required_for?: string[];
+  /**
+   * Granularity of the downstream grant.
+   */
+  scope?: 'account' | 'identity' | 'post' | 'unknown';
+  /**
+   * Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.
+   */
+  status?: 'connected' | 'missing' | 'pending' | 'expired' | 'revoked' | 'not_required' | 'unknown';
+  /**
+   * Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.
+   */
+  connection_id?: string;
+  /**
+   * Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.
+   */
+  resource_ref?: {
+    /**
+     * Provider-native advertiser or business account id, when safe to disclose.
+     */
+    platform_account_id?: string;
+    /**
+     * Provider-native creator, page, channel, organization, or profile id, when safe to disclose.
+     */
+    identity_id?: string;
+    /**
+     * Provider-native public handle for the owning identity, when available.
+     */
+    handle?: string;
+    /**
+     * Public URL for the owning identity, when available.
+     */
+    profile_url?: string;
+    /**
+     * Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.
+     */
+    post_id?: string;
+    /**
+     * Public URL for the referenced post, when available.
+     */
+    post_url?: string;
+  };
+  /**
+   * Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.
+   */
+  authorization_url?: string;
+  /**
+   * Human-readable instructions for completing or restoring this downstream connection.
+   */
+  authorization_instructions?: string;
+  /**
+   * Expiration time for the downstream grant, when known.
+   * @format date-time
+   */
+  expires_at?: string;
+}
 export interface HTML5FormatDeclaration {
   format_kind: 'html5';
   params: CanonicalFormatHTML5Banner;
@@ -5036,6 +5248,14 @@ export interface CanonicalFormatImageCarousel {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
@@ -5065,6 +5285,10 @@ export interface CanonicalFormatImageCarousel {
    * @minimum 1
    */
   card_image_max_file_size_kb?: number;
+  /**
+   * @minimum 1
+   */
+  card_video_max_file_size_kb?: number;
   /**
    * @minimum 1
    */
@@ -5148,6 +5372,14 @@ export interface CanonicalFormatHostedVideo {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
@@ -5177,9 +5409,9 @@ export interface CanonicalFormatHostedVideo {
    */
   max_height?: number;
   /**
-   * [min, max] duration in milliseconds. **Precedence**: when both `duration_ms_exact` and `duration_ms_range` ship on the same product, `duration_ms_exact` takes precedence — buyers MUST validate against the exact value and ignore the range. The range is treated as advisory metadata in that case (e.g., for UI display showing the broader product family). SDKs SHOULD lint a warning when both fields ship; producers SHOULD pick one.
+   * [min, max] duration in milliseconds. Either endpoint MAY be null to express an unbounded side: [null, 60000] means up to 60s; [15000, null] means at least 15s. [null, null] is invalid because at least one endpoint must be bounded. **Precedence**: when both `duration_ms_exact` and `duration_ms_range` ship on the same product, `duration_ms_exact` takes precedence — buyers MUST validate against the exact value and ignore the range. SDKs SHOULD lint a warning when both fields ship; producers SHOULD pick one.
    */
-  duration_ms_range?: number[];
+  duration_ms_range?: (number | null)[];
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship (see `duration_ms_range` description).
    * @minimum 1
@@ -5222,16 +5454,17 @@ export interface CanonicalFormatHostedVideo {
   companion_banner_widths?: number[];
   companion_banner_heights?: number[];
   /**
-   * Where the rendered asset bytes come from. Single shared enum across canonicals. See `image.json#asset_source` for the full semantics. `publisher_host_recorded` is audio-specific and has no defined behavior on video — adopters MUST select a value appropriate to the canonical.
+   * Where the rendered asset bytes come from. Single shared enum across canonicals. See `image.json#asset_source` for the full semantics. `publisher_host_recorded` is audio-specific and has no defined behavior on video. `publisher_owned_reference` is valid when the product accepts an existing post reference via a `published_post` slot instead of uploaded video bytes. Adopters MUST select a value appropriate to the canonical.
    */
   asset_source?:
     | 'buyer_uploaded'
     | 'publisher_host_recorded'
     | 'seller_pre_rendered_from_brief'
     | 'seller_human_designed'
-    | 'agent_synthesized';
+    | 'agent_synthesized'
+    | 'publisher_owned_reference';
   /**
-   * Whether the product accepts buyer-uploaded video. When `rejected`, the buyer cannot ship a video asset directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the video.
+   * Whether the product accepts buyer-uploaded video. When `rejected`, the buyer cannot ship a video asset directly — they must use build_creative, sync_creatives with brief inputs, or sync_creatives with an accepted reference asset so the seller produces or resolves the video.
    */
   buyer_asset_acceptance?: 'accepted' | 'rejected';
 }
@@ -5296,6 +5529,14 @@ export interface CanonicalFormatVASTVideo {
    * Default slots for video_vast canonical. Buyer ships a VAST tag (URL or inline XML, VAST 2.x-4.x) plus an optional clickthrough URL (which falls back to the VAST `ClickThrough` element when omitted). Tracking events are inherent to VAST and don't require explicit slots.
    */
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -5421,13 +5662,21 @@ export interface CanonicalFormatHostedAudio {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
   /**
-   * [min, max] duration in milliseconds. **Precedence**: `duration_ms_exact` takes precedence when both ship on the same product. SDKs SHOULD lint a warning when both fields ship.
+   * [min, max] duration in milliseconds. Either endpoint MAY be null to express an unbounded side: [null, 60000] means up to 60s; [15000, null] means at least 15s. [null, null] is invalid because at least one endpoint must be bounded. **Precedence**: when both `duration_ms_exact` and `duration_ms_range` ship on the same product, `duration_ms_exact` takes precedence — buyers MUST validate against the exact value and ignore the range. SDKs SHOULD lint a warning when both fields ship; producers SHOULD pick one.
    */
-  duration_ms_range?: number[];
+  duration_ms_range?: (number | null)[];
   /**
    * When set, duration must equal exactly this value. Takes precedence over `duration_ms_range` when both ship.
    * @minimum 1
@@ -5458,14 +5707,15 @@ export interface CanonicalFormatHostedAudio {
    */
   true_peak_dbfs?: number;
   /**
-   * Where the rendered audio bytes come from. Single shared enum across canonicals (see `image.json#asset_source` for the full semantics). `publisher_host_recorded`: the publisher's host records the audio (podcast host-read pattern); buyer must use the publisher's build_creative capability. This value is audio-specific.
+   * Where the rendered audio bytes come from. Single shared enum across canonicals (see `image.json#asset_source` for the full semantics). `publisher_host_recorded`: the publisher's host records the audio (podcast host-read pattern); buyer must use the publisher's build_creative capability. `publisher_owned_reference` is valid only when the product accepts a reference asset whose publisher-owned source resolves to playable audio. `publisher_host_recorded` remains the normal audio-specific host-read value.
    */
   asset_source?:
     | 'buyer_uploaded'
     | 'publisher_host_recorded'
     | 'seller_pre_rendered_from_brief'
     | 'seller_human_designed'
-    | 'agent_synthesized';
+    | 'agent_synthesized'
+    | 'publisher_owned_reference';
   /**
    * Whether the product accepts buyer-uploaded audio. When `rejected`, the buyer cannot ship an audio asset directly — they must use build_creative (or sync_creatives with brief inputs) so the seller produces the audio. Combined with `asset_source`, lets a product declare 'I produce audio from briefs and refuse buyer uploads' (asset_source=`seller_pre_rendered_from_brief`, buyer_asset_acceptance=`rejected`).
    */
@@ -5542,6 +5792,14 @@ export interface CanonicalFormatDAASTAudio {
    * Default slots for audio_daast canonical. Buyer ships a DAAST tag (URL or inline XML, 1.0 or 1.1) plus an optional clickthrough URL. Tracking events are inherent to DAAST and don't require explicit slots.
    */
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -5622,6 +5880,14 @@ export interface CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven {
    */
   synthesis_nondeterministic?: boolean;
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -5758,6 +6024,14 @@ export interface CanonicalFormatNativeInFeed {
    */
   slots?: unknown;
   /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
+  /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
   production_window_business_days?: number;
@@ -5820,11 +6094,16 @@ export interface CanonicalFormatNativeInFeed {
    */
   ssl_required?: boolean;
   /**
-   * Where the rendered native assets come from. `publisher_host_recorded` is omitted (audio-specific and not meaningful for native). Other values mirror the shared production-source axis used on `image` / `video_hosted`. `buyer_uploaded` (default): buyer ships pre-rendered title/image/body. `seller_pre_rendered_from_brief`: buyer ships a brief, seller renders the native bundle. `agent_synthesized`: AI synthesis pipeline produces title + image + body from a brief; pair with `synthesis_nondeterministic: true` for generative pipelines that can't guarantee in-spec output.
+   * Where the rendered native assets come from. `publisher_host_recorded` is omitted (audio-specific and not meaningful for native). Other values mirror the shared production-source axis used on `image` / `video_hosted`. `buyer_uploaded` (default): buyer ships pre-rendered title/image/body. `seller_pre_rendered_from_brief`: buyer ships a brief, seller renders the native bundle. `agent_synthesized`: AI synthesis pipeline produces title + image + body from a brief; pair with `synthesis_nondeterministic: true` for generative pipelines that can't guarantee in-spec output. `publisher_owned_reference`: buyer ships an existing published post reference; the seller resolves the post into the native presentation after authorization/review.
    */
-  asset_source?: 'buyer_uploaded' | 'seller_pre_rendered_from_brief' | 'seller_human_designed' | 'agent_synthesized';
+  asset_source?:
+    | 'buyer_uploaded'
+    | 'seller_pre_rendered_from_brief'
+    | 'seller_human_designed'
+    | 'agent_synthesized'
+    | 'publisher_owned_reference';
   /**
-   * Whether the product accepts buyer-uploaded native assets. When `rejected`, the buyer cannot ship pre-rendered title/image/body — they must use `build_creative` (or `sync_creatives` with brief inputs) so the seller produces the native bundle from a brief.
+   * Whether the product accepts buyer-uploaded native assets. When `rejected`, the buyer cannot ship pre-rendered title/image/body — they must use `build_creative`, `sync_creatives` with brief inputs, or an accepted `published_post` reference so the seller produces or resolves the native bundle.
    */
   buyer_asset_acceptance?: 'accepted' | 'rejected';
 }
@@ -5877,6 +6156,14 @@ export interface CanonicalFormatResponsiveCreative {
    */
   synthesis_nondeterministic?: boolean;
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -6034,6 +6321,14 @@ export interface CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement {
    * agent_placement has minimal buyer-shipped slots — the surface composes the rendered output from brand context (resolved via the manifest's top-level `brand` BrandRef) plus optional offering_ref and landing_page_url assets. None of these assets are rendered verbatim by the buyer; the agent chooses how to use them.
    */
   slots?: unknown;
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    */
@@ -7889,7 +8184,14 @@ export type BuildCreativeResponse = {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
-} & (BuildCreativeSuccess | BuildCreativeMultiSuccess | BuildCreativeError | BuildCreativeSubmitted);
+} & (
+  | BuildCreativeSuccess
+  | BuildCreativeMultiSuccess
+  | BuildCreativeVariantSuccess
+  | BuildCreativeEstimate
+  | BuildCreativeError
+  | BuildCreativeSubmitted
+);
 /**
  * The generated or transformed creative manifest
  */
@@ -7898,9 +8200,9 @@ export type CreativeManifest = {
   format_kind?: CanonicalFormatKind;
   format_option_ref?: FormatOptionReference;
   /**
-   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'published_post', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
    *
-   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   * Each slot value is **either** a single asset object (most slots — image, video, published_post, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, published_post, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
     /**
@@ -7915,7 +8217,7 @@ export type CreativeManifest = {
    */
   rights?: RightsConstraint[];
   /**
-   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   * Industry-standard or market-specific identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct traffic identifiers (e.g., the :15 and :30 cuts, or separate TV and radio versions). Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -8105,6 +8407,16 @@ export type PreviewRender =
         csp_policy?: string;
       };
     };
+/**
+ * Echoes the selection_strategy the agent applied when max_creatives sampling occurred (mirrors keep_mode_applied). Present when the request set selection_strategy. The ranking itself shows in the rank/recommended on creatives[].variants[].
+ */
+export type CreativeSelectionStrategy =
+  | 'audience_relevance'
+  | 'contextual_fit'
+  | 'performance'
+  | 'proximity'
+  | 'inventory_priority'
+  | 'random';
 /**
  * Response for completed or failed sync_creatives
  */
@@ -9782,10 +10094,14 @@ export interface VendorMetricValue {
   breakdown?: {};
 }
 /**
- * Single-format success response. Returned when the request used target_format_id.
+ * Single-format success response. Returned when the request used target_format_id (without fan-out). Carries an optional build_variant_id so a single build is refinable; multi-format builds that need per-output refinable leaves should request the variant shape (max_variants).
  */
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
+  /**
+   * Leaf handle for this produced creative — present when the agent supports refinement (creative.supports_refinement). Pass it as refine_from_build_variant_id to refine this build. Same namespace as BuildCreativeVariantSuccess leaves; distinct from served variant_id / preview_id. Lazily earns a creative_id on trafficking.
+   */
+  build_variant_id?: string;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -9926,9 +10242,9 @@ export interface LegacyManifestNamedFormatReference {
   format_id: FormatReferenceStructuredObject;
   format_option_ref?: FormatOptionReference;
   /**
-   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'published_post', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
    *
-   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   * Each slot value is **either** a single asset object (most slots — image, video, published_post, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, published_post, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
     /**
@@ -9943,7 +10259,7 @@ export interface LegacyManifestNamedFormatReference {
    */
   rights?: RightsConstraint[];
   /**
-   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   * Industry-standard or market-specific identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct traffic identifiers (e.g., the :15 and :30 cuts, or separate TV and radio versions). Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -9956,9 +10272,9 @@ export interface ManifestCanonicalFormatKind {
   format_kind: CanonicalFormatKind;
   format_option_ref?: FormatOptionReference;
   /**
-   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
+   * Map of slot keys to actual asset content. Legacy named-format path: each key matches an `asset_id` from the format's `assets` array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). 3.1+ canonical-format path: each key matches an `asset_group_id` from the format's `slots` declaration drawn from the canonical vocabulary registry (e.g., 'images_landscape', 'video', 'published_post', 'landing_page_url', 'vast_tag', 'script', 'creative_brief'). Either path produces the same envelope shape; only the slot-key vocabulary differs.
    *
-   * Each slot value is **either** a single asset object (most slots — image, video, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
+   * Each slot value is **either** a single asset object (most slots — image, video, published_post, vast_tag, landing_page_url, etc.) **or** an array of asset objects (slots with `min`/`max` counts on the format declaration — `cards` on `image_carousel`, `headlines` / `descriptions` / `images_landscape` on `responsive_creative`, etc.). Single-vs-array shape is governed by the format's `slots[].min` and `slots[].max` parameters: when `max > 1` (or when the slot is conceptually a pool), the value MUST be an array; when the slot is single-valued, the value MUST be a single object. Each asset value (single or array element) carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog, published_post, zip, card) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
     /**
@@ -9973,7 +10289,7 @@ export interface ManifestCanonicalFormatKind {
    */
   rights?: RightsConstraint[];
   /**
-   * Industry-standard identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct Ad-IDs (e.g., the :15 and :30 cuts).
+   * Industry-standard or market-specific identifiers for this specific manifest (e.g., Ad-ID, ISCI, Clearcast clock number, IDcrea). When present, overrides creative-level identifiers. Use when different format versions of the same source creative have distinct traffic identifiers (e.g., the :15 and :30 cuts, or separate TV and radio versions). Add a PR to extend creative-identifier-type when another shared identifier scheme needs first-class support.
    */
   industry_identifiers?: IndustryIdentifier[];
   provenance?: Provenance;
@@ -10084,6 +10400,292 @@ export interface BuildCreativeMultiSuccess {
    */
   currency?: string;
   consumption?: CreativeConsumption;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Multiplicity success response. Returned WHENEVER the request used max_creatives, max_variants > 1, variant_axis, or refine_from_build_variant_id — with or without a transformer_id. **There is no fallback to the single/multi-format shapes: a client that sends any of those inputs MUST handle this `creatives[]` shape; it will not receive `creative_manifest`/`creative_manifests`.** Carries creatives[] — one entry per produced creative group (per catalog item when fanning out) — each holding variants[] alternatives. The envelope semantics are fixed: creatives[] is the set of creative groups the call produced; variants[] is the choose-among set within each group. Every produced variant is a real, independently-billed build (you pay for all produced); the buyer keeps one or many by trafficking the chosen build_variant_id(s). Mutually exclusive with the other success/error/submitted shapes. Per-FORMAT remains atomic within a (creative) group; per-ITEM (catalog fan-out) is non-atomic — a failed item is reported via that creative's errors[] and does not fail the batch.
+ */
+export interface BuildCreativeVariantSuccess {
+  /**
+   * One entry per produced creative group. With catalog fan-out, one entry per catalog item (bounded/sampled by max_creatives). This array is the produced group set; use variants[] inside each group for choose-among alternatives.
+   */
+  creatives: {
+    /**
+     * Build-time handle for this produced creative within this response. Distinct from a library creative_id — a build_creative_id is not yet persisted/servable; it acquires a creative_id when a chosen variant is trafficked or added to the library (lazy promotion).
+     */
+    build_creative_id?: string;
+    /**
+     * When this creative was produced by fanning out over a catalog, identifies the source item.
+     */
+    catalog_item_ref?: {
+      /**
+       * The catalog type the item came from.
+       */
+      catalog_type?: string;
+      /**
+       * Identifier of the catalog item this creative was built for.
+       */
+      item_id: string;
+    };
+    signal_condition?: SignalTargeting;
+    /**
+     * Choose-among alternatives produced for this creative group (voices, themes, best-of-N, etc.). At least one. Each is an independently-tagged, independently-billed build.
+     */
+    variants?: {
+      /**
+       * Build-time handle for this produced variant — the leaf-level lineage anchor for the creative. Minted per produced variant. Its OWN namespace — MUST NOT reuse a `preview_id` (preview renders) or a served `variant_id` (delivery). Lineage and joins (refinement parentage, build→delivery learning, QA re-rolls) anchor on this leaf id, NOT on the call-level `build_creative_id`. A leaf lazily earns a durable `creative_id` only when trafficked / added to the library; that `creative_id` is what flows into `report_usage`. An untrafficked leaf has no `report_usage` key — it is billed via the inline per-leaf `vendor_cost` only, and `report_usage` reconciliation applies once the leaf earns a `creative_id`.
+       */
+      build_variant_id: string;
+      /**
+       * When this variant was produced by refining a prior build (request `refine_from_build_variant_id`), the source leaf's `build_variant_id` — establishing refinement lineage (a leaf may itself be refined, forming a chain). Absent for first-generation builds. AI-derivative attribution rides the manifest's existing `provenance`; this field carries only the lineage edge.
+       */
+      parent_build_variant_id?: string;
+      creative_manifest: CreativeManifest;
+      /**
+       * The value of the variant axis that produced this variant (e.g. the voice id, theme name, or config value). Lets the buyer correlate the variant to its A/B cell.
+       */
+      variant_axis_value?: unknown;
+      /**
+       * Set when keep_mode was keep_one/keep_some — flags the agent's recommended pick(s). Advisory.
+       */
+      recommended?: boolean;
+      /**
+       * Agent's ranking of this variant (1 = best) when it scored alternatives (best-of-N). Advisory.
+       * @minimum 1
+       */
+      rank?: number;
+      /**
+       * Optional per-leaf evaluation block populated when the request supplied an `evaluator` and the agent advertises creative.supports_evaluator. Experimental (x-status: experimental) — part of the evaluator surface; sellers populating it MUST list `creative.evaluator` in experimental_features. The rank-side of the get_creative_features feature oracle: it carries the creative-feature values this leaf was scored on, which is what the gate-then-rank pipeline (evaluator.feature_requirement[] gate → evaluator.rank_by ordering) and `recommended`/`rank` are computed over. `eval.features[]` is `creative/creative-feature-result.json[]` — the same shape get_creative_features.results[] returns; the wrapper is open (additionalProperties:true) while each feature item is closed. A leaf's eval is a feature measurement, not a pass/fail verdict (a verdict is a categorical string feature value gated via feature_requirement.allowed_values). Leaves the agent dropped via the gate are not present; this block appears only on returned (recommended/billed) leaves. Advisory; does not change what is produced or billed.
+       */
+      eval?: {
+        /**
+         * Creative-feature values the evaluator measured for this leaf — `creative-feature-result[]` (e.g., a `creative_quality_score` number, an `on_brief` categorical, a calibrated `predicted_performance` in [0,1] from the exemplars form). The gate (evaluator.feature_requirement[]) and ranking (evaluator.rank_by) are evaluated over these values. Same shape get_creative_features returns.
+         */
+        features?: CreativeFeatureResult[];
+        /**
+         * Number of leaves this leaf was scored against (the best-of-N N). Lets the buyer interpret rank in context.
+         * @minimum 1
+         */
+        ranked_against?: number;
+        /**
+         * Number of judge calls made during evaluation. Sellers SHOULD populate when agent_url was used and an eval_budget was supplied, giving buyers visibility into external call usage. No billing coupling in v1.
+         * @minimum 0
+         */
+        calls_used?: number;
+        /**
+         * Wall-clock seconds consumed during evaluation. Sellers SHOULD populate when agent_url was used and an eval_budget was supplied, giving buyers visibility into external call usage. No billing coupling in v1.
+         * @minimum 0
+         */
+        seconds_used?: number;
+        ext?: ExtensionObject;
+      };
+      /**
+       * Which rate-card pricing option was applied for THIS variant leaf. Pass in report_usage after promotion.
+       */
+      pricing_option_id?: string;
+      /**
+       * Cost incurred for this variant leaf, denominated in currency.
+       * @minimum 0
+       */
+      vendor_cost?: number;
+      /**
+       * ISO 4217 currency code for vendor_cost.
+       * @pattern ^[A-Z]{3}$
+       */
+      currency?: string;
+      consumption?: CreativeConsumption;
+    }[];
+    /**
+     * Per-creative errors when this catalog item failed to build. Present only on failed items; does not fail the batch (per-item non-atomic). A failed entry carries errors[] and no variants[]; a successful entry carries variants[] and SHOULD NOT carry errors.
+     */
+    errors?: Error[];
+  }[];
+  /**
+   * Total catalog items eligible for the build (before max_creatives sampling). Lets the buyer see that creatives[] is a sample of a larger set.
+   * @minimum 0
+   */
+  items_total?: number;
+  /**
+   * Number of creatives returned in creatives[] (after max_creatives sampling).
+   * @minimum 0
+   */
+  items_returned?: number;
+  /**
+   * Total leaves the request would have produced (≈ items_to_produce × variants_per_item). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
+   * @minimum 0
+   */
+  leaves_total?: number;
+  /**
+   * Number of leaves actually produced and billed across creatives[].variants[]. When budget_status is 'capped', leaves_returned < leaves_total is the leaf-granular shortfall signal (items_returned/items_total are catalog-item counts and do not capture a mid-item or variant-only cap).
+   * @minimum 0
+   */
+  leaves_returned?: number;
+  /**
+   * Aggregate cost across all variant leaves, denominated in currency. MUST equal the sum of the per-leaf vendor_cost values (leaves are the source of truth).
+   * @minimum 0
+   */
+  vendor_cost?: number;
+  /**
+   * ISO 4217 currency code for the aggregate vendor_cost.
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  /**
+   * Echoes the `keep_mode` the agent applied (mirrors the request hint). Present when the request set `keep_mode`. `keep_mode` is advisory — it does not change what is produced or billed (you pay for every leaf in `variants[]`) — so this echo is the buyer's confirmation that the hint was received, the audit paper trail for a 'I asked for keep_one but was billed for N' dispute. Whether the agent acted on it shows in the `recommended`/`rank` it set on the leaves.
+   */
+  keep_mode_applied?: 'keep_all' | 'keep_one' | 'keep_some';
+  selection_strategy_applied?: CreativeSelectionStrategy;
+  /**
+   * `complete` (default; absent == complete for back-compat) means the agent produced everything requested. `capped` means a `max_spend` ceiling stopped production early: every returned leaf is real/billed, and an advisory `BUDGET_CAP_REACHED` entry in `errors[]` is the authoritative cap signal. The leaf-granular shortfall is `leaves_returned` < `leaves_total` (do NOT rely on items_returned < items_total — that is also the normal max_creatives-sampling signal and does not capture a mid-item or variant-only cap). This is a successful partial build, not a failure.
+   */
+  budget_status?: 'complete' | 'capped';
+  /**
+   * Advisory (non-terminal) entries on an otherwise-successful build — e.g. a `BUDGET_CAP_REACHED` notice when `budget_status` is `capped`. Terminal failures use the BuildCreativeError shape, not this field.
+   */
+  errors?: Error[];
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  /**
+   * ISO 8601 timestamp when the earliest generated asset URL expires across all variants. Re-build after this time to get fresh URLs.
+   * @format date-time
+   */
+  expires_at?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * A single feature evaluation result for a creative. Uses the same value structure as property-feature-value (value, confidence, expires_at, etc.).
+ */
+export interface CreativeFeatureResult {
+  /**
+   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency'). Features prefixed with 'registry:' reference standardized policies from the shared policy registry (e.g., 'registry:eu_ai_act_article_50'). Unprefixed feature IDs are agent-defined.
+   */
+  feature_id: string;
+  /**
+   * The feature value. Type depends on feature definition: boolean for binary, number for quantitative, string for categorical.
+   */
+  value: boolean | number | string;
+  /**
+   * Unit of measurement for quantitative values (e.g., 'percentage', 'score')
+   */
+  unit?: string;
+  /**
+   * Confidence score for this value (0-1)
+   * @minimum 0
+   * @maximum 1
+   */
+  confidence?: number;
+  /**
+   * When this feature was evaluated
+   * @format date-time
+   */
+  measured_at?: string;
+  /**
+   * When this evaluation expires and should be refreshed
+   * @format date-time
+   */
+  expires_at?: string;
+  /**
+   * Version of the methodology used to evaluate this feature
+   */
+  methodology_version?: string;
+  /**
+   * Additional vendor-specific details about this evaluation
+   */
+  details?: {};
+  /**
+   * Optional attribution — when this feature was evaluated for the purpose of a specific policy, policy_id references the authorizing PolicyEntry. Creative agents and sellers populate when the measurement was motivated by a specific policy; do NOT populate when the feature is a generic measurement (carbon score, brand consistency) unrelated to any policy. See /docs/governance/policy-attribution.
+   */
+  policy_id?: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Dry-run estimate. Returned when the request set mode:"estimate". The agent produced NOTHING and billed NOTHING; it returns a projected cost band computed against this request's actual inputs (script length, brief, catalog size, max_creatives × max_variants) — the band the buyer cannot derive itself because per_unit gives the rate but not the unit count. Advisory and non-binding in this revision. Mutually exclusive with the success/error/submitted shapes (discriminated by mode:"estimate" + the estimate object).
+ */
+export interface BuildCreativeEstimate {
+  /**
+   * Echoes the request mode; discriminates this dry-run envelope from the producing shapes.
+   */
+  mode: 'estimate';
+  /**
+   * Projected cost for what mode:"execute" would have produced.
+   */
+  estimate: {
+    /**
+     * Catalog items eligible (before max_creatives sampling).
+     * @minimum 0
+     */
+    items_total?: number;
+    /**
+     * Distinct creatives that would be produced (after max_creatives).
+     * @minimum 0
+     */
+    items_to_produce?: number;
+    /**
+     * Signal-fan-out conditions axis count (len(signal_conditions)). Present when signal_conditions was sent so leaves_total = items_to_produce × conditions_total × variants_per_item is legible before spend.
+     * @minimum 1
+     */
+    conditions_total?: number;
+    /**
+     * Alternatives per creative (max_variants).
+     * @minimum 1
+     */
+    variants_per_item?: number;
+    /**
+     * Total billable leaves = items_to_produce × variants_per_item.
+     * @minimum 0
+     */
+    leaves_total?: number;
+    /**
+     * ISO 4217 currency for the cost band.
+     * @pattern ^[A-Z]{3}$
+     */
+    currency: string;
+    /**
+     * Low end of the projected aggregate vendor_cost.
+     * @minimum 0
+     */
+    cost_low: number;
+    /**
+     * High end. For basis "fixed" this equals cost_low (exact).
+     * @minimum 0
+     */
+    cost_high: number;
+    /**
+     * Optional point estimate within the band.
+     * @minimum 0
+     */
+    cost_expected?: number;
+    /**
+     * `fixed` = per-format flat pricing (cost_low == cost_high, exact). `estimated_units` = generative per_unit where the seller projects a unit range (band reflects the uncertainty in seconds/images/tokens). `cpm_deferred` = CPM-priced; build-time cost is 0 and cost accrues at serve time (mirrors the vendor_cost:0 CPM convention).
+     */
+    basis: 'fixed' | 'estimated_units' | 'cpm_deferred';
+    /**
+     * Optional per-leaf breakdown of the estimate.
+     */
+    per_leaf?: {
+      catalog_item_ref?: {};
+      variant_axis_value?: unknown;
+      pricing_option_id?: string;
+      /**
+       * @minimum 0
+       */
+      cost_low?: number;
+      /**
+       * @minimum 0
+       */
+      cost_high?: number;
+      consumption_estimate?: CreativeConsumption;
+    }[];
+  };
+  /**
+   * ISO 8601 timestamp after which this estimate's inputs/prices may no longer hold.
+   * @format date-time
+   */
+  expires_at?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -11368,7 +11970,8 @@ export type AssetContentType =
   | 'url'
   | 'webhook'
   | 'brief'
-  | 'catalog';
+  | 'catalog'
+  | 'published_post';
 export interface GetBrandIdentitySuccess {
   /**
    * Brand identifier
@@ -14472,6 +15075,150 @@ export type VASTAsset7 = VASTAsset;
  */
 export type DAASTAsset7 = DAASTAsset;
 /**
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant8` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type AssetVariant8 = AssetVariant;
+/**
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset8` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type VASTAsset8 = VASTAsset;
+/**
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset8` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DAASTAsset8 = DAASTAsset;
+/**
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant9` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type AssetVariant9 = AssetVariant;
+/**
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset9` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type VASTAsset9 = VASTAsset;
+/**
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset9` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DAASTAsset9 = DAASTAsset;
+/**
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant10` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type AssetVariant10 = AssetVariant;
+/**
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset10` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type VASTAsset10 = VASTAsset;
+/**
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset10` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DAASTAsset10 = DAASTAsset;
+/**
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
+ *
+ * `AssetVariant11` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type AssetVariant11 = AssetVariant;
+/**
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset11` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type VASTAsset11 = VASTAsset;
+/**
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset11` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type DAASTAsset11 = DAASTAsset;
+/**
  * Progress payload for active get_products task.
  */
 export interface GetProductsWorking {
@@ -14684,6 +15431,30 @@ export type LegacyManifestNamedFormatReference1 = LegacyManifestNamedFormatRefer
  * @deprecated Use `ManifestCanonicalFormatKind` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
 export type ManifestCanonicalFormatKind1 = ManifestCanonicalFormatKind;
+/**
+ * Re-export of `LegacyManifestNamedFormatReference` under the legacy codegen artifact name.
+ *
+ * `LegacyManifestNamedFormatReference2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `LegacyManifestNamedFormatReference` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `LegacyManifestNamedFormatReference`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `LegacyManifestNamedFormatReference` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type LegacyManifestNamedFormatReference2 = LegacyManifestNamedFormatReference;
+/**
+ * Re-export of `ManifestCanonicalFormatKind` under the legacy codegen artifact name.
+ *
+ * `ManifestCanonicalFormatKind2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `ManifestCanonicalFormatKind` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `ManifestCanonicalFormatKind`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `ManifestCanonicalFormatKind` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type ManifestCanonicalFormatKind2 = ManifestCanonicalFormatKind;
 /**
  * Progress payload for active build_creative task. Returned during AI generation, format transformation, or complex library retrieval with macro resolution.
  */
@@ -15306,52 +16077,6 @@ export type GetCreativeFeaturesResponse = ProtocolEnvelope & {
       }
   );
 /**
- * A single feature evaluation result for a creative. Uses the same value structure as property-feature-value (value, confidence, expires_at, etc.).
- */
-export interface CreativeFeatureResult {
-  /**
-   * The feature that was evaluated (e.g., 'auto_redirect', 'brand_consistency'). Features prefixed with 'registry:' reference standardized policies from the shared policy registry (e.g., 'registry:eu_ai_act_article_50'). Unprefixed feature IDs are agent-defined.
-   */
-  feature_id: string;
-  /**
-   * The feature value. Type depends on feature definition: boolean for binary, number for quantitative, string for categorical.
-   */
-  value: boolean | number | string;
-  /**
-   * Unit of measurement for quantitative values (e.g., 'percentage', 'score')
-   */
-  unit?: string;
-  /**
-   * Confidence score for this value (0-1)
-   * @minimum 0
-   * @maximum 1
-   */
-  confidence?: number;
-  /**
-   * When this feature was evaluated
-   * @format date-time
-   */
-  measured_at?: string;
-  /**
-   * When this evaluation expires and should be refreshed
-   * @format date-time
-   */
-  expires_at?: string;
-  /**
-   * Version of the methodology used to evaluate this feature
-   */
-  methodology_version?: string;
-  /**
-   * Additional vendor-specific details about this evaluation
-   */
-  details?: {};
-  /**
-   * Optional attribution — when this feature was evaluated for the purpose of a specific policy, policy_id references the authorizing PolicyEntry. Creative agents and sellers populate when the measurement was motivated by a specific policy; do NOT populate when the feature is a generic measurement (carbon score, brand consistency) unrelated to any policy. See /docs/governance/policy-attribution.
-   */
-  policy_id?: string;
-  ext?: ExtensionObject;
-}
-/**
  * Non-blocking observation emitted by a creative governance agent. Audit observations surface claims that deserve human or downstream audit review but are not verifier refutations and are not rejection grounds by themselves.
  */
 export interface CreativeAuditObservation {
@@ -15447,9 +16172,9 @@ export interface ListCreativeFormatsRequestCreativeAgent {
    */
   type?: 'audio' | 'video' | 'display' | 'dooh';
   /**
-   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
+   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. For published-post reference formats, search for 'published_post'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  asset_types?: ('image' | 'video' | 'audio' | 'text' | 'html' | 'javascript' | 'url')[];
+  asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats with width <= this value. Omit for responsive/fluid formats.
    */
@@ -15484,11 +16209,13 @@ export interface ListCreativeFormatsRequestCreativeAgent {
    */
   disclosure_persistence?: DisclosurePersistence[];
   /**
-   * Filter to formats whose output_format_ids includes any of these format IDs. Returns formats that can produce these outputs — inspect each result's input_format_ids to see what inputs they accept.
+   * @deprecated
+   * **DEPRECATED in 3.1.** Discover build capability via `list_transformers` (filter its `output_format_ids`) instead — build capability is a property of transformers, not a relationship between formats. *Legacy:* filter to formats whose `output_format_ids` includes any of these format IDs.
    */
   output_format_ids?: FormatReferenceStructuredObject[];
   /**
-   * Filter to formats whose input_format_ids includes any of these format IDs. Returns formats that accept these creatives as input — inspect each result's output_format_ids to see what they can produce.
+   * @deprecated
+   * **DEPRECATED in 3.1.** Discover build capability via `list_transformers` (filter its `input_format_ids`) instead. *Legacy:* filter to formats whose `input_format_ids` includes any of these format IDs.
    */
   input_format_ids?: FormatReferenceStructuredObject[];
   /**
@@ -15948,6 +16675,10 @@ export type CreativeEventReasonCode =
   | 'seller_rereview'
   | 'policy_revocation'
   | 'content_drift'
+  | 'identity_authorization_revoked'
+  | 'identity_authorization_expired'
+  | 'source_private'
+  | 'source_deleted'
   | 'takedown_request'
   | 'advertiser_request'
   | 'seller_archive'
@@ -16044,6 +16775,259 @@ export interface WebhookActivityRecord {
    */
   error_message?: string | null;
   ext?: ExtensionObject;
+}
+
+// bundled/creative/list-transformers-request.json
+/**
+ * Request parameters for discovering account-scoped creative transformers offered by this creative agent. Brief-filterable and paginated. Transformers are the creative analog of media-buy products: agent-offered, account-scoped, selectable units of build capability. Use `expand_params` to additionally return account-scoped option VALUES (e.g. the buyer's configured voices) for named enumerable params.
+ */
+export interface ListTransformersRequestCreativeAgent {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Return only these specific transformer IDs.
+   */
+  transformer_ids?: string[];
+  /**
+   * Filter to transformers that accept any of these formats as input.
+   */
+  input_format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Filter to transformers that can produce any of these output formats.
+   */
+  output_format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Search transformers by name (case-insensitive partial match).
+   */
+  name_search?: string;
+  /**
+   * Natural-language brief used to rank and filter transformers (and their enumerable option values when expanded) — e.g. 'warm female Spanish-language voiceover'. Curates to intent rather than returning the full set, the way get_products curates inventory.
+   */
+  brief?: string;
+  /**
+   * Param `field` names for which to return the FIRST page of account-scoped option VALUES inline on each transformer's `params[].options[]`. Omit to return param descriptors without enumerated values (the lean default). When a param's options are truncated, its `params[].options_cursor` is set — fetch the next page via `expand_pagination` (below).
+   */
+  expand_params?: string[];
+  /**
+   * Fetch the NEXT page of a specific param's account-scoped options, using the `options_cursor` a prior response returned for that `(transformer, param)`. Scoped per `(transformer_id, field)` so multiple params can be paged independently. Use this instead of `expand_params` once you hold a cursor.
+   */
+  expand_pagination?: {
+    /**
+     * The transformer whose param options to page.
+     */
+    transformer_id: string;
+    /**
+     * The param `field` to page.
+     */
+    field: string;
+    /**
+     * Opaque cursor from that param's prior `params[].options_cursor`.
+     */
+    options_cursor: string;
+  }[];
+  /**
+   * Include `pricing_options` on each transformer. Requires `account`.
+   */
+  include_pricing?: boolean;
+  account?: AccountReference;
+  pagination?: PaginationRequest;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// bundled/creative/list-transformers-response.json
+/**
+ * Response payload for list_transformers — account-scoped transformer descriptors matching the query, with optional per-param enumerated option values (when expanded) and per-account pricing (when requested).
+ */
+export type ListTransformersResponseCreativeAgent = ProtocolEnvelope & {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Transformer descriptors matching the query.
+   */
+  transformers: Transformer[];
+  /**
+   * Task-specific errors and warnings.
+   */
+  errors?: Error[];
+  pagination?: PaginationResponse;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+/**
+ * An agent-offered, account-scoped, selectable unit of creative build capability — the creative analog of a media-buy product. A transformer maps input formats to output formats and exposes typed configuration `params[]`. Discovered via list_transformers and selected by `transformer_id` in build_creative. The agent chooses granularity: a distinct voice or model may be its own transformer, or a single transformer may expose `voice`/`model` as an enumerable param. Whether something is a distinct transformer vs. a param is the agent's call — surface separately-priced or capability-distinct alternatives as transformers; keep scalar dials as params.
+ */
+export interface Transformer {
+  /**
+   * Stable identifier for this transformer within the agent. Pass to build_creative `transformer_id` to select it.
+   */
+  transformer_id: string;
+  /**
+   * Human-readable transformer name (e.g. 'Voiceover — Isaac', 'Veo 3 text-to-video').
+   */
+  name: string;
+  /**
+   * Plain-text explanation of what this transformer produces and how.
+   */
+  description?: string;
+  /**
+   * Transformer-specific attributes a buyer can filter or display (e.g. provider, modality, language).
+   */
+  metadata?: {};
+  /**
+   * Optional discovery/audit anchors for voice transformers provisioned from brand-agent voice_synthesis entries. Informational only: these references help buyers match a discovered transformer to brand/rights-agent provenance, but they do not assert build-time authorization or require the creative agent to perform rights-token validation.
+   */
+  voice_synthesis_ref?: {
+    /**
+     * Brand agent that exposed the referenced voice_synthesis entry.
+     */
+    brand_agent: {
+      /**
+       * MCP endpoint URL of the brand agent.
+       */
+      url: string;
+      /**
+       * Agent identifier.
+       */
+      id: string;
+    };
+    /**
+     * voice_synthesis.voice_id from the brand agent.
+     */
+    voice_id: string;
+    /**
+     * Optional rights offering or grant identifier associated with this provisioned voice. This is provenance metadata only, not a build_creative rights token.
+     */
+    rights_id?: string;
+  }[];
+  /**
+   * Formats this transformer accepts as input. Empty or omitted means it builds from a brief / raw assets (pure generation) rather than transforming an existing creative.
+   */
+  input_format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Formats this transformer can produce. A build_creative request's target format(s) MUST be a subset of these.
+   */
+  output_format_ids: FormatReferenceStructuredObject[];
+  /**
+   * Configuration knobs this transformer exposes. The buyer supplies values in build_creative `config`, keyed by each param's `field`. Enumerable param values (e.g. account-specific voices) are returned only when requested via list_transformers `expand_params`.
+   */
+  params?: TransformerParam[];
+  /**
+   * Per-account rate-card options for using this transformer. Present when the list_transformers request set include_pricing=true with an account. The applied option is echoed back per-leaf on the build_creative response and reconciled via report_usage.
+   */
+  pricing_options?: VendorPricingOption[];
+  /**
+   * Optional per-transformer fan-out limits that NARROW the agent-level get_adcp_capabilities `creative.multiplicity`. Same shape as the agent-level object. When present, this transformer's authoritative; its ceilings (max_creatives_limit / max_variants_limit) MUST NOT exceed the agent ceilings, and its variant_dimensions MUST be a subset of the agent's. Omit to inherit the agent-level capability unchanged.
+   */
+  multiplicity?: {
+    /**
+     * Whether this transformer accepts max_creatives.
+     */
+    supports_catalog_fanout?: boolean;
+    /**
+     * Per-transformer ceiling on max_creatives (≤ the agent ceiling).
+     * @minimum 1
+     */
+    max_creatives_limit?: number;
+    /**
+     * Whether this transformer accepts max_variants > 1 / variant_axis.
+     */
+    supports_variants?: boolean;
+    /**
+     * Per-transformer ceiling on max_variants (≤ the agent ceiling).
+     * @minimum 1
+     */
+    max_variants_limit?: number;
+    /**
+     * Variant axis dimensions this transformer supports (⊆ the agent's).
+     */
+    variant_dimensions?: ('voice' | 'theme' | 'best_of_n' | 'transformer_config' | 'custom')[];
+  };
+}
+/**
+ * Descriptor for one configuration knob a transformer exposes. Returned inside transformer.json `params[]` from list_transformers. The descriptor declares the knob's shape; the buyer supplies its value in build_creative `config` keyed by `field`. For `value_source: enumerable` params (e.g. account-specific voices), the legal `options[]` are account-scoped and dynamic — they are returned only when the param's `field` is named in the list_transformers `expand_params` request, and may be paginated via `options_cursor`.
+ */
+export interface TransformerParam {
+  /**
+   * The config key. Buyers set the value under this exact key in build_creative `config`.
+   */
+  field: string;
+  /**
+   * JSON type of the value the buyer supplies for this field.
+   */
+  type: 'string' | 'number' | 'integer' | 'boolean';
+  /**
+   * Where the legal values come from. `inline` — a small closed set listed in `allowed_values` (e.g. mastering_preset). `range` — a numeric interval bounded by `minimum`/`maximum` (e.g. speaking_rate). `enumerable` — an account-scoped, dynamic set (e.g. voices, including custom/cloned ones) resolved per-credential; values appear in `options[]` only when expanded. `free_text` — an open buyer-authored string with no closed/enumerable set (e.g. a negative_prompt or style note for a generative agent); `type` MUST be `string` and `allowed_values`/`minimum`/`maximum`/`options`/`options_cursor` MUST be absent. NOTE: a transformer-param MUST NOT be a generation-count knob (sample_count/n/num_images/count) — output count is owned by `max_variants`/`max_creatives`, never config.
+   */
+  value_source: 'inline' | 'range' | 'enumerable' | 'free_text';
+  /**
+   * Optional maximum character length for a `free_text` param. Omit for no declared limit.
+   * @minimum 1
+   */
+  max_length?: number;
+  /**
+   * The closed set of legal values. Present when `value_source` is `inline`.
+   */
+  allowed_values?: unknown[];
+  /**
+   * Inclusive lower bound. Present when `value_source` is `range`.
+   */
+  minimum?: number;
+  /**
+   * Inclusive upper bound. Present when `value_source` is `range`.
+   */
+  maximum?: number;
+  /**
+   * Account-scoped legal values for an `enumerable` param. Populated ONLY when this param's `field` was named in the list_transformers `expand_params` request — otherwise omitted (the buyer enumerates on demand). Brief-filtered and paginated; use `options_cursor` for the next page.
+   */
+  options?: {
+    /**
+     * The value the buyer passes in `config` for this field.
+     */
+    value: unknown;
+    /**
+     * Human-readable label for this option.
+     */
+    label?: string;
+    /**
+     * Option-specific attributes the buyer can filter or display (e.g. for a voice: language, gender, provider, custom).
+     */
+    metadata?: {};
+  }[];
+  /**
+   * Opaque pagination cursor for this param's `options[]`. Present when more option values are available than were returned. Pass back to list_transformers (scoped to this transformer + field) to fetch the next page.
+   */
+  options_cursor?: string;
+  /**
+   * The value applied when the buyer omits this field from `config`. Type matches `type`.
+   */
+  default?: unknown;
+  /**
+   * Whether the buyer MUST supply this field in `config`. When false and no `default` is declared, the agent chooses.
+   */
+  required?: boolean;
+  /**
+   * Human-readable explanation of what this knob does.
+   */
+  description?: string;
 }
 
 // bundled/creative/preview-creative-request.json
@@ -16477,9 +17461,11 @@ export interface ValidateInputResult {
 
 // bundled/media-buy/build-creative-request.json
 /**
- * Request to transform, generate, or retrieve a creative manifest. Supports three modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) retrieval from a creative library by creative_id. Produces target manifest(s) in the specified format(s). Provide either target_format_id for a single format or target_format_ids for multiple formats.
+ * Request to transform, generate, refine, or retrieve a creative manifest. Supports four modes: (1) generation from a brief or seed assets, (2) transformation of an existing manifest, (3) refinement of a prior produced variant via refine_from_build_variant_id (re-build with a natural-language message + config delta), (4) retrieval from a creative library by creative_id. Produces target manifest(s) in the specified format(s). Provide either target_format_id for a single format or target_format_ids for multiple formats.
  */
-export interface BuildCreativeRequest {
+export type BuildCreativeRequest = {
+  [k: string]: unknown | undefined;
+} & {
   /**
    * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
    * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
@@ -16517,11 +17503,88 @@ export interface BuildCreativeRequest {
    * Array of format IDs to generate in a single call. Mutually exclusive with target_format_id. The creative agent produces one manifest per format. Each format definition specifies its own required input assets and output structure.
    */
   target_format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * Selects an account-scoped transformer (discovered via list_transformers) to perform the build. One transformer per call. When present, the build uses this transformer and target_format_id/target_format_ids select which of its outputs to produce — they MUST be a subset of the transformer's output_format_ids. Render configuration goes in `config`.
+   */
+  transformer_id?: string;
+  /**
+   * Typed render configuration for the selected transformer, keyed by each param's `field` (from the transformer's params[] in list_transformers). Example: { "voice": "isaac", "speaking_rate": 1.1, "mastering_preset": "podcast" }. The agent MUST validate `config` against the transformer's live params for this account and reject unrecognized keys and out-of-range / non-enumerated values with a field-attributed error (e.g. `config.voice`) rather than silently ignoring them — config drives a paid render. Genuinely vendor-specific or experimental knobs not declared as params belong in `ext`, not here. (The schema leaves this object open because legal keys are dynamic per transformer; strict validation is a normative agent obligation.) When `refine_from_build_variant_id` is set, `config` is applied as a DELTA over the parent leaf's config.
+   */
+  config?: {};
+  /**
+   * Refine a previously produced variant: re-build from the referenced `build_variant_id`, applying the natural-language instruction in `message` and any `config` delta, and return NEW lineage-linked variant(s) — each with `parent_build_variant_id` set to this id. A refinement is never a mutation; the parent leaf is unchanged. The `transformer_id` and target format(s) are inherited from the parent and need not be repeated; passing a `transformer_id` or `target_format_id`/`target_format_ids` that differs from the parent's is rejected with `INVALID_REQUEST`. Composes with `max_variants` / `variant_axis` (produces N refined alternatives), but is mutually exclusive with `max_creatives` / catalog fan-out (you refine one prior creative, not a catalog). Requires the agent to advertise `creative.supports_refinement: true` in get_adcp_capabilities; agents that do not retain prior builds reject with `UNSUPPORTED_FEATURE`. A ref that is unknown or no longer retained (agents retain produced leaves for an agent-defined window) is rejected with `REFERENCE_NOT_FOUND`, with `error.field` set to `refine_from_build_variant_id`. To refine a buyer-held manifest when the agent retains nothing, use the transform path instead (`creative_manifest` + `message`).
+   */
+  refine_from_build_variant_id?: string;
+  /**
+   * `execute` (default) produces and bills the creative(s). `estimate` is a DRY RUN: the agent produces nothing and bills nothing, and returns a BuildCreativeEstimate with a projected cost band (cost_low/cost_high) computed against THIS request's actual inputs (script length, brief, catalog size, max_creatives × max_variants) — the band the buyer cannot derive itself, since per_unit gives the rate but not the unit count. Requires the agent to advertise `creative.supports_spend_controls`; otherwise rejected with `UNSUPPORTED_FEATURE`.
+   */
+  mode?: 'execute' | 'estimate';
+  /**
+   * Hard per-call spend ceiling. The agent produces leaves until the NEXT leaf would push the run's aggregate vendor_cost over `amount`, then STOPS and returns the partial BuildCreativeVariantSuccess produced so far with `budget_status: "capped"` (every returned leaf is real, trafficable, and billed — nothing produced is discarded; the leaf shortfall is `leaves_returned` < `leaves_total`). If even the first leaf would exceed the cap, the call fails with BUDGET_CAP_REACHED. `currency` MUST match the rate card's currency (the agent does not FX-convert) or the request is rejected with INVALID_REQUEST (error.field `max_spend.currency`). Requires `creative.supports_spend_controls`. Caps a SINGLE call — to bound a refinement loop, track aggregate vendor_cost across calls and stop issuing them (buyer responsibility in this revision). max_spend bounds only build-time vendor_cost: CPM-priced builds (estimate basis `cpm_deferred`) have build-time vendor_cost 0 and accrue at serve time, so max_spend never engages for them — bound a CPM fan-out with max_creatives instead.
+   */
+  max_spend?: {
+    /**
+     * Maximum aggregate vendor_cost to incur on this call, in `currency`.
+     * @minimum 0
+     */
+    amount: number;
+    /**
+     * ISO 4217 currency; MUST match the rate card.
+     * @pattern ^[A-Z]{3}$
+     */
+    currency: string;
+  };
+  /**
+   * Caps how many DISTINCT creatives to produce along the catalog/item fan-out axis — one creative per catalog item. Use it to sample a large catalog (e.g. send 150 job openings, set max_creatives: 5 to preview five). Distinct from item_limit, which caps how many catalog items a SINGLE creative consumes (DCO-style). Omitted with a catalog input means one creative per item up to the catalog/format bound; omitted without a catalog collapses to a single creative. Large fan-outs may return asynchronously. Mutually exclusive with `refine_from_build_variant_id` (refinement targets one prior creative, not a catalog fan-out). Supported only when the agent advertises `creative.multiplicity.supports_catalog_fanout`; values above `max_creatives_limit` are clamped. Pair with `max_spend` to bound the bill of a large fan-out.
+   * @minimum 1
+   */
+  max_creatives?: number;
+  /**
+   * Advisory keep-all PRODUCTION axis: produce one distinct creative group per signal condition, each kept and trafficked with its own signal targeting (e.g. a rain creative AND a sun creative). Sibling to max_creatives (catalog axis), NOT a variant_axis value (which is choose-among). Each item reuses SignalTargeting (value_type-discriminated binary/categorical/numeric over signal_ref) so the produced group's signal_condition resolves condition identity through the SAME schema the sales-side package targeting uses, plus an optional signal_agent_segment_id carrying the RESOLVED-segment identity (vs signal_ref's definition identity) — echo a provider-exposed handle verbatim; it is the primary trafficking-compatibility key, with categorical signal_ref+value as the weaker fallback. Per #5280 this is an ADVISORY context pointer — it informs production and MUST NOT hard-block at the build_creative layer; trafficking-compatibility (a sun creative MUST NOT serve into rain-targeted packages) is enforced reject-at-trafficking on the sales side (SIGNAL_TARGETING_INCOMPATIBLE), not here. Triggers the BuildCreativeVariantSuccess shape. Supported only when the agent advertises creative.multiplicity.supports_signal_fanout; condition counts above max_signal_conditions_limit are CLAMPED (not rejected), consistent with max_creatives. Composes with max_creatives (catalog × conditions cross-product) and max_variants (variants per group).
+   */
+  signal_conditions?: (SignalTargeting & {
+    /**
+     * Optional opaque resolved-segment handle for this fan-out condition — the RESOLVED condition identity, distinct from signal_ref's DEFINITION identity. When get_signals or a product signal_targeting_options entry exposed a signal_agent_segment_id for the targeted signal, echo it here verbatim so the produced creative's signal_condition carries the resolved-segment identity that the trafficking-compatibility check (SIGNAL_TARGETING_INCOMPATIBLE) matches on exactly. Providers MAY namespace it (e.g. provider_a:weather:rain_realtime vs provider_b:precip:high) so cross-provider conditions stay distinct without a shared taxonomy registry; treat as opaque, do not parse the namespace for business logic. Prefer it over reconstructing condition identity from categorical values — categorical {signal_ref,value} identity is the weaker fallback, appropriate only for inherently-categorical signals with no resolved handle, and never a cross-provider equivalence claim.
+     */
+    signal_agent_segment_id?: string;
+  })[];
+  /**
+   * Caps how many ALTERNATIVES to produce per creative (different voices, themes, best-of-N, etc.). Default 1 preserves single-output behavior. Each variant is a real, independently-billed build (you pay for all produced); the buyer keeps one or many. When variant_axis.values[] is provided, its length is authoritative over max_variants. Resolutions/quality tiers are NOT variants — request them as additional target formats.
+   * @minimum 1
+   */
+  max_variants?: number;
+  /**
+   * Declares the dimension along which variants differ. When `values` is provided, the agent produces exactly one variant per value (e.g. an A/B of two voices). When only `dimension` is provided, the agent chooses up to max_variants variants along that dimension (e.g. best-of-N, themes).
+   */
+  variant_axis?: {
+    /**
+     * What varies across variants. `transformer_config` varies a named config param (name it in `field`); `best_of_n` lets the agent explore and rank; `custom` is agent-defined (describe in `label`).
+     */
+    dimension: 'voice' | 'theme' | 'best_of_n' | 'transformer_config' | 'custom';
+    /**
+     * The transformer `config` param `field` this axis sweeps. REQUIRED when `dimension` is `transformer_config`; `values[]` are then interpreted as values for `config[field]`. Omit for other dimensions.
+     */
+    field?: string;
+    /**
+     * Caller-fixed set of values for the axis (e.g. ["isaac", "sara"] for dimension `voice`). When present, len(values) is the variant count and is authoritative over max_variants.
+     */
+    values?: unknown[];
+    /**
+     * Human-readable description of the axis, especially for `custom`.
+     */
+    label?: string;
+  };
+  /**
+   * Advisory hint for how the buyer intends to use the variants. `keep_one` (best-of-N) and `keep_some` signal the agent to set `recommended`/`rank` on returned variants. Advisory only — it does not change what is returned or billed; every produced variant is returned and charged. Keeping is a client act of trafficking the chosen build_variant_id(s).
+   */
+  keep_mode?: 'keep_all' | 'keep_one' | 'keep_some';
+  selection_strategy?: CreativeSelectionStrategy;
   account?: AccountReference;
   brand?: BrandReference;
   quality?: CreativeQuality;
+  evaluator?: EvaluatorSpec;
   /**
-   * Maximum number of catalog items to use when generating. When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets.
+   * Maximum number of catalog items a SINGLE creative consumes when generating (DCO-style — e.g. how many items fill one carousel/feed creative). When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets. Distinct from `max_creatives`, which fans OUT across catalog items to produce one distinct creative per item.
    * @minimum 1
    */
   item_limit?: number;
@@ -16565,7 +17628,39 @@ export interface BuildCreativeRequest {
   idempotency_key: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-}
+};
+/**
+ * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
+ */
+export type EvaluatorSpec =
+  | {
+      /**
+       * Pass/fail examples that calibrate the single prediction feature (e.g. `predicted_performance` in [0,1]) the evaluator returns in eval.features[]. Artifact-based, mirroring content-standards.json calibration_exemplars.
+       */
+      exemplars: {
+        /**
+         * Artifacts exemplifying variants the buyer considers good — the high end (≈1) of the calibrated prediction feature.
+         */
+        pass?: Artifact[];
+        /**
+         * Artifacts exemplifying variants the buyer considers bad — the low end (≈0) of the calibrated prediction feature.
+         */
+        fail?: Artifact[];
+      };
+    }
+  | {
+      /**
+       * Account-scoped house evaluator selected by the buyer. Discovery via `list_evaluators` is a committed 3.x follow-on; until it lands, this resolves out-of-band by prior buyer/seller arrangement (the reason the surface is experimental). An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
+       */
+      evaluator_id: string;
+    }
+  | {
+      /**
+       * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable degrades to seller-default ranking (advisory errors[] note), not a failure.
+       * @pattern ^https:\/\/
+       */
+      agent_url: string;
+    };
 
 // bundled/media-buy/create-media-buy-request.json
 /**
@@ -16653,7 +17748,7 @@ export interface CreateMediaBuyRequest {
    */
   po_number?: string;
   /**
-   * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and Ad-IDs through the transaction lifecycle.
+   * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and creative traffic identifiers through the transaction lifecycle.
    * @maxLength 100
    */
   agency_estimate_number?: string;
@@ -17365,6 +18460,11 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
          * Human-readable placement name
          */
         placement_name?: string;
+        /**
+         * Canonical publisher domain whose adagents.json namespace this placement belongs to, matching the `publisher_domain` on the product's `placements[]` entry that `placement_id` resolves to (see core/placement.json). Lets buyers attribute delivered impressions to a publisher namespace without re-fetching the product catalog — the common case for multi-publisher buys through a single sales agent. Sellers SHOULD emit it whenever the resolving product placement carries a publisher_domain (always true for `kind: publisher_ref`); sellers MAY omit it only for `seller_inline` placements in a legacy single-publisher context where the seller agent's own domain is the namespace. Single-valued: a placement resolves within exactly one publisher namespace (package-level attribution, where an ad-network product can span publishers, is a separate concern).
+         * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+         */
+        publisher_domain?: string;
       })[];
       /**
        * Whether by_placement was truncated. Sellers MUST return this flag whenever by_placement is present (false means the list is complete).
@@ -18142,6 +19242,8 @@ export type GetProductsRequest = {
     | 'publisher_properties'
     | 'channels'
     | 'video_placement_types'
+    | 'sponsored_placement_types'
+    | 'social_placement_surfaces'
     | 'format_ids'
     | 'format_options'
     | 'placements'
@@ -18276,6 +19378,14 @@ export interface ProductFilters {
    * Filter video products by acceptable declared video placement types, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested video placement types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
    */
   video_placement_types?: VideoPlacementType[];
+  /**
+   * Filter retail-media products by acceptable declared sponsored-placement types (sponsored search, sponsored display, or sponsored native). Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested sponsored-placement types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
+   */
+  sponsored_placement_types?: SponsoredPlacementType[];
+  /**
+   * Filter social products by acceptable declared social-placement surfaces (feed, stories, short_video, explore, or search). Sellers SHOULD return only products they can satisfy with at least one requested surface. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested surfaces SHOULD NOT match unless the seller can constrain delivery to the requested surface during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
+   */
+  social_placement_surfaces?: SocialPlacementSurface[];
   /**
    * @deprecated
    * Deprecated: Use trusted_match filter instead. Filter to products executable through specific agentic ad exchanges. URLs are canonical identifiers.
@@ -18500,7 +19610,7 @@ export interface ListCreativeFormatsRequest {
    */
   format_ids?: FormatReferenceStructuredObject[];
   /**
-   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
+   * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. For published-post reference formats, search for 'published_post'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
   asset_types?: AssetContentType[];
   /**
@@ -20635,7 +21745,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supports_proposals?: boolean;
     /**
-     * Where this seller surfaces dependency-resource impairments (creative rejected post-approval, audience suspended, catalog item withdrawn, event source insufficient, property depublished) to buyers. Non-exclusive: a seller mirroring impairments on both the buy snapshot AND firing webhooks declares `["snapshot", "webhook"]` (the common case for premium guaranteed sellers). Each value names one surface where buyers can observe an impairment:
+     * Where this seller surfaces dependency-resource impairments (creative suspended/rejected post-approval, audience suspended, catalog item withdrawn, event source insufficient, property depublished) to buyers. Non-exclusive: a seller mirroring impairments on both the buy snapshot AND firing webhooks declares `["snapshot", "webhook"]` (the common case for premium guaranteed sellers). Each value names one surface where buyers can observe an impairment:
      *
      * - **`snapshot`** — seller propagates resource transitions into `media_buy.health` and `media_buy.impairments[]` on the next `get_media_buys` read. The `impairment.coherence` compliance assertion grades this surface; storyboards that exercise it (`media_buy_seller/dependency_impairment`, `media_buy_seller/dependency_impairment_cardinality`) require `"snapshot"` to be declared, else they grade `not_applicable`.
      * - **`webhook`** — seller fires `notification-type: impairment` webhooks (configured via `push_notification_config`). Sellers declaring `"webhook"` MUST satisfy the persistent-channel webhook contract for the impairment event type. A seller declaring `["webhook"]` without `"snapshot"` is webhook-only — buyers reconcile state from the push channel alone, and snapshot-coherence storyboards grade `not_applicable`.
@@ -21147,6 +22257,67 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supports_transformation?: boolean;
     /**
+     * When true, this agent exposes account-scoped creative transformers via list_transformers (the creative analog of media-buy products) and accepts transformer_id + config on build_creative. Buyers SHOULD call list_transformers to discover available transformers, their typed config params (and account-scoped enumerable option values via expand_params), and pricing. When false or absent, the agent does not offer the transformer surface.
+     */
+    supports_transformers?: boolean;
+    /**
+     * When true, this agent retains produced build_variant leaves for an agent-defined retention window and can re-build from one via build_creative's refine_from_build_variant_id — applying a natural-language instruction in message plus an optional config delta, returning new lineage-linked variants. A build-time agent capability independent of generation/transformation. When false or absent, refine_from_build_variant_id is rejected with UNSUPPORTED_FEATURE; buyers refine instead via the transform path (creative_manifest + message).
+     */
+    supports_refinement?: boolean;
+    /**
+     * When true, build_creative honors a per-call `max_spend` ceiling (producing partial paid results and returning budget_status:"capped" + a BUDGET_CAP_REACHED advisory rather than overspending) AND supports mode:"estimate" dry-runs (a projected cost band, producing/billing nothing). When false or absent, max_spend / mode:estimate are rejected with UNSUPPORTED_FEATURE. Out-of-band billers (bills_through_adcp:false) have no AdCP cost truth to cap against, so this is meaningful only alongside bills_through_adcp:true.
+     */
+    supports_spend_controls?: boolean;
+    /**
+     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer) and populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
+     */
+    supports_evaluator?: boolean;
+    /**
+     * When supports_refinement is true, the GUARANTEED-MINIMUM window (a floor, not a ceiling) during which a produced build_variant_id remains refinable via refine_from_build_variant_id: a ref within this window from production SHOULD resolve; the agent MAY retain longer. Omit when the retention window is agent-defined and not advertised — buyers then treat refinability as best-effort and handle REFERENCE_NOT_FOUND.
+     * @minimum 0
+     */
+    refinable_retention_seconds?: number;
+    /**
+     * Pre-call discriminators for build_creative fan-out, so a buyer knows BEFORE sending max_creatives / max_variants whether this agent supports them and the ceilings. Over-limit requests are CLAMPED to these ceilings (the agent produces up to the limit and signals the shortfall via items_returned < items_total on BuildCreativeVariantSuccess), not rejected — consistent with item_limit's 'use the lesser' rule. Absent means no fan-out: build_creative produces a single creative and max_creatives/max_variants>1 are not supported.
+     */
+    multiplicity?: {
+      /**
+       * When true, build_creative accepts max_creatives (one distinct creative per catalog item).
+       */
+      supports_catalog_fanout?: boolean;
+      /**
+       * Ceiling on max_creatives. Omitted means no advertised ceiling.
+       * @minimum 1
+       */
+      max_creatives_limit?: number;
+      /**
+       * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.signal_fanout` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts signal_conditions[] (one distinct creative group per signal condition, keep-all). Mirrors supports_catalog_fanout.
+       */
+      supports_signal_fanout?: boolean;
+      /**
+       * Ceiling on len(signal_conditions). Over-limit requests are CLAMPED (not rejected), like max_creatives_limit. Omitted means no advertised ceiling.
+       * @minimum 1
+       */
+      max_signal_conditions_limit?: number;
+      /**
+       * When true, build_creative accepts max_variants > 1 / variant_axis (alternatives per creative).
+       */
+      supports_variants?: boolean;
+      /**
+       * Ceiling on max_variants. Omitted means no advertised ceiling.
+       * @minimum 1
+       */
+      max_variants_limit?: number;
+      /**
+       * Which variant_axis.dimension values this agent supports.
+       */
+      variant_dimensions?: ('voice' | 'theme' | 'best_of_n' | 'transformer_config' | 'custom')[];
+      /**
+       * Which selection_strategy values this agent supports when sampling max_creatives < items_total. Sibling to variant_dimensions. Part of the experimental signal-fanout surface (feature id `creative.signal_fanout`).
+       */
+      selection_strategies?: CreativeSelectionStrategy[];
+    };
+    /**
      * Canonical-formats path: format declarations describing which canonical formats this creative agent can produce via `build_creative`. Each entry uses the same `ProductFormatDeclaration` shape as a product's inline `format_options[i]` — `format_kind` discriminator + `params` (canonical's parameter schema including `slots`, dimensions, durations, codecs, character limits, platform_extensions, tracking_extensions). Replaces the v1 `list_creative_formats` discovery surface for creative agents.
      */
     supported_formats?: {
@@ -21410,6 +22581,7 @@ export type AdCPSpecialism =
   | 'creative-ad-server'
   | 'creative-generative'
   | 'creative-template'
+  | 'creative-transformers'
   | 'governance-aware-seller'
   | 'governance-delivery-monitor'
   | 'governance-spend-authority'
@@ -21557,6 +22729,347 @@ export interface SICapabilities {
    */
   mcp_apps?: boolean;
 }
+/**
+ * Request parameters for the get_task_status AdCP tool. This is a 3.x protocol-namespace alias for the legacy AdCP tasks/get polling surface, not a transport-native MCP/A2A tasks/* method. It retrieves a specific AdCP application-layer async task by ID with optional conversation history and terminal result payload.
+ */
+export interface GetTaskStatusRequest {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Unique identifier of the task to retrieve
+   */
+  task_id: string;
+  /**
+   * Include full conversation history for this task (may increase response size)
+   */
+  include_history?: boolean;
+  /**
+   * Include the task's result payload when status is completed. Defaults to false for lightweight status-only polls. When true, sellers MUST include result on the response when status is completed.
+   */
+  include_result?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// bundled/protocol/get-task-status-response.json
+/**
+ * Response from the get_task_status AdCP tool, a 3.x protocol-namespace alias for legacy AdCP tasks/get. Contains AdCP application-layer task status, task metadata, and optional conversation history or terminal result payload; distinct from transport-native MCP/A2A task responses.
+ */
+export type GetTaskStatusResponse = ProtocolEnvelope & {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Unique identifier for this task
+   */
+  task_id: string;
+  task_type: TaskType;
+  protocol: AdCPProtocol;
+  status: TaskStatus;
+  /**
+   * When the task was initially created (ISO 8601)
+   * @format date-time
+   */
+  created_at: string;
+  /**
+   * When the task was last updated (ISO 8601)
+   * @format date-time
+   */
+  updated_at: string;
+  /**
+   * When the task completed (ISO 8601, only for completed/failed/canceled tasks)
+   * @format date-time
+   */
+  completed_at?: string;
+  /**
+   * Whether this task has webhook configuration
+   */
+  has_webhook?: boolean;
+  /**
+   * Progress information for long-running tasks
+   */
+  progress?: {
+    /**
+     * Completion percentage (0-100)
+     * @minimum 0
+     * @maximum 100
+     */
+    percentage?: number;
+    /**
+     * Current step or phase of the operation
+     */
+    current_step?: string;
+    /**
+     * Total number of steps in the operation
+     * @minimum 1
+     */
+    total_steps?: number;
+    /**
+     * Current step number
+     * @minimum 1
+     */
+    step_number?: number;
+  };
+  /**
+   * Error details for failed tasks
+   */
+  error?: {
+    /**
+     * Error code for programmatic handling
+     */
+    code: string;
+    /**
+     * Detailed error message
+     */
+    message: string;
+    /**
+     * Additional error context
+     */
+    details?: {
+      protocol?: AdCPProtocol;
+      /**
+       * Specific operation that failed
+       */
+      operation?: string;
+      /**
+       * Domain-specific error context
+       */
+      specific_context?: {};
+    };
+  };
+  /**
+   * Complete conversation history for this task (only included if include_history was true in request)
+   */
+  history?: {
+    /**
+     * When this exchange occurred (ISO 8601)
+     * @format date-time
+     */
+    timestamp: string;
+    /**
+     * Whether this was a request from client or response from server
+     */
+    type: 'request' | 'response';
+    /**
+     * The full request or response payload
+     */
+    data: {};
+  }[];
+  result?: AdCPAsyncResponseData;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+
+// bundled/protocol/list-tasks-request.json
+/**
+ * Request parameters for the list_tasks AdCP tool. This is a 3.x protocol-namespace alias for the legacy AdCP tasks/list reconciliation surface, not a transport-native MCP/A2A tasks/* method. It lists and filters AdCP application-layer async tasks for state reconciliation while preserving the legacy 3.x payload shape.
+ */
+export interface ListTasksRequest {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Filter criteria for querying tasks
+   */
+  filters?: {
+    protocol?: AdCPProtocol;
+    /**
+     * Filter by multiple AdCP protocols
+     */
+    protocols?: AdCPProtocol[];
+    status?: TaskStatus;
+    /**
+     * Filter by multiple task statuses
+     */
+    statuses?: TaskStatus[];
+    task_type?: TaskType;
+    /**
+     * Filter by multiple task types
+     */
+    task_types?: TaskType[];
+    /**
+     * Filter tasks created after this date (ISO 8601)
+     * @format date-time
+     */
+    created_after?: string;
+    /**
+     * Filter tasks created before this date (ISO 8601)
+     * @format date-time
+     */
+    created_before?: string;
+    /**
+     * Filter tasks last updated after this date (ISO 8601)
+     * @format date-time
+     */
+    updated_after?: string;
+    /**
+     * Filter tasks last updated before this date (ISO 8601)
+     * @format date-time
+     */
+    updated_before?: string;
+    /**
+     * Filter by specific task IDs
+     */
+    task_ids?: string[];
+    /**
+     * Filter tasks where context contains this text (searches media_buy_id, signal_id, etc.)
+     */
+    context_contains?: string;
+    /**
+     * Filter tasks that have webhook configuration when true
+     */
+    has_webhook?: boolean;
+  };
+  /**
+   * Sorting parameters
+   */
+  sort?: {
+    /**
+     * Field to sort by
+     */
+    field?: 'created_at' | 'updated_at' | 'status' | 'task_type' | 'protocol';
+    direction?: SortDirection;
+  };
+  pagination?: PaginationRequest;
+  /**
+   * Include full conversation history for each task (may significantly increase response size)
+   */
+  include_history?: boolean;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+
+// bundled/protocol/list-tasks-response.json
+/**
+ * Response from the list_tasks AdCP tool, a 3.x protocol-namespace alias for legacy AdCP tasks/list. Contains filtered AdCP application-layer task results and reconciliation data while preserving the legacy 3.x domain field shape; distinct from transport-native MCP/A2A task responses.
+ */
+export type ListTasksResponse = ProtocolEnvelope & {
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Summary of the query that was executed
+   */
+  query_summary: {
+    /**
+     * Total number of tasks matching filters (across all pages)
+     * @minimum 0
+     */
+    total_matching?: number;
+    /**
+     * Number of tasks returned in this response
+     * @minimum 0
+     */
+    returned?: number;
+    /**
+     * Count of tasks by domain
+     */
+    domain_breakdown?: {
+      /**
+       * Number of media-buy tasks in results
+       * @minimum 0
+       */
+      'media-buy'?: number;
+      /**
+       * Number of signals tasks in results
+       * @minimum 0
+       */
+      signals?: number;
+    };
+    /**
+     * Count of tasks by status
+     */
+    status_breakdown?: {
+      /**
+       * @minimum 0
+       */
+      [k: string]: number | undefined;
+    };
+    /**
+     * List of filters that were applied to the query
+     */
+    filters_applied?: string[];
+    /**
+     * Sort order that was applied
+     */
+    sort_applied?: {
+      field: string;
+      direction: 'asc' | 'desc';
+    };
+  };
+  /**
+   * Array of tasks matching the query criteria
+   */
+  tasks: {
+    /**
+     * Unique identifier for this task
+     */
+    task_id: string;
+    task_type: TaskType;
+    /**
+     * AdCP domain this task belongs to
+     */
+    domain: 'media-buy' | 'signals';
+    status: TaskStatus;
+    /**
+     * When the task was initially created (ISO 8601)
+     * @format date-time
+     */
+    created_at: string;
+    /**
+     * When the task was last updated (ISO 8601)
+     * @format date-time
+     */
+    updated_at: string;
+    /**
+     * When the task completed (ISO 8601, only for completed/failed/canceled tasks)
+     * @format date-time
+     */
+    completed_at?: string;
+    /**
+     * Whether this task has webhook configuration
+     */
+    has_webhook?: boolean;
+  }[];
+  pagination: PaginationResponse;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+};
+
+// bundled/signals/activate-signal-request.json
 /**
  * A deployment target where signals can be activated (DSP, sales agent, etc.)
  */
@@ -21784,7 +23297,7 @@ export type GetSignalsRequest = {
   countries?: string[];
   filters?: SignalFilters;
   /**
-   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, and data_subject_rights when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. When consent_basis or art9_basis is projected for another provider's signal, the value remains provider-declared signal-definition posture; sellers and federating agents MUST NOT substitute their own processing basis. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
+   * Specific signal fields to include in the response, aligned with get_products.fields. Required identity and activation fields such as signal_ref or signal_id, signal_agent_segment_id, name, description, signal_type, coverage_percentage, and deployments are always included when required by the response schema. Use for progressive disclosure of rich signal-definition metadata: request fields such as taxonomy, data_sources, methodology, segmentation_criteria, criteria_url, refresh_cadence, lookback_window, onboarder, modeling, audience_expansion, device_expansion, countries, consent_basis, restricted_attributes, policy_categories, art9_basis, data_subject_rights, and last_updated when the buyer needs them inline. Omit for the agent's default discovery projection. Agents SHOULD honor requested fields for exact lookup, refinement, small custom-signal result sets, and private/source-native signals when available. fields is a projection request, not an entitlement grant; agents MAY redact requested definition fields unless the caller is authorized for the underlying lineage, methodology, and rights-routing metadata. When consent_basis or art9_basis is projected for another provider's signal, the value remains provider-declared signal-definition posture; sellers and federating agents MUST NOT substitute their own processing basis. For broad discovery and wholesale pages, agents MAY return compact pointers instead of inlining large resources, especially when provider-published definitions can be resolved from signal_ref, taxonomy.ref, criteria_url, disclosure_url, and validators such as resolved URL plus catalog_etag, HTTP ETag/Last-Modified, or taxonomy.etag.
    */
   fields?: (
     | 'signal_ref'
@@ -21817,6 +23330,7 @@ export type GetSignalsRequest = {
     | 'policy_categories'
     | 'art9_basis'
     | 'data_subject_rights'
+    | 'last_updated'
   )[];
   /**
    * @deprecated
@@ -22038,6 +23552,7 @@ export type SIGetOfferingResponse = ProtocolEnvelope & {
      * @format date-time
      */
     expires_at?: string;
+    availability_status?: OfferingAvailabilityStatus;
     /**
      * Price indication (e.g., 'from $199', '50% off')
      */
@@ -22079,6 +23594,7 @@ export type SIGetOfferingResponse = ProtocolEnvelope & {
      * Brief availability info (e.g., 'In stock', 'Size 14 available', '3 left')
      */
     availability_summary?: string;
+    availability_status?: OfferingAvailabilityStatus;
     /**
      * Product detail page URL
      */
@@ -22104,6 +23620,17 @@ export type SIGetOfferingResponse = ProtocolEnvelope & {
   context?: ContextObject;
   ext?: ExtensionObject;
 };
+/**
+ * Machine-readable availability state for the offering. Optional; when omitted, derive availability from the top-level 'available' boolean and 'unavailable_reason'.
+ */
+export type OfferingAvailabilityStatus =
+  | 'available'
+  | 'limited'
+  | 'sold_out'
+  | 'expired'
+  | 'region_restricted'
+  | 'inactive';
+
 
 // bundled/sponsored-intelligence/si-initiate-session-request.json
 /**
@@ -23199,14 +24726,15 @@ export interface AuthorizedAgentBaseFields {
 export interface CanonicalProjectionReference {
   kind: CanonicalFormatKind;
   /**
-   * Where the rendered asset bytes come from on the projected v2 declaration. Default (when omitted) is `buyer_uploaded` — the canonical's default. Set explicitly when the v1 named format doesn't follow that default. Required for generative entries (`agent_synthesized` or `seller_pre_rendered_from_brief`) because their asset shape doesn't carry image/video/audio bytes — projection without this hint produces a lossy v2 declaration that claims buyer-uploaded bytes.
+   * Where the rendered asset bytes come from on the projected v2 declaration. Default (when omitted) is `buyer_uploaded` — the canonical's default. Set explicitly when the v1 named format doesn't follow that default. Required for generative entries (`agent_synthesized` or `seller_pre_rendered_from_brief`) because their asset shape doesn't carry image/video/audio bytes, and for published-post reference entries (`publisher_owned_reference`) because their asset shape carries a post reference rather than uploaded bytes. Projection without this hint produces a lossy v2 declaration that claims buyer-uploaded bytes.
    */
   asset_source?:
     | 'buyer_uploaded'
     | 'publisher_host_recorded'
     | 'seller_pre_rendered_from_brief'
     | 'seller_human_designed'
-    | 'agent_synthesized';
+    | 'agent_synthesized'
+    | 'publisher_owned_reference';
   /**
    * When the v1 named format's slot shape differs from the canonical's default slots, this carries the override that the projected v2 declaration's `params.slots[]` should use. REPLACES (does not merge with) the canonical's default slots — projection-time semantics. The slot vocabulary follows `asset-group-vocabulary.json`. Asset IDs in the v1 format's `assets[*]` MUST resolve (directly or via the vocabulary's aliases) to the `asset_group_id` values declared here.
    */
@@ -23221,7 +24749,7 @@ export interface CanonicalProjectionSlotOverride {
    */
   asset_group_id: string;
   /**
-   * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`.
+   * Asset type — `image`, `video`, `audio`, `text`, `html`, `javascript`, `url`, `zip`, `brief`, `catalog`, `published_post`, or another canonical slot asset type.
    */
   asset_type: string;
   /**
@@ -24164,11 +25692,21 @@ export interface Format {
    */
   supported_macros?: (UniversalMacro | string)[];
   /**
-   * Array of format IDs this format accepts as input creative manifests. When present, indicates this format can take existing creatives in these formats as input. Omit for formats that work from raw assets (images, text, etc.) rather than existing creatives.
+   * @deprecated
+   * **DEPRECATED in 3.1. Removed at 4.0.** Use `list_transformers` instead — a transformer declares its own `input_format_ids`/`output_format_ids`, so build capability is a property of the transformer (the unit you select and that carries pricing), not a relationship hung on a format. Discover build capability via `list_transformers` (optionally filtered by `input_format_ids`/`output_format_ids`).
+   *
+   * Migration: sellers that expressed transform capability by hanging `input_format_ids` on a format SHOULD declare a transformer via `list_transformers` instead. Buyers SHOULD discover build capability via `list_transformers` rather than filtering formats.
+   *
+   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* array of format IDs this format accepts as input creative manifests; when present, indicates this format can take existing creatives in these formats as input. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
    */
   input_format_ids?: FormatReferenceStructuredObject[];
   /**
-   * Array of format IDs that this format can produce as output. When present, indicates this format can build creatives in these output formats (e.g., a multi-publisher template format might produce standard display formats across many publishers). Omit for formats that produce a single fixed output (the format itself).
+   * @deprecated
+   * **DEPRECATED in 3.1. Removed at 4.0.** Use `list_transformers` instead — a transformer declares its own `output_format_ids`, so what a builder can produce is a property of the transformer, not a relationship hung on a format. Discover via `list_transformers`.
+   *
+   * Migration: sellers that expressed multi-output build capability (e.g. a multi-publisher template) by hanging `output_format_ids` on a format SHOULD declare a transformer via `list_transformers` instead.
+   *
+   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* array of format IDs this format can produce as output; when present, indicates this format can build creatives in these output formats. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
    */
   output_format_ids?: FormatReferenceStructuredObject[];
   /**
@@ -24220,7 +25758,12 @@ export interface Format {
    */
   reported_metrics?: AvailableMetric[];
   /**
-   * Pricing options for this format. Used by transformation and generation agents that charge per format adapted, per image generated, or per unit of work. Present when the request included include_pricing=true and account. Ad servers and library-based agents expose pricing on list_creatives instead.
+   * @deprecated
+   * **DEPRECATED in 3.1. Removed at 4.0.** Use `transformer.pricing_options` (via `list_transformers`) instead — pricing belongs on the transformer (the unit selected and billed), exactly as it belongs on a media-buy product. Once formats only describe output shape, format-level pricing is vestigial.
+   *
+   * Migration: transformation/generation agents that charged via `format.pricing_options` SHOULD move the same `vendor-pricing-option` entries onto the corresponding transformer. The applied option is echoed per-leaf on the build_creative response and reconciled via report_usage, unchanged.
+   *
+   * *Legacy behavior, retained for 3.1–3.x backward compatibility:* pricing options for this format, used by transformation/generation agents that charge per format adapted, per image generated, or per unit of work; present when the request included include_pricing=true and account. SDKs reading 3.1 catalogs MUST continue to honor this field when present; 4.0+ SDKs MAY reject it. New code SHOULD NOT emit this field.
    */
   pricing_options?: VendorPricingOption[];
   canonical?: CanonicalProjectionReference;
@@ -24787,7 +26330,7 @@ export type PlacementDefinition = {
    */
   channels?: MediaChannel[];
   /**
-   * Optional 3.1+ canonical format-option declarations supported by this placement. Two ways to populate an entry: (1) reference an entry in the file's top-level `formats[]` by `format_option_id` only — buyers resolve the full declaration from `formats[]` by matching `format_option_id` (recommended; avoids duplication). Top-level formats may be publisher-owned custom formats or narrowed canonical formats; their `format_kind` is the canonical anchor that the placement reference inherits. (2) carry an inline `ProductFormatDeclaration` directly — for placement-specific canonical narrowing that doesn't fit a reusable catalog entry. Same anyOf pattern as Product.
+   * Optional 3.1+ canonical format-option declarations supported by this placement. This `adagents.json` placement surface supports two entry shapes: (1) reference an entry in the same file's top-level `formats[]` by `format_option_id` only — buyers resolve the full declaration from `formats[]` by matching `format_option_id` (recommended; avoids duplication). Top-level formats may be publisher-owned custom formats or narrowed canonical formats; their `format_kind` is the canonical anchor that the placement reference inherits. (2) carry an inline `ProductFormatDeclaration` directly — for placement-specific canonical narrowing that doesn't fit a reusable catalog entry. This bare-reference shape is placement-catalog specific; Product `format_options[]` entries are always full `ProductFormatDeclaration` objects with required `format_kind` and `params`.
    *
    * Product-level formats remain the upper bound for a sellable product. Catalog placement formats describe placement support; when a product references the placement and also declares product-level formats, buyers use the intersection for that product placement. A catalog placement format that is absent from the product-level declaration is not accepted for that product unless the product explicitly includes it.
    *
@@ -24800,6 +26343,14 @@ export type PlacementDefinition = {
    * Declared video placement types for this publisher placement, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. Product-level placement declarations may narrow this set but SHOULD NOT broaden it. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
    */
   video_placement_types?: VideoPlacementType[];
+  /**
+   * Declared sponsored-placement types for this publisher placement, distinguishing where the catalog-driven retail-media placement renders on the retailer surface. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. Product-level placement declarations may narrow this set but SHOULD NOT broaden it. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  sponsored_placement_types?: SponsoredPlacementType[];
+  /**
+   * Declared social-placement surfaces for this publisher placement, distinguishing the in-app surface where the social placement renders. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. Product-level placement declarations may narrow this set but SHOULD NOT broaden it. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  social_placement_surfaces?: SocialPlacementSurface[];
   ext?: ExtensionObject;
 };
 /**
@@ -26219,6 +27770,11 @@ export interface SignalDefinitionEnrichment {
      */
     ccpa_opt_out_url?: string;
   };
+  /**
+   * When this definition record was last updated. This indicates freshness of the definition record, not an attestation that the underlying data or model was refreshed at that time.
+   * @format date-time
+   */
+  last_updated?: string;
   dts_compliant_version?: string;
 }
 /**
@@ -26583,6 +28139,11 @@ export interface SignalDefinition {
     ccpa_opt_out_url?: string;
   };
   /**
+   * When this definition record was last updated. This indicates freshness of the definition record, not an attestation that the underlying data or model was refreshed at that time.
+   * @format date-time
+   */
+  last_updated?: string;
+  /**
    * IAB Data Transparency Standard version this signal definition self-attests as satisfying, when applicable.
    */
   dts_compliant_version?: string;
@@ -26597,6 +28158,10 @@ export type SignalPricingOption = {
    * Opaque identifier for this pricing option, unique within the vendor agent. Pass this in report_usage to identify which pricing option was applied.
    */
   pricing_option_id: string;
+  /**
+   * Creative transformers only: scopes this pricing option to specific output formats, so one transformer can price different outputs differently (e.g. a multi-publisher template charging per publisher format). When present, the option applies only to leaves whose format matches one of these; an unscoped option (this field absent) is the default for any output. A build targeting an output that matches no scoped option AND has no unscoped default is rejected with UNPRICEABLE_OUTPUT — never billed at a guessed rate (no silent fallback). Inert for non-creative vendors (signals/governance), which omit it.
+   */
+  applies_to_output_format_ids?: FormatReferenceStructuredObject[];
 } & VendorPricing;
 
 // core/store-item.json
@@ -27225,6 +28790,9 @@ export type XEntityTypes =
   | 'vendor_pricing_option'
   | 'creative'
   | 'creative_format'
+  | 'transformer'
+  | 'evaluator'
+  | 'build_variant'
   | 'audience'
   | 'signal'
   | 'signal_activation_id'
@@ -27355,16 +28923,16 @@ export interface CreativeStatusChangedWebhook {
    */
   creative_id: string;
   /**
-   * The status transition that triggered this fire. Valid `from` values are restricted to the prior states from which a seller/system-initiated transition can fire (`processing` for processing outcomes, `pending_review` for initial review outcomes, `approved` for re-review/revocation/seller-archive). The post-terminal states `rejected` and `archived` MUST NOT appear as `from` — those would require a buyer-initiated unblock (`sync_creatives` resubmit / unarchive), which does not fire this event.
+   * The status transition that triggered this fire. Valid `from` values are restricted to the prior states from which a seller/system-initiated transition can fire (`processing` for processing outcomes, `pending_review` for initial review outcomes, `approved` for re-review/revocation/seller-archive/recoverable suspension, `suspended` for seller-observed recovery or terminal escalation). The post-terminal states `rejected` and `archived` MUST NOT appear as `from` — those would require a buyer-initiated unblock (`sync_creatives` resubmit / unarchive), which does not fire this event.
    */
   transition: {
     /**
-     * Prior status — restricted to the states from which a seller/system-initiated transition can fire. For initial review outcomes the prior status is `pending_review`; for processing outcomes it is `processing`; for seller re-review, post-approval revocation, and seller-initiated archive it is `approved`.
+     * Prior status — restricted to the states from which a seller/system-initiated transition can fire. For initial review outcomes the prior status is `pending_review`; for processing outcomes it is `processing`; for seller re-review, post-approval revocation, recoverable suspension, and seller-initiated archive it is `approved`; for recovery from a dependency/authorization outage or terminal escalation after a suspension it is `suspended`.
      */
-    from: 'processing' | 'pending_review' | 'approved';
+    from: 'processing' | 'pending_review' | 'approved' | 'suspended';
     to: CreativeStatus;
     /**
-     * ISO 8601 timestamp when the seller observed the transition. Distinct from `fired_at` — `fired_at` reflects when the webhook was emitted, which may lag `observed_at` by up to the seller's coalescence window. **Ordering with `media-buy.impairment`:** when a creative transition also causes a media-buy impairment (e.g., `approved → rejected` while assignments exist), the `creative.status_changed` and `impairment` fires are not ordered — buyers MUST NOT assume one arrives before the other. Reconcile via the snapshot (`list_creatives` and `get_media_buys`) when the two fires reference the same `creative_id`.
+     * ISO 8601 timestamp when the seller observed the transition. Distinct from `fired_at` — `fired_at` reflects when the webhook was emitted, which may lag `observed_at` by up to the seller's coalescence window. **Ordering with `media-buy.impairment`:** when a creative transition also causes a media-buy impairment (e.g., `approved → suspended` or `approved → rejected` while assignments exist), the `creative.status_changed` and `impairment` fires are not ordered — buyers MUST NOT assume one arrives before the other. Reconcile via the snapshot (`list_creatives` and `get_media_buys`) when the two fires reference the same `creative_id`.
      * @format date-time
      */
     observed_at: string;
@@ -27388,7 +28956,7 @@ export interface CreativeStatusChangedWebhook {
  */
 export interface VideoBrief {
   /**
-   * Ordered list of per-segment prompts that compose the generated video. The sum of `duration_ms` across segments should match the target video duration declared by the format declaration's `duration_ms_exact` / `duration_ms_range`.
+   * Ordered list of per-segment prompts that compose the generated video. The sum of `duration_ms` across segments should match the target video duration declared by the format declaration's `duration_ms_exact` or `duration_ms_range`.
    */
   segments: {
     /**
@@ -27466,6 +29034,7 @@ export type ErrorCode =
   | 'AUTH_REQUIRED'
   | 'AUTH_MISSING'
   | 'AUTH_INVALID'
+  | 'AUTHORIZATION_REQUIRED'
   | 'RATE_LIMITED'
   | 'SERVICE_UNAVAILABLE'
   | 'CONFIGURATION_ERROR'
@@ -27477,6 +29046,7 @@ export type ErrorCode =
   | 'CREATIVE_REJECTED'
   | 'CREATIVE_VALUE_NOT_ALLOWED'
   | 'UNSUPPORTED_FEATURE'
+  | 'UNPRICEABLE_OUTPUT'
   | 'UNSUPPORTED_GRANULARITY'
   | 'UNSUPPORTED_PROVISIONING'
   | 'AUDIENCE_TOO_SMALL'
@@ -27489,17 +29059,20 @@ export type ErrorCode =
   | 'GOVERNANCE_DENIED'
   | 'BUDGET_EXHAUSTED'
   | 'BUDGET_EXCEEDED'
+  | 'BUDGET_CAP_REACHED'
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
   | 'IDEMPOTENCY_EXPIRED'
   | 'IDEMPOTENCY_IN_FLIGHT'
   | 'CREATIVE_DEADLINE_EXCEEDED'
+  | 'CREATIVE_INACCESSIBLE'
   | 'INVALID_STATE'
   | 'MEDIA_BUY_NOT_FOUND'
   | 'NOT_CANCELLABLE'
   | 'PACKAGE_NOT_FOUND'
   | 'CREATIVE_NOT_FOUND'
   | 'SIGNAL_NOT_FOUND'
+  | 'SIGNAL_TARGETING_INCOMPATIBLE'
   | 'SESSION_NOT_FOUND'
   | 'PLAN_NOT_FOUND'
   | 'REFERENCE_NOT_FOUND'
@@ -27525,6 +29098,7 @@ export type ErrorCode =
   | 'PROVENANCE_EMBEDDED_MISSING'
   | 'PROVENANCE_VERIFIER_NOT_ACCEPTED'
   | 'PROVENANCE_CLAIM_CONTRADICTED'
+  | 'EVALUATOR_AGENT_NOT_ACCEPTED'
   | 'BILLING_NOT_SUPPORTED'
   | 'BILLING_NOT_PERMITTED_FOR_AGENT'
   | 'BILLING_OUT_OF_BAND'
@@ -27543,7 +29117,11 @@ export type ErrorCode =
   | 'FORMAT_NOT_SUPPORTED'
   | 'PIXEL_TRACKER_LOSSY_DOWNGRADE'
   | 'PIXEL_TRACKER_UPGRADE_INFERRED'
-  | 'STALE_RESPONSE';
+  | 'STALE_RESPONSE'
+  | 'FEED_FETCH_FAILED'
+  | 'INVALID_FEED_FORMAT'
+  | 'ITEM_VALIDATION_FAILED'
+  | 'CATALOG_LIMIT_EXCEEDED';
 
 
 // enums/error-scope.json
@@ -27734,6 +29312,33 @@ export interface AudienceTooSmallDetails {
   current_size?: number;
 }
 
+
+// error-details/authorization-required.json
+/**
+ * Recommended details shape for AUTHORIZATION_REQUIRED errors. The caller's AdCP credential was accepted, but the seller cannot complete the requested action until one or more downstream platform connections or grants are completed, restored, or refreshed.
+ */
+export interface AuthorizationRequiredDetails {
+  /**
+   * Complete set of downstream connections known to be required for the relevant product, format, or request.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Subset of downstream connections that blocked the current request. Sellers SHOULD populate this array when the caller needs to route a human through a connections flow. Entries with `status` of `missing`, `pending`, `expired`, or `revoked` MUST include either `provider` or `authorization_url` so the buyer can route the remediation unambiguously.
+   */
+  missing_connections?: DownstreamConnectionRequirement[];
+  /**
+   * General recovery URL when there is a single obvious authorization step or when the seller has its own connection-management page.
+   */
+  authorization_url?: string;
+  /**
+   * Human-readable recovery instructions. Use `missing_connections[].authorization_instructions` when instructions differ per downstream connection.
+   */
+  authorization_instructions?: string;
+  /**
+   * Legacy or provider-specific authorization hint for the referenced object. Prefer `missing_connections[]` for new implementations.
+   */
+  reference_authorization?: {};
+}
 
 // error-details/billing-not-permitted-for-agent.json
 /**
@@ -28088,6 +29693,14 @@ export interface CanonicalFormatBase {
   slots?: {
     [k: string]: unknown | undefined;
   }[];
+  /**
+   * Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.
+   */
+  required_connections?: DownstreamConnectionRequirement[];
+  /**
+   * Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.
+   */
+  reference_mutability?: 'immutable_snapshot' | 'mutable_requires_reapproval' | 'mutable_auto_recheck';
   /**
    * Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).
    * @minimum 0

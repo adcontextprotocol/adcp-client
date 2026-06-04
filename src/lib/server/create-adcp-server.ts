@@ -54,12 +54,13 @@ import {
   type AdcpServer,
   type AdcpServerInternal,
 } from './adcp-server';
-import { createTaskCapableServer } from './tasks';
+import { createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
-import { adcpError, applyAdcpErrorAllowlist } from './errors';
+import { adcpError, applyAdcpErrorAllowlist, sanitizeStructuredAdcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
-import type { TaskRegistry } from './decisioning/runtime/task-registry';
+import type { TaskRecord, TaskRegistry } from './decisioning/runtime/task-registry';
+import { protocolForTool } from './decisioning/runtime/protocol-for-tool';
 import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import {
@@ -182,7 +183,10 @@ import type {
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
+  GetTaskStatusRequestSchema,
+  ListTasksRequestSchema,
   ListCreativeFormatsRequestSchema,
+  ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
   GetCreativeDeliveryRequestSchema,
   ListCreativesRequestSchema,
@@ -230,6 +234,7 @@ import type {
   AcquireRightsRequestSchema,
   UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
+import { AccountReferenceSchema } from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
@@ -248,8 +253,11 @@ import type {
   UpdateMediaBuyResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
+  GetTaskStatusResponse,
+  ListTasksResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
+  ListTransformersResponse,
   ProvidePerformanceFeedbackSuccess,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeSuccess,
@@ -308,11 +316,16 @@ import type {
   CalibrateContentResponse,
   ValidateContentDeliveryResponse,
   GetMediaBuyArtifactsResponse,
+  ListTasksRequest,
+  TaskStatus,
+  TaskType,
+  AdCPProtocol as WireAdcpProtocol,
 } from '../types/tools.generated';
 
 import type { AdcpProtocol, MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../utils/capabilities';
 import type { MediaChannel } from '../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../types/server-payload';
+import { STANDARD_ERROR_CODES, isStandardErrorCode } from '../types/error-codes';
 import {
   MEDIA_BUY_TOOLS,
   SIGNALS_TOOLS,
@@ -542,10 +555,25 @@ export interface AdcpToolMap {
     result: ServerPayload<ProvidePerformanceFeedbackSuccess>;
     response: ProvidePerformanceFeedbackResponse;
   };
+  get_task_status: {
+    params: z.input<typeof GetTaskStatusRequestSchema>;
+    result: ServerPayload<GetTaskStatusResponse>;
+    response: GetTaskStatusResponse;
+  };
+  list_tasks: {
+    params: z.input<typeof ListTasksRequestSchema>;
+    result: ServerPayload<ListTasksResponse>;
+    response: ListTasksResponse;
+  };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
     result: ServerPayload<ListCreativeFormatsResponse>;
     response: ListCreativeFormatsResponse;
+  };
+  list_transformers: {
+    params: z.input<typeof ListTransformersRequestSchema>;
+    result: ServerPayload<ListTransformersResponse>;
+    response: ListTransformersResponse;
   };
   build_creative: {
     params: z.input<typeof BuildCreativeRequestSchema>;
@@ -865,6 +893,7 @@ export interface SignalsHandlers<TAccount = unknown> {
 
 export interface CreativeHandlers<TAccount = unknown> {
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
+  listTransformers?: DomainHandler<'list_transformers', TAccount>;
   buildCreative?: DomainHandler<'build_creative', TAccount>;
   previewCreative?: DomainHandler<'preview_creative', TAccount>;
   listCreatives?: DomainHandler<'list_creatives', TAccount>;
@@ -1030,6 +1059,8 @@ export interface AdcpCapabilitiesOverrides {
   governance?: Partial<NonNullable<GetAdCPCapabilitiesResponse['governance']>> | null;
   brand?: Partial<NonNullable<GetAdCPCapabilitiesResponse['brand']>> | null;
   sponsored_intelligence?: Partial<NonNullable<GetAdCPCapabilitiesResponse['sponsored_intelligence']>> | null;
+  measurement?: Partial<NonNullable<GetAdCPCapabilitiesResponse['measurement']>> | null;
+  experimental_features?: GetAdCPCapabilitiesResponse['experimental_features'] | null;
   account?: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> | null;
   compliance_testing?: GetAdCPCapabilitiesResponse['compliance_testing'] | null;
   webhook_signing?: GetAdCPCapabilitiesResponse['webhook_signing'] | null;
@@ -2122,6 +2153,230 @@ function genericResponse(toolName: string, data: object, summary?: string): McpT
   };
 }
 
+const ADCP_TASK_TYPES = new Set<TaskType>([
+  'create_media_buy',
+  'update_media_buy',
+  'media_buy_delivery',
+  'sync_creatives',
+  'activate_signal',
+  'get_signals',
+  'create_property_list',
+  'update_property_list',
+  'get_property_list',
+  'list_property_lists',
+  'delete_property_list',
+  'sync_accounts',
+  'get_account_financials',
+  'get_creative_delivery',
+  'sync_event_sources',
+  'sync_audiences',
+  'sync_catalogs',
+  'log_event',
+  'get_brand_identity',
+  'search_brands',
+  'get_rights',
+  'acquire_rights',
+]);
+
+const PROTOCOL_TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
+  create_media_buy: 'media-buy',
+  update_media_buy: 'media-buy',
+  media_buy_delivery: 'media-buy',
+  sync_creatives: 'creative',
+  get_creative_delivery: 'creative',
+  activate_signal: 'signals',
+  get_signals: 'signals',
+  sync_accounts: 'media-buy',
+  get_account_financials: 'media-buy',
+  sync_event_sources: 'media-buy',
+  sync_audiences: 'media-buy',
+  sync_catalogs: 'media-buy',
+  log_event: 'media-buy',
+  get_brand_identity: 'brand',
+  search_brands: 'brand',
+  get_rights: 'brand',
+  acquire_rights: 'brand',
+  create_property_list: 'governance',
+  update_property_list: 'governance',
+  get_property_list: 'governance',
+  list_property_lists: 'governance',
+  delete_property_list: 'governance',
+};
+
+function readRegistryTaskType(task: TaskRecord): TaskType | undefined {
+  return ADCP_TASK_TYPES.has(task.tool as TaskType) ? (task.tool as TaskType) : undefined;
+}
+
+function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefined {
+  const taskType = readRegistryTaskType(task);
+  if (taskType === undefined) return undefined;
+  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
+  return {
+    task_id: task.taskId,
+    task_type: taskType,
+    protocol,
+    status: task.status as TaskStatus,
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+      ? { completed_at: task.updatedAt }
+      : {}),
+    ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
+    ...(task.progress !== undefined ? { progress: task.progress } : {}),
+    ...(task.error !== undefined
+      ? { error: sanitizeStructuredAdcpError(task.error) as GetTaskStatusResponse['error'] }
+      : task.statusMessage !== undefined
+        ? {
+            error: {
+              code: task.status === 'failed' ? 'TASK_FAILED' : 'TASK_STATUS_MESSAGE',
+              message: task.statusMessage,
+            },
+          }
+        : {}),
+  };
+}
+
+function toProtocolTaskListItem(task: TaskRecord): ListTasksResponse['tasks'][number] | undefined {
+  const taskType = readRegistryTaskType(task);
+  if (taskType === undefined) return undefined;
+  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[taskType] ?? 'media-buy';
+  return {
+    task_id: task.taskId,
+    task_type: taskType,
+    domain: protocol === 'signals' ? 'signals' : 'media-buy',
+    status: task.status as TaskStatus,
+    created_at: task.createdAt,
+    updated_at: task.updatedAt,
+    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+      ? { completed_at: task.updatedAt }
+      : {}),
+    ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
+  };
+}
+
+function appendSearchableTaskValue(values: string[], value: unknown): void {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    values.push(String(value));
+  }
+}
+
+function appendSearchableResultIdentifiers(values: string[], value: unknown, depth = 0): void {
+  if (depth > 3 || value == null || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const item of value) appendSearchableResultIdentifiers(values, item, depth + 1);
+    return;
+  }
+  if (!isPlainObject(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (/(^|_)(id|ids|ref|refs)$/.test(key)) {
+      if (Array.isArray(child)) {
+        for (const item of child) appendSearchableTaskValue(values, item);
+      } else {
+        appendSearchableTaskValue(values, child);
+      }
+    }
+    if (child != null && typeof child === 'object') {
+      appendSearchableResultIdentifiers(values, child, depth + 1);
+    }
+  }
+}
+
+function taskSearchHaystack(task: TaskRecord, item: ListTasksResponse['tasks'][number]): string {
+  const values = [item.task_id, item.task_type, item.status, item.domain, task.accountId];
+  appendSearchableResultIdentifiers(values, task.result);
+  appendSearchableResultIdentifiers(values, task.progress);
+  return values.join('\n');
+}
+
+function taskMatchesFilters(task: TaskRecord, filters: ListTasksRequest['filters']): boolean {
+  if (!isPlainObject(filters)) return true;
+  const item = toProtocolTaskListItem(task);
+  if (item === undefined) return false;
+  const protocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[item.task_type] ?? 'media-buy';
+  if (typeof filters.protocol === 'string' && protocol !== filters.protocol) return false;
+  if (Array.isArray(filters.protocols) && !filters.protocols.includes(protocol)) return false;
+  if (typeof filters.status === 'string' && item.status !== filters.status) return false;
+  if (Array.isArray(filters.statuses) && !filters.statuses.includes(item.status)) return false;
+  if (typeof filters.task_type === 'string' && item.task_type !== filters.task_type) return false;
+  if (Array.isArray(filters.task_types) && !filters.task_types.includes(item.task_type)) return false;
+  if (Array.isArray(filters.task_ids) && !filters.task_ids.includes(item.task_id)) return false;
+  if (!taskTimestampMatches(item.created_at, filters.created_after, 'after')) return false;
+  if (!taskTimestampMatches(item.created_at, filters.created_before, 'before')) return false;
+  if (!taskTimestampMatches(item.updated_at, filters.updated_after, 'after')) return false;
+  if (!taskTimestampMatches(item.updated_at, filters.updated_before, 'before')) return false;
+  if (typeof filters.has_webhook === 'boolean' && (task.hasWebhook === true) !== filters.has_webhook) return false;
+  if (typeof filters.context_contains === 'string' && filters.context_contains.length > 0) {
+    if (!taskSearchHaystack(task, item).includes(filters.context_contains)) return false;
+  }
+  return true;
+}
+
+function taskTimestampMatches(value: string, boundary: unknown, direction: 'after' | 'before'): boolean {
+  if (typeof boundary !== 'string') return true;
+  const valueMs = Date.parse(value);
+  const boundaryMs = Date.parse(boundary);
+  if (!Number.isFinite(valueMs) || !Number.isFinite(boundaryMs)) return false;
+  return direction === 'after' ? valueMs > boundaryMs : valueMs < boundaryMs;
+}
+
+function taskBelongsToCaller(task: TaskRecord, accountId: string, ownerScope: string | undefined): boolean {
+  if (task.accountId !== accountId) return false;
+  if (ownerScope === undefined) return false;
+  if (task.ownerScope === undefined) return ownerScope === `account:${accountId}`;
+  return task.ownerScope === ownerScope;
+}
+
+function taskOwnerScopeForContext(
+  authInfo: ResolvedAuthInfo | undefined,
+  sessionKey: string | undefined,
+  agent: BuyerAgent | undefined,
+  accountId: string
+): string {
+  if (sessionKey !== undefined) return `session:${sessionKey}`;
+  if (agent?.agent_url) return `agent:${agent.agent_url}`;
+  const credential = authInfo?.credential;
+  if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
+  if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
+  if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
+  if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
+  return `account:${accountId}`;
+}
+
+function compareProtocolTaskItems(
+  left: ListTasksResponse['tasks'][number],
+  right: ListTasksResponse['tasks'][number],
+  sort: ListTasksRequest['sort']
+): number {
+  const field = isPlainObject(sort) && typeof sort.field === 'string' ? sort.field : 'created_at';
+  const direction = isPlainObject(sort) && sort.direction === 'asc' ? 'asc' : 'desc';
+  const multiplier = direction === 'asc' ? 1 : -1;
+  let result = 0;
+  if (field === 'updated_at') result = left.updated_at.localeCompare(right.updated_at);
+  else if (field === 'status') result = left.status.localeCompare(right.status);
+  else if (field === 'task_type') result = left.task_type.localeCompare(right.task_type);
+  else if (field === 'protocol') {
+    const leftProtocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[left.task_type] ?? 'media-buy';
+    const rightProtocol = PROTOCOL_TASK_TYPE_TO_PROTOCOL[right.task_type] ?? 'media-buy';
+    result = leftProtocol.localeCompare(rightProtocol);
+  } else {
+    result = left.created_at.localeCompare(right.created_at);
+  }
+  return result === 0 ? left.task_id.localeCompare(right.task_id) * multiplier : result * multiplier;
+}
+
+function parseTaskListCursor(cursor: unknown): number | undefined {
+  if (cursor === undefined) return undefined;
+  if (typeof cursor !== 'string' || !/^(0|[1-9]\d*)$/.test(cursor)) {
+    throw new Error('Invalid task list cursor');
+  }
+  return Number.parseInt(cursor, 10);
+}
+
+function taskListPageSize(pagination: unknown): number {
+  if (!isPlainObject(pagination) || typeof pagination.max_results !== 'number') return 50;
+  return Math.min(Math.max(Math.floor(pagination.max_results), 1), 100);
+}
+
 function wrapBuildCreative(data: any, summary?: string): McpToolResponse {
   if ('creative_manifests' in data) {
     return buildCreativeMultiResponse(data, summary);
@@ -2153,8 +2408,13 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
+  // Protocol
+  get_task_status: { wrap: null, annotations: RO },
+  list_tasks: { wrap: null, annotations: RO },
+
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
+  list_transformers: { wrap: null, annotations: RO },
   build_creative: { wrap: wrapBuildCreative, annotations: MUT },
   preview_creative: { wrap: null, annotations: RO },
   get_creative_delivery: { wrap: creativeDeliveryResponse, annotations: RO },
@@ -2255,6 +2515,7 @@ const SIGNALS_ENTRIES: HandlerEntry[] = [
 
 const CREATIVE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
+  { handlerKey: 'listTransformers', toolName: 'list_transformers' },
   { handlerKey: 'buildCreative', toolName: 'build_creative' },
   { handlerKey: 'previewCreative', toolName: 'preview_creative' },
   { handlerKey: 'listCreatives', toolName: 'list_creatives' },
@@ -2416,6 +2677,36 @@ function isErrorArm(value: unknown): value is { errors: unknown[]; context?: unk
   return true;
 }
 
+function sanitizePayloadError(value: unknown): unknown {
+  if (!isPlainObject(value)) return value;
+  const code = value.code;
+  if (typeof code !== 'string') return value;
+  const sanitized = applyAdcpErrorAllowlist(code, value);
+  if (!isStandardErrorCode(code)) return sanitized;
+
+  const safe = sanitized as unknown as Record<string, unknown>;
+  const projected: Record<string, unknown> = {
+    code,
+    message: typeof safe.message === 'string' ? safe.message : 'operation failed',
+    recovery: STANDARD_ERROR_CODES[code].recovery,
+  };
+  for (const key of ['field', 'suggestion', 'retry_after', 'issues']) {
+    if (safe[key] !== undefined) projected[key] = safe[key];
+  }
+  if (safe.details !== undefined) {
+    projected.details = safe.details;
+  }
+  return projected;
+}
+
+function sanitizePayloadErrors(sc: Record<string, unknown>): boolean {
+  if (!Array.isArray(sc.errors)) return false;
+  const sanitized = sc.errors.map(sanitizePayloadError);
+  const changed = sanitized.some((value, index) => value !== (sc.errors as unknown[])[index]);
+  if (changed) sc.errors = sanitized;
+  return changed;
+}
+
 /**
  * Wrap a Submitted envelope returned directly by a handler. Skips the
  * Success-builder defaults (`revision`, `confirmed_at`, `valid_actions`)
@@ -2439,7 +2730,8 @@ function wrapSubmittedEnvelope(value: { status: 'submitted'; task_id: string; me
  * `response-validation: strict` consistent across both error paths.
  */
 function wrapErrorArm(value: { errors: unknown[] }): McpToolResponse {
-  const firstError = value.errors[0] as { code?: unknown; message?: unknown } | undefined;
+  const sanitizedErrors = value.errors.map(sanitizePayloadError);
+  const firstError = sanitizedErrors[0] as { code?: unknown; message?: unknown } | undefined;
   const summary =
     firstError && typeof firstError === 'object'
       ? `${typeof firstError.code === 'string' ? firstError.code : 'ERROR'}: ${typeof firstError.message === 'string' ? firstError.message : 'operation failed'}`
@@ -2447,7 +2739,7 @@ function wrapErrorArm(value: { errors: unknown[] }): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary }],
     isError: true,
-    structuredContent: value as unknown as Record<string, unknown>,
+    structuredContent: { ...value, errors: sanitizedErrors } as unknown as Record<string, unknown>,
   };
 }
 
@@ -2587,6 +2879,7 @@ function enrichErrorTwoLayer(
   const envValid = env != null && typeof env === 'object' && typeof env.code === 'string';
   const payloadList = sc.errors;
   const payloadValid = Array.isArray(payloadList) && payloadList.length > 0;
+  if (payloadValid && sanitizePayloadErrors(sc)) syncContentJsonText(response, sc);
 
   // Path A: envelope present, payload missing → synthesise payload-layer
   // `errors[]` from the envelope. The `adcpError()` builder always lands
@@ -2602,7 +2895,7 @@ function enrichErrorTwoLayer(
   // the first payload item. `wrapErrorArm()` lands here when adopters
   // return a typed Error arm directly.
   if (!envValid && payloadValid) {
-    const first = (payloadList as unknown[])[0];
+    const first = (sc.errors as unknown[])[0];
     if (first && typeof first === 'object') {
       const projected = projectPayloadErrorToEnvelope(first as Record<string, unknown>);
       // Only stamp the envelope if the payload's first item carries the
@@ -3181,10 +3474,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // server's lifetime — every dispatch reuses the same value. Downshift
   // (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up; today this
   // always reflects the seller's own pin.
+  const protocolBundleKey = resolveBundleKey(adcpVersion);
   const servedAdcpVersion = (() => {
-    const bundleKey = resolveBundleKey(adcpVersion);
+    const bundleKey = protocolBundleKey;
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
   })();
+  const supportsProtocolTaskTools = protocolBundleKey === '3.1.0-rc.7' || protocolBundleKey === '3.1-rc.7';
 
   // Tool-name set for two-layer error emission. Computed once at server
   // build from the bundled response schemas: any tool whose top-level
@@ -3382,7 +3677,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     {
       domain: 'creative' as const,
       wired: isWired(config.creative as Record<string, unknown> | undefined),
-      specialisms: ['creative-ad-server', 'creative-generative', 'creative-template'] as const,
+      specialisms: ['creative-ad-server', 'creative-generative', 'creative-template', 'creative-transformers'] as const,
     },
     {
       domain: 'signals' as const,
@@ -3479,8 +3774,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolvedInstructions = undefined;
   }
 
+  const mcpTaskStore = taskStore ?? new InMemoryTaskStore();
   const server = createTaskCapableServer(name, version, {
-    taskStore,
+    taskStore: mcpTaskStore,
     taskMessageQueue,
     instructions: resolvedInstructions,
   });
@@ -3516,6 +3812,382 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
     responseEnhancer?.(response);
     return response;
+  };
+
+  const finalizeProtocolTaskToolResponse = (
+    toolName: 'get_task_status' | 'list_tasks',
+    params: Record<string, unknown>,
+    response: McpToolResponse,
+    opts: { echoContext?: boolean } = {}
+  ): McpToolResponse => {
+    sanitizeAdcpErrorEnvelope(response);
+    enrichErrorTwoLayer(response, toolName, toolsWithErrorArm);
+    if (!isErrorResponse(response)) {
+      normalizeMediaBuyStatusCollision(response, toolName);
+      injectEnvelopeStatusIntoResponse(response);
+      const validationError = protocolTaskResponseValidationError(toolName, response);
+      if (validationError) return finalizeProtocolTaskToolResponse(toolName, params, validationError, opts);
+    }
+    if (opts.echoContext !== false) injectContextIntoResponse(response, params.context);
+    injectVersionIntoResponse(response, servedAdcpVersion);
+    return applyResponseEnhancer(response);
+  };
+
+  const unsupportedVersionResponse = (params: Record<string, unknown>): McpToolResponse | undefined => {
+    const reqAdcpVersion = (params as { adcp_version?: unknown }).adcp_version;
+    const reqAdcpMajorRaw = (params as { adcp_major_version?: unknown }).adcp_major_version;
+    const reqAdcpMajor =
+      typeof reqAdcpMajorRaw === 'number'
+        ? reqAdcpMajorRaw
+        : typeof reqAdcpMajorRaw === 'string'
+          ? Number.parseInt(reqAdcpMajorRaw, 10)
+          : undefined;
+    if (typeof reqAdcpVersion === 'string' && reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
+      const stringMajor = parseAdcpMajorVersion(reqAdcpVersion);
+      if (Number.isFinite(stringMajor) && stringMajor !== reqAdcpMajor) {
+        return adcpError('VERSION_UNSUPPORTED', {
+          message:
+            `Request carries adcp_version="${reqAdcpVersion}" (major ${stringMajor}) and ` +
+            `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}; majors must agree.`,
+          details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+        });
+      }
+    }
+
+    const effectiveReqMajor =
+      reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)
+        ? reqAdcpMajor
+        : typeof reqAdcpVersion === 'string'
+          ? parseAdcpMajorVersion(reqAdcpVersion)
+          : undefined;
+    if (effectiveReqMajor !== undefined && Number.isFinite(effectiveReqMajor)) {
+      const supportedMajors = getAdvertisedSupportedMajors(capConfig, adcpVersion);
+      if (!supportedMajors.has(effectiveReqMajor)) {
+        const claimed =
+          typeof reqAdcpVersion === 'string'
+            ? `adcp_version="${reqAdcpVersion}"`
+            : `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}`;
+        const supportedList = [...supportedMajors].sort((a, b) => a - b).join(', ');
+        return adcpError('VERSION_UNSUPPORTED', {
+          message: `Request claims ${claimed} (major ${effectiveReqMajor}); this seller supports major ${supportedList}.`,
+          details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+        });
+      }
+    }
+    return undefined;
+  };
+
+  const protocolTaskAccountExtensionIssues = (params: Record<string, unknown>): ValidationIssue[] => {
+    if (params.account === undefined) return [];
+    const parsed = AccountReferenceSchema.safeParse(params.account);
+    if (parsed.success) return [];
+    return [
+      {
+        pointer: '/account',
+        message: 'must be a valid AccountReference',
+        keyword: 'oneOf',
+        schemaPath: '#/properties/account',
+      },
+    ];
+  };
+
+  const protocolTaskRequestValidationError = (
+    toolName: 'get_task_status' | 'list_tasks',
+    params: Record<string, unknown>
+  ): McpToolResponse | undefined => {
+    const accountIssues = protocolTaskAccountExtensionIssues(params);
+    const outcome =
+      requestValidationMode === 'off'
+        ? ({ valid: true, issues: [], schemaId: undefined } as const)
+        : validateRequest(toolName, params, adcpVersion);
+    const issues = [...(outcome.valid ? [] : outcome.issues), ...accountIssues];
+    if (issues.length === 0) return undefined;
+    if (requestValidationMode === 'strict' || accountIssues.length > 0) {
+      return adcpError(
+        'VALIDATION_ERROR',
+        buildAdcpValidationErrorPayload(toolName, 'request', issues, {
+          exposeSchemaPath: exposeErrorDetails,
+          rootSchemaId: outcome.schemaId,
+        })
+      );
+    }
+    logger.warn(
+      `Schema validation warning (request) for ${toolName}: ${formatIssues(issues, 3, { rootSchemaId: outcome.schemaId })}`,
+      {
+        tool: toolName,
+        issues,
+      }
+    );
+    return undefined;
+  };
+
+  const protocolTaskResponseValidationError = (
+    toolName: 'get_task_status' | 'list_tasks',
+    response: McpToolResponse
+  ): McpToolResponse | undefined => {
+    if (responseValidationMode === 'off') return undefined;
+    const outcome = validateResponse(toolName, response.structuredContent, adcpVersion);
+    if (outcome.valid) return undefined;
+    logger.warn(
+      `Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues, 3, { rootSchemaId: outcome.schemaId })}`,
+      {
+        tool: toolName,
+        issues: outcome.issues,
+        variant: outcome.variant,
+      }
+    );
+    if (responseValidationMode !== 'strict') return undefined;
+    return adcpError(
+      'VALIDATION_ERROR',
+      buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues, {
+        exposeSchemaPath: exposeErrorDetails,
+        rootSchemaId: outcome.schemaId,
+      })
+    );
+  };
+
+  const protocolTaskBoundsError = (
+    toolName: 'get_task_status' | 'list_tasks',
+    params: Record<string, unknown>
+  ): McpToolResponse | undefined => {
+    if (params.include_history === true) {
+      return adcpError('INVALID_REQUEST', {
+        message: 'include_history is not supported by this task registry',
+        field: 'include_history',
+      });
+    }
+    if (toolName === 'get_task_status') {
+      if (typeof params.task_id !== 'string' || params.task_id.length === 0) {
+        return adcpError('INVALID_REQUEST', {
+          message: 'task_id must be a non-empty string',
+          field: 'task_id',
+        });
+      }
+    }
+    const filters = params.filters;
+    if (isPlainObject(filters) && Array.isArray(filters.task_ids)) {
+      if (
+        filters.task_ids.length > 100 ||
+        filters.task_ids.some(taskId => typeof taskId !== 'string' || taskId.length === 0)
+      ) {
+        return adcpError('INVALID_REQUEST', {
+          message: 'filters.task_ids must contain at most 100 non-empty strings',
+          field: 'filters.task_ids',
+        });
+      }
+    }
+    return undefined;
+  };
+
+  const taskToolCredentialPolicyError = (
+    toolName: 'get_task_status' | 'list_tasks',
+    params: Record<string, unknown>,
+    mcpExtra: any
+  ): McpToolResponse | undefined => {
+    if (credentialPolicy === undefined) return undefined;
+    const effectivePolicy =
+      typeof credentialPolicy === 'string' || credentialPolicy.tools?.[toolName] !== undefined
+        ? resolveCredentialPolicyForTool(credentialPolicy, toolName)
+        : (credentialPolicy.tools?.tasks_get ?? credentialPolicy.policy);
+    if (effectivePolicy !== 'lax') {
+      const hits = scanArgsForCredentials(params, credentialPolicyPatterns);
+      const blockedPaths =
+        typeof effectivePolicy === 'object' ? hits.filter(p => !effectivePolicy.allow.includes(p)) : hits;
+      if (blockedPaths.length > 0) {
+        return adcpError('PERMISSION_DENIED', {
+          message:
+            'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
+          recovery: 'correctable',
+          details: { scope: 'credentials', credential_paths: blockedPaths },
+        });
+      }
+    }
+    if (
+      typeof credentialPolicy !== 'string' &&
+      credentialPolicy.scanAuthInfo === true &&
+      mcpExtra?.authInfo?.extra !== null &&
+      mcpExtra?.authInfo?.extra !== undefined &&
+      typeof mcpExtra.authInfo.extra === 'object'
+    ) {
+      const authInfoHits = scanArgsForCredentials(mcpExtra.authInfo.extra, credentialPolicyPatterns);
+      if (authInfoHits.length > 0) {
+        try {
+          logger.warn('credentialPolicy: authInfo.extra carries credential-shaped keys', {
+            tool: toolName,
+            paths: authInfoHits.map(p => `authInfo.extra.${p}`),
+          });
+        } catch {
+          // Ignore logger failures on the rejection path.
+        }
+        return adcpError('PERMISSION_DENIED', {
+          message:
+            'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
+          recovery: 'terminal',
+          details: { scope: 'credentials' },
+        });
+      }
+    }
+    return undefined;
+  };
+
+  const resolveTaskQueryAccountId = async (
+    params: Record<string, unknown>,
+    extra: any,
+    toolName: 'get_task_status' | 'list_tasks'
+  ): Promise<{
+    accountId?: string;
+    ownerScope?: string;
+    accountResolutionAttempted: boolean;
+    error?: McpToolResponse;
+  }> => {
+    const ctx: HandlerContext<TAccount> = { store: stateStore };
+    let accountResolutionAttempted = false;
+    if (extra?.authInfo) {
+      const authInfo = extra.authInfo as ResolvedAuthInfo;
+      ctx.authInfo = authInfo;
+      const inboundCredential = authInfo.extra?.credential;
+      if (inboundCredential !== undefined && authInfo.credential === undefined) {
+        authInfo.credential = inboundCredential as ResolvedAuthInfo['credential'];
+      }
+    }
+
+    if (agentRegistry !== undefined) {
+      try {
+        const resolved = await agentRegistry.resolve({
+          ...(ctx.authInfo?.credential !== undefined && { credential: ctx.authInfo.credential }),
+          ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
+          input: params,
+        });
+        if (resolved != null) {
+          if (!Object.isFrozen(resolved)) {
+            if (resolved.billing_capabilities instanceof Set) {
+              Object.freeze(resolved.billing_capabilities);
+            }
+            Object.freeze(resolved);
+          }
+          ctx.agent = resolved;
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Buyer-agent registry resolution failed during task poll', { tool: toolName, error: reason });
+        return {
+          accountResolutionAttempted,
+          error: adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Buyer-agent registry resolution failed',
+            ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+          }),
+        };
+      }
+    }
+
+    const accountRef = params.account;
+    if (accountRef != null) {
+      accountResolutionAttempted = true;
+      if (!resolveAccount) {
+        return {
+          accountResolutionAttempted,
+          error: adcpError('ACCOUNT_NOT_FOUND', {
+            message: 'The specified account does not exist',
+            field: 'account',
+          }),
+        };
+      }
+      try {
+        const account = await resolveAccount(accountRef as AccountReference, {
+          toolName: toolName as AdcpServerToolName,
+          authInfo: ctx.authInfo,
+          ...(ctx.agent != null && { agent: ctx.agent }),
+          input: params,
+        });
+        if (account != null) ctx.account = account;
+        if (account == null) {
+          return {
+            accountResolutionAttempted,
+            error: adcpError('ACCOUNT_NOT_FOUND', {
+              message: 'The specified account does not exist',
+              field: 'account',
+            }),
+          };
+        }
+      } catch (err) {
+        if (isThrownAdcpError(err)) return { accountResolutionAttempted, error: err };
+        if (err instanceof AdcpError) {
+          return { accountResolutionAttempted, error: projectThrownAdcpError(err) };
+        }
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Account resolution failed', { tool: toolName, error: reason });
+        return {
+          accountResolutionAttempted,
+          error: adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Account resolution failed',
+            ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+          }),
+        };
+      }
+    } else if (resolveAccountFromAuth) {
+      try {
+        const account = await resolveAccountFromAuth({
+          toolName,
+          authInfo: ctx.authInfo,
+          ...(ctx.agent != null && { agent: ctx.agent }),
+          input: params,
+        });
+        accountResolutionAttempted = true;
+        if (account != null) {
+          ctx.account = account;
+        }
+      } catch (err) {
+        accountResolutionAttempted = true;
+        if (isThrownAdcpError(err)) return { accountResolutionAttempted, error: err };
+        if (err instanceof AdcpError) {
+          return { accountResolutionAttempted, error: projectThrownAdcpError(err) };
+        }
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
+        return {
+          accountResolutionAttempted,
+          error: adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Account resolution failed',
+            ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+          }),
+        };
+      }
+    }
+
+    if (resolveSessionKey) {
+      try {
+        const sessionKey = await resolveSessionKey({
+          toolName: toolName as AdcpServerToolName,
+          params,
+          account: ctx.account,
+          ...(ctx.agent != null && { agent: ctx.agent }),
+        });
+        if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.error('Session key resolution failed during task poll', { tool: toolName, error: reason });
+        return {
+          accountResolutionAttempted,
+          error: adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Session key resolution failed',
+            ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+          }),
+        };
+      }
+    }
+
+    const accountLike = ctx.account as { id?: unknown; account_id?: unknown } | undefined;
+    const accountId =
+      typeof accountLike?.id === 'string'
+        ? accountLike.id
+        : typeof accountLike?.account_id === 'string'
+          ? accountLike.account_id
+          : undefined;
+    const ownerScope =
+      accountId !== undefined
+        ? taskOwnerScopeForContext(ctx.authInfo, ctx.sessionKey, ctx.agent, accountId)
+        : undefined;
+    return { accountId, ownerScope, accountResolutionAttempted };
   };
 
   // Collect all domain handlers into a flat toolName → handler map
@@ -4229,11 +4901,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           } else if (isErrorArm(result)) {
             // Log-warn (always) on spec-violating Error items — required
             // `code`/`message` are spec-mandatory on core/error.json. We
-            // don't fail the response: response-schema validation is
-            // already skipped for `isError: true` envelopes and flipping
-            // a handler-returned Error arm into a framework VALIDATION_ERROR
-            // would obscure the seller's intended error. A steady-state
-            // warn is enough to surface drift in dev/test logs.
+            // must fail closed here: error envelopes skip response-schema
+            // validation, and blindly wrapping malformed primitives can leak
+            // secret-bearing strings in `errors[]`.
             const malformed = (result.errors as unknown[]).some(
               e =>
                 e == null ||
@@ -4244,10 +4914,26 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             if (malformed) {
               logger.warn(`Handler returned ${toolName} Error arm with spec-violating errors[]`, {
                 tool: toolName,
-                errors: result.errors,
+                count: (result.errors as unknown[]).length,
               });
+              const errPayload = buildAdcpValidationErrorPayload(
+                toolName,
+                'response',
+                [
+                  {
+                    pointer: '/errors',
+                    message: 'must contain Error objects with string code and message fields',
+                    keyword: 'type',
+                    schemaPath: '#/properties/errors/items',
+                    hint: 'Return errors as `{ code, message }` objects; do not return raw strings or exception values.',
+                  },
+                ],
+                { exposeSchemaPath: exposeErrorDetails }
+              );
+              formatted = adcpError('VALIDATION_ERROR', errPayload);
+            } else {
+              formatted = wrapErrorArm(result);
             }
-            formatted = wrapErrorArm(result);
           } else {
             formatted = wrap(result);
           }
@@ -5089,6 +5775,187 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }
   }
 
+  if (supportsProtocolTaskTools && taskRegistry !== undefined) {
+    server.registerTool(
+      'get_task_status',
+      {
+        inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+        annotations: RO,
+      },
+      (async (params: any, extra: any) => {
+        const credentialError = taskToolCredentialPolicyError('get_task_status', params ?? {}, extra);
+        if (credentialError) {
+          return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, credentialError, {
+            echoContext: false,
+          });
+        }
+        const validationError = protocolTaskRequestValidationError('get_task_status', params ?? {});
+        if (validationError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, validationError);
+        const boundsError = protocolTaskBoundsError('get_task_status', params ?? {});
+        if (boundsError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, boundsError);
+        const versionError = unsupportedVersionResponse(params ?? {});
+        if (versionError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, versionError);
+        const taskId = typeof params?.task_id === 'string' ? params.task_id : '';
+        const { accountId, ownerScope, error } = await resolveTaskQueryAccountId(
+          params ?? {},
+          extra,
+          'get_task_status'
+        );
+        if (error) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, error);
+        let task: TaskRecord | null = null;
+        try {
+          task = taskId && taskRegistry !== undefined ? await taskRegistry.getTask(taskId) : null;
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          logger.error('Task registry read failed during task poll', { tool: 'get_task_status', error: reason });
+          return finalizeProtocolTaskToolResponse(
+            'get_task_status',
+            params ?? {},
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Task registry read failed',
+              ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+            })
+          );
+        }
+        if (task == null || accountId === undefined || !taskBelongsToCaller(task, accountId, ownerScope)) {
+          return finalizeProtocolTaskToolResponse(
+            'get_task_status',
+            params ?? {},
+            adcpError('REFERENCE_NOT_FOUND', {
+              message: taskId ? `Task ${taskId} not found` : 'Task not found',
+              field: 'task_id',
+            })
+          );
+        }
+
+        const response = toProtocolTaskStatus(task);
+        if (response === undefined) {
+          return finalizeProtocolTaskToolResponse(
+            'get_task_status',
+            params ?? {},
+            adcpError('REFERENCE_NOT_FOUND', {
+              message: taskId ? `Task ${taskId} not found` : 'Task not found',
+              field: 'task_id',
+            })
+          );
+        }
+        if (params?.include_result === true && response.status === 'completed') {
+          response.result = task.result as GetTaskStatusResponse['result'];
+        }
+        if (isPlainObject(params?.context)) response.context = params.context;
+        return finalizeProtocolTaskToolResponse(
+          'get_task_status',
+          params ?? {},
+          genericResponse('get_task_status', response)
+        );
+      }) as Parameters<typeof server.registerTool>[2]
+    );
+    registeredToolNames.add('get_task_status');
+  }
+
+  if (supportsProtocolTaskTools && taskRegistry?.list !== undefined) {
+    server.registerTool(
+      'list_tasks',
+      {
+        inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+        annotations: RO,
+      },
+      (async (params: any, extra: any) => {
+        const credentialError = taskToolCredentialPolicyError('list_tasks', params ?? {}, extra);
+        if (credentialError) {
+          return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, credentialError, { echoContext: false });
+        }
+        const validationError = protocolTaskRequestValidationError('list_tasks', params ?? {});
+        if (validationError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, validationError);
+        const boundsError = protocolTaskBoundsError('list_tasks', params ?? {});
+        if (boundsError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, boundsError);
+        const versionError = unsupportedVersionResponse(params ?? {});
+        if (versionError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, versionError);
+        const { accountId, ownerScope, error } = await resolveTaskQueryAccountId(params ?? {}, extra, 'list_tasks');
+        if (error) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, error);
+        let cursorStart = 0;
+        try {
+          cursorStart =
+            parseTaskListCursor(isPlainObject(params?.pagination) ? params.pagination.cursor : undefined) ?? 0;
+        } catch (err) {
+          return finalizeProtocolTaskToolResponse(
+            'list_tasks',
+            params ?? {},
+            adcpError('INVALID_REQUEST', {
+              message: err instanceof Error ? err.message : 'Invalid task list cursor',
+              field: 'pagination.cursor',
+            })
+          );
+        }
+
+        let listed: { tasks: TaskRecord[] };
+        try {
+          listed =
+            accountId !== undefined && ownerScope !== undefined && taskRegistry?.list !== undefined
+              ? await taskRegistry.list({ accountId, ownerScope })
+              : { tasks: [] };
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : String(err);
+          logger.error('Task registry list failed during task poll', { tool: 'list_tasks', error: reason });
+          return finalizeProtocolTaskToolResponse(
+            'list_tasks',
+            params ?? {},
+            adcpError('SERVICE_UNAVAILABLE', {
+              message: 'Task registry list failed',
+              ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+            })
+          );
+        }
+        const filteredTasks = listed.tasks.filter(
+          task =>
+            accountId !== undefined &&
+            taskBelongsToCaller(task, accountId, ownerScope) &&
+            taskMatchesFilters(task, params?.filters)
+        );
+        const sortedTasks = filteredTasks
+          .map(toProtocolTaskListItem)
+          .filter((task): task is ListTasksResponse['tasks'][number] => task !== undefined)
+          .sort((left, right) => compareProtocolTaskItems(left, right, params?.sort));
+        const pageSize = taskListPageSize(params?.pagination);
+        const tasks = sortedTasks.slice(cursorStart, cursorStart + pageSize);
+        const nextOffset = cursorStart + tasks.length;
+        const hasMore = nextOffset < sortedTasks.length;
+        const status_breakdown = sortedTasks.reduce<Record<string, number>>((counts, task) => {
+          counts[task.status] = (counts[task.status] ?? 0) + 1;
+          return counts;
+        }, {});
+        const domain_breakdown = sortedTasks.reduce<Record<string, number>>((counts, task) => {
+          counts[task.domain] = (counts[task.domain] ?? 0) + 1;
+          return counts;
+        }, {});
+        const response: ListTasksResponse = {
+          status: 'completed',
+          query_summary: {
+            total_matching: sortedTasks.length,
+            returned: tasks.length,
+            domain_breakdown,
+            status_breakdown,
+            filters_applied: isPlainObject(params?.filters) ? Object.keys(params.filters) : [],
+            sort_applied: {
+              field:
+                isPlainObject(params?.sort) && typeof params.sort.field === 'string' ? params.sort.field : 'created_at',
+              direction: isPlainObject(params?.sort) && params.sort.direction === 'asc' ? 'asc' : 'desc',
+            },
+          },
+          tasks,
+          pagination: {
+            has_more: hasMore,
+            ...(hasMore && { cursor: String(nextOffset) }),
+            total_count: sortedTasks.length,
+          },
+        };
+        if (isPlainObject(params?.context)) response.context = params.context;
+        return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, genericResponse('list_tasks', response));
+      }) as Parameters<typeof server.registerTool>[2]
+    );
+    registeredToolNames.add('list_tasks');
+  }
+
   // ─── Custom tools ──────────────────────────────────────────
   // Seller extensions outside AdcpToolMap. No idempotency / governance /
   // response-wrapping — handlers own those concerns directly. Registered
@@ -5271,6 +6138,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   if (capConfig?.overrides) {
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
+  }
+
+  if (
+    capabilitiesData.measurement !== undefined &&
+    Array.isArray(capabilitiesData.experimental_features) &&
+    capabilitiesData.experimental_features.includes('measurement.core') &&
+    !capabilitiesData.supported_protocols.includes('measurement' as never)
+  ) {
+    capabilitiesData.supported_protocols = [
+      ...capabilitiesData.supported_protocols,
+      'measurement',
+    ] as GetAdCPCapabilitiesResponse['supported_protocols'];
   }
 
   // Stamp the SDK version so conformance tooling can surface version-staleness

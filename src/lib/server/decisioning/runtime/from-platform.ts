@@ -64,6 +64,7 @@ import {
   type GovernanceHandlers,
   type BrandRightsHandlers,
   type HandlerContext,
+  type AdcpServerToolName,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
@@ -106,7 +107,8 @@ import type {
 } from '../../../types/tools.generated';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import { rollupOptimizationMetricsFromProducts } from '../../../utils/capability-rollups';
-import { adcpError, type AdcpErrorResponse } from '../../errors';
+import { adcpError, sanitizeStructuredAdcpError, type AdcpErrorResponse } from '../../errors';
+import { resolveCredentialPolicyForTool, scanArgsForCredentials, type CredentialPolicy } from '../../credential-policy';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
@@ -1408,7 +1410,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // MCP tool names cannot contain `/`, so expose the AdCP work-status
       // polling surface under the MCP-safe `tasks_get` alias only. A2A keeps
       // using the transport-native `tasks/get` method name on its own path.
-      const tasksGetTool = buildTasksGetTool(platform, taskRegistry, platform.agentRegistry, fwLogger);
+      const tasksGetTool = buildTasksGetTool(
+        platform,
+        taskRegistry,
+        platform.agentRegistry,
+        fwLogger,
+        opts.resolveSessionKey,
+        opts.credentialPolicy
+      );
       return {
         ...opts.customTools,
         tasks_get: tasksGetTool,
@@ -1891,8 +1900,59 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
   agentRegistry: BuyerAgentRegistry | undefined,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  resolveSessionKey: AdcpServerConfig['resolveSessionKey'] | undefined,
+  credentialPolicy: CredentialPolicy | undefined
 ) {
+  const credentialPolicyPatterns =
+    credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
+  const credentialPolicyError = (
+    args: Record<string, unknown>,
+    extra: { authInfo?: ResolvedAuthInfo } | undefined
+  ): AdcpErrorResponse | undefined => {
+    if (credentialPolicy === undefined) return undefined;
+    const effectivePolicy = resolveCredentialPolicyForTool(credentialPolicy, 'tasks_get');
+    if (effectivePolicy !== 'lax') {
+      const hits = scanArgsForCredentials(args, credentialPolicyPatterns);
+      const blockedPaths =
+        typeof effectivePolicy === 'object' ? hits.filter(p => !effectivePolicy.allow.includes(p)) : hits;
+      if (blockedPaths.length > 0) {
+        return adcpError('PERMISSION_DENIED', {
+          message:
+            'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
+          recovery: 'correctable',
+          details: { scope: 'credentials', credential_paths: blockedPaths },
+        });
+      }
+    }
+    if (
+      typeof credentialPolicy !== 'string' &&
+      credentialPolicy.scanAuthInfo === true &&
+      extra?.authInfo?.extra !== null &&
+      extra?.authInfo?.extra !== undefined &&
+      typeof extra.authInfo.extra === 'object'
+    ) {
+      const authInfoHits = scanArgsForCredentials(extra.authInfo.extra, credentialPolicyPatterns);
+      if (authInfoHits.length > 0) {
+        try {
+          logger.warn?.('credentialPolicy: authInfo.extra carries credential-shaped keys', {
+            tool: 'tasks_get',
+            paths: authInfoHits.map(p => `authInfo.extra.${p}`),
+          });
+        } catch {
+          // Ignore logger failures on the rejection path.
+        }
+        return adcpError('PERMISSION_DENIED', {
+          message:
+            'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
+          recovery: 'terminal',
+          details: { scope: 'credentials' },
+        });
+      }
+    }
+    return undefined;
+  };
+
   const inputShape = {
     // Cap task_id length: framework-issued task ids are
     // `task_<UUIDv4>` = 41 chars. Cap at 128 so a malicious buyer can't
@@ -1947,7 +2007,15 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       args: { task_id: string; account?: { account_id?: string } },
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
+      const policyError = credentialPolicyError(args as Record<string, unknown>, extra);
+      if (policyError) return policyError;
       const ref = args.account;
+      if (extra?.authInfo) {
+        const inboundCredential = extra.authInfo.extra?.credential;
+        if (inboundCredential !== undefined && extra.authInfo.credential === undefined) {
+          extra.authInfo.credential = inboundCredential as ResolvedAuthInfo['credential'];
+        }
+      }
       // Resolve the buyer agent (when an `agentRegistry` is configured) so
       // adopters' `accounts.resolve` impl sees `ctx.agent` — same contract as
       // every other AccountStore method. Bypasses the dispatcher's
@@ -1960,11 +2028,10 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       //     the poll would strand work with no visibility. Hard-cutoff
       //     sellers implement that policy inside their `accounts.resolve`
       //     or downstream by reading `ctx.agent.status` themselves.
-      //   - **Registry failures don't break the poll.** A transient registry
-      //     error during a read poll falls through to `agent: undefined`;
-      //     adopters who require a resolved agent for tenant scoping can
-      //     return null from their `accounts.resolve` and the existing
-      //     ACCOUNT_NOT_FOUND surface fires.
+      //   - **Registry failures are surfaced as SERVICE_UNAVAILABLE.** The
+      //     task owner scope may have been persisted as `agent:${agent_url}`;
+      //     falling back to credential/session/account scope on a transient
+      //     registry outage would turn a valid task into a false 404.
       let agent: BuyerAgent | undefined;
       if (agentRegistry !== undefined) {
         try {
@@ -1987,14 +2054,11 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             agent = resolved;
           }
         } catch (err) {
-          // Swallow to keep the poll alive (see policy comment above), but
-          // log so upstream-IDP outages are visible to operators. Without
-          // this log, buyers seeing REFERENCE_NOT_FOUND for valid tasks
-          // (because adopters' resolvers return null without `ctx.agent`)
-          // would be invisible in adopter logs. Per security-reviewer
-          // defense-in-depth note on PR #1323.
-          logger.warn?.('Buyer-agent registry resolution failed during tasks_get poll', {
+          logger.error?.('Buyer-agent registry resolution failed during tasks_get poll', {
             error: err instanceof Error ? err.message : String(err),
+          });
+          return adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Buyer-agent registry resolution failed',
           });
         }
       }
@@ -2004,13 +2068,22 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         ...(agent !== undefined && { agent }),
       };
       let resolvedAccountId: string | undefined;
+      let resolvedAccount: Account | undefined;
       if (ref) {
         refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref as AccountReference);
         try {
           const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
-          if (resolved) resolvedAccountId = resolved.id;
+          if (resolved) {
+            resolvedAccountId = resolved.id;
+            resolvedAccount = resolved;
+          }
         } catch (err) {
-          if (!(err instanceof AccountNotFoundError)) throw err;
+          if (!(err instanceof AccountNotFoundError)) {
+            logger.error?.('Account resolution failed during tasks_get poll', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+          }
         }
         if (!resolvedAccountId) {
           return adcpError('ACCOUNT_NOT_FOUND', {
@@ -2021,13 +2094,47 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       } else {
         try {
           const resolved = await platform.accounts.resolve(undefined, resolveCtx);
-          if (resolved) resolvedAccountId = resolved.id;
+          if (resolved) {
+            resolvedAccountId = resolved.id;
+            resolvedAccount = resolved;
+          }
         } catch (err) {
-          if (!(err instanceof AccountNotFoundError)) throw err;
+          if (!(err instanceof AccountNotFoundError)) {
+            logger.error?.('Auth-derived account resolution failed during tasks_get poll', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return adcpError('SERVICE_UNAVAILABLE', { message: 'Account resolution failed' });
+          }
+        }
+      }
+      let sessionKey: string | undefined;
+      if (resolveSessionKey !== undefined) {
+        try {
+          sessionKey = await resolveSessionKey({
+            toolName: 'tasks_get' as AdcpServerToolName,
+            params: args,
+            ...(resolvedAccount !== undefined && { account: resolvedAccount }),
+            ...(agent !== undefined && { agent }),
+          });
+        } catch (err) {
+          logger.error?.('Session key resolution failed during tasks_get poll', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return adcpError('SERVICE_UNAVAILABLE', {
+            message: 'Session key resolution failed',
+          });
         }
       }
 
-      const record = await taskRegistry.getTask(args.task_id);
+      let record;
+      try {
+        record = await taskRegistry.getTask(args.task_id);
+      } catch (err) {
+        logger.error?.('Task registry read failed during tasks_get poll', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return adcpError('SERVICE_UNAVAILABLE', { message: 'Task registry read failed' });
+      }
       if (record == null) {
         return adcpError('REFERENCE_NOT_FOUND', {
           message: `Task ${args.task_id} not found`,
@@ -2051,6 +2158,26 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           message: `Task ${args.task_id} not found`,
           field: 'task_id',
         });
+      }
+      if (resolvedAccountId !== undefined) {
+        const ownerCtx: HandlerContext<Account> = {
+          store: {} as HandlerContext<Account>['store'],
+          ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+          ...(agent !== undefined && { agent }),
+          ...(sessionKey !== undefined && { sessionKey }),
+          account: resolvedAccount ?? ({ id: resolvedAccountId } as Account),
+        };
+        const expectedOwnerScope = taskOwnerScopeFor(ownerCtx, resolvedAccountId);
+        if (
+          record.ownerScope === undefined
+            ? expectedOwnerScope !== `account:${resolvedAccountId}`
+            : record.ownerScope !== expectedOwnerScope
+        ) {
+          return adcpError('REFERENCE_NOT_FOUND', {
+            message: `Task ${args.task_id} not found`,
+            field: 'task_id',
+          });
+        }
       }
 
       // Spec shape: `tasks-get-response.json` requires task_id, task_type,
@@ -2080,10 +2207,19 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       if (record.status === 'failed' && record.error) {
         // Spec shape: top-level `error: { code, message, details? }` —
         // matches `tasks-get-response.json`'s required `code` + `message`
-        // shape with optional `details` carrying the structured-error
-        // tail (`recovery`, `field`, `suggestion`, `retry_after`,
-        // adopter-supplied `details`).
-        const { code, message, ...details } = record.error;
+        // shape with optional `details` carrying a flattened structured-error
+        // tail (`recovery`, `field`, `suggestion`, `retry_after`) plus safe
+        // adopter-supplied detail fields.
+        const { code, message, details: safeDetails, ...tail } = sanitizeStructuredAdcpError(record.error);
+        const details =
+          safeDetails !== null &&
+          safeDetails !== undefined &&
+          typeof safeDetails === 'object' &&
+          !Array.isArray(safeDetails)
+            ? { ...tail, ...(safeDetails as Record<string, unknown>) }
+            : safeDetails !== undefined
+              ? { ...tail, details: safeDetails }
+              : tail;
         payload.error = {
           code,
           message,
@@ -2539,6 +2675,7 @@ async function projectSync<TResult, TWire, TCtxMeta = unknown>(
 interface DispatchHitlOpts {
   tool: string;
   accountId: string;
+  ownerScope?: string;
   pushNotificationUrl?: string;
   pushNotificationToken?: string;
   pushNotificationOperationId?: string;
@@ -2553,6 +2690,19 @@ interface DispatchHitlOpts {
    * so each tool's dispatcher reads the constructor flag once.
    */
   autoEmitCompletion?: boolean;
+}
+
+function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): string {
+  if (ctx.sessionKey !== undefined) return `session:${ctx.sessionKey}`;
+  if (ctx.agent?.agent_url) return `agent:${ctx.agent.agent_url}`;
+  const credential = ctx.authInfo?.credential;
+  if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
+  if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
+  if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
+  if (typeof ctx.authInfo?.clientId === 'string' && ctx.authInfo.clientId.length > 0) {
+    return `client:${ctx.authInfo.clientId}`;
+  }
+  return `account:${accountId}`;
 }
 
 /**
@@ -2711,6 +2861,7 @@ async function dispatchHitl<TResult>(
   const { taskId } = await taskRegistry.create({
     tool: opts.tool,
     accountId: opts.accountId,
+    ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
     hasWebhook: opts.pushNotificationUrl !== undefined,
     ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
@@ -2796,14 +2947,15 @@ async function dispatchHitl<TResult>(
     }
 
     // Failure path
-    const structured =
+    const structured = sanitizeStructuredAdcpError(
       taskFnError instanceof AdcpError
         ? taskFnError.toStructuredError()
         : {
             code: 'SERVICE_UNAVAILABLE' as const,
             recovery: 'transient' as const,
-            message: taskFnError instanceof Error ? taskFnError.message : String(taskFnError),
-          };
+            message: 'Task failed',
+          }
+    );
     try {
       await taskRegistry.fail(taskId, structured);
     } catch (registryErr) {
@@ -3403,6 +3555,9 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'offering', // SI offering catalog; correlation handled by brand-side `offering_token`, not framework hydration.
   'rights_holder_brand', // Read-through `get_brand_identity`; not separately stored.
   'advertiser_brand', // Same as above.
+  'transformer', // Creative build capability catalog entry; no ctx-metadata ResourceKind yet.
+  'build_variant', // Build lineage/refinement handle; no ctx-metadata ResourceKind yet.
+  'task', // Protocol task reconciliation id; task registry handles lookup, not ctx_metadata hydration.
 ]);
 
 /**
@@ -3799,6 +3954,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               {
                 tool: 'get_products',
                 accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
@@ -3935,6 +4091,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               {
                 tool: 'create_media_buy',
                 accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,
@@ -4050,6 +4207,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             {
               tool: 'sync_creatives',
               accountId: reqCtx.account.id,
+              ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               pushNotificationOperationId: push.operationId,
@@ -4302,6 +4460,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
               {
                 tool: 'sync_creatives',
                 accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
                 pushNotificationToken: push.token,
                 pushNotificationOperationId: push.operationId,

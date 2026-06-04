@@ -336,7 +336,7 @@ export type RequiredPlatformsFor<
     // every platform value at the call site.
     // eslint-disable-next-line @typescript-eslint/no-empty-object-type
     {}
-  : S extends 'creative-template' | 'creative-generative'
+  : S extends 'creative-template' | 'creative-generative' | 'creative-transformers'
     ? { creative: CreativeBuilderPlatform<TCtxMeta> }
     : S extends 'creative-ad-server'
       ? { creative: CreativeAdServerPlatform<TCtxMeta> }

@@ -266,9 +266,14 @@ describe('createA2AAdapter', () => {
       );
     });
 
-    it('fails loud when no tools are registered and no skills override supplied', () => {
-      const adcp = createAdcpServer({});
-      assert.throws(() => createA2AAdapter({ server: adcp, agentCard: baseCard() }), /no skills/i);
+    it('exposes framework-owned protocol task skills on a protocol-only server', async () => {
+      const adcp = createAdcpServer({ taskRegistry: createInMemoryTaskRegistry() });
+      const a2a = createA2AAdapter({ server: adcp, agentCard: baseCard() });
+      const card = await a2a.getAgentCard();
+      const skillIds = card.skills.map(s => s.id);
+      assert.ok(skillIds.includes('get_task_status'));
+      assert.ok(skillIds.includes('list_tasks'));
+      assert.ok(!skillIds.includes('get_adcp_capabilities'), 'capabilities tool excluded from public card');
     });
   });
 

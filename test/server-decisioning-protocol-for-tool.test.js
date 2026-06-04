@@ -14,7 +14,6 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
     assert.strictEqual(protocolForTool('create_media_buy'), 'media-buy');
     assert.strictEqual(protocolForTool('update_media_buy'), 'media-buy');
     assert.strictEqual(protocolForTool('get_products'), 'media-buy');
-    assert.strictEqual(protocolForTool('sync_audiences'), 'media-buy');
   });
 
   it('maps signals tools to signals', () => {
@@ -46,6 +45,13 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
     assert.strictEqual(protocolForTool('si_send_message'), 'sponsored-intelligence');
   });
 
+  it('maps event/audience/catalog task tools to media-buy per the rc.7 task enum', () => {
+    assert.strictEqual(protocolForTool('sync_event_sources'), 'media-buy');
+    assert.strictEqual(protocolForTool('sync_audiences'), 'media-buy');
+    assert.strictEqual(protocolForTool('sync_catalogs'), 'media-buy');
+    assert.strictEqual(protocolForTool('log_event'), 'media-buy');
+  });
+
   it('falls back to media-buy for unknown tools', () => {
     // Sales is the safest default — anything the framework dispatches but
     // isn't catalogued here is most likely a new sales tool.
@@ -54,8 +60,16 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
 });
 
 describe('TOOL_PROTOCOL_MAP — table integrity', () => {
-  it('returns only the 6 spec-defined protocol values', () => {
-    const valid = new Set(['media-buy', 'signals', 'governance', 'creative', 'brand', 'sponsored-intelligence']);
+  it('returns only the 7 spec-defined rc.7 protocol values', () => {
+    const valid = new Set([
+      'media-buy',
+      'signals',
+      'governance',
+      'creative',
+      'brand',
+      'sponsored-intelligence',
+      'measurement',
+    ]);
     for (const [tool, protocol] of Object.entries(TOOL_PROTOCOL_MAP)) {
       assert.ok(valid.has(protocol), `tool '${tool}' maps to invalid protocol '${protocol}'`);
     }

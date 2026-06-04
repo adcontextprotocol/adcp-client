@@ -14,6 +14,7 @@
 
 import type {
   Account as WireAccount,
+  AccountAuthorization,
   AccountScope,
   BillingParty,
   BrandReference,
@@ -38,6 +39,20 @@ import type { NotificationConfig } from '../../types/v3-1-beta';
 import type { CursorPage, CursorRequest } from './pagination';
 import type { AdcpStructuredError } from './async-outcome';
 import type { AdcpCredential, BuyerAgent } from './buyer-agent';
+
+export const ACCOUNT_AUTHORIZATION_WIRE_KEYS = [
+  'allowed_tasks',
+  'field_scopes',
+  'scope_name',
+  'read_only',
+] as const satisfies readonly (keyof AccountAuthorization)[];
+
+type MissingAccountAuthorizationWireKey = Exclude<
+  keyof AccountAuthorization,
+  (typeof ACCOUNT_AUTHORIZATION_WIRE_KEYS)[number]
+>;
+const ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE: Record<MissingAccountAuthorizationWireKey, never> = {};
+void ACCOUNT_AUTHORIZATION_WIRE_KEY_COVERAGE;
 
 type WireNotificationConfig = Omit<NotificationConfig, 'authentication'> & {
   authentication?: Omit<NonNullable<NotificationConfig['authentication']>, 'credentials'>;
@@ -185,6 +200,19 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * they accept legacy webhook auth.
    */
   notification_configs?: NotificationConfig[];
+
+  /**
+   * Caller-specific authorization metadata for this account. Emitted only on
+   * `list_accounts` / account response surfaces that use the
+   * `AccountWithAuthorization` wire shape. Use this for platform adapters
+   * that can introspect what the authenticated buyer agent may do on this
+   * account, including downstream grants such as advertiser-account access
+   * plus publisher identity/post authorization.
+   *
+   * Absence is silence, not denial: it means the adapter does not expose
+   * introspectable account authorization for this caller/account tuple.
+   */
+  authorization?: AccountAuthorization;
 
   /**
    * Sandbox account marker. For implicit accounts the wire schema treats
@@ -745,7 +773,7 @@ export interface AccountFilter {
  *
  * Carries the same optional commercial / lifecycle fields as the wire shape
  * so adopters can echo `setup` (for `pending_approval` accounts), `billing`,
- * `billing_entity`, `payment_terms`, etc. on creation. The framework
+ * `billing_entity`, `payment_terms`, caller-specific `authorization`, etc. on creation. The framework
  * projects these through `toWireSyncAccountRow` before emit, applying the
  * same `billing_entity.bank` strip as `toWireAccount` (write-only contract).
  *
@@ -775,6 +803,12 @@ export interface SyncAccountsResultRow {
   credit_limit?: WireAccount['credit_limit'];
   /** Applied account-level webhook subscriptions; credentials are stripped on emit. */
   notification_configs?: NotificationConfig[];
+  /**
+   * Caller-specific authorization metadata for this synced account, including
+   * downstream grants such as advertiser-account access plus publisher
+   * identity/post authorization.
+   */
+  authorization?: AccountAuthorization;
   errors?: SyncAccountError[];
   warnings?: string[];
   sandbox?: boolean;
@@ -839,9 +873,30 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       account.notification_configs.map(projectNotificationConfig);
   }
+  if (account.authorization !== undefined) {
+    (wire as WireAccount & { authorization?: AccountAuthorization }).authorization = projectAccountAuthorization(
+      account.authorization
+    );
+  }
   if (account.sandbox !== undefined) wire.sandbox = account.sandbox;
   if (account.ext !== undefined) wire.ext = account.ext;
   return wire;
+}
+
+function projectAccountAuthorization(authorization: AccountAuthorization): AccountAuthorization {
+  const projected: AccountAuthorization = {
+    allowed_tasks: [...authorization.allowed_tasks],
+  };
+  if (authorization.field_scopes !== undefined) {
+    projected.field_scopes = Object.fromEntries(
+      Object.entries(authorization.field_scopes)
+        .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]))
+        .map(([task, fields]) => [task, [...fields]])
+    );
+  }
+  if (authorization.scope_name !== undefined) projected.scope_name = authorization.scope_name;
+  if (authorization.read_only !== undefined) projected.read_only = authorization.read_only;
+  return projected;
 }
 
 type WireSyncAccountRow = SyncAccountsSuccess['accounts'][number];
@@ -879,6 +934,11 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.notification_configs !== undefined) {
     (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       row.notification_configs.map(projectNotificationConfig);
+  }
+  if (row.authorization !== undefined) {
+    (wire as WireSyncAccountRow & { authorization?: AccountAuthorization }).authorization = projectAccountAuthorization(
+      row.authorization
+    );
   }
   if (row.errors !== undefined) wire.errors = row.errors;
   if (row.warnings !== undefined) wire.warnings = row.warnings;

@@ -58,6 +58,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
 
   // Creative
   list_creative_formats: schemas.ListCreativeFormatsResponseSchema,
+  list_transformers: schemas.ListTransformersResponseSchema,
   build_creative: schemas.BuildCreativeResponseSchema,
   validate_input: schemas.ValidateInputResponseSchema,
   preview_creative: schemas.PreviewCreativeResponseSchema,
@@ -123,6 +124,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
 
   // Capabilities
   get_adcp_capabilities: schemas.GetAdCPCapabilitiesResponseSchema,
+  get_task_status: schemas.GetTaskStatusResponseSchema,
+  list_tasks: schemas.ListTasksResponseSchema,
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,

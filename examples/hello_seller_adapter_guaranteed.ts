@@ -764,8 +764,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
       // Storyboard sends buying_mode: 'brief' with a free-text brief —
       // production maps to a relevance ranker. The mock returns the full
-      // product catalog; we pull guaranteed products to match the
-      // sales-guaranteed specialism's value proposition.
+      // product catalog. The sales-guaranteed storyboard seeds
+      // non-guaranteed products first because shared media-buy scenarios use
+      // products[0]/products[1] for synchronous create flows, while the main
+      // guaranteed phases use explicit guaranteed product IDs.
       //
       // When the buyer provides structured filters (flight dates, budget),
       // forward them so each product comes back with a per-query
@@ -775,14 +777,13 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // (per-product forecast). Use the discrete `getForecast` below if
       // your backend can't fold forecast into the catalog response.
       const briefBudget = (req.filters?.budget_range as { max?: number } | undefined)?.max;
-      const guaranteed = await upstream.listProducts(networkCode, {
-        deliveryType: 'guaranteed',
+      const products = await upstream.listProducts(networkCode, {
         ...(req.filters?.start_date && { flightStart: req.filters.start_date }),
         ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
       return {
-        products: guaranteed.map(p => projectProduct(p, publisherDomain)),
+        products: products.map(p => projectProduct(p, publisherDomain)),
         cache_scope: 'account',
       };
     },

@@ -3196,6 +3196,183 @@ describe('tasks_get wire tool (B9)', () => {
     assert.deepStrictEqual(payload.result, { media_buy_id: 'mb_42', status: 'active' });
   });
 
+  it('serves get_task_status/list_tasks from the platform task registry while a task is submitted', async () => {
+    let releaseTask;
+    const unblockTask = new Promise(resolve => {
+      releaseTask = resolve;
+    });
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => {
+        await unblockTask;
+        return { media_buy_id: 'mb_42', status: 'active' };
+      }),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    let taskId;
+
+    try {
+      const submitted = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            buyer_ref: 'b1',
+            idempotency_key: '11111111-1111-1111-1111-111111111112',
+            packages: [],
+            start_time: '2026-05-01T00:00:00Z',
+            end_time: '2026-06-01T00:00:00Z',
+            account: { account_id: 'acc_owner' },
+            push_notification_config: { url: 'https://buyer.example/webhooks/tasks' },
+          },
+        },
+      });
+      assert.strictEqual(submitted.structuredContent.status, 'submitted');
+      taskId = submitted.structuredContent.task_id;
+
+      const status = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_task_status',
+          arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_owner' } },
+        },
+      });
+      assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
+      assert.strictEqual(status.structuredContent.task_id, taskId);
+      assert.strictEqual(status.structuredContent.task_type, 'create_media_buy');
+      assert.strictEqual(status.structuredContent.protocol, 'media-buy');
+      assert.strictEqual(status.structuredContent.status, 'submitted');
+      assert.strictEqual(status.structuredContent.has_webhook, true);
+      assert.strictEqual(status.structuredContent.result, undefined);
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.7');
+
+      const listed = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'list_tasks',
+          arguments: {
+            account: { account_id: 'acc_owner' },
+            filters: { task_ids: [taskId], statuses: ['submitted'], has_webhook: true },
+          },
+        },
+      });
+      assert.notStrictEqual(listed.isError, true, JSON.stringify(listed.structuredContent));
+      assert.strictEqual(listed.structuredContent.query_summary.total_matching, 1);
+      assert.deepStrictEqual(
+        listed.structuredContent.tasks.map(task => ({
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: task.status,
+          has_webhook: task.has_webhook,
+        })),
+        [{ task_id: taskId, task_type: 'create_media_buy', status: 'submitted', has_webhook: true }]
+      );
+
+      const crossTenant = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_task_status',
+          arguments: { task_id: taskId, account: { account_id: 'acc_attacker' } },
+        },
+      });
+      assert.strictEqual(crossTenant.isError, true);
+      assert.strictEqual(crossTenant.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+
+      releaseTask();
+      await server.awaitTask(taskId);
+
+      const completed = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_task_status',
+          arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_owner' } },
+        },
+      });
+      assert.notStrictEqual(completed.isError, true, JSON.stringify(completed.structuredContent));
+      assert.strictEqual(completed.structuredContent.status, 'completed');
+      assert.deepStrictEqual(completed.structuredContent.result, { media_buy_id: 'mb_42', status: 'active' });
+    } finally {
+      releaseTask();
+      if (taskId) await server.awaitTask(taskId);
+    }
+  });
+
+  it('sanitizes AUTHORIZATION_REQUIRED task errors before polling exposes them', async () => {
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(async () => {
+        throw new AdcpError('AUTHORIZATION_REQUIRED', {
+          message: 'TikTok publisher identity authorization required',
+          details: {
+            missing_connections: [
+              {
+                provider: 'tiktok',
+                connection_type: 'publisher_identity',
+                status: 'missing',
+                authorization_url: 'https://seller.example/connect/tiktok',
+                access_token: 'tok_secret',
+                resource_ref: {
+                  identity_id: 'creator_456',
+                  private_note: 'internal',
+                },
+              },
+            ],
+            authorization_url: 'https://seller.example/connect',
+            refresh_token: 'refresh_secret',
+            tenant_id: 'tenant_secret',
+          },
+        });
+      }),
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+
+    const submitted = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111113',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_owner' },
+        },
+      },
+    });
+    const taskId = submitted.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const status = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, account: { account_id: 'acc_owner' } },
+      },
+    });
+    assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
+    const error = status.structuredContent.error;
+    assert.strictEqual(error.code, 'AUTHORIZATION_REQUIRED');
+    assert.strictEqual(error.details.authorization_url, 'https://seller.example/connect');
+    assert.equal(error.details.refresh_token, undefined);
+    assert.equal(error.details.tenant_id, undefined);
+    assert.equal(error.details.missing_connections[0].access_token, undefined);
+    assert.equal(error.details.missing_connections[0].resource_ref.private_note, undefined);
+
+    const legacyStatus = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: { task_id: taskId, account: { account_id: 'acc_owner' } },
+      },
+    });
+    assert.notStrictEqual(legacyStatus.isError, true, JSON.stringify(legacyStatus.structuredContent));
+    const legacyError = legacyStatus.structuredContent.error;
+    assert.strictEqual(legacyError.code, 'AUTHORIZATION_REQUIRED');
+    assert.strictEqual(legacyError.details.authorization_url, 'https://seller.example/connect');
+    assert.equal(legacyError.details.details, undefined);
+    assert.equal(legacyError.details.refresh_token, undefined);
+    assert.equal(legacyError.details.missing_connections[0].access_token, undefined);
+  });
+
   it('applies responseEnhancer to the framework-owned tasks_get custom tool', async () => {
     const server = createAdcpServerFromPlatform(
       buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' })),

@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-06-01
-> @adcp/sdk v8.1.0-beta.19
+> Generated at: 2026-06-04
+> @adcp/sdk v9.0.0-beta.22
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -125,6 +125,60 @@ _Response (success branch):_
   errors: object[]
   context: Context
   wholesale_feed_webhooks: object
+}
+```
+
+**`get_task_status`** — Request parameters for get_task_status, the 3.
+
+_Request:_
+```
+{
+  task_id: string  // required
+  include_history: boolean
+  include_result: boolean
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  task_id: string  // required
+  task_type: Task Type  // required
+  protocol: Adcp Protocol  // required
+  status: Task Status  // required
+  created_at: string  // required
+  updated_at: string  // required
+  completed_at: string
+  has_webhook: boolean
+  progress: object
+  error: object
+  history: object[]
+  result: Async Response Data
+  context: Context
+}
+```
+
+**`list_tasks`** — Request parameters for list_tasks, the 3.
+
+_Request:_
+```
+{
+  filters: object
+  sort: object
+  pagination: Pagination Request
+  include_history: boolean
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  query_summary: object  // required
+  tasks: object[]  // required
+  pagination: Pagination Response  // required
+  context: Context
 }
 ```
 
@@ -641,9 +695,21 @@ _Request:_
   package_id: string
   target_format_id: Format Id
   target_format_ids: object[]
+  transformer_id: string
+  config: object
+  refine_from_build_variant_id: string
+  mode: 'execute' | 'estimate'
+  max_spend: object
+  max_creatives: integer
+  signal_conditions: object[]
+  max_variants: integer
+  variant_axis: object
+  keep_mode: 'keep_all' | 'keep_one' | 'keep_some'
+  selection_strategy: Creative Selection Strategy
   account: Account Ref
   brand: Brand Ref
   quality: Creative Quality
+  evaluator: Evaluator Spec
   item_limit: integer
   include_preview: boolean
   preview_inputs: object[]
@@ -658,6 +724,7 @@ _Response (success branch):_
 ```
 {
   creative_manifest: Creative Manifest  // required
+  build_variant_id: string
   sandbox: boolean
   expires_at: string
   preview: object
@@ -716,7 +783,7 @@ _Request:_
 {
   format_ids: object[]
   type: 'audio' | 'video' | 'display' | 'dooh'
-  asset_types: string[]
+  asset_types: object[]
   max_width: integer
   max_height: integer
   min_width: integer
@@ -750,6 +817,35 @@ _Watch out:_
 - Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
 - Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
+
+**`list_transformers`** — Request parameters for discovering account-scoped creative transformers (the creative analog of products), with optional brief filtering, per-param option expansion, and pricing.
+
+_Request:_
+```
+{
+  transformer_ids: string[]
+  input_format_ids: object[]
+  output_format_ids: object[]
+  name_search: string
+  brief: string
+  expand_params: string[]
+  expand_pagination: object[]
+  include_pricing: boolean
+  account: Account Ref
+  pagination: Pagination Request
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  transformers: object[]  // required
+  errors: object[]
+  pagination: Pagination Response
+  context: Context
+}
+```
 
 **`get_creative_delivery`** — Request parameters for retrieving creative delivery data with variant-level breakdowns.
 
