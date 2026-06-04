@@ -1,5 +1,11 @@
 # Changelog
 
+## 9.0.0-beta.24
+
+### Minor Changes
+
+- 3db8480: Support ADCP rc8 async discovery task handoffs and webhook completion for get_products and get_signals.
+
 ## 9.0.0-beta.23
 
 ### Minor Changes
