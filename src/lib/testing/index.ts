@@ -138,6 +138,8 @@ export type {
   ForceAudienceStatusParams,
   ForceCatalogItemStatusParams,
   ForceCreateMediaBuyArmParams,
+  ForceGetProductsArmParams,
+  ForceGetSignalsArmParams,
   ForceCreativeStatusParams,
   ForceMediaBuyStatusParams,
   ForceSessionStatusParams,
@@ -162,6 +164,7 @@ export type {
 export {
   TestControllerError,
   CONTROLLER_SCENARIOS,
+  DISCOVERY_ARM_SCENARIOS,
   SEED_SCENARIOS,
   SESSION_ENTRY_CAP,
   createSeedFixtureCache,
