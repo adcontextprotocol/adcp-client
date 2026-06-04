@@ -965,7 +965,7 @@ function removeDeprecatedFields(schema: any, schemaName: string): any {
         ? FORCED_ENUM_VALUES[schemaName]
         : undefined;
     if (forcedEnumValues) {
-      cleaned = { ...(cleaned ?? schema) };
+      cleaned = { ...schema };
       cleaned.enum = [...forcedEnumValues.filter(value => !cleaned.enum.includes(value)), ...cleaned.enum];
       if (cleaned.enumDescriptions) {
         cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
