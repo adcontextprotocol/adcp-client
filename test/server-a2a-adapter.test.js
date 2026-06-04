@@ -267,7 +267,7 @@ describe('createA2AAdapter', () => {
     });
 
     it('exposes framework-owned protocol task skills on a protocol-only server', async () => {
-      const adcp = createAdcpServer({});
+      const adcp = createAdcpServer({ taskRegistry: createInMemoryTaskRegistry() });
       const a2a = createA2AAdapter({ server: adcp, agentCard: baseCard() });
       const card = await a2a.getAgentCard();
       const skillIds = card.skills.map(s => s.id);
