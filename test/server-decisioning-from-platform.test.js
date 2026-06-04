@@ -698,6 +698,465 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
   }
 
+  function dispatchGetProducts(server, overrides = {}) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          buying_mode: 'brief',
+          brief: 'premium auto intenders',
+          promoted_offering: 'cars',
+          account: { account_id: 'acc_1' },
+          ...overrides,
+        },
+      },
+    });
+  }
+
+  function dispatchGetSignals(server, overrides = {}) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_signals',
+        arguments: {
+          discovery_mode: 'brief',
+          brief: 'luxury auto intenders',
+          account: { account_id: 'acc_1' },
+          ...overrides,
+        },
+      },
+    });
+  }
+
+  it('getProducts returning ctx.handoffToTask: submitted envelope, background completes terminal products', async () => {
+    let capturedTaskId;
+    const platform = buildHitlPlatform({
+      getProducts: async (_req, ctx) =>
+        ctx.handoffToTask(async taskCtx => {
+          capturedTaskId = taskCtx.id;
+          await new Promise(r => setTimeout(r, 20));
+          return {
+            products: [{ product_id: 'p_async', name: 'async product' }],
+            cache_scope: 'account',
+          };
+        }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'products-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+
+    const result = await dispatchGetProducts(server);
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    assert.ok(result.structuredContent.task_id.startsWith('task_'));
+    assert.strictEqual(result.structuredContent.task_id, capturedTaskId);
+    assert.strictEqual(result.structuredContent.products, undefined);
+    assert.strictEqual(result.structuredContent.proposals, undefined);
+
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const finalRecord = await server.getTaskState(taskId);
+    assert.strictEqual(finalRecord.status, 'completed');
+    assert.deepStrictEqual(finalRecord.result, {
+      products: [{ product_id: 'p_async', name: 'async product' }],
+      cache_scope: 'account',
+    });
+  });
+
+  it('getSignals returning ctx.handoffToTask: submitted envelope, background completes terminal signals', async () => {
+    let capturedTaskId;
+    const platform = {
+      ...buildHitlPlatform(),
+      sales: undefined,
+      capabilities: {
+        specialisms: ['signal-marketplace'],
+        config: {},
+      },
+      signals: {
+        getSignals: async (_req, ctx) =>
+          ctx.handoffToTask(async taskCtx => {
+            capturedTaskId = taskCtx.id;
+            await new Promise(r => setTimeout(r, 20));
+            return {
+              signals: [{ signal_agent_segment_id: 'sig_async', name: 'Async signal' }],
+            };
+          }),
+        activateSignal: async () => ({ deployments: [] }),
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'signals-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+
+    const result = await dispatchGetSignals(server);
+    assert.strictEqual(result.structuredContent.status, 'submitted');
+    assert.ok(result.structuredContent.task_id.startsWith('task_'));
+    assert.strictEqual(result.structuredContent.task_id, capturedTaskId);
+    assert.strictEqual(result.structuredContent.signals, undefined);
+
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const finalRecord = await server.getTaskState(taskId);
+    assert.strictEqual(finalRecord.status, 'completed');
+    assert.deepStrictEqual(finalRecord.result, {
+      signals: [{ signal_agent_segment_id: 'sig_async', name: 'Async signal' }],
+    });
+  });
+
+  it('async getProducts is visible via task tools and emits terminal webhook', async () => {
+    let releaseTask;
+    const unblockTask = new Promise(resolve => {
+      releaseTask = resolve;
+    });
+    const emits = [];
+    const platform = buildHitlPlatform({
+      getProducts: async (_req, ctx) =>
+        ctx.handoffToTask(async () => {
+          await unblockTask;
+          return {
+            products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+            cache_scope: 'account',
+          };
+        }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'products-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+      taskWebhookEmitter: {
+        emit: async params => {
+          emits.push(params);
+          return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+        },
+      },
+    });
+
+    const submitted = await dispatchGetProducts(server, {
+      push_notification_config: {
+        url: 'https://buyer.example.com/webhook',
+        token: 'webhook-token-1234',
+        operation_id: 'op_products_async',
+      },
+    });
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
+    const taskId = submitted.structuredContent.task_id;
+    assert.strictEqual(submitted.structuredContent.products, undefined);
+    assert.strictEqual(submitted.structuredContent.proposals, undefined);
+
+    const status = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(status.isError, true, JSON.stringify(status.structuredContent));
+    assert.strictEqual(status.structuredContent.task_type, 'get_products');
+    assert.strictEqual(status.structuredContent.protocol, 'media-buy');
+    assert.strictEqual(status.structuredContent.status, 'submitted');
+    assert.strictEqual(status.structuredContent.has_webhook, true);
+    assert.strictEqual(status.structuredContent.result, undefined);
+
+    const listed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_tasks',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          filters: { task_ids: [taskId], task_type: 'get_products', has_webhook: true },
+        },
+      },
+    });
+    assert.notStrictEqual(listed.isError, true, JSON.stringify(listed.structuredContent));
+    assert.deepStrictEqual(
+      listed.structuredContent.tasks.map(task => ({
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status: task.status,
+        has_webhook: task.has_webhook,
+      })),
+      [{ task_id: taskId, task_type: 'get_products', status: 'submitted', has_webhook: true }]
+    );
+
+    releaseTask();
+    await server.awaitTask(taskId);
+
+    const completed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.strictEqual(completed.structuredContent.status, 'completed');
+    assert.deepStrictEqual(completed.structuredContent.result, {
+      products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+      cache_scope: 'account',
+    });
+    assert.strictEqual(emits.length, 1, 'one get_products webhook emitted on terminal completion');
+    assert.strictEqual(emits[0].payload.task_type, 'get_products');
+    assert.strictEqual(emits[0].payload.task_id, taskId);
+    assert.strictEqual(emits[0].payload.protocol, 'media-buy');
+    assert.strictEqual(emits[0].payload.status, 'completed');
+    assert.strictEqual(emits[0].payload.operation_id, 'op_products_async');
+    assert.strictEqual(emits[0].payload.token, 'webhook-token-1234');
+    assert.deepStrictEqual(emits[0].payload.result, {
+      products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+      cache_scope: 'account',
+    });
+    assertMcpWebhookPayloadValid(emits[0].payload);
+  });
+
+  it('async getSignals is visible via task tools and emits terminal webhook', async () => {
+    let releaseTask;
+    const unblockTask = new Promise(resolve => {
+      releaseTask = resolve;
+    });
+    const emits = [];
+    const platform = {
+      ...buildHitlPlatform(),
+      sales: undefined,
+      capabilities: {
+        specialisms: ['signal-marketplace'],
+        config: {},
+      },
+      signals: {
+        getSignals: async (_req, ctx) =>
+          ctx.handoffToTask(async () => {
+            await unblockTask;
+            return {
+              signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+            };
+          }),
+        activateSignal: async () => ({ deployments: [] }),
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'signals-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+      taskWebhookEmitter: {
+        emit: async params => {
+          emits.push(params);
+          return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+        },
+      },
+    });
+
+    const submitted = await dispatchGetSignals(server, {
+      push_notification_config: {
+        url: 'https://buyer.example.com/signals-webhook',
+        token: 'signals-webhook-token-1234',
+        operation_id: 'op_signals_async',
+      },
+    });
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
+    const taskId = submitted.structuredContent.task_id;
+    assert.strictEqual(submitted.structuredContent.signals, undefined);
+
+    const pending = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(pending.isError, true, JSON.stringify(pending.structuredContent));
+    assert.strictEqual(pending.structuredContent.task_type, 'get_signals');
+    assert.strictEqual(pending.structuredContent.protocol, 'signals');
+    assert.strictEqual(pending.structuredContent.status, 'submitted');
+    assert.strictEqual(pending.structuredContent.has_webhook, true);
+    assert.strictEqual(pending.structuredContent.result, undefined);
+
+    const listed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_tasks',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          filters: { task_ids: [taskId], task_type: 'get_signals', has_webhook: true },
+        },
+      },
+    });
+    assert.notStrictEqual(listed.isError, true, JSON.stringify(listed.structuredContent));
+    assert.deepStrictEqual(
+      listed.structuredContent.tasks.map(task => ({
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status: task.status,
+        has_webhook: task.has_webhook,
+      })),
+      [{ task_id: taskId, task_type: 'get_signals', status: 'submitted', has_webhook: true }]
+    );
+
+    releaseTask();
+    await server.awaitTask(taskId);
+
+    const completed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(completed.isError, true, JSON.stringify(completed.structuredContent));
+    assert.strictEqual(completed.structuredContent.task_type, 'get_signals');
+    assert.strictEqual(completed.structuredContent.protocol, 'signals');
+    assert.strictEqual(completed.structuredContent.status, 'completed');
+    assert.deepStrictEqual(completed.structuredContent.result, {
+      signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+    });
+    assert.strictEqual(emits.length, 1, 'one get_signals webhook emitted on terminal completion');
+    assert.strictEqual(emits[0].payload.task_type, 'get_signals');
+    assert.strictEqual(emits[0].payload.task_id, taskId);
+    assert.strictEqual(emits[0].payload.protocol, 'signals');
+    assert.strictEqual(emits[0].payload.status, 'completed');
+    assert.strictEqual(emits[0].payload.operation_id, 'op_signals_async');
+    assert.strictEqual(emits[0].payload.token, 'signals-webhook-token-1234');
+    assert.deepStrictEqual(emits[0].payload.result, {
+      signals: [{ signal_agent_segment_id: 'sig_pollable', name: 'Pollable signal' }],
+    });
+    assertMcpWebhookPayloadValid(emits[0].payload);
+  });
+
+  it('rejects async discovery when account is omitted', async () => {
+    const productsPlatform = {
+      ...buildHitlPlatform({
+        getProducts: async (_req, ctx) =>
+          ctx.handoffToTask(async () => ({
+            products: [{ product_id: 'p_async' }],
+            cache_scope: 'public',
+          })),
+      }),
+      accounts: {
+        resolve: async ref =>
+          ref == null ? null : { id: ref.account_id ?? 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } },
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+    };
+    const productsServer = createAdcpServerFromPlatform(productsPlatform, {
+      name: 'products-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const products = await dispatchGetProducts(productsServer, { account: undefined });
+    assert.strictEqual(products.isError, true);
+    assert.strictEqual(products.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(products.structuredContent.adcp_error.field, 'account');
+
+    const signalsPlatform = {
+      ...buildHitlPlatform(),
+      accounts: {
+        resolve: async ref =>
+          ref == null ? null : { id: ref.account_id ?? 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } },
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      sales: undefined,
+      capabilities: { specialisms: ['signal-marketplace'], config: {} },
+      signals: {
+        getSignals: async (_req, ctx) => ctx.handoffToTask(async () => ({ signals: [] })),
+        activateSignal: async () => ({ deployments: [] }),
+      },
+    };
+    const signalsServer = createAdcpServerFromPlatform(signalsPlatform, {
+      name: 'signals-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const signals = await dispatchGetSignals(signalsServer, { account: undefined });
+    assert.strictEqual(signals.isError, true);
+    assert.strictEqual(signals.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signals.structuredContent.adcp_error.field, 'account');
+  });
+
+  it('rejects wholesale discovery push configs and task handoffs', async () => {
+    let productHandlerCalls = 0;
+    const productsPlatform = buildHitlPlatform({
+      getProducts: async (_req, ctx) => {
+        productHandlerCalls += 1;
+        return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+      },
+    });
+    const productsServer = createAdcpServerFromPlatform(productsPlatform, {
+      name: 'products-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const productsPush = await dispatchGetProducts(productsServer, {
+      buying_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: { url: 'https://buyer.example.com/webhook' },
+    });
+    assert.strictEqual(productsPush.isError, true);
+    assert.strictEqual(productsPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(productsPush.structuredContent.adcp_error.field, 'push_notification_config');
+    assert.strictEqual(productHandlerCalls, 0, 'wholesale push config should fail before adapter dispatch');
+
+    const productsHandoff = await dispatchGetProducts(productsServer, { buying_mode: 'wholesale', brief: undefined });
+    assert.strictEqual(productsHandoff.isError, true);
+    assert.strictEqual(productsHandoff.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(productsHandoff.structuredContent.adcp_error.field, 'buying_mode');
+
+    const productsUndefinedPush = await dispatchGetProducts(productsServer, {
+      buying_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: undefined,
+    });
+    assert.strictEqual(productsUndefinedPush.isError, true);
+    assert.strictEqual(productsUndefinedPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(productsUndefinedPush.structuredContent.adcp_error.field, 'buying_mode');
+
+    let signalHandlerCalls = 0;
+    const signalsPlatform = {
+      ...buildHitlPlatform(),
+      sales: undefined,
+      capabilities: { specialisms: ['signal-marketplace'], config: {} },
+      signals: {
+        getSignals: async (_req, ctx) => {
+          signalHandlerCalls += 1;
+          return ctx.handoffToTask(async () => ({ signals: [] }));
+        },
+        activateSignal: async () => ({ deployments: [] }),
+      },
+    };
+    const signalsServer = createAdcpServerFromPlatform(signalsPlatform, {
+      name: 'signals-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const signalsPush = await dispatchGetSignals(signalsServer, {
+      discovery_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: { url: 'https://buyer.example.com/webhook' },
+    });
+    assert.strictEqual(signalsPush.isError, true);
+    assert.strictEqual(signalsPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signalsPush.structuredContent.adcp_error.field, 'push_notification_config');
+    assert.strictEqual(signalHandlerCalls, 0, 'wholesale push config should fail before adapter dispatch');
+
+    const signalsHandoff = await dispatchGetSignals(signalsServer, { discovery_mode: 'wholesale', brief: undefined });
+    assert.strictEqual(signalsHandoff.isError, true);
+    assert.strictEqual(signalsHandoff.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signalsHandoff.structuredContent.adcp_error.field, 'discovery_mode');
+
+    const signalsUndefinedPush = await dispatchGetSignals(signalsServer, {
+      discovery_mode: 'wholesale',
+      brief: undefined,
+      push_notification_config: undefined,
+    });
+    assert.strictEqual(signalsUndefinedPush.isError, true);
+    assert.strictEqual(signalsUndefinedPush.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signalsUndefinedPush.structuredContent.adcp_error.field, 'discovery_mode');
+  });
+
   it('createMediaBuy returning ctx.handoffToTask: submitted envelope, background completes terminal state', async () => {
     let capturedTaskId;
     const platform = buildHitlPlatform({
@@ -3243,7 +3702,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.7');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.8');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',

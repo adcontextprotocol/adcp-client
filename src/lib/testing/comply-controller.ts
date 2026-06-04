@@ -47,6 +47,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodTypeAny } from 'zod';
 import {
   CONTROLLER_SCENARIOS,
+  DISCOVERY_ARM_SCENARIOS,
   TOOL_INPUT_SHAPE,
   createSeedFixtureCache,
   handleTestControllerRequest,
@@ -165,6 +166,18 @@ export interface ForceSessionStatusParams {
 export interface ForceCreateMediaBuyArmParams {
   arm: 'submitted' | 'input-required';
   task_id?: string;
+  message?: string;
+}
+
+export interface ForceGetProductsArmParams {
+  arm: 'submitted';
+  task_id: string;
+  message?: string;
+}
+
+export interface ForceGetSignalsArmParams {
+  arm: 'submitted';
+  task_id: string;
   message?: string;
 }
 
@@ -355,6 +368,12 @@ export interface ComplyControllerConfig {
     /** Register a directive shaping the next `create_media_buy` arm. Consumed
      * on the next call. `arm: 'submitted'` requires `task_id`. */
     create_media_buy_arm?: DirectiveAdapter<ForceCreateMediaBuyArmParams>;
+    /** Register a directive shaping the next `get_products` async arm. Extension
+     * scenario for async discovery storyboards (adcp#5342). */
+    get_products_arm?: DirectiveAdapter<ForceGetProductsArmParams>;
+    /** Register a directive shaping the next `get_signals` submitted arm. Extension
+     * scenario for async discovery storyboards (adcp#5342). */
+    get_signals_arm?: DirectiveAdapter<ForceGetSignalsArmParams>;
     /** Transition an in-flight task to `completed` with the given result
      * payload. The seller delivers `result` to the buyer's push-notification
      * URL per the AdCP 3.0 async completion path. */
@@ -560,6 +579,12 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (force?.create_media_buy_arm) {
     store.forceCreateMediaBuyArm = params => Promise.resolve(force.create_media_buy_arm!(params, ctx));
   }
+  if (force?.get_products_arm) {
+    store.forceGetProductsArm = params => Promise.resolve(force.get_products_arm!(params, ctx));
+  }
+  if (force?.get_signals_arm) {
+    store.forceGetSignalsArm = params => Promise.resolve(force.get_signals_arm!(params, ctx));
+  }
   if (force?.task_completion) {
     store.forceTaskCompletion = (taskId, result) =>
       Promise.resolve(force.task_completion!({ task_id: taskId, result }, ctx));
@@ -607,6 +632,8 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.media_buy_status) out.push(CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS);
   if (config.force?.session_status) out.push(CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS);
   if (config.force?.create_media_buy_arm) out.push(CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM);
+  if (config.force?.get_products_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM as ControllerScenario);
+  if (config.force?.get_signals_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM as ControllerScenario);
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.force?.creative_purge) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);

@@ -99,8 +99,8 @@ export function protocolForTool(tool: string): AdcpProtocol {
 
 /**
  * Tools whose `task_type` value is permitted in the v6.0 webhook payload
- * envelope. Spec `enums/task-type.json` is a closed 20-value enum at AdCP
- * 3.0 GA — receivers validate against it. Tools NOT in this set still
+ * envelope. Spec `enums/task-type.json` is a closed enum — receivers
+ * validate against it. Tools NOT in this set still
  * dispatch fine but the framework MUST NOT emit a webhook with a
  * non-spec `task_type` value (it would be rejected by spec-validating
  * subscribers).
@@ -112,6 +112,7 @@ export function protocolForTool(tool: string): AdcpProtocol {
  * @internal
  */
 export const SPEC_WEBHOOK_TASK_TYPES: ReadonlySet<string> = new Set([
+  'get_products',
   'create_media_buy',
   'update_media_buy',
   'sync_creatives',

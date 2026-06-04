@@ -189,6 +189,19 @@ export const SEED_SCENARIOS = {
 } as const satisfies Record<string, SeedScenario>;
 
 /**
+ * Extension scenario names for async discovery storyboards. These are not
+ * first-class members of the generated controller scenario enum until the
+ * protocol schema lands them, but the controller contract is open for
+ * extension and the dispatcher accepts string scenario names.
+ *
+ * Tracked upstream: adcontextprotocol/adcp#5342.
+ */
+export const DISCOVERY_ARM_SCENARIOS = {
+  FORCE_GET_PRODUCTS_ARM: 'force_get_products_arm',
+  FORCE_GET_SIGNALS_ARM: 'force_get_signals_arm',
+} as const;
+
+/**
  * Stable `SeedSuccess.message` strings the SDK's `dispatchSeed` emits.
  * Adopters who want to detect first-seed vs idempotent-replay can match
  * on these constants instead of grepping for the literal prose.
@@ -267,6 +280,24 @@ export interface TestControllerStore {
     task_id?: string;
     message?: string;
   }): Promise<ForcedDirectiveSuccess>;
+
+  /**
+   * Register a directive shaping the next `get_products` call from this
+   * authenticated sandbox account into the submitted async arm. Extension
+   * scenario for async discovery storyboard prep (adcp#5342).
+   */
+  forceGetProductsArm?(params: {
+    arm: 'submitted';
+    task_id: string;
+    message?: string;
+  }): Promise<ForcedDirectiveSuccess>;
+
+  /**
+   * Register a directive shaping the next `get_signals` call from this
+   * authenticated sandbox account into the submitted async arm. Extension
+   * scenario for async discovery storyboard prep (adcp#5342).
+   */
+  forceGetSignalsArm?(params: { arm: 'submitted'; task_id: string; message?: string }): Promise<ForcedDirectiveSuccess>;
 
   /**
    * Transition an in-flight task to `completed` and record the supplied
@@ -643,6 +674,8 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   if (typeof store.seedBuyerAgent === 'function') out.push(SEED_SCENARIOS.SEED_BUYER_AGENT);
   if (typeof store.forceAudienceStatus === 'function') out.push(FORCE_AUDIENCE_STATUS_SCENARIO);
   if (typeof store.forceCatalogItemStatus === 'function') out.push(FORCE_CATALOG_ITEM_STATUS_SCENARIO);
+  if (typeof store.forceGetProductsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM);
+  if (typeof store.forceGetSignalsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
   return out;
 }
 
@@ -1222,6 +1255,52 @@ async function handleTestControllerRequestImpl(
           await store.forceCreateMediaBuyArm({
             arm,
             task_id: params?.task_id as string | undefined,
+            message: params?.message as string | undefined,
+          })
+        );
+      }
+
+      case DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM: {
+        if (!store.forceGetProductsArm) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const arm = params?.arm;
+        if (arm !== 'submitted') {
+          return controllerError('INVALID_PARAMS', "force_get_products_arm requires params.arm = 'submitted'");
+        }
+        if (!params?.task_id) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_get_products_arm with arm='submitted' requires params.task_id"
+          );
+        }
+        return wrapStoreSuccess(
+          await store.forceGetProductsArm({
+            arm,
+            task_id: params.task_id as string,
+            message: params?.message as string | undefined,
+          })
+        );
+      }
+
+      case DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM: {
+        if (!store.forceGetSignalsArm) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const arm = params?.arm;
+        if (arm !== 'submitted') {
+          return controllerError('INVALID_PARAMS', "force_get_signals_arm requires params.arm = 'submitted'");
+        }
+        if (!params?.task_id) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_get_signals_arm with arm='submitted' requires params.task_id"
+          );
+        }
+        return wrapStoreSuccess(
+          await store.forceGetSignalsArm({
+            arm,
+            task_id: params.task_id as string,
             message: params?.message as string | undefined,
           })
         );

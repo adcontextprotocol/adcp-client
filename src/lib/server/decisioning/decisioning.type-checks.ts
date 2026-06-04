@@ -28,6 +28,7 @@ import type {
   BuildCreativeMultiPayload,
   CreativeApprovedPayload,
   GetProductsPayload,
+  GetProductsHandlerResult,
   CreateMediaBuyHandlerResult,
   CreateMediaBuyPayload,
   UpdateMediaBuyPayload,
@@ -54,6 +55,7 @@ import type {
   ComplianceTestingCapabilities,
   ServerPayload,
   CheckGovernancePayload,
+  GetSignalsHandlerResult,
 } from './index';
 import type { OperationalContext, OperationalPlatform } from '../operational-platform';
 import {
@@ -63,6 +65,7 @@ import {
   defineSalesCorePlatform,
   defineSalesIngestionPlatform,
   defineAudiencePlatform,
+  defineSignalsPlatform,
   definePlatformWithCompliance,
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
@@ -427,7 +430,7 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
 
 function _sales_platform_handler_results_accept_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
-    getProducts: async () => ({ products: [], cache_scope: 'account' }),
+    getProducts: async (_req, ctx) => ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' })),
     createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => _createBuyPayload()),
     updateMediaBuy: async () => _updateBuyPayload(),
     getMediaBuyDelivery: async () => ({
@@ -438,11 +441,24 @@ function _sales_platform_handler_results_accept_task_handoff() {
     syncCreatives: async (_creatives, ctx) => ctx.handoffToTask(async () => []),
   };
 
+  const getProductsResult: GetProductsHandlerResult = { products: [], cache_scope: 'account' };
   const createResult: CreateMediaBuyHandlerResult = _createBuyPayload();
   const syncResult: SyncCreativesHandlerResult = [];
+  void getProductsResult;
   void createResult;
   void syncResult;
   return sales;
+}
+
+function _signals_platform_handler_results_accept_task_handoff() {
+  const signals = defineSignalsPlatform<_SocialMeta>({
+    getSignals: async (_req, ctx) => ctx.handoffToTask(async () => ({ signals: [] })),
+    activateSignal: async () => ({ deployments: [] }),
+  });
+
+  const getSignalsResult: GetSignalsHandlerResult = { signals: [] };
+  void getSignalsResult;
+  return signals;
 }
 
 type _Ok<T> = { ok: true; value: T };
@@ -953,6 +969,7 @@ export const _references = [
   _sales_guaranteed_spread_helpers_pattern,
   _sales_platform_payload_returns_do_not_require_protocol_status,
   _sales_platform_handler_results_accept_task_handoff,
+  _signals_platform_handler_results_accept_task_handoff,
   _adopter_result_payload_aliases_do_not_require_protocol_status,
   _account_handler_result_aliases_are_exported,
   _server_payload_preserves_domain_status_fields,

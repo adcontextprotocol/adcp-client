@@ -45,7 +45,7 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
     assert.strictEqual(protocolForTool('si_send_message'), 'sponsored-intelligence');
   });
 
-  it('maps event/audience/catalog task tools to media-buy per the rc.7 task enum', () => {
+  it('maps event/audience/catalog task tools to media-buy per the task enum', () => {
     assert.strictEqual(protocolForTool('sync_event_sources'), 'media-buy');
     assert.strictEqual(protocolForTool('sync_audiences'), 'media-buy');
     assert.strictEqual(protocolForTool('sync_catalogs'), 'media-buy');
@@ -60,7 +60,7 @@ describe('protocolForTool — webhook + tasks_get protocol routing', () => {
 });
 
 describe('TOOL_PROTOCOL_MAP — table integrity', () => {
-  it('returns only the 7 spec-defined rc.7 protocol values', () => {
+  it('returns only the 7 spec-defined protocol values', () => {
     const valid = new Set([
       'media-buy',
       'signals',
@@ -90,14 +90,16 @@ describe('TOOL_PROTOCOL_MAP — table integrity', () => {
 });
 
 describe('SPEC_WEBHOOK_TASK_TYPES — closed-enum gate', () => {
-  it('matches the AdCP 3.0 GA enums/task-type.json closed enum (20 values)', () => {
-    // If this count changes, sync with schemas/cache/3.0.0/enums/task-type.json
+  it('matches the AdCP rc8 enums/task-type.json closed enum plus SDK compatibility shim (21 values)', () => {
+    // If this count changes, sync with schemas/cache/latest/enums/task-type.json
     // and update protocol-for-tool.ts. The framework gates webhook delivery
     // to this set so spec-validating receivers don't reject envelopes.
-    assert.strictEqual(SPEC_WEBHOOK_TASK_TYPES.size, 20);
+    assert.strictEqual(SPEC_WEBHOOK_TASK_TYPES.size, 21);
   });
 
   it('includes the canonical HITL tools', () => {
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('get_products'));
+    assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('get_signals'));
     assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('create_media_buy'));
     assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('sync_creatives'));
     assert.ok(SPEC_WEBHOOK_TASK_TYPES.has('update_media_buy'));

@@ -2154,6 +2154,7 @@ function genericResponse(toolName: string, data: object, summary?: string): McpT
 }
 
 const ADCP_TASK_TYPES = new Set<TaskType>([
+  'get_products',
   'create_media_buy',
   'update_media_buy',
   'media_buy_delivery',
@@ -2179,6 +2180,7 @@ const ADCP_TASK_TYPES = new Set<TaskType>([
 ]);
 
 const PROTOCOL_TASK_TYPE_TO_PROTOCOL: Partial<Record<TaskType, WireAdcpProtocol>> = {
+  get_products: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
   media_buy_delivery: 'media-buy',
@@ -3479,7 +3481,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     const bundleKey = protocolBundleKey;
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
   })();
-  const supportsProtocolTaskTools = protocolBundleKey === '3.1.0-rc.7' || protocolBundleKey === '3.1-rc.7';
+  const supportsProtocolTaskTools =
+    protocolBundleKey === '3.1.0-rc.7' ||
+    protocolBundleKey === '3.1-rc.7' ||
+    protocolBundleKey === '3.1.0-rc.8' ||
+    protocolBundleKey === '3.1-rc.8' ||
+    protocolBundleKey === '3.1-rc';
 
   // Tool-name set for two-layer error emission. Computed once at server
   // build from the bundled response schemas: any tool whose top-level

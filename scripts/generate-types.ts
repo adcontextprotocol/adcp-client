@@ -947,17 +947,66 @@ const DEPRECATED_ENUM_VALUES: Record<string, string[]> = {
   'task-type': ['list_property_features', 'list_authorized_properties'],
 };
 
+// Compatibility enum additions for schema bundles that define async response
+// arms before the shared task-type enum catches up.
+const FORCED_ENUM_VALUES: Record<string, string[]> = {
+  'task-type': ['get_products'],
+};
+
+const FORCED_ENUM_SCHEMA_VERSION: Record<string, string> = {
+  'task-type': '3.1.0-rc.8',
+};
+
+function forcedEnumValuesForSchema(schema: any, schemaName: string): string[] | undefined {
+  const forcedEnumValues = FORCED_ENUM_VALUES[schemaName];
+  if (!forcedEnumValues) return undefined;
+
+  const requiredVersion = FORCED_ENUM_SCHEMA_VERSION[schemaName];
+  const schemaId = typeof schema.$id === 'string' ? schema.$id : '';
+  if (requiredVersion && schemaId.includes(requiredVersion)) {
+    return forcedEnumValues;
+  }
+
+  if (requiredVersion && getCachedAdCPVersion() === requiredVersion) {
+    throw new Error(
+      `Expected ${schemaName} enum shim for AdCP ${requiredVersion} to apply, but schema $id was ${schemaId || '(missing)'}.`
+    );
+  }
+
+  return undefined;
+}
+
 /**
  * Remove deprecated fields from a schema based on DEPRECATED_SCHEMA_FIELDS config
  * Also handles deprecated enum values
  */
 function removeDeprecatedFields(schema: any, schemaName: string): any {
-  // Handle deprecated enum values
   if (schema.enum && Array.isArray(schema.enum)) {
+    let cleaned: any | undefined;
+    const forcedEnumValues = forcedEnumValuesForSchema(schema, schemaName);
+    if (forcedEnumValues) {
+      const missingForcedValues = forcedEnumValues.filter(value => !schema.enum.includes(value));
+      if (missingForcedValues.length === 0) {
+        throw new Error(
+          `Expected ${schemaName} enum shim to add ${forcedEnumValues.join(', ')}, but no values were missing.`
+        );
+      }
+      cleaned = { ...schema };
+      cleaned.enum = [...missingForcedValues, ...cleaned.enum];
+      if (cleaned.enumDescriptions) {
+        cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
+        for (const value of forcedEnumValues) {
+          if (value === 'get_products' && cleaned.enumDescriptions[value] === undefined) {
+            cleaned.enumDescriptions[value] = 'Media-buy domain: Discover or curate advertising products';
+          }
+        }
+      }
+    }
+    // Handle deprecated enum values
     const enumValuesToRemove = DEPRECATED_ENUM_VALUES[schemaName];
     if (enumValuesToRemove) {
-      const cleaned = { ...schema };
-      cleaned.enum = schema.enum.filter((v: string) => !enumValuesToRemove.includes(v));
+      cleaned = { ...(cleaned ?? schema) };
+      cleaned.enum = cleaned.enum.filter((v: string) => !enumValuesToRemove.includes(v));
       // Also clean enumDescriptions if present
       if (cleaned.enumDescriptions) {
         cleaned.enumDescriptions = { ...cleaned.enumDescriptions };
@@ -965,8 +1014,8 @@ function removeDeprecatedFields(schema: any, schemaName: string): any {
           delete cleaned.enumDescriptions[value];
         }
       }
-      return cleaned;
     }
+    if (cleaned) return cleaned;
   }
 
   const fieldsToRemove = DEPRECATED_SCHEMA_FIELDS[schemaName];

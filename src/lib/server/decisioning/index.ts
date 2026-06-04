@@ -236,6 +236,7 @@ export type {
   SalesCorePlatform,
   SalesIngestionPlatform,
   GetProductsPayload,
+  GetProductsHandlerResult,
   CreateMediaBuyPayload,
   CreateMediaBuyHandlerResult,
   UpdateMediaBuyPayload,
@@ -260,7 +261,12 @@ export type {
   AudienceStatus,
 } from './specialisms/audiences';
 
-export type { SignalsPlatform, GetSignalsPayload, ActivateSignalPayload } from './specialisms/signals';
+export type {
+  SignalsPlatform,
+  GetSignalsPayload,
+  GetSignalsHandlerResult,
+  ActivateSignalPayload,
+} from './specialisms/signals';
 
 export type {
   SponsoredIntelligencePlatform,

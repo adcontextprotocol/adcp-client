@@ -1,14 +1,14 @@
 /**
  * SalesPlatform — sales specialism platform interface.
  *
- * **Unified hybrid shape.** `create_media_buy` and `sync_creatives` use a
+ * **Unified hybrid shape.** `get_products`, `create_media_buy`, and `sync_creatives` use a
  * single method each. The method returns the wire success arm (sync fast
  * path) OR `ctx.handoffToTask(fn)` to promote the call to a background
  * task (HITL slow path). Branch per-call — the same method handles
- * programmatic remnant, guaranteed inventory, and hybrid sellers. Every
- * other tool is sync-only:
+ * programmatic remnant, guaranteed inventory, curated discovery, and hybrid
+ * sellers. Every other tool is sync-only:
  *
- *   - `get_products` — sync. Brief in, products out.
+ *   - `get_products` — sync OR `ctx.handoffToTask(...)` for curated brief/refine flows.
  *   - `create_media_buy` — sync OR `ctx.handoffToTask(...)`.
  *   - `update_media_buy` — sync only. Re-approval flows that need HITL run
  *     out-of-band; `publishStatusChange` carries the result.
@@ -116,6 +116,7 @@ export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
  * with `{ creatives: [...] }` to form `SyncCreativesSuccess`.
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
+export type GetProductsHandlerResult = GetProductsPayload | TaskHandoff<GetProductsPayload>;
 export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuyPayload>;
 export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;
 
@@ -138,30 +139,19 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // Adopters who only do ingestion (e.g. a Meta CAPI integration claiming
   // `sales-social`) drop the 5 core stubs without compile errors.
 
-  // ── get_products: sync only — by design, not just by spec ─────────
+  // ── get_products: unified hybrid shape ────────────────────────────
   // get_products is a CATALOG LOOKUP — fast read against the seller's
-  // existing inventory. It is NOT the right wire surface for proposal
-  // generation (brief-to-pitch creative workflows that produce new
-  // products tailored to the buyer's request). Those are different
-  // verbs in the AdCP buyer's vocabulary and conflating them is a
-  // buyer-predictability tax: a buyer calling get_products for fast
-  // catalog filtering against a proposal-mode tenant gets a slow
-  // response they didn't expect.
+  // existing inventory. rc8 allows curated brief/refine lookups to return a
+  // Submitted arm when the seller needs async enrichment. Adopters express
+  // that by returning ctx.handoffToTask(fn); the framework owns task_id
+  // allocation, polling state, and optional completion webhook delivery.
   //
-  // The SDK keeps get_products sync-only deliberately, even when
-  // adcp#3392 lands consolidated Submitted arms for the OTHER 5 HITL
-  // tools (create_media_buy, update_media_buy, sync_creatives,
-  // sync_catalogs, build_creative). For proposal generation, file
-  // adcp#3407 advocates a separate `request_proposal` wire tool with
-  // explicit Submitted-only semantics.
-  //
-  // Until that lands: long-form proposal flows surface the eventual
-  // proposal via per-account notification channels (`publishStatusChange`
-  // on `resource_type: 'proposal'`). Adopters running proposal-mode
-  // workflows declare it via `capabilities` so buyers can route
-  // appropriately before the first call.
-  /** Sync catalog lookup: filters in, products out. NOT for proposal generation. */
-  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsPayload>;
+  // Wholesale catalog dumps remain sync: if the seller cannot serve the
+  // full catalog directly, it should maintain an internal cache and return
+  // the current catalog view instead of turning wholesale discovery into a
+  // long-running operation.
+  /** Catalog discovery: return products directly or hand off curated discovery to a background task. */
+  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsHandlerResult>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
 
