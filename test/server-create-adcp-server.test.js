@@ -1517,7 +1517,7 @@ describe('createAdcpServer', () => {
       assert.ok(!tools.includes('list_tasks'));
     });
 
-    it('does not register rc.7 task tools for older AdCP schema pins', async () => {
+    it('does not register protocol task tools for older AdCP schema pins', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
@@ -1530,12 +1530,12 @@ describe('createAdcpServer', () => {
       assert.ok(!tools.includes('list_tasks'));
     });
 
-    it('registers rc.7 task tools for the release-precision 3.1-rc.7 pin', async () => {
+    it('registers protocol task tools for the release-precision 3.1-rc.8 pin', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
-        adcpVersion: '3.1-rc.7',
+        adcpVersion: '3.1-rc.8',
         taskRegistry,
       });
       const tools = registeredTools(server);
@@ -1543,7 +1543,20 @@ describe('createAdcpServer', () => {
       assert.ok(tools.includes('list_tasks'));
     });
 
-    it('validates rc.7 task tool requests on the built server', async () => {
+    it('registers protocol task tools for the 3.1-rc family alias', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        adcpVersion: '3.1-rc',
+        taskRegistry,
+      });
+      const tools = registeredTools(server);
+      assert.ok(tools.includes('get_task_status'));
+      assert.ok(tools.includes('list_tasks'));
+    });
+
+    it('validates protocol task tool requests on the built server', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
@@ -1610,7 +1623,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
     });
 
-    it('rejects include_history on rc.7 task polling aliases because history is not stored', async () => {
+    it('rejects include_history on protocol task polling aliases because history is not stored', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const owned = await taskRegistry.create({
         tool: 'sync_creatives',
@@ -1643,7 +1656,7 @@ describe('createAdcpServer', () => {
       assert.match(listed.structuredContent.adcp_error.message, /include_history/);
     });
 
-    it('validates rc.7 task tool responses on the built server', async () => {
+    it('validates protocol task tool responses on the built server', async () => {
       const invalidTask = {
         taskId: 'task_invalid_status',
         tool: 'sync_creatives',
@@ -1727,7 +1740,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'creative');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.1-rc.7');
+      assert.strictEqual(status.adcp_version, '3.1-rc.8');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -1752,7 +1765,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.1-rc.7');
+      assert.strictEqual(listed.adcp_version, '3.1-rc.8');
 
       const buyerTwoList = await callTool(
         server,
@@ -1766,7 +1779,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.1-rc.7');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.1-rc.8');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -1789,7 +1802,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(tooManyTaskIds.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     });
 
-    it('uses the rc.7 task protocol map for media-buy event task filters', async () => {
+    it('uses the task protocol map for media-buy event task filters', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const owned = await taskRegistry.create({
         tool: 'sync_event_sources',
@@ -2110,12 +2123,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.7');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.8');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.1-rc.7');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.1-rc.8');
 
       const contextLeak = await callToolRaw(
         server,

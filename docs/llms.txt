@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
 > Generated at: 2026-06-04
-> Library: @adcp/sdk v9.0.0-beta.22
+> Library: @adcp/sdk v9.0.0-beta.23
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -359,7 +359,7 @@ Request parameters for discovering available advertising products.
 
 **Request:**
 - Required: `buying_mode: 'brief' | 'wholesale' | 'refine'`
-- Optional: `brief: string`, `refine: object[]`, `brand: Brand Ref`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: object[]`, `filters: Product Filters`, `property_list: Property List Ref`, +7 more
+- Optional: `brief: string`, `refine: object[]`, `brand: Brand Ref`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: object[]`, `filters: Product Filters`, `property_list: Property List Ref`, +8 more
 
 **Response (success branch):**
 - Optional: `products: object[]`, `extensions: object`, `proposals: object[]`, `errors: object[]`, `property_list_applied: boolean`, `catalog_applied: boolean`, `refinement_applied: object[]`, `incomplete: object[]`, +8 more
@@ -619,7 +619,7 @@ Request parameters for validating a creative manifest against canonical formats 
 Request parameters for discovering signals based on description.
 
 **Request:**
-- Optional: `discovery_mode: 'brief' | 'wholesale'`, `account: Account Ref`, `signal_spec: string`, `signal_refs: object[]`, `signal_ids: object[]`, `destinations: object[]`, `countries: string[]`, `filters: Signal Filters`, +6 more
+- Optional: `discovery_mode: 'brief' | 'wholesale'`, `account: Account Ref`, `signal_spec: string`, `signal_refs: object[]`, `signal_ids: object[]`, `destinations: object[]`, `countries: string[]`, `filters: Signal Filters`, +7 more
 
 **Response (success branch):**
 - Optional: `signals: object[]`, `errors: object[]`, `incomplete: object[]`, `wholesale_feed_version: string`, `pricing_version: string`, `cache_scope: 'public' | 'account'`, `unchanged: 'true'`, `pagination: Pagination Response`, +2 more

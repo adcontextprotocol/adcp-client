@@ -30,8 +30,8 @@
  * 11 optional; unified hybrid on `create_media_buy` / `sync_creatives`),
  * `CreativeBuilderPlatform` (build_creative / sync_creatives unified
  * hybrid, optional preview_creative sync-only, optional refineCreative),
- * `AudiencePlatform.syncAudiences`, `SignalsPlatform` (activate_signal,
- * list_signals), `AccountStore` (reportUsage, getAccountFinancials),
+ * `AudiencePlatform.syncAudiences`, `SignalsPlatform` (get_signals /
+ * activate_signal), `AccountStore` (reportUsage, getAccountFinancials),
  * `ContentStandardsPlatform`, `CampaignGovernancePlatform`,
  * `TenantRegistry` (multi-tenant health), `createPostgresTaskRegistry`,
  * `tasks/get` wire handler, per-server + module-level `publishStatusChange`.
@@ -1388,7 +1388,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ),
     signals: mergeHandlers(
       opts.signals,
-      buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      buildSignalsHandlers(
+        platform,
+        taskRegistry,
+        taskWebhookEmit,
+        observability,
+        fwLogger,
+        {
+          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+        },
+        ctxFor,
+        effectiveCtxMetadata
+      ),
       'signals',
       mergeOpts
     ),
@@ -3971,14 +3983,18 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
+            const push = extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            });
             // Pick dispatch target: ProposalManager (when wired) takes
             // ownership of get_products; sales is the v1 fallback.
             // Refine routing per Python's _select_proposal_method:
             // refine_products iff buying_mode='refine' AND
             // capabilities.refine AND the manager implements it.
-            let result: RequireCacheScopeWhenProducts<
+            type GetProductsPayload = RequireCacheScopeWhenProducts<
               ServerPayload<import('../../../types/tools.generated').GetProductsResponse>
             >;
+            let result: GetProductsPayload | TaskHandoff<GetProductsPayload>;
             if (proposalManager) {
               const buyingMode = (params as { buying_mode?: string }).buying_mode;
               const useRefine =
@@ -3991,29 +4007,47 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             } else {
               result = await sales!.getProducts!(params, reqCtx);
             }
-            // Auto-store products: persist each Product's wire shape +
-            // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
-            // calls referencing product_id can hydrate the full Product
-            // automatically (publisher sees `req.packages[i].product`).
-            await autoStoreResources(
-              ctxMetadataStore,
-              reqCtx.account?.id,
-              'product',
-              (result as { products?: readonly unknown[] })?.products,
-              'product_id',
-              logger
+            return routeIfHandoff(
+              taskRegistry,
+              {
+                tool: 'get_products',
+                accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+                observability,
+                logger,
+              },
+              result,
+              async terminalResult => {
+                // Auto-store products: persist each Product's wire shape +
+                // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
+                // calls referencing product_id can hydrate the full Product
+                // automatically (publisher sees `req.packages[i].product`).
+                await autoStoreResources(
+                  ctxMetadataStore,
+                  reqCtx.account?.id,
+                  'product',
+                  (terminalResult as { products?: readonly unknown[] })?.products,
+                  'product_id',
+                  logger
+                );
+                // v1.5 seam: persist proposals[] as DRAFT records (with
+                // typed recipes pulled from Product.implementation_config)
+                // so subsequent finalize / create_media_buy can hydrate.
+                if (proposalStore) {
+                  await maybePersistDraftAfterGetProducts({
+                    response: terminalResult,
+                    store: proposalStore,
+                    ctx: reqCtx as unknown as { account: { id: string } },
+                  });
+                }
+                return terminalResult;
+              }
             );
-            // v1.5 seam: persist proposals[] as DRAFT records (with
-            // typed recipes pulled from Product.implementation_config)
-            // so subsequent finalize / create_media_buy can hydrate.
-            if (proposalStore) {
-              await maybePersistDraftAfterGetProducts({
-                response: result,
-                store: proposalStore,
-                ctx: reqCtx as unknown as { account: { id: string } },
-              });
-            }
-            return result;
           },
           r => r
         );
@@ -4588,9 +4622,13 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
+  taskRegistry: TaskRegistry,
+  taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
+  observability: DecisioningObservabilityHooks | undefined,
+  logger: AdcpLogger,
+  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
   ctxFor: CtxForFn,
-  ctxMetadataStore: CtxMetadataStore | undefined,
-  logger: AdcpLogger
+  ctxMetadataStore: CtxMetadataStore | undefined
 ): SignalsHandlers<Account> | undefined {
   const signals = platform.signals;
   if (!signals) return undefined;
@@ -4599,28 +4637,49 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
+          const push = extractPushConfig(params, logger, {
+            allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+          });
           const result = await signals.getSignals(params, reqCtx);
-          // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
-          // objects), not bare strings — but the helper's truncation-detection
-          // is purely length-based, so the object element type is irrelevant.
-          warnIfTruncatedMultiIdResponse(
-            'getSignals',
-            'signal_ids',
-            (params as { signal_ids?: readonly unknown[] }).signal_ids,
-            (result as { signals?: readonly unknown[] })?.signals,
-            logger
+          return routeIfHandoff(
+            taskRegistry,
+            {
+              tool: 'get_signals',
+              accountId: reqCtx.account.id,
+              ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
+              pushNotificationUrl: push.url,
+              pushNotificationToken: push.token,
+              pushNotificationOperationId: push.operationId,
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+              observability,
+              logger,
+            },
+            result,
+            async terminalResult => {
+              // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
+              // objects), not bare strings — but the helper's truncation-detection
+              // is purely length-based, so the object element type is irrelevant.
+              warnIfTruncatedMultiIdResponse(
+                'getSignals',
+                'signal_ids',
+                (params as { signal_ids?: readonly unknown[] }).signal_ids,
+                (terminalResult as { signals?: readonly unknown[] })?.signals,
+                logger
+              );
+              // Auto-store signals so subsequent activate_signal can hydrate
+              // `req.signal` from the publisher's prior catalog entry.
+              await autoStoreResources(
+                ctxMetadataStore,
+                reqCtx.account?.id,
+                'signal',
+                (terminalResult as { signals?: readonly unknown[] })?.signals,
+                'signal_agent_segment_id',
+                logger
+              );
+              return terminalResult;
+            }
           );
-          // Auto-store signals so subsequent activate_signal can hydrate
-          // `req.signal` from the publisher's prior catalog entry.
-          await autoStoreResources(
-            ctxMetadataStore,
-            reqCtx.account?.id,
-            'signal',
-            (result as { signals?: readonly unknown[] })?.signals,
-            'signal_agent_segment_id',
-            logger
-          );
-          return result;
         },
         r => r
       );

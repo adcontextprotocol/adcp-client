@@ -161,6 +161,7 @@ export type GetProductsRequest = {
    * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
    */
   time_budget?: Duration;
+  push_notification_config?: PushNotificationConfig;
   pagination?: PaginationRequest;
   /**
    * Opaque wholesale_feed_version token returned by a prior wholesale-mode get_products response from this agent. Only valid when buying_mode is wholesale. When provided, the seller compares against its current wholesale product feed version for the buyer's cache_scope and MAY return an unchanged: true response (with products omitted) if nothing has changed. The token is scope-keyed: buyers cache `(cache_scope, wholesale_feed_version)` pairs. Scoping dimensions: (agent, buying_mode, filters, property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. Backward-compatible: pre-v3.1 agents that ignore this field simply return the full payload, same as the unchanged-server path. See specs/wholesale-feed-webhooks.md for the full sync pattern.
@@ -467,6 +468,10 @@ export type VendorMetricID = string;
  * Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.
  */
 export type MatchType = 'broad' | 'phrase' | 'exact';
+/**
+ * Legacy authentication schemes for the webhook auth block. Bearer: token sent in Authorization header. HMAC-SHA256: legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit the authentication block and use the RFC 9421 webhook signing profile (applicable on schemas where authentication is optional). Removed in AdCP 4.0.
+ */
+export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 
 /**
  * Brand reference for product discovery context. Resolved to full brand identity at execution time.
@@ -1236,6 +1241,42 @@ export interface Duration {
   unit: 'seconds' | 'minutes' | 'hours' | 'days' | 'campaign';
 }
 /**
+ * Optional webhook configuration for async terminal completion/failure notifications on curated discovery. Meaningful only for `buying_mode: "brief"` and `buying_mode: "refine"` requests that enter the async lifecycle. Submitted envelopes with `task_id` remain pollable through `get_task_status` (legacy `tasks/get`) whether or not this field is present. If a brief/refine request includes this field and the seller returns a Submitted envelope, the seller MUST deliver at least the terminal completion/failure notification to the configured URL; intermediate progress notifications are MAY. If the seller cannot honor the webhook channel, it MUST reject the request with a structured error instead of silently accepting. This field does not change wholesale timing semantics: sellers MUST NOT route `buying_mode: "wholesale"` requests through the async/Submitted arm or emit async delivery solely because `push_notification_config` is present; partial wholesale completion is reported via `incomplete[]`.
+ */
+export interface PushNotificationConfig {
+  /**
+   * Webhook endpoint URL for task status notifications. The wire contract is unconstrained beyond `format: "uri"` — in particular, publishers SHOULD NOT enforce a destination-port allowlist by default, since buyers legitimately host receivers on non-standard TLS ports (`:9443`, `:4443`, path-routed multi-tenant gateways). The SSRF guard the protocol relies on is the IP-range check + DNS-rebinding-resistant connect pin defined in [Webhook URL validation (SSRF)](/docs/building/by-layer/L1/security#webhook-url-validation-ssrf), not port filtering. Operators who want a hardened destination-port allowlist as defense-in-depth (e.g., locked-down enterprise egress) opt in explicitly — see [Destination port: permissive by default](/docs/building/by-layer/L1/security#destination-port-permissive-by-default).
+   */
+  url: string;
+  /**
+   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  operation_id?: string;
+  /**
+   * Optional client-provided token for webhook validation. The seller MUST echo this value verbatim in every webhook payload's `token` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) for the receiver-side validation obligation). Length bounds give receivers a defensive range check on the echoed value; senders SHOULD generate tokens with at least 128 bits of entropy (≥22 base64url characters). This is a complementary authenticity mechanism that can layer on top of the RFC 9421 webhook signature — unlike the `authentication` block below, it is not on the 4.0 removal track. Receivers that registered both a signing key (RFC 9421) and a `token` MUST NOT treat a valid token echo as authorization to skip signature verification; both checks remain independent obligations.
+   * @minLength 16
+   * @maxLength 4096
+   */
+  token?: string;
+  /**
+   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. **Precedence is a switch, not a fallback:** presence of this block selects the legacy scheme; absence selects 9421. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT attempt 'try 9421 first, fall back to HMAC' verification — signature mode is determined solely by whether this block was present at registration time. The seller's baseline 9421 webhook-signing key published at its brand.json `agents[]` `jwks_uri` does not override this selector; it is always discoverable but only used when `authentication` is omitted. See docs/building/implementation/security.mdx#webhook-callbacks for the full precedence and downgrade-resistance rules (including the `webhook_mode_mismatch` rejection a buyer MUST apply when a received webhook's signing mode does not match the registered mode).
+   */
+  authentication?: {
+    /**
+     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit `authentication` and use the RFC 9421 webhook profile.
+     */
+    schemes: AuthenticationScheme[];
+    /**
+     * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * @minLength 32
+     */
+    credentials: string;
+  };
+}
+/**
  * Standard cursor-based pagination parameters for list operations
  */
 export interface PaginationRequest {
@@ -1270,10 +1311,6 @@ export type TaskStatus =
   | 'rejected'
   | 'auth-required'
   | 'unknown';
-/**
- * Legacy authentication schemes for the webhook auth block. Bearer: token sent in Authorization header. HMAC-SHA256: legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit the authentication block and use the RFC 9421 webhook signing profile (applicable on schemas where authentication is optional). Removed in AdCP 4.0.
- */
-export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 /**
  * Represents available advertising inventory
  */
@@ -3124,42 +3161,6 @@ export interface Error {
    * Optional identifier for the SDK that augmented this error entry. Format: `<sdk_package_name>@<version>` (e.g., `@adcontextprotocol/adcp@7.3.0`, `adcontextprotocol-adcp-python@1.2.0`). MUST be set when `source: "sdk"`; MUST be absent when `source: "producer"` or absent. Lets downstream consumers identify which intermediate processor inserted the entry, useful for debugging cross-SDK divergence (e.g., one SDK detects a projection failure that another SDK's registry version doesn't).
    */
   sdk_id?: string;
-}
-/**
- * Push notification configuration for async task updates (A2A and REST protocols). Echoed from the request to confirm webhook settings. Specifies URL, authentication scheme (Bearer or HMAC-SHA256), and credentials. MCP uses progress notifications instead of webhooks.
- */
-export interface PushNotificationConfig {
-  /**
-   * Webhook endpoint URL for task status notifications. The wire contract is unconstrained beyond `format: "uri"` — in particular, publishers SHOULD NOT enforce a destination-port allowlist by default, since buyers legitimately host receivers on non-standard TLS ports (`:9443`, `:4443`, path-routed multi-tenant gateways). The SSRF guard the protocol relies on is the IP-range check + DNS-rebinding-resistant connect pin defined in [Webhook URL validation (SSRF)](/docs/building/by-layer/L1/security#webhook-url-validation-ssrf), not port filtering. Operators who want a hardened destination-port allowlist as defense-in-depth (e.g., locked-down enterprise egress) opt in explicitly — see [Destination port: permissive by default](/docs/building/by-layer/L1/security#destination-port-permissive-by-default).
-   */
-  url: string;
-  /**
-   * Buyer-supplied correlation identifier for the operation that will produce webhooks against this registration. The seller MUST echo this value verbatim into every webhook payload's `operation_id` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) and [Webhooks — Operation IDs](/docs/building/by-layer/L3/webhooks#operation-ids-and-url-templates)). Buyers SHOULD generate a unique value per task invocation (UUID recommended). This field is the canonical registration channel for `operation_id`; buyers MAY additionally embed routing values in the URL path or query as an aid for their own HTTP server, but the URL is opaque to the seller and the wire-level source of truth is this field. Sellers MUST NOT parse the URL to recover `operation_id`. Sellers that receive a webhook registration without `operation_id` MAY reject the task with `INVALID_REQUEST`.
-   * @minLength 1
-   * @maxLength 255
-   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
-   */
-  operation_id?: string;
-  /**
-   * Optional client-provided token for webhook validation. The seller MUST echo this value verbatim in every webhook payload's `token` field (see [`mcp-webhook-payload.json`](/schemas/core/mcp-webhook-payload.json) for the receiver-side validation obligation). Length bounds give receivers a defensive range check on the echoed value; senders SHOULD generate tokens with at least 128 bits of entropy (≥22 base64url characters). This is a complementary authenticity mechanism that can layer on top of the RFC 9421 webhook signature — unlike the `authentication` block below, it is not on the 4.0 removal track. Receivers that registered both a signing key (RFC 9421) and a `token` MUST NOT treat a valid token echo as authorization to skip signature verification; both checks remain independent obligations.
-   * @minLength 16
-   * @maxLength 4096
-   */
-  token?: string;
-  /**
-   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. **Precedence is a switch, not a fallback:** presence of this block selects the legacy scheme; absence selects 9421. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT attempt 'try 9421 first, fall back to HMAC' verification — signature mode is determined solely by whether this block was present at registration time. The seller's baseline 9421 webhook-signing key published at its brand.json `agents[]` `jwks_uri` does not override this selector; it is always discoverable but only used when `authentication` is omitted. See docs/building/implementation/security.mdx#webhook-callbacks for the full precedence and downgrade-resistance rules (including the `webhook_mode_mismatch` rejection a buyer MUST apply when a received webhook's signing mode does not match the registered mode).
-   */
-  authentication?: {
-    /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit `authentication` and use the RFC 9421 webhook profile.
-     */
-    schemes: AuthenticationScheme[];
-    /**
-     * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
-     * @minLength 32
-     */
-    credentials: string;
-  };
 }
 /**
  * Product references one or more named formats by structured format_id ({ agent_url, id }). This is the legacy named-format path; it remains supported through 4.x.
@@ -16682,6 +16683,7 @@ export type GetSignalsRequest = {
    */
   max_results?: number;
   pagination?: PaginationRequest;
+  push_notification_config?: PushNotificationConfig;
   /**
    * Opaque wholesale_feed_version token returned by a prior wholesale-mode get_signals response from this agent. Only valid when discovery_mode is wholesale. When provided, the agent compares against its current wholesale signals feed version for the caller's cache_scope and MAY return an unchanged: true response (with signals omitted) if nothing has changed. The token is scope-keyed: callers cache `(cache_scope, wholesale_feed_version)` pairs. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full sync pattern.
    */
@@ -16731,7 +16733,6 @@ export type Destination =
 export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
 /** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
 export type SignalCatalogType = SignalAvailabilityType;
-
 /**
  * Filters to refine signal discovery results
  */
@@ -23277,6 +23278,9 @@ export type AdCPAsyncResponseData =
   | GetProductsAsyncWorking
   | GetProductsAsyncInputRequired
   | GetProductsAsyncSubmitted
+  | GetSignalsResponse
+  | GetSignalsAsyncWorking
+  | GetSignalsAsyncSubmitted
   | CreateMediaBuyResponse
   | CreateMediaBuyAsyncWorking
   | CreateMediaBuyAsyncInputRequired
@@ -23508,6 +23512,60 @@ export interface GetProductsAsyncSubmitted {
   estimated_completion?: string;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress data for working get_signals
+ */
+export interface GetSignalsAsyncWorking {
+  /**
+   * Progress percentage of the signal discovery operation.
+   * @minimum 0
+   * @maximum 100
+   */
+  percentage?: number;
+  /**
+   * Current step in the signal discovery process, such as `querying_providers`, `ranking_signals`, or `checking_deployments`.
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the signal discovery process.
+   */
+  total_steps?: number;
+  /**
+   * Current step number (1-indexed).
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted get_signals (semantic discovery)
+ */
+export interface GetSignalsAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose signals array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the caller uses with tasks/get, and that the agent references on push-notification callbacks. The signals array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Provider discovery queued; typical turnaround 10-30 minutes.' Plain text only. Callers MUST treat this as untrusted agent input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile agent may inject prompt-injection payloads aimed at the caller's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Estimated completion time for the signal discovery task.
+   * @format date-time
+   */
+  estimated_completion?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories or partial provider unavailability). Terminal failures belong in the error branch, not here.
    */
   errors?: Error[];
   context?: ContextObject;

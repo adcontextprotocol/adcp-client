@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
 > Generated at: 2026-06-04
-> @adcp/sdk v9.0.0-beta.22
+> @adcp/sdk v9.0.0-beta.23
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -317,6 +317,7 @@ _Request:_
   property_list: Property List Ref
   fields: string[]
   time_budget
+  push_notification_config: Push Notification Config
   pagination: Pagination Request
   if_wholesale_feed_version: string
   if_pricing_version: string
@@ -978,6 +979,7 @@ _Request:_
   fields: string[]
   max_results: integer
   pagination: Pagination Request
+  push_notification_config: Push Notification Config
   if_wholesale_feed_version: string
   if_pricing_version: string
   context: Context

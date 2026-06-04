@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-06-04T12:59:28.694Z
+// Generated at: 2026-06-04T19:40:20.198Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1534,6 +1534,15 @@ export const GetProductsAsyncWorkingSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const GetSignalsAsyncWorkingSchema = z.object({
+    percentage: z.number().min(0).max(100).optional(),
+    current_step: z.string().optional(),
+    total_steps: z.number().optional(),
+    step_number: z.number().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CreateMediaBuyAsyncWorkingSchema = z.object({
     percentage: z.number().min(0).max(100).optional(),
     current_step: z.string().optional(),
@@ -1604,6 +1613,32 @@ export const SyncCatalogsAsyncInputRequiredSchema = z.object({
 }).passthrough();
 
 export const ProposalStatusSchema = z.union([z.literal("draft"), z.literal("committed")]);
+
+export const RestrictedAttributeSchema = z.union([z.literal("racial_ethnic_origin"), z.literal("political_opinions"), z.literal("religious_beliefs"), z.literal("trade_union_membership"), z.literal("health_data"), z.literal("sex_life_sexual_orientation"), z.literal("genetic_data"), z.literal("biometric_data"), z.literal("age"), z.literal("familial_status")]);
+
+export const ConsentBasisSchema = z.union([z.literal("consent"), z.literal("legitimate_interest"), z.literal("contract"), z.literal("legal_obligation")]);
+
+export const SignalAvailabilityTypeSchema = z.union([z.literal("marketplace"), z.literal("custom"), z.literal("owned")]);
+
+export const SignalCatalogTypeSchema = SignalAvailabilityTypeSchema;
+
+export const DeploymentSchema = z.union([z.object({
+        type: z.literal("platform"),
+        platform: z.string(),
+        account: z.string().optional(),
+        is_live: z.boolean(),
+        activation_key: ActivationKeySchema.optional(),
+        estimated_activation_duration_minutes: z.number().min(0).optional(),
+        deployed_at: z.iso.datetime().optional()
+    }).passthrough(), z.object({
+        type: z.literal("agent"),
+        agent_url: z.string(),
+        account: z.string().optional(),
+        is_live: z.boolean(),
+        activation_key: ActivationKeySchema.optional(),
+        estimated_activation_duration_minutes: z.number().min(0).optional(),
+        deployed_at: z.iso.datetime().optional()
+    }).passthrough()]);
 
 export const ErrorSchema = z.object({
     code: z.string().min(1).max(64),
@@ -1825,6 +1860,66 @@ export const InsertionOrderSchema = z.object({
 }).passthrough();
 
 export const GetProductsAsyncSubmittedSchema = z.object({
+    status: z.literal("submitted"),
+    task_id: z.string(),
+    message: z.string().max(2000).optional(),
+    estimated_completion: z.iso.datetime().optional(),
+    errors: z.array(ErrorSchema).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const SignalModelingDisclosureSchema = z.object({
+    required: z.boolean(),
+    jurisdictions: z.array(z.object({
+        country: z.string().regex(/^[A-Z]{2}$/),
+        region: z.string().optional(),
+        regulation: z.string(),
+        disclosure_text: z.string().optional(),
+        disclosure_url: z.string().optional(),
+        audience: z.union([z.literal("buyer"), z.literal("data_subject"), z.literal("regulator"), z.literal("public")]).optional()
+    }).passthrough()).optional(),
+    notes: z.string().max(2000).optional()
+}).passthrough();
+
+export const ForecastPointSchema = z.object({
+    label: z.string().max(128).optional(),
+    budget: z.number().min(0).optional(),
+    product_id: z.string().optional(),
+    dimensions: ForecastPointDimensionsSchema.optional(),
+    metrics: z.object({
+        audience_size: ForecastRangeSchema.optional(),
+        reach: ForecastRangeSchema.optional(),
+        frequency: ForecastRangeSchema.optional(),
+        impressions: ForecastRangeSchema.optional(),
+        clicks: ForecastRangeSchema.optional(),
+        spend: ForecastRangeSchema.optional(),
+        views: ForecastRangeSchema.optional(),
+        completed_views: ForecastRangeSchema.optional(),
+        grps: ForecastRangeSchema.optional(),
+        engagements: ForecastRangeSchema.optional(),
+        follows: ForecastRangeSchema.optional(),
+        saves: ForecastRangeSchema.optional(),
+        profile_visits: ForecastRangeSchema.optional(),
+        measured_impressions: ForecastRangeSchema.optional(),
+        downloads: ForecastRangeSchema.optional(),
+        plays: ForecastRangeSchema.optional(),
+        coverage_rate: ForecastRangeSchema.and(z.object({
+            low: z.record(z.string(), z.unknown()).optional(),
+            mid: z.record(z.string(), z.unknown()).optional(),
+            high: z.record(z.string(), z.unknown()).optional()
+        }).passthrough()).optional()
+    }).passthrough().catchall(ForecastRangeSchema),
+    viewability: z.record(z.string(), z.unknown()).optional(),
+    vendor_metric_values: z.array(ForecastVendorMetricValueSchema).optional()
+}).passthrough();
+
+export const DateRangeSchema = z.object({
+    start: z.iso.date(),
+    end: z.iso.date()
+}).passthrough();
+
+export const GetSignalsAsyncSubmittedSchema = z.object({
     status: z.literal("submitted"),
     task_id: z.string(),
     message: z.string().max(2000).optional(),
@@ -3064,6 +3159,25 @@ export const GetProductsSubmittedSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const GetSignalsWorkingSchema = z.object({
+    percentage: z.number().min(0).max(100).optional(),
+    current_step: z.string().optional(),
+    total_steps: z.number().optional(),
+    step_number: z.number().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const GetSignalsSubmittedSchema = z.object({
+    status: z.literal("submitted"),
+    task_id: z.string(),
+    message: z.string().max(2000).optional(),
+    estimated_completion: z.iso.datetime().optional(),
+    errors: z.array(ErrorSchema).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CreateMediaBuyWorkingSchema = z.object({
     percentage: z.number().min(0).max(100).optional(),
     current_step: z.string().optional(),
@@ -3864,8 +3978,6 @@ export const ProvidePerformanceFeedbackErrorSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ConsentBasisSchema = z.union([z.literal("consent"), z.literal("legitimate_interest"), z.literal("contract"), z.literal("legal_obligation")]);
-
 export const AudienceMemberSchema = z.object({
     external_id: z.string(),
     hashed_email: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -4252,30 +4364,6 @@ export const ActivateSignalRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ActivateSignalErrorSchema = z.object({
-    errors: z.array(ErrorSchema),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const DeploymentSchema = z.union([z.object({
-        type: z.literal("platform"),
-        platform: z.string(),
-        account: z.string().optional(),
-        is_live: z.boolean(),
-        activation_key: ActivationKeySchema.optional(),
-        estimated_activation_duration_minutes: z.number().min(0).optional(),
-        deployed_at: z.iso.datetime().optional()
-    }).passthrough(), z.object({
-        type: z.literal("agent"),
-        agent_url: z.string(),
-        account: z.string().optional(),
-        is_live: z.boolean(),
-        activation_key: ActivationKeySchema.optional(),
-        estimated_activation_duration_minutes: z.number().min(0).optional(),
-        deployed_at: z.iso.datetime().optional()
-    }).passthrough()]);
-
 export const ActivateSignalSuccessSchema = z.object({
     deployments: z.array(DeploymentSchema),
     sandbox: z.boolean().optional(),
@@ -4283,9 +4371,11 @@ export const ActivateSignalSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const SignalAvailabilityTypeSchema = z.union([z.literal("marketplace"), z.literal("custom"), z.literal("owned")]);
-
-export const SignalCatalogTypeSchema = SignalAvailabilityTypeSchema;
+export const ActivateSignalErrorSchema = z.object({
+    errors: z.array(ErrorSchema),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const SignalFiltersSchema = z.object({
     catalog_types: z.array(SignalAvailabilityTypeSchema).optional(),
@@ -4294,21 +4384,6 @@ export const SignalFiltersSchema = z.object({
     max_percent: z.number().min(0).max(100).optional(),
     min_coverage_percentage: z.number().min(0).max(100).optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const SignalListingSchema = z.object({
-    signal_ref: SignalRefSchema.optional(),
-    signal_id: SignalIDSchema.optional(),
-    name: z.string().optional(),
-    description: z.string().optional(),
-    methodology_url: z.string().optional(),
-    last_updated: z.iso.datetime().optional(),
-    value_type: SignalValueTypeSchema.optional(),
-    categories: z.array(z.string()).optional(),
-    range: z.object({
-        min: z.number(),
-        max: z.number()
-    }).passthrough().optional()
 }).passthrough();
 
 export const SIGetOfferingRequestSchema = z.object({
@@ -4707,11 +4782,6 @@ export const CreativeBriefSchema = z.object({
         }).passthrough()).optional(),
         prohibited_claims: z.array(z.string()).optional()
     }).passthrough().optional()
-}).passthrough();
-
-export const DateRangeSchema = z.object({
-    start: z.iso.date(),
-    end: z.iso.date()
 }).passthrough();
 
 export const DestinationItemSchema = z.object({
@@ -5271,51 +5341,68 @@ export const SellerAgentReferenceSchema = z.object({
     id: z.string().min(1).regex(/^[a-zA-Z0-9_-]+$/).optional()
 }).passthrough();
 
-export const ForecastPointSchema = z.object({
-    label: z.string().max(128).optional(),
-    budget: z.number().min(0).optional(),
-    product_id: z.string().optional(),
-    dimensions: ForecastPointDimensionsSchema.optional(),
-    metrics: z.object({
-        audience_size: ForecastRangeSchema.optional(),
-        reach: ForecastRangeSchema.optional(),
-        frequency: ForecastRangeSchema.optional(),
-        impressions: ForecastRangeSchema.optional(),
-        clicks: ForecastRangeSchema.optional(),
-        spend: ForecastRangeSchema.optional(),
-        views: ForecastRangeSchema.optional(),
-        completed_views: ForecastRangeSchema.optional(),
-        grps: ForecastRangeSchema.optional(),
-        engagements: ForecastRangeSchema.optional(),
-        follows: ForecastRangeSchema.optional(),
-        saves: ForecastRangeSchema.optional(),
-        profile_visits: ForecastRangeSchema.optional(),
-        measured_impressions: ForecastRangeSchema.optional(),
-        downloads: ForecastRangeSchema.optional(),
-        plays: ForecastRangeSchema.optional(),
-        coverage_rate: ForecastRangeSchema.and(z.object({
-            low: z.record(z.string(), z.unknown()).optional(),
-            mid: z.record(z.string(), z.unknown()).optional(),
-            high: z.record(z.string(), z.unknown()).optional()
-        }).passthrough()).optional()
-    }).passthrough().catchall(ForecastRangeSchema),
-    viewability: z.record(z.string(), z.unknown()).optional(),
-    vendor_metric_values: z.array(ForecastVendorMetricValueSchema).optional()
-}).passthrough();
-
-export const RestrictedAttributeSchema = z.union([z.literal("racial_ethnic_origin"), z.literal("political_opinions"), z.literal("religious_beliefs"), z.literal("trade_union_membership"), z.literal("health_data"), z.literal("sex_life_sexual_orientation"), z.literal("genetic_data"), z.literal("biometric_data"), z.literal("age"), z.literal("familial_status")]);
-
-export const SignalModelingDisclosureSchema = z.object({
-    required: z.boolean(),
-    jurisdictions: z.array(z.object({
-        country: z.string().regex(/^[A-Z]{2}$/),
-        region: z.string().optional(),
-        regulation: z.string(),
-        disclosure_text: z.string().optional(),
-        disclosure_url: z.string().optional(),
-        audience: z.union([z.literal("buyer"), z.literal("data_subject"), z.literal("regulator"), z.literal("public")]).optional()
-    }).passthrough()).optional(),
-    notes: z.string().max(2000).optional()
+export const SignalDefinitionEnrichmentSchema = z.object({
+    restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
+    policy_categories: z.array(z.string()).optional(),
+    taxonomy: z.object({
+        ref: z.string(),
+        version: z.string().optional(),
+        segtax: z.number().min(1).optional(),
+        etag: z.string().optional(),
+        values: z.array(z.object({
+            id: z.string().min(1),
+            path: z.string().optional(),
+            modifiers: z.array(z.string()).optional()
+        }).passthrough()),
+        value_mappings: z.array(z.object({
+            value: z.string(),
+            taxonomy_value_id: z.string(),
+            path: z.string().optional(),
+            modifiers: z.array(z.string()).optional()
+        }).passthrough()).optional(),
+        parent_match_behavior: z.union([z.literal("exact_only"), z.literal("descendants_supported"), z.literal("unknown")]).optional()
+    }).passthrough().optional(),
+    segmentation_criteria: z.string().max(500).optional(),
+    criteria_url: z.string().optional(),
+    data_sources: z.array(z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])).optional(),
+    methodology: z.union([z.literal("observed"), z.literal("declared"), z.literal("derived"), z.literal("inferred"), z.literal("modeled")]).optional(),
+    audience_expansion: z.boolean().optional(),
+    device_expansion: z.boolean().optional(),
+    refresh_cadence: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
+    lookback_window: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
+    onboarder: z.object({
+        match_keys: z.array(z.union([z.literal("name"), z.literal("address"), z.literal("email"), z.literal("postal"), z.literal("lat_long"), z.literal("mobile_id"), z.literal("cookie_id"), z.literal("ip"), z.literal("customer_id"), z.literal("phone")])),
+        pre_onboarding_audience_expansion: z.boolean().optional(),
+        pre_onboarding_device_expansion: z.boolean().optional(),
+        pre_onboarding_precision_level: z.union([z.literal("individual"), z.literal("household"), z.literal("business"), z.literal("geography")]).optional()
+    }).passthrough().optional(),
+    countries: z.array(z.string()).optional(),
+    consent_basis: z.array(ConsentBasisSchema).optional(),
+    art9_basis: z.union([z.literal("explicit_consent"), z.literal("manifestly_made_public"), z.literal("substantial_public_interest"), z.literal("vital_interests")]).optional(),
+    modeling: z.object({
+        method: z.union([z.literal("lookalike"), z.literal("supervised"), z.literal("embedding"), z.literal("rules")]),
+        seed_source: z.object({
+            type: z.union([z.literal("first_party_crm"), z.literal("panel"), z.literal("declared_survey"), z.literal("transactional"), z.literal("behavioral")]),
+            provider_signed: z.boolean()
+        }).passthrough(),
+        training_data_jurisdictions: z.array(z.string()),
+        ai_act_risk_class: z.union([z.literal("minimal"), z.literal("limited"), z.literal("high_risk")]),
+        disclosure: SignalModelingDisclosureSchema.optional()
+    }).passthrough().optional(),
+    data_subject_rights: z.object({
+        upstream_source_domain: z.string().max(253).optional(),
+        channels: z.array(z.object({
+            rights: z.array(z.union([z.literal("access"), z.literal("rectification"), z.literal("erasure"), z.literal("portability"), z.literal("objection")])),
+            url: z.string().regex(/^https:\/\//).optional(),
+            email: z.email().optional(),
+            languages: z.array(z.string()).optional(),
+            countries: z.array(z.string()).optional()
+        }).passthrough()),
+        response_sla_days: z.number().min(1).max(90).optional(),
+        ccpa_opt_out_url: z.string().regex(/^https:\/\//).optional()
+    }).passthrough().optional(),
+    last_updated: z.iso.datetime().optional(),
+    dts_compliant_version: z.string().optional()
 }).passthrough();
 
 export const SignalDefinitionSchema = z.object({
@@ -6109,6 +6196,21 @@ export const ReportingCapabilitiesSchema = z.object({
     date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
     windowed_pull_granularities: z.array(ReportingFrequencySchema).optional(),
     measurement_windows: z.array(MeasurementWindowSchema).optional()
+}).passthrough();
+
+export const SignalListingSchema = z.object({
+    signal_ref: SignalRefSchema.optional(),
+    signal_id: SignalIDSchema.optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    methodology_url: z.string().optional(),
+    last_updated: z.iso.datetime().optional(),
+    value_type: SignalValueTypeSchema.optional(),
+    categories: z.array(z.string()).optional(),
+    range: z.object({
+        min: z.number(),
+        max: z.number()
+    }).passthrough().optional()
 }).passthrough();
 
 export const ProductSignalTargetingOptionSchema = z.object({
@@ -7213,6 +7315,7 @@ export const GetSignalsRequestSchema = z.object({
     fields: z.array(z.union([z.literal("signal_ref"), z.literal("signal_id"), z.literal("signal_agent_segment_id"), z.literal("name"), z.literal("description"), z.literal("value_type"), z.literal("categories"), z.literal("range"), z.literal("signal_type"), z.literal("data_provider"), z.literal("coverage_percentage"), z.literal("deployments"), z.literal("pricing_options"), z.literal("taxonomy"), z.literal("data_sources"), z.literal("methodology"), z.literal("segmentation_criteria"), z.literal("criteria_url"), z.literal("refresh_cadence"), z.literal("lookback_window"), z.literal("onboarder"), z.literal("modeling"), z.literal("audience_expansion"), z.literal("device_expansion"), z.literal("countries"), z.literal("consent_basis"), z.literal("restricted_attributes"), z.literal("policy_categories"), z.literal("art9_basis"), z.literal("data_subject_rights"), z.literal("last_updated")])).optional(),
     max_results: z.number().min(1).optional(),
     pagination: PaginationRequestSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
     if_wholesale_feed_version: z.string().optional(),
     if_pricing_version: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -9580,6 +9683,7 @@ export const GetProductsRequestSchema = z.object({
     property_list: PropertyListReferenceSchema.optional(),
     fields: z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_ids"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("reporting_capabilities"), z.literal("creative_policy"), z.literal("catalog_types"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("included_signals"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_options"), z.literal("signal_targeting_rules"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("brief_relevance"), z.literal("expires_at"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])).optional(),
     time_budget: DurationSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
     pagination: PaginationRequestSchema.optional(),
     if_wholesale_feed_version: z.string().optional(),
     if_pricing_version: z.string().optional(),
@@ -9918,70 +10022,6 @@ export const CatalogRequirementsSchema = z.object({
     feed_formats: z.array(FeedFormatSchema).optional(),
     offering_asset_constraints: z.array(OfferingAssetConstraintSchema).optional(),
     field_bindings: z.array(CatalogFieldBindingSchema).optional()
-}).passthrough();
-
-export const SignalDefinitionEnrichmentSchema = z.object({
-    restricted_attributes: z.array(RestrictedAttributeSchema).optional(),
-    policy_categories: z.array(z.string()).optional(),
-    taxonomy: z.object({
-        ref: z.string(),
-        version: z.string().optional(),
-        segtax: z.number().min(1).optional(),
-        etag: z.string().optional(),
-        values: z.array(z.object({
-            id: z.string().min(1),
-            path: z.string().optional(),
-            modifiers: z.array(z.string()).optional()
-        }).passthrough()),
-        value_mappings: z.array(z.object({
-            value: z.string(),
-            taxonomy_value_id: z.string(),
-            path: z.string().optional(),
-            modifiers: z.array(z.string()).optional()
-        }).passthrough()).optional(),
-        parent_match_behavior: z.union([z.literal("exact_only"), z.literal("descendants_supported"), z.literal("unknown")]).optional()
-    }).passthrough().optional(),
-    segmentation_criteria: z.string().max(500).optional(),
-    criteria_url: z.string().optional(),
-    data_sources: z.array(z.union([z.literal("app_behavior"), z.literal("app_usage"), z.literal("web_usage"), z.literal("geo_location"), z.literal("email"), z.literal("tv_ott_or_stb_device"), z.literal("panel"), z.literal("online_ecommerce"), z.literal("credit_data"), z.literal("loyalty_card"), z.literal("transaction"), z.literal("online_survey"), z.literal("offline_survey"), z.literal("public_record_census"), z.literal("public_record_voter_file"), z.literal("public_record_other"), z.literal("offline_transaction")])).optional(),
-    methodology: z.union([z.literal("observed"), z.literal("declared"), z.literal("derived"), z.literal("inferred"), z.literal("modeled")]).optional(),
-    audience_expansion: z.boolean().optional(),
-    device_expansion: z.boolean().optional(),
-    refresh_cadence: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
-    lookback_window: z.union([z.literal("intra_day"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("bi_monthly"), z.literal("quarterly"), z.literal("bi_annually"), z.literal("annually")]).optional(),
-    onboarder: z.object({
-        match_keys: z.array(z.union([z.literal("name"), z.literal("address"), z.literal("email"), z.literal("postal"), z.literal("lat_long"), z.literal("mobile_id"), z.literal("cookie_id"), z.literal("ip"), z.literal("customer_id"), z.literal("phone")])),
-        pre_onboarding_audience_expansion: z.boolean().optional(),
-        pre_onboarding_device_expansion: z.boolean().optional(),
-        pre_onboarding_precision_level: z.union([z.literal("individual"), z.literal("household"), z.literal("business"), z.literal("geography")]).optional()
-    }).passthrough().optional(),
-    countries: z.array(z.string()).optional(),
-    consent_basis: z.array(ConsentBasisSchema).optional(),
-    art9_basis: z.union([z.literal("explicit_consent"), z.literal("manifestly_made_public"), z.literal("substantial_public_interest"), z.literal("vital_interests")]).optional(),
-    modeling: z.object({
-        method: z.union([z.literal("lookalike"), z.literal("supervised"), z.literal("embedding"), z.literal("rules")]),
-        seed_source: z.object({
-            type: z.union([z.literal("first_party_crm"), z.literal("panel"), z.literal("declared_survey"), z.literal("transactional"), z.literal("behavioral")]),
-            provider_signed: z.boolean()
-        }).passthrough(),
-        training_data_jurisdictions: z.array(z.string()),
-        ai_act_risk_class: z.union([z.literal("minimal"), z.literal("limited"), z.literal("high_risk")]),
-        disclosure: SignalModelingDisclosureSchema.optional()
-    }).passthrough().optional(),
-    data_subject_rights: z.object({
-        upstream_source_domain: z.string().max(253).optional(),
-        channels: z.array(z.object({
-            rights: z.array(z.union([z.literal("access"), z.literal("rectification"), z.literal("erasure"), z.literal("portability"), z.literal("objection")])),
-            url: z.string().regex(/^https:\/\//).optional(),
-            email: z.email().optional(),
-            languages: z.array(z.string()).optional(),
-            countries: z.array(z.string()).optional()
-        }).passthrough()),
-        response_sla_days: z.number().min(1).max(90).optional(),
-        ccpa_opt_out_url: z.string().regex(/^https:\/\//).optional()
-    }).passthrough().optional(),
-    last_updated: z.iso.datetime().optional(),
-    dts_compliant_version: z.string().optional()
 }).passthrough();
 
 export const SignalPricingOptionSchema = z.object({
@@ -10403,7 +10443,7 @@ export const CreateCollectionListResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, MediaBuyDeliveryWebhookResultSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
+export const AdCPAsyncResponseDataSchema: z.ZodType = z.union([GetProductsResponseSchema, GetProductsAsyncWorkingSchema, GetProductsAsyncInputRequiredSchema, GetProductsAsyncSubmittedSchema, GetSignalsResponseSchema, GetSignalsAsyncWorkingSchema, GetSignalsAsyncSubmittedSchema, CreateMediaBuyResponseSchema, CreateMediaBuyAsyncWorkingSchema, CreateMediaBuyAsyncInputRequiredSchema, CreateMediaBuyAsyncSubmittedSchema, UpdateMediaBuyResponseSchema, UpdateMediaBuyAsyncWorkingSchema, UpdateMediaBuyAsyncInputRequiredSchema, UpdateMediaBuyAsyncSubmittedSchema, MediaBuyDeliveryWebhookResultSchema, BuildCreativeResponseSchema, BuildCreativeAsyncWorkingSchema, BuildCreativeAsyncInputRequiredSchema, BuildCreativeAsyncSubmittedSchema, SyncCreativesResponseSchema, SyncCreativesAsyncWorkingSchema, SyncCreativesAsyncInputRequiredSchema, SyncCreativesAsyncSubmittedSchema, SyncCatalogsResponseSchema, SyncCatalogsAsyncWorkingSchema, SyncCatalogsAsyncInputRequiredSchema, SyncCatalogsAsyncSubmittedSchema]);
 
 export const GetTaskStatusResponseSchema = z.object({
     context_id: z.string().optional(),

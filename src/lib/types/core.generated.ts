@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.7
-// Generated at: 2026-06-04T12:59:08.032Z
+// Generated AdCP core types from official schemas v3.1.0-rc.8
+// Generated at: 2026-06-04T19:39:56.761Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -7937,6 +7937,9 @@ export type AdCPAsyncResponseData =
   | GetProductsAsyncWorking
   | GetProductsAsyncInputRequired
   | GetProductsAsyncSubmitted
+  | GetSignalsResponse
+  | GetSignalsAsyncWorking
+  | GetSignalsAsyncSubmitted
   | CreateMediaBuyResponse
   | CreateMediaBuyAsyncWorking
   | CreateMediaBuyAsyncInputRequired
@@ -7962,6 +7965,92 @@ export type AdCPAsyncResponseData =
  * Lifecycle status of this proposal and the per-proposal source of truth for whether finalization is required before create_media_buy. When absent, the proposal is ready to buy (backward compatible). 'draft' means indicative pricing — finalize via refine before purchasing. 'committed' means firm pricing with inventory reserved until expires_at and executable via create_media_buy.
  */
 export type ProposalStatus = 'draft' | 'committed';
+/**
+ * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
+ */
+export type RestrictedAttribute =
+  | 'racial_ethnic_origin'
+  | 'political_opinions'
+  | 'religious_beliefs'
+  | 'trade_union_membership'
+  | 'health_data'
+  | 'sex_life_sexual_orientation'
+  | 'genetic_data'
+  | 'biometric_data'
+  | 'age'
+  | 'familial_status';
+/**
+ * Common GDPR lawful bases relevant to advertising. Covers the Article 6(1) bases used in programmatic advertising contexts.
+ */
+export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'legal_obligation';
+/**
+ * Commercial/provenance type of signal (marketplace, custom, owned)
+ */
+export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
+/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
+export type SignalCatalogType = SignalAvailabilityType;
+/**
+ * A signal deployment to a specific deployment target with activation status and key
+ */
+export type Deployment =
+  | {
+      /**
+       * Discriminator indicating this is a platform-based deployment
+       */
+      type: 'platform';
+      /**
+       * Platform identifier for DSPs
+       */
+      platform: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this deployment
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       * @minimum 0
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       * @format date-time
+       */
+      deployed_at?: string;
+    }
+  | {
+      /**
+       * Discriminator indicating this is an agent URL-based deployment
+       */
+      type: 'agent';
+      /**
+       * URL identifying the deployment agent
+       */
+      agent_url: string;
+      /**
+       * Account identifier if applicable
+       */
+      account?: string;
+      /**
+       * Whether signal is currently active on this deployment
+       */
+      is_live: boolean;
+      activation_key?: ActivationKey;
+      /**
+       * Estimated time to activate if not live, or to complete activation if in progress
+       * @minimum 0
+       */
+      estimated_activation_duration_minutes?: number;
+      /**
+       * Timestamp when activation completed (if is_live=true)
+       * @format date-time
+       */
+      deployed_at?: string;
+    };
 /**
  * Response for completed or failed create_media_buy
  */
@@ -9205,6 +9294,469 @@ export interface GetProductsAsyncSubmitted {
   estimated_completion?: string;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Response for completed or failed get_signals
+ */
+export interface GetSignalsResponse {
+  /**
+   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  /**
+   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
+   */
+  task_id?: string;
+  status: TaskStatus;
+  /**
+   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
+   */
+  message?: string;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Governance context token issued by the account's governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. An account binds to one governance agent (see sync_governance); governance is phased across `purchase` / `modification` / `delivery`, not partitioned across specialist agents, so the envelope carries a single token for the full lifecycle.
+   *
+   * Value format: governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Array of matching signals
+   */
+  signals?: {
+    /**
+     * Restricted attribute categories this signal touches.
+     */
+    restricted_attributes?: RestrictedAttribute[];
+    /**
+     * Policy categories this signal is sensitive for.
+     */
+    policy_categories?: string[];
+    /**
+     * Optional taxonomy metadata describing what this signal means in an external audience, content, retail-media, or provider-owned taxonomy.
+     */
+    taxonomy?: {
+      ref: string;
+      version?: string;
+      segtax?: number;
+      etag?: string;
+      values: {
+        id: string;
+        path?: string;
+        modifiers?: string[];
+      }[];
+      value_mappings?: {
+        value: string;
+        taxonomy_value_id: string;
+        path?: string;
+        modifiers?: string[];
+      }[];
+      parent_match_behavior?: 'exact_only' | 'descendants_supported' | 'unknown';
+    };
+    segmentation_criteria?: string;
+    criteria_url?: string;
+    data_sources?: (
+      | 'app_behavior'
+      | 'app_usage'
+      | 'web_usage'
+      | 'geo_location'
+      | 'email'
+      | 'tv_ott_or_stb_device'
+      | 'panel'
+      | 'online_ecommerce'
+      | 'credit_data'
+      | 'loyalty_card'
+      | 'transaction'
+      | 'online_survey'
+      | 'offline_survey'
+      | 'public_record_census'
+      | 'public_record_voter_file'
+      | 'public_record_other'
+      | 'offline_transaction'
+    )[];
+    methodology?: 'observed' | 'declared' | 'derived' | 'inferred' | 'modeled';
+    audience_expansion?: boolean;
+    device_expansion?: boolean;
+    refresh_cadence?:
+      | 'intra_day'
+      | 'daily'
+      | 'weekly'
+      | 'monthly'
+      | 'bi_monthly'
+      | 'quarterly'
+      | 'bi_annually'
+      | 'annually';
+    lookback_window?:
+      | 'intra_day'
+      | 'daily'
+      | 'weekly'
+      | 'monthly'
+      | 'bi_monthly'
+      | 'quarterly'
+      | 'bi_annually'
+      | 'annually';
+    onboarder?: {
+      match_keys: (
+        | 'name'
+        | 'address'
+        | 'email'
+        | 'postal'
+        | 'lat_long'
+        | 'mobile_id'
+        | 'cookie_id'
+        | 'ip'
+        | 'customer_id'
+        | 'phone'
+      )[];
+      pre_onboarding_audience_expansion?: boolean;
+      pre_onboarding_device_expansion?: boolean;
+      pre_onboarding_precision_level?: 'individual' | 'household' | 'business' | 'geography';
+    };
+    countries?: string[];
+    /**
+     * Data provider's declared GDPR Article 6 lawful basis or consent basis for the underlying signal definition, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own processing basis for the provider-declared basis.
+     */
+    consent_basis?: ConsentBasis[];
+    /**
+     * Data provider's declared GDPR Article 9 basis for the underlying signal definition when special-category data is involved and Article 9 applies, projected into this get_signals response row when requested. Sellers and federating agents that pass through another provider's signal MUST NOT substitute their own Article 9 basis for the provider-declared basis.
+     */
+    art9_basis?: 'explicit_consent' | 'manifestly_made_public' | 'substantial_public_interest' | 'vital_interests';
+    modeling?: {
+      method: 'lookalike' | 'supervised' | 'embedding' | 'rules';
+      seed_source: {
+        type: 'first_party_crm' | 'panel' | 'declared_survey' | 'transactional' | 'behavioral';
+        /**
+         * Provider assertion that the seed source carries a signed attestation. Consumers MUST NOT treat this boolean alone as cryptographic proof.
+         */
+        provider_signed: boolean;
+      };
+      training_data_jurisdictions: string[];
+      ai_act_risk_class: 'minimal' | 'limited' | 'high_risk';
+      disclosure?: SignalModelingDisclosure;
+    };
+    /**
+     * Per-signal data-subject-rights routing. This is a contact/routing reference, not a machine-callable AdCP API.
+     */
+    data_subject_rights?: {
+      upstream_source_domain?: string;
+      channels: {
+        rights: ('access' | 'rectification' | 'erasure' | 'portability' | 'objection')[];
+        url?: string;
+        email?: string;
+        languages?: string[];
+        countries?: string[];
+      }[];
+      response_sla_days?: number;
+      ccpa_opt_out_url?: string;
+    };
+    /**
+     * When this listing record was last updated. This indicates freshness of the listing record, not an attestation that the underlying data or model was refreshed at that time.
+     */
+    last_updated?: string;
+    dts_compliant_version?: string;
+    signal_ref?: SignalRef;
+    signal_id?: SignalID;
+    /**
+     * Human-readable signal name
+     */
+    name: string;
+    /**
+     * Detailed signal description
+     */
+    description: string;
+    /**
+     * Optional link to published methodology, media-kit, or data documentation. For data_provider and signal_source refs, this SHOULD match or supplement the referenced definition.
+     */
+    methodology_url?: string;
+    value_type?: SignalValueType;
+    /**
+     * Valid values for categorical signals. Present when value_type is 'categorical'. Buyers must use one of these values in SignalTargeting.values.
+     */
+    categories?: string[];
+    /**
+     * Valid range for numeric signals. Present when value_type is 'numeric'.
+     */
+    range?: {
+      /**
+       * Minimum value (inclusive)
+       */
+      min: number;
+      /**
+       * Maximum value (inclusive)
+       */
+      max: number;
+    };
+    /**
+     * Opaque resolved-segment handle issued by this signal source. Pass this string verbatim to activate_signal.signal_agent_segment_id, and echo it in package signal targeting when the selected product option exposes the same handle. Treat the value as provider-scoped and opaque: providers MAY namespace it so two providers can expose similarly named signals without relying on a shared taxonomy. Do not pass the signal_id object as this handle, and do not reconstruct a segment handle from categorical values when get_signals returned a resolved segment.
+     */
+    signal_agent_segment_id: string;
+    signal_type: SignalAvailabilityType;
+    /**
+     * Human-readable source name for the signal, when applicable. For data_provider-scoped signals this is the data provider name; for signal_source-scoped signals it may identify the signal source or proprietary origin.
+     */
+    data_provider?: string;
+    /**
+     * @deprecated
+     * DEPRECATED for detailed planning. Optional legacy scalar percentage of audience coverage retained only as a fallback for clients that do not consume coverage_forecast. When coverage_forecast is present, coverage_forecast is authoritative for signal-level discovery and coverage_percentage is fallback-only. If coverage_forecast includes an absent bucket over the same denominator, coverage_percentage SHOULD align with 100 * (1 - absent coverage_rate.mid).
+     * @minimum 0
+     * @maximum 100
+     */
+    coverage_percentage?: number;
+    coverage_forecast?: SignalCoverageForecast;
+    /**
+     * Array of deployment targets
+     */
+    deployments: Deployment[];
+    /**
+     * Pricing options available for this signal when it has an incremental price. The buyer selects one and passes its pricing_option_id in report_usage or package-level signal_targeting_groups for billing verification. Omit when pricing is unavailable to the caller, bundled into the destination product, or has no incremental cost.
+     */
+    pricing_options?: VendorPricingOption[];
+  }[];
+  /**
+   * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
+   */
+  errors?: Error[];
+  /**
+   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
+   */
+  incomplete?: {
+    /**
+     * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
+     */
+    scope: 'signals' | 'pricing' | 'wholesale_feed';
+    /**
+     * Human-readable explanation of what is missing and why.
+     */
+    description: string;
+    /**
+     * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
+     */
+    estimated_wait?: Duration;
+  }[];
+  /**
+   * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+   */
+  wholesale_feed_version?: string;
+  /**
+   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
+   */
+  pricing_version?: string;
+  /**
+   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+   */
+  cache_scope?: 'public' | 'account';
+  /**
+   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals.
+   */
+  unchanged?: true;
+  pagination?: PaginationResponse;
+  /**
+   * When true, this response contains simulated data from sandbox mode.
+   */
+  sandbox?: boolean;
+  ext?: ExtensionObject;
+}
+/**
+ * Disclosure requirements and jurisdictional notes for modeled data signals. This schema is intentionally separate from core/provenance.json because creative provenance is about generated content, render guidance, and asset-level chain of custody, while signal modeling disclosure is about data-segment methodology and data-use transparency.
+ */
+export interface SignalModelingDisclosure {
+  /**
+   * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
+   */
+  required: boolean;
+  /**
+   * Jurisdictions where a modeling or AI-use disclosure applies.
+   */
+  jurisdictions?: {
+    /**
+     * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
+     */
+    country: string;
+    /**
+     * Provider-defined sub-national region code or name when the obligation is regional. No global canonical format is implied.
+     */
+    region?: string;
+    /**
+     * Provider-supplied regulation identifier for the disclosure obligation.
+     */
+    regulation: string;
+    /**
+     * Human-readable disclosure text or summary the provider expects buyers or reviewers to see.
+     */
+    disclosure_text?: string;
+    /**
+     * Optional URL to the provider's canonical disclosure or methodology page for this jurisdiction.
+     */
+    disclosure_url?: string;
+    /**
+     * Primary audience for this disclosure entry.
+     */
+    audience?: 'buyer' | 'data_subject' | 'regulator' | 'public';
+  }[];
+  /**
+   * Optional provider notes on how the disclosure should be interpreted. Informational only; buyers should not branch programmatically on this text.
+   * @maxLength 2000
+   */
+  notes?: string;
+}
+/**
+ * Optional forecast-shaped signal availability guidance. When present, this is authoritative for signal-level discovery coverage. Use this to disclose the denominator, bucket semantics, not-present bucket, aggregate present bucket, and per-value coverage distribution for the signal.
+ */
+export interface SignalCoverageForecast {
+  /**
+   * Coverage or availability points. Each point reuses the standard ForecastPoint shape, MUST include a signal dimension, and MUST include metrics.coverage_rate. Use metrics.impressions for count denominators and metrics.coverage_rate for the fraction of the declared scope represented by the point.
+   */
+  points: (ForecastPoint & {
+    dimensions: {
+      [k: string]: unknown | undefined;
+    };
+    metrics?: {
+      [k: string]: unknown | undefined;
+    };
+  })[];
+  /**
+   * How to interpret the points array. Signal coverage forecasts always use 'availability' because the points describe available inventory or population coverage, not spend curves or temporal pacing.
+   */
+  forecast_range_unit: 'availability';
+  method: ForecastMethod;
+  /**
+   * Explicit denominator for the coverage forecast. This identifies the inventory, product, account, or custom universe that coverage_rate values are relative to. Additional seller-specific qualifiers are allowed for scopes such as line item type, ad server, inventory class, country, or flight window.
+   */
+  scope: {
+    /**
+     * Denominator family for the coverage forecast.
+     */
+    kind: 'inventory' | 'product' | 'account' | 'custom';
+    /**
+     * Human-readable denominator label, such as 'network price-priority inventory'.
+     */
+    label: string;
+    /**
+     * Product denominator when kind is 'product'.
+     */
+    product_id?: string;
+    /**
+     * Countries included in the denominator, as ISO 3166-1 alpha-2 codes.
+     */
+    countries?: string[];
+    /**
+     * Seller or ad-server line item types included in the denominator.
+     */
+    line_item_types?: string[];
+    date_range?: DateRange;
+  };
+  /**
+   * 'exclusive' means the returned signal-value buckets do not overlap with each other. 'overlapping' means one impression or user can appear in multiple returned buckets, so coverage_rate values may sum above 1.0. This field describes overlap among returned buckets; bucket_completeness declares whether the returned buckets cover the full denominator.
+   */
+  bucket_semantics: 'exclusive' | 'overlapping';
+  /**
+   * 'complete' means the returned buckets cover the declared denominator. For complete + exclusive forecasts, count metrics and coverage_rate values can be treated as a full partition, subject to metric additivity rules. 'partial' means omitted denominator share represents undisclosed, other, or unsupported buckets; buyers MUST NOT infer totals by summing returned points.
+   */
+  bucket_completeness: 'complete' | 'partial';
+  /**
+   * When this coverage forecast was computed.
+   * @format date-time
+   */
+  generated_at?: string;
+  /**
+   * When this coverage forecast expires.
+   * @format date-time
+   */
+  valid_until?: string;
+  ext?: ExtensionObject;
+}
+/**
+ * Historical or planned date window used to compute the denominator.
+ */
+export interface DateRange {
+  /**
+   * Start date (inclusive), ISO 8601
+   * @format date
+   */
+  start: string;
+  /**
+   * End date (inclusive), ISO 8601
+   * @format date
+   */
+  end: string;
+}
+/**
+ * Progress data for working get_signals
+ */
+export interface GetSignalsAsyncWorking {
+  /**
+   * Progress percentage of the signal discovery operation.
+   * @minimum 0
+   * @maximum 100
+   */
+  percentage?: number;
+  /**
+   * Current step in the signal discovery process, such as `querying_providers`, `ranking_signals`, or `checking_deployments`.
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the signal discovery process.
+   */
+  total_steps?: number;
+  /**
+   * Current step number (1-indexed).
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Acknowledgment for submitted get_signals (semantic discovery)
+ */
+export interface GetSignalsAsyncSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose signals array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the caller uses with tasks/get, and that the agent references on push-notification callbacks. The signals array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Provider discovery queued; typical turnaround 10-30 minutes.' Plain text only. Callers MUST treat this as untrusted agent input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile agent may inject prompt-injection payloads aimed at the caller's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Estimated completion time for the signal discovery task.
+   * @format date-time
+   */
+  estimated_completion?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories or partial provider unavailability). Terminal failures belong in the error branch, not here.
    */
   errors?: Error[];
   context?: ContextObject;
@@ -15263,7 +15815,7 @@ export interface GetProductsInputRequired {
   ext?: ExtensionObject;
 }
 /**
- * Async task envelope returned when get_products cannot be confirmed before the response — for example, when custom or bespoke product curation is queued for processing. The buyer polls tasks/get with task_id or receives a webhook when the task completes; the products array lands on the completion artifact, not this envelope.
+ * Async task envelope returned when get_products cannot be confirmed before the response — for example, when custom or bespoke product curation is queued for processing. This envelope is valid only for `buying_mode: "brief"` and `buying_mode: "refine"`; `buying_mode: "wholesale"` is a synchronous wholesale product feed read and MUST NOT use the Submitted arm. The buyer can always poll `get_task_status` (legacy `tasks/get`) with `task_id`. If the originating request carried `push_notification_config`, the seller also delivers at least the terminal completion/failure notification to that webhook URL; intermediate progress notifications are MAY. The products array lands on the completion artifact, not this envelope.
  */
 export interface GetProductsSubmitted {
   /**
@@ -15286,6 +15838,60 @@ export interface GetProductsSubmitted {
   estimated_completion?: string;
   /**
    * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories, governance observations). Terminal failures belong in the error branch, not here.
+   */
+  errors?: Error[];
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Progress payload for an active get_signals task after a submitted semantic discovery request has started processing. Valid only for `discovery_mode: "brief"`; wholesale signals feed reads report partial completion via `incomplete[]`, not async task progress.
+ */
+export interface GetSignalsWorking {
+  /**
+   * Progress percentage of the signal discovery operation.
+   * @minimum 0
+   * @maximum 100
+   */
+  percentage?: number;
+  /**
+   * Current step in the signal discovery process, such as `querying_providers`, `ranking_signals`, or `checking_deployments`.
+   */
+  current_step?: string;
+  /**
+   * Total number of steps in the signal discovery process.
+   */
+  total_steps?: number;
+  /**
+   * Current step number (1-indexed).
+   */
+  step_number?: number;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+}
+/**
+ * Async task envelope returned when get_signals cannot be confirmed before the response — for example, when semantic discovery depends on slow provider queries or review. This envelope is valid only for `discovery_mode: "brief"`; `discovery_mode: "wholesale"` is a synchronous wholesale signals feed read and MUST NOT use the Submitted arm. The caller can always poll `get_task_status` (legacy `tasks/get`) with `task_id`. If the originating request carried `push_notification_config`, the agent also delivers at least the terminal completion/failure notification to that webhook URL; intermediate progress notifications are MAY. The signals array lands on the completion artifact, not this envelope.
+ */
+export interface GetSignalsSubmitted {
+  /**
+   * Task-level status literal. Discriminates this async envelope from the synchronous success shape, whose signals array is issued in-line. See task-status.json for the full task-status enum.
+   */
+  status: 'submitted';
+  /**
+   * Task handle the caller uses with tasks/get, and that the agent references on push-notification callbacks. The signals array is issued on the completion artifact, not here. Per AdCP wire conventions this is snake_case; A2A adapters MAY surface it as taskId, but the payload field emitted by the agent is task_id.
+   */
+  task_id: string;
+  /**
+   * Optional human-readable explanation of why the task is submitted — e.g., 'Provider discovery queued; typical turnaround 10-30 minutes.' Plain text only. Callers MUST treat this as untrusted agent input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile agent may inject prompt-injection payloads aimed at the caller's agent.
+   * @maxLength 2000
+   */
+  message?: string;
+  /**
+   * Estimated completion time for the signal discovery task.
+   * @format date-time
+   */
+  estimated_completion?: string;
+  /**
+   * Optional advisory errors accompanying the submitted envelope. Use only for non-blocking warnings (e.g., throttled_severity advisories or partial provider unavailability). Terminal failures belong in the error branch, not here.
    */
   errors?: Error[];
   context?: ContextObject;
@@ -19279,6 +19885,7 @@ export type GetProductsRequest = {
    * Maximum time the buyer will commit to this request. The seller returns the best results achievable within this budget and does not start processes (human approvals, expensive external queries) that cannot complete in time. When omitted, the seller decides timing.
    */
   time_budget?: Duration;
+  push_notification_config?: PushNotificationConfig;
   pagination?: PaginationRequest;
   /**
    * Opaque wholesale_feed_version token returned by a prior wholesale-mode get_products response from this agent. Only valid when buying_mode is wholesale. When provided, the seller compares against its current wholesale product feed version for the buyer's cache_scope and MAY return an unchanged: true response (with products omitted) if nothing has changed. The token is scope-keyed: buyers cache `(cache_scope, wholesale_feed_version)` pairs. Scoping dimensions: (agent, buying_mode, filters, property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. Backward-compatible: pre-v3.1 agents that ignore this field simply return the full payload, same as the unchanged-server path. See specs/wholesale-feed-webhooks.md for the full sync pattern.
@@ -20101,11 +20708,6 @@ export interface ProvidePerformanceFeedbackError {
 }
 
 // bundled/media-buy/sync-audiences-request.json
-/**
- * GDPR lawful basis for processing this audience list. Informational — not validated by the protocol, but required by some sellers operating in regulated markets (e.g. EU). When omitted, the buyer asserts they have a lawful basis appropriate to their jurisdiction.
- */
-export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'legal_obligation';
-
 /**
  * Request parameters for managing CRM-based audiences on an account with upsert semantics. Existing audiences matched by audience_id are updated, new ones are created. Members are specified as delta operations: add appends new members, remove drops existing ones. Recommend no more than 100,000 members per call; for larger lists, chunk and call incrementally using add/remove deltas. When delete_missing is true, buyer-managed audiences on the account not in this request are removed — do not combine with omitted audiences or all buyer-managed audiences will be deleted. When audiences is omitted, the call is discovery-only: it returns all audiences on the account without modification.
  */
@@ -23163,68 +23765,6 @@ export type ActivateSignalResponse = ProtocolEnvelope & {
   adcp_major_version?: number;
 } & (ActivateSignalSuccess | ActivateSignalError);
 /**
- * A signal deployment to a specific deployment target with activation status and key
- */
-export type Deployment =
-  | {
-      /**
-       * Discriminator indicating this is a platform-based deployment
-       */
-      type: 'platform';
-      /**
-       * Platform identifier for DSPs
-       */
-      platform: string;
-      /**
-       * Account identifier if applicable
-       */
-      account?: string;
-      /**
-       * Whether signal is currently active on this deployment
-       */
-      is_live: boolean;
-      activation_key?: ActivationKey;
-      /**
-       * Estimated time to activate if not live, or to complete activation if in progress
-       * @minimum 0
-       */
-      estimated_activation_duration_minutes?: number;
-      /**
-       * Timestamp when activation completed (if is_live=true)
-       * @format date-time
-       */
-      deployed_at?: string;
-    }
-  | {
-      /**
-       * Discriminator indicating this is an agent URL-based deployment
-       */
-      type: 'agent';
-      /**
-       * URL identifying the deployment agent
-       */
-      agent_url: string;
-      /**
-       * Account identifier if applicable
-       */
-      account?: string;
-      /**
-       * Whether signal is currently active on this deployment
-       */
-      is_live: boolean;
-      activation_key?: ActivationKey;
-      /**
-       * Estimated time to activate if not live, or to complete activation if in progress
-       * @minimum 0
-       */
-      estimated_activation_duration_minutes?: number;
-      /**
-       * Timestamp when activation completed (if is_live=true)
-       * @format date-time
-       */
-      deployed_at?: string;
-    };
-/**
  * Success response - signal activated successfully to one or more deployment targets
  */
 export interface ActivateSignalSuccess {
@@ -23339,6 +23879,7 @@ export type GetSignalsRequest = {
    */
   max_results?: number;
   pagination?: PaginationRequest;
+  push_notification_config?: PushNotificationConfig;
   /**
    * Opaque wholesale_feed_version token returned by a prior wholesale-mode get_signals response from this agent. Only valid when discovery_mode is wholesale. When provided, the agent compares against its current wholesale signals feed version for the caller's cache_scope and MAY return an unchanged: true response (with signals omitted) if nothing has changed. The token is scope-keyed: callers cache `(cache_scope, wholesale_feed_version)` pairs. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full sync pattern.
    */
@@ -23350,13 +23891,6 @@ export type GetSignalsRequest = {
   context?: ContextObject;
   ext?: ExtensionObject;
 };
-/**
- * Commercial/provenance types for signals available for audience targeting
- */
-export type SignalAvailabilityType = 'marketplace' | 'custom' | 'owned';
-/** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
-export type SignalCatalogType = SignalAvailabilityType;
-
 /**
  * Filters to refine signal discovery results
  */
@@ -23388,72 +23922,6 @@ export interface SignalFilters {
   min_coverage_percentage?: number;
   ext?: ExtensionObject;
 }
-
-// bundled/signals/get-signals-response.json
-/**
- * Response payload for get_signals task
- */
-export type GetSignalsResponse = ProtocolEnvelope & {
-  /**
-   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
-   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
-   */
-  adcp_version?: string;
-  /**
-   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
-   * @minimum 1
-   * @maximum 99
-   */
-  adcp_major_version?: number;
-  /**
-   * Array of matching signals
-   */
-  signals?: SignalListing[];
-  /**
-   * Task-specific errors and warnings (e.g., signal discovery or pricing issues)
-   */
-  errors?: Error[];
-  /**
-   * Declares what the agent could not finish within the caller's time_budget or due to internal limits. Each entry identifies a scope that is missing or partial. Absent when the response is fully complete.
-   */
-  incomplete?: {
-    /**
-     * 'signals': not all matching signals were returned. 'pricing': signals returned but pricing is absent or unconfirmed. 'wholesale_feed': in wholesale mode, full feed enumeration could not complete in the time budget.
-     */
-    scope: 'signals' | 'pricing' | 'wholesale_feed';
-    /**
-     * Human-readable explanation of what is missing and why.
-     */
-    description: string;
-    /**
-     * How much additional time would resolve this scope. Allows the caller to decide whether to retry with a larger time_budget.
-     */
-    estimated_wait?: Duration;
-  }[];
-  /**
-   * Opaque token representing the version of the wholesale signals feed state used to compose this response. Agents that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so callers can cache and probe later. Callers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A caller caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, discovery_mode, filters, destinations, countries) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
-   */
-  wholesale_feed_version?: string;
-  /**
-   * Opaque token representing the version of the pricing layer. When the agent supports independent pricing versioning, pricing_version changes when prices move but wholesale_feed_version changes only when structure/metadata moves. Same cache_scope keying as wholesale_feed_version. Agents not separating these MAY omit pricing_version and use wholesale_feed_version for both.
-   */
-  pricing_version?: string;
-  /**
-   * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the agent's published rate card; the caller MAY dedupe under (agent, discovery_mode, filters, destinations, countries) without scoping by account. 'account': this response includes account-specific overrides; the caller MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the agent MUST return `cache_scope: 'public'`. When the request included `account`, the agent MUST return either 'public' (this account prices off the public rate card — caller dedupes) or 'account' (account-specific overrides exist — caller caches under the account key). Agents MAY return 'public' on an account-scoped request that previously had overrides — callers SHOULD interpret this as a downgrade. Without schema-required cache_scope, an agent silently omitting the field on an account-scoped response would cause callers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs validating strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version`. For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 agents correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
-   */
-  cache_scope?: 'public' | 'account';
-  /**
-   * Present and `true` ONLY on wholesale-mode responses when the request carried if_wholesale_feed_version (and/or if_pricing_version) matching the agent's current version for the caller's cache_scope, in which case signals[] MUST be omitted; wholesale_feed_version (echoed), cache_scope (echoed), and pricing_version (echoed when used) MUST still be present. Callers receiving unchanged: true MUST NOT mutate their local wholesale signals mirror. **One shape per state:** agents MUST NOT emit `unchanged: false` — the absence of the field IS the signal that the response carries signals.
-   */
-  unchanged?: true;
-  pagination?: PaginationResponse;
-  /**
-   * When true, this response contains simulated data from sandbox mode.
-   */
-  sandbox?: boolean;
-  context?: ContextObject;
-  ext?: ExtensionObject;
-};
 
 // bundled/sponsored-intelligence/si-get-offering-request.json
 /**
@@ -25132,24 +25600,6 @@ export interface CreativeBrief {
     prohibited_claims?: string[];
   };
 }
-
-// core/date-range.json
-/**
- * A date range with inclusive start and end dates (ISO 8601 calendar dates). Used for billing periods, flight dates, and other calendar-day boundaries.
- */
-export interface DateRange {
-  /**
-   * Start date (inclusive), ISO 8601
-   * @format date
-   */
-  start: string;
-  /**
-   * End date (inclusive), ISO 8601
-   * @format date
-   */
-  end: string;
-}
-
 
 // core/destination-item.json
 /**
@@ -27533,89 +27983,7 @@ export interface SellerAgentReference {
 }
 
 
-// core/signal-coverage-forecast.json
-/**
- * Forecast-shaped availability guidance for a signal. Use this when a seller or signal source can expose how much of a declared inventory denominator has a signal present, absent, or present with specific values. This object intentionally omits DeliveryForecast.currency because signal coverage can be unitless.
- */
-export interface SignalCoverageForecast {
-  /**
-   * Coverage or availability points. Each point reuses the standard ForecastPoint shape, MUST include a signal dimension, and MUST include metrics.coverage_rate. Use metrics.impressions for count denominators and metrics.coverage_rate for the fraction of the declared scope represented by the point.
-   */
-  points: (ForecastPoint & {
-    dimensions: {
-      [k: string]: unknown | undefined;
-    };
-    metrics?: {
-      [k: string]: unknown | undefined;
-    };
-  })[];
-  /**
-   * How to interpret the points array. Signal coverage forecasts always use 'availability' because the points describe available inventory or population coverage, not spend curves or temporal pacing.
-   */
-  forecast_range_unit: 'availability';
-  method: ForecastMethod;
-  /**
-   * Explicit denominator for the coverage forecast. This identifies the inventory, product, account, or custom universe that coverage_rate values are relative to. Additional seller-specific qualifiers are allowed for scopes such as line item type, ad server, inventory class, country, or flight window.
-   */
-  scope: {
-    /**
-     * Denominator family for the coverage forecast.
-     */
-    kind: 'inventory' | 'product' | 'account' | 'custom';
-    /**
-     * Human-readable denominator label, such as 'network price-priority inventory'.
-     */
-    label: string;
-    /**
-     * Product denominator when kind is 'product'.
-     */
-    product_id?: string;
-    /**
-     * Countries included in the denominator, as ISO 3166-1 alpha-2 codes.
-     */
-    countries?: string[];
-    /**
-     * Seller or ad-server line item types included in the denominator.
-     */
-    line_item_types?: string[];
-    date_range?: DateRange;
-  };
-  /**
-   * 'exclusive' means the returned signal-value buckets do not overlap with each other. 'overlapping' means one impression or user can appear in multiple returned buckets, so coverage_rate values may sum above 1.0. This field describes overlap among returned buckets; bucket_completeness declares whether the returned buckets cover the full denominator.
-   */
-  bucket_semantics: 'exclusive' | 'overlapping';
-  /**
-   * 'complete' means the returned buckets cover the declared denominator. For complete + exclusive forecasts, count metrics and coverage_rate values can be treated as a full partition, subject to metric additivity rules. 'partial' means omitted denominator share represents undisclosed, other, or unsupported buckets; buyers MUST NOT infer totals by summing returned points.
-   */
-  bucket_completeness: 'complete' | 'partial';
-  /**
-   * When this coverage forecast was computed.
-   * @format date-time
-   */
-  generated_at?: string;
-  /**
-   * When this coverage forecast expires.
-   * @format date-time
-   */
-  valid_until?: string;
-  ext?: ExtensionObject;
-}
-
 // core/signal-definition-enrichment.json
-/**
- * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
- */
-export type RestrictedAttribute =
-  | 'racial_ethnic_origin'
-  | 'political_opinions'
-  | 'religious_beliefs'
-  | 'trade_union_membership'
-  | 'health_data'
-  | 'sex_life_sexual_orientation'
-  | 'genetic_data'
-  | 'biometric_data'
-  | 'age'
-  | 'familial_status';
 /**
  * Optional signal-definition enrichment fields that may be projected inline on signal listings when requested through get_signals.fields. This schema intentionally excludes signal identity and required definition fields so source-native, private, or compact listings can include typed partial disclosure without becoming a full adagents.json signal definition.
  */
@@ -27777,51 +28145,6 @@ export interface SignalDefinitionEnrichment {
   last_updated?: string;
   dts_compliant_version?: string;
 }
-/**
- * Disclosure requirements and jurisdictional notes for modeled data signals. This schema is intentionally separate from core/provenance.json because creative provenance is about generated content, render guidance, and asset-level chain of custody, while signal modeling disclosure is about data-segment methodology and data-use transparency.
- */
-export interface SignalModelingDisclosure {
-  /**
-   * The provider's claim that a modeling or AI-use disclosure is required for this signal in at least one applicable jurisdiction. This is a declared compliance signal, not a protocol-level legal determination.
-   */
-  required: boolean;
-  /**
-   * Jurisdictions where a modeling or AI-use disclosure applies.
-   */
-  jurisdictions?: {
-    /**
-     * ISO 3166-1 alpha-2 country code.
-     * @pattern ^[A-Z]{2}$
-     */
-    country: string;
-    /**
-     * Provider-defined sub-national region code or name when the obligation is regional. No global canonical format is implied.
-     */
-    region?: string;
-    /**
-     * Provider-supplied regulation identifier for the disclosure obligation.
-     */
-    regulation: string;
-    /**
-     * Human-readable disclosure text or summary the provider expects buyers or reviewers to see.
-     */
-    disclosure_text?: string;
-    /**
-     * Optional URL to the provider's canonical disclosure or methodology page for this jurisdiction.
-     */
-    disclosure_url?: string;
-    /**
-     * Primary audience for this disclosure entry.
-     */
-    audience?: 'buyer' | 'data_subject' | 'regulator' | 'public';
-  }[];
-  /**
-   * Optional provider notes on how the disclosure should be interpreted. Informational only; buyers should not branch programmatically on this text.
-   * @maxLength 2000
-   */
-  notes?: string;
-}
-
 
 // core/signal-definition.json
 /**

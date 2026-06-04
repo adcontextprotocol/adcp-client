@@ -12,9 +12,11 @@
  * Both expose the same surface: `getSignals` for catalog discovery and
  * `activateSignal` for provisioning a signal onto a destination platform.
  *
- * Async story: `activate_signal` is sync at the wire level — its response
- * union has no `Submitted` arm. Long-running activation pipelines (identity-
- * graph match: 5-30 min, destination provisioning: hours) return the wire
+ * Async story: `get_signals` can be sync OR `ctx.handoffToTask(...)` for
+ * curated semantic discovery. `activate_signal` is sync at the wire level —
+ * its response union has no `Submitted` arm. Long-running activation
+ * pipelines (identity-graph match: 5-30 min, destination provisioning:
+ * hours) return the wire
  * `ActivateSignalSuccess` immediately with deployments in `pending` state,
  * then emit `publishStatusChange({ resource_type: 'signal', ... })` events
  * as each deployment reaches `activating` / `deployed` / `failed`.
@@ -26,6 +28,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
+import type { TaskHandoff } from '../async-outcome';
 import type { ServerPayload } from '../../../types/server-payload';
 import type {
   GetSignalsRequest,
@@ -37,20 +40,22 @@ import type {
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type GetSignalsPayload = ServerPayload<GetSignalsResponse>;
+export type GetSignalsHandlerResult = GetSignalsPayload | TaskHandoff<GetSignalsPayload>;
 export type ActivateSignalPayload = ServerPayload<ActivateSignalSuccess>;
 
 export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
-   * Catalog discovery. Sync — query your signal index, return signals
-   * matching the buyer's filters (industry, intent type, audience size,
-   * etc.). The wire `GetSignalsResponse` has no async envelope, so
-   * platforms with slow catalog stores need internal caches.
+   * Catalog discovery. Query your signal index and return signals matching
+   * the buyer's filters (industry, intent type, audience size, etc.) directly
+   * OR return `ctx.handoffToTask(fn)` for semantic discovery that needs async
+   * enrichment. Wholesale discovery remains sync; keep an internal catalog
+   * cache when the full catalog cannot be queried within the request budget.
    *
    * Throw `AdcpError` for buyer-fixable rejection (e.g.,
    * `'POLICY_VIOLATION'` if the buyer doesn't have rights to the data
    * category they're requesting).
    */
-  getSignals(req: GetSignalsRequest, ctx: Ctx<TCtxMeta>): Promise<GetSignalsPayload>;
+  getSignals(req: GetSignalsRequest, ctx: Ctx<TCtxMeta>): Promise<GetSignalsHandlerResult>;
 
   /**
    * Provision a signal onto one or more destination platforms (Snap,
