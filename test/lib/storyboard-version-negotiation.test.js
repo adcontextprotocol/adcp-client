@@ -514,10 +514,9 @@ describe('storyboard runner AdCP version negotiation', () => {
         assert.strictEqual(validator({ sentinel: 'installed-sdk-default' }), false);
       });
       _resetValidationLoader('3.0.12');
-      assert.throws(
-        () => getValidator('get_products', 'request', '3.0.12'),
-        /AdCP schema data for version "3\.0\.12" not found/
-      );
+      const installedValidator = getValidator('get_products', 'request', '3.0.12');
+      assert.ok(installedValidator, 'installed 3.0 fallback validator should compile after external root reset');
+      assert.strictEqual(installedValidator({ sentinel: 'external' }), false);
     } finally {
       _resetValidationLoader('3.0.12');
       fs.rmSync(tempRoot, { recursive: true, force: true });
