@@ -33,6 +33,8 @@ import type {
   BuildCreativeResponse,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListTransformersRequest,
+  ListTransformersResponse,
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
   ListCreativesRequest,
@@ -99,6 +101,10 @@ import type {
   SITerminateSessionResponse,
   GetAdCPCapabilitiesRequest,
   GetAdCPCapabilitiesResponse,
+  GetTaskStatusRequest,
+  GetTaskStatusResponse,
+  ListTasksRequest,
+  ListTasksResponse,
   ListAccountsRequest,
   ListAccountsResponse,
   SyncAccountsRequest,
@@ -266,6 +272,13 @@ export class Agent {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse> {
     return this.callTool<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP list_transformers tool schema
+   */
+  async listTransformers(params: ListTransformersRequest): Promise<ListTransformersResponse> {
+    return this.callTool<ListTransformersResponse>('list_transformers', params);
   }
 
   /**
@@ -500,6 +513,20 @@ export class Agent {
   }
 
   /**
+   * Official AdCP get_task_status tool schema
+   */
+  async getTaskStatus(params: GetTaskStatusRequest): Promise<GetTaskStatusResponse> {
+    return this.callTool<GetTaskStatusResponse>('get_task_status', params);
+  }
+
+  /**
+   * Official AdCP list_tasks tool schema
+   */
+  async listTasks(params: ListTasksRequest): Promise<ListTasksResponse> {
+    return this.callTool<ListTasksResponse>('list_tasks', params);
+  }
+
+  /**
    * Official AdCP list_accounts tool schema
    */
   async listAccounts(params: ListAccountsRequest): Promise<ListAccountsResponse> {
@@ -633,6 +660,13 @@ export class AgentCollection {
    */
   async previewCreative(params: PreviewCreativeRequest): Promise<PreviewCreativeResponse[]> {
     return this.callToolOnAll<PreviewCreativeResponse>('preview_creative', params);
+  }
+
+  /**
+   * Official AdCP list_transformers tool schema (across multiple agents)
+   */
+  async listTransformers(params: ListTransformersRequest): Promise<ListTransformersResponse[]> {
+    return this.callToolOnAll<ListTransformersResponse>('list_transformers', params);
   }
 
   /**
@@ -815,6 +849,20 @@ export class AgentCollection {
    */
   async getAdcpCapabilities(params: GetAdCPCapabilitiesRequest): Promise<GetAdCPCapabilitiesResponse[]> {
     return this.callToolOnAll<GetAdCPCapabilitiesResponse>('get_adcp_capabilities', params);
+  }
+
+  /**
+   * Official AdCP get_task_status tool schema (across multiple agents)
+   */
+  async getTaskStatus(params: GetTaskStatusRequest): Promise<GetTaskStatusResponse[]> {
+    return this.callToolOnAll<GetTaskStatusResponse>('get_task_status', params);
+  }
+
+  /**
+   * Official AdCP list_tasks tool schema (across multiple agents)
+   */
+  async listTasks(params: ListTasksRequest): Promise<ListTasksResponse[]> {
+    return this.callToolOnAll<ListTasksResponse>('list_tasks', params);
   }
 
   /**

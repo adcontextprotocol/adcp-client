@@ -3403,6 +3403,9 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'offering', // SI offering catalog; correlation handled by brand-side `offering_token`, not framework hydration.
   'rights_holder_brand', // Read-through `get_brand_identity`; not separately stored.
   'advertiser_brand', // Same as above.
+  'transformer', // Creative build capability catalog entry; no ctx-metadata ResourceKind yet.
+  'build_variant', // Build lineage/refinement handle; no ctx-metadata ResourceKind yet.
+  'task', // Protocol task reconciliation id; task registry handles lookup, not ctx_metadata hydration.
 ]);
 
 /**

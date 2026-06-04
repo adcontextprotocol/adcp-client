@@ -177,6 +177,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // Budget — adjust and retry.
   BUDGET_TOO_LOW: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
   BUDGET_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
+  BUDGET_CAP_REACHED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
   AUDIENCE_TOO_SMALL: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
 
   // Validation / state — read issues[] and patch.
@@ -197,6 +198,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
 
   // Creative deadline — buyer can re-negotiate or surface to user.
   CREATIVE_DEADLINE_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
+  CREATIVE_INACCESSIBLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
 
   // Account state — operator must resolve.
   // ACCOUNT_AMBIGUOUS: spec says "pass explicit account_id" but the agent
@@ -236,6 +238,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   AUTH_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
   AUTH_MISSING: { action: 'escalate', escalateReason: 'auth' },
   AUTH_INVALID: { action: 'escalate', escalateReason: 'terminal' },
+  AUTHORIZATION_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
   PERMISSION_DENIED: { action: 'escalate', escalateReason: 'auth' },
 
   // Agent-status terminals — adcp#3906 consolidates the 3.0.5 placeholder
@@ -264,6 +267,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
 
   // Creative value rejection — commercial signal; don't auto-tweak.
   CREATIVE_VALUE_NOT_ALLOWED: { action: 'escalate', escalateReason: 'commercial' },
+  EVALUATOR_AGENT_NOT_ACCEPTED: { action: 'escalate', escalateReason: 'commercial' },
 
   // Brand required — validation; patch and retry.
   BRAND_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
@@ -311,6 +315,7 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   FORMAT_DECLARATION_V1_AMBIGUOUS: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_OPTION_UNRESOLVED: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_NOT_SUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  UNPRICEABLE_OUTPUT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
   PRIVATE_FIELD_IN_PUBLIC_PLACEMENT: { action: 'escalate', escalateReason: 'capability' },
   FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE: { action: 'escalate', escalateReason: 'capability' },
 
@@ -327,6 +332,13 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // payload still populated. No retry — surface the advisory to operator
   // and consume the payload as if it were fresh.
   STALE_RESPONSE: { action: 'escalate', escalateReason: 'terminal' },
+
+  // Creative/catalog input correction.
+  SIGNAL_TARGETING_INCOMPATIBLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  FEED_FETCH_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  INVALID_FEED_FORMAT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  ITEM_VALIDATION_FAILED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  CATALOG_LIMIT_EXCEEDED: { action: 'escalate', escalateReason: 'commercial' },
 };
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.6/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.7/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-rc.6.
+ * Manifest-derived constants for AdCP 3.1.0-rc.7.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-rc.6/manifest.json` (adcp_version: 3.1.0-rc.6, generated_at:
- * 2026-05-31T22:47:36.845Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-rc.7/manifest.json` (adcp_version: 3.1.0-rc.7, generated_at:
+ * 2026-06-04T10:41:34.727Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -88,6 +88,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "broaden targeting or upload more audience members"
   },
+  AUTHORIZATION_REQUIRED: {
+    description: "The caller is authenticated, but the referenced object requires an additional downstream platform connection, identity, creator, or post authorization before the seller can complete the requested action. Typical use: `sync_creatives` with a `published_post` reference where the seller can resolve the post but the owning identity has not authorized paid serving, or authorization has expired/revoked and can be restored. Distinct from `AUTH_MISSING` / `AUTH_INVALID` (caller credentials) and from `PERMISSION_DENIED` (seller policy denies the caller). Sellers SHOULD include recovery details conforming to `error-details/authorization-required.json`, especially `error.details.missing_connections[]` when the caller needs to complete one of several platform connections. Legacy recovery hints such as `authorization_url`, `authorization_instructions`, or `reference_authorization` remain valid when safe to disclose.",
+    recovery: "correctable",
+    suggestion: "complete or restore the required downstream platform connection, identity, creator, or post authorization; use error.details.missing_connections, authorization_url, authorization_instructions, or reference_authorization when present"
+  },
   AUTH_INVALID: {
     description: "Credentials were presented but rejected — revoked, expired, malformed signature, or a key no longer in the seller's keystore. Sellers MUST return this code when an `Authorization` header was present but verification failed. SDK server runtime treats this code as terminal and does not refresh or retry it; use `AUTH_MISSING` / legacy `AUTH_REQUIRED` for missing request credentials that can be refreshed via `AccountStore.refreshToken`.",
     recovery: "terminal",
@@ -123,6 +128,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "include brand (domain plus optional brand_id) on the request"
   },
+  BUDGET_CAP_REACHED: {
+    description: "build_creative stopped producing early because the next leaf would exceed the request's max_spend ceiling. Normally a SUCCESSFUL partial build (BuildCreativeVariantSuccess with budget_status: 'capped' and an advisory BUDGET_CAP_REACHED entry — every returned leaf is real and billed); returned as a terminal error only when even the first leaf would exceed the cap (no partial possible). Distinct from BUDGET_EXCEEDED (would exceed a media-buy/package allocation — a rejection) and BUDGET_EXHAUSTED (already spent).",
+    recovery: "correctable",
+    suggestion: "raise max_spend, or reduce max_creatives/max_variants, to produce the remaining items"
+  },
   BUDGET_EXCEEDED: {
     description: "Operation would exceed the allocated budget for the media buy or package. Distinct from BUDGET_EXHAUSTED (already spent) and BUDGET_TOO_LOW (below minimum).",
     recovery: "correctable",
@@ -142,6 +152,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "Campaign governance has been suspended pending human review; the governance agent MUST reject `check_governance` and `report_plan_outcome` calls on the affected plan until the escalation is resolved. Distinct from `ACCOUNT_SUSPENDED` (account-wide) — this is scoped to a single plan/campaign.",
     recovery: "transient",
     suggestion: "wait for the escalation to resolve; contact the plan operator if the suspension persists"
+  },
+  CATALOG_LIMIT_EXCEEDED: {
+    description: "The account has reached its maximum catalog count.",
+    recovery: "correctable",
+    suggestion: "remove unused catalogs, or contact the seller to raise the limit"
   },
   COMPLIANCE_UNSATISFIED: {
     description: "A required disclosure from the brief's compliance section cannot be satisfied by the target format — either the required position or the required persistence mode is not in the format's disclosure_capabilities.",
@@ -163,6 +178,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "check creative_deadline via get_media_buys before submitting changes, or negotiate a deadline extension with the seller"
   },
+  CREATIVE_INACCESSIBLE: {
+    description: "A creative governance agent (get_creative_features) could not retrieve the submitted creative_manifest assets for evaluation — an asset URL was unreachable, returned an error, or required credentials the agent does not hold. Distinct from CREATIVE_NOT_FOUND (a creative_id absent from the agent's library, not an asset-fetch failure) and CREATIVE_REJECTED (assets retrieved but failed policy).",
+    recovery: "correctable",
+    suggestion: "verify the asset URLs in creative_manifest are reachable without agent-side credentials, then re-submit"
+  },
   CREATIVE_NOT_FOUND: {
     description: "Referenced creative does not exist in the agent's creative library. Sellers MUST return this code uniformly for any creative_id not owned by the calling account — never distinguish 'exists in another tenant' from 'does not exist', which would enable cross-tenant enumeration.",
     recovery: "correctable",
@@ -182,6 +202,16 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "The seller detected a buyer-principal credential placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the transport's authentication channel. Buyer-principal credentials MUST arrive on the transport's authentication channel (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3) and MUST NOT travel inside the task payload. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date.",
     recovery: "terminal",
     suggestion: "do NOT auto-retry — auto-retry re-logs the credential on each attempt. Move the credential out of request args (top-level, `context`, `ext`, any nested location) onto the transport authentication channel (Authorization: Bearer, RFC 9421 signature, MCP/A2A authentication framing); rotate the leaked credential, then resubmit on the transport channel only"
+  },
+  EVALUATOR_AGENT_NOT_ACCEPTED: {
+    description: "Buyer attached an evaluator agent pointer on `build_creative` — `evaluator.feature_agent.agent_url` or the `evaluator` agent-form `agent_url` — that does not match (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) any entry in the seller's `creative_policy.accepted_verifiers[].agent_url`. The producing agent does not call buyer-asserted endpoints outside its allowlist; this mirrors `PROVENANCE_VERIFIER_NOT_ACCEPTED` for the gate/rank evaluator path — the buyer represents which on-list agent it used, the seller is the agent-of-record and calls only allowlisted agents. `error.field` MUST point at the offending `agent_url` path; `error.details` SHOULD include a reference to the product whose `creative_policy.accepted_verifiers` the buyer should consult.",
+    recovery: "correctable",
+    suggestion: "replace the evaluator agent_url (evaluator.feature_agent.agent_url or the evaluator agent-form agent_url) with one from the seller's published accepted_verifiers, or drop the evaluator agent pointer to fall back to seller-default ranking"
+  },
+  FEED_FETCH_FAILED: {
+    description: "Platform could not fetch the catalog feed URL during sync_catalogs.",
+    recovery: "correctable",
+    suggestion: "check URL accessibility, authentication, and that content matches the declared feed_format"
   },
   FIELD_NOT_PERMITTED: {
     description: "A request field is not in the caller's `field_scopes` allowlist for this task. Sellers declaring `field_scopes` on the account's `authorization` object MUST reject any request that sets a non-allowlisted field with this code. Distinct from `VALIDATION_ERROR` (schema/business-rule violation) - the field is valid, just not writable by this caller. `error.field` MUST identify the exact offending field path (e.g., `packages[0].budget`); when multiple fields are disallowed, sellers SHOULD return one error per field, or MAY enumerate them in `error.details.fields`.",
@@ -243,6 +273,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "transient",
     suggestion: "wait error.details.retry_after seconds and retry with the SAME idempotency_key — MUST NOT mint a fresh key (turns a safe retry into a double-execution race)"
   },
+  INVALID_FEED_FORMAT: {
+    description: "Catalog feed content does not match the declared feed_format.",
+    recovery: "correctable",
+    suggestion: "verify the feed content matches the declared format"
+  },
   INVALID_REQUEST: {
     description: "Request is malformed, missing required fields, or violates schema constraints.",
     recovery: "correctable",
@@ -257,6 +292,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "The committed proposal requires a signed insertion order but no io_acceptance was provided.",
     recovery: "correctable",
     suggestion: "review the proposal's insertion_order, accept terms, and include io_acceptance on create_media_buy"
+  },
+  ITEM_VALIDATION_FAILED: {
+    description: "One or more catalog items failed schema validation during sync_catalogs.",
+    recovery: "correctable",
+    suggestion: "check item_issues for per-item rejection reasons and fix the offending items"
   },
   MEDIA_BUY_NOT_FOUND: {
     description: "Referenced media buy does not exist or is not accessible to the requesting agent.",
@@ -418,6 +458,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "verify signal_id via get_signals, or confirm the signal is available from this agent"
   },
+  SIGNAL_TARGETING_INCOMPATIBLE: {
+    description: "A creative carrying a signal_condition (from build_creative signal_conditions fan-out, #5240) was assigned to a package whose signal targeting is incompatible — e.g. a sun creative routed to a rain-targeted package. The trafficking-compatibility invariant: a creative built FOR one signal condition MUST NOT serve into a package targeting an incompatible condition. Enforced reject-at-trafficking on the sales side (create_media_buy / sync_creatives), NOT at build_creative (per #5280, signal pointers are advisory at the build layer; enforcement lives at the trafficking boundary). Compatibility is matched on shared signal_ref identity: when both sides carry signal_agent_segment_id, compare the opaque handle exactly; when both carry only categorical {signal_id,value}, compare signal_ref + value-set semantics; equal categorical labels from DIFFERENT providers are NOT compatible absent an explicit equivalence mechanism; when one side has a segment handle and the other only a categorical value, the seller MAY accept only if it can resolve both to the same provider-issued segment, else reject/warn. For value_type:numeric the comparison is range-overlap (WG-open: range-overlap vs exact-match — see RFC #5240 open decisions). error.field SHOULD point at the offending assignment path (e.g. packages[N].creative_assignments[M] or creatives[N]); error.details SHOULD carry the creative's signal_condition and the package's incompatible signal targeting so the buyer can re-route. Distinct from SIGNAL_NOT_FOUND (signal unknown/inaccessible) by being a compatibility mismatch between a known creative condition and a known package condition.",
+    recovery: "correctable",
+    suggestion: "assign the creative to a package whose signal targeting matches the creative's signal_condition, or rebuild the creative for the package's condition; match on shared signal_ref identity (compare signal_agent_segment_id exactly when both carry it, else categorical signal_ref + value)"
+  },
   STALE_RESPONSE: {
     description: "Non-fatal advisory raised when the seller's live fetch to an upstream or sub-agent failed (timeout, connection error, downstream 5xx) and the response payload was satisfied from a cached prior result that is past the seller's freshness target for this surface. Emitted **alongside** a populated success payload — the caller's request still completes from a usable cache hit; this code tells downstream consumers that the data is older than the seller would normally serve. Distinct from `SERVICE_UNAVAILABLE` (seller's own service is down, no payload — transient, retry-with-backoff) by signalling **graceful degradation**: the seller's own service is fine, but one of its dependencies is currently unreachable and the seller chose to honor the request from cache rather than return empty. Sellers MUST emit `STALE_RESPONSE` ONLY when the response payload is non-empty AND derived from a cache entry whose `cache_age_seconds` exceeds the surface's freshness target. When no cached entry exists (or the cache hit is within freshness target), sellers MUST NOT emit this code — return the empty-or-fresh response with whatever upstream-failure code applies (e.g., `SERVICE_UNAVAILABLE`). **Wire placement (normative).** Transport-level success markers stay flipped to success (HTTP 200, MCP `isError: false`, A2A `succeeded`) — the task ran successfully and produced a response, even if from cache. The advisory rides in `errors[]` on the payload and MUST NOT be promoted to `adcp_error` on the envelope (envelope-level errors are reserved for the empty-payload failure case per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`). `error.field` SHOULD point at the affected payload path (e.g., `formats` for `list_creative_formats`, `products` for `get_products`). `error.details` SHOULD conform to `error-details/stale-response.json` — `served_from_cache` (required, always `true`), `cache_age_seconds` (required), and optionally `freshness_target_seconds`, `upstream` (the dependency that failed), and `original_error` (the underlying failure code/message). **Multiple stale upstreams.** When N sub-agents are stale (e.g., a `list_creative_formats` registry aggregating from multiple creative agents), the seller SHOULD emit **one `STALE_RESPONSE` entry per affected upstream** rather than aggregating — the per-upstream shape mirrors the existing precedent set by `PIXEL_TRACKER_LOSSY_DOWNGRADE` (one advisory per downgraded asset) and lets buyer agents reason about which sub-population of the payload is stale. Each entry's `error.field` SHOULD narrow to the affected slice (e.g., `formats` for formats sourced from the stale upstream).",
     recovery: "transient",
@@ -427,6 +472,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "Buyer-proposed measurement_terms were rejected by the seller. The error details SHOULD identify which specific term was rejected and the seller's acceptable range or supported vendors.",
     recovery: "correctable",
     suggestion: "adjust the proposed terms and retry, or omit measurement_terms to accept the product's defaults"
+  },
+  UNPRICEABLE_OUTPUT: {
+    description: "A creative transformer build targets an output format that no pricing option covers — no transformer.pricing_options entry has a matching applies_to_output_format_ids and none is unscoped. The build is rejected rather than billed at a guessed rate (no silent fallback).",
+    recovery: "correctable",
+    suggestion: "target an output format the transformer prices, or have the seller add a pricing option covering it"
   },
   UNSUPPORTED_FEATURE: {
     description: "A requested feature or field is not supported by this seller.",
@@ -504,6 +554,7 @@ export const CREATIVE_TOOLS_FROM_MANIFEST = [
   "get_creative_delivery",
   "get_creative_features",
   "list_creatives",
+  "list_transformers",
   "preview_creative",
   "sync_creatives",
   "validate_input",
@@ -542,6 +593,8 @@ export const PROPERTY_TOOLS_FROM_MANIFEST = [
 
 export const PROTOCOL_TOOLS_FROM_MANIFEST = [
   "get_adcp_capabilities",
+  "get_task_status",
+  "list_tasks",
 ] as const;
 
 export const SIGNALS_TOOLS_FROM_MANIFEST = [

@@ -13,6 +13,7 @@ import {
 } from '../types/error-codes';
 import type { ValidationIssue } from '../validation/schema-validator';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
+import { pickSafeDetails } from './pick-safe-details';
 
 export interface AdcpErrorOptions {
   message: string;
@@ -95,6 +96,28 @@ export interface AdcpErrorResponse {
   };
 }
 
+const AUTHORIZATION_REQUIRED_DETAIL_KEYS = [
+  'required_connections',
+  'missing_connections',
+  'provider',
+  'connection_type',
+  'required_for',
+  'scope',
+  'status',
+  'resource_ref',
+  'platform_account_id',
+  'identity_id',
+  'handle',
+  'profile_url',
+  'post_id',
+  'post_url',
+  'authorization_url',
+  'authorization_instructions',
+  'checked_at',
+  'expires_at',
+  'reference_authorization',
+] as const;
+
 /**
  * Build an L3-compliant MCP tool error response with all three transport layers:
  *
@@ -175,6 +198,7 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
  * `envelope-allowlist.ts`.
  */
 export function applyAdcpErrorAllowlist(code: string, payload: Record<string, unknown>): AdcpErrorPayload {
+  payload = sanitizeAdcpErrorDetails(code, payload);
   const allowlist = ADCP_ERROR_FIELD_ALLOWLIST[code];
   if (!allowlist) return payload as unknown as AdcpErrorPayload;
   const out: Record<string, unknown> = {};
@@ -183,6 +207,17 @@ export function applyAdcpErrorAllowlist(code: string, payload: Record<string, un
     out[key] = key === 'recovery' ? normalizeAllowlistedRecoveryForCode(code, value) : value;
   }
   return out as unknown as AdcpErrorPayload;
+}
+
+function sanitizeAdcpErrorDetails(code: string, payload: Record<string, unknown>): Record<string, unknown> {
+  if (code !== 'AUTHORIZATION_REQUIRED' || payload.details === undefined) return payload;
+
+  const sanitizedDetails = pickSafeDetails(payload.details, AUTHORIZATION_REQUIRED_DETAIL_KEYS, {
+    maxDepth: 4,
+    maxSizeBytes: 4096,
+  });
+  const { details: _details, ...rest } = payload;
+  return sanitizedDetails === undefined ? rest : { ...rest, details: sanitizedDetails };
 }
 
 function isErrorRecovery(value: unknown): value is ErrorRecovery {

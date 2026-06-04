@@ -281,6 +281,7 @@ export const GOVERNANCE_TOOLS = [
 export const CREATIVE_TOOLS = [
   'build_creative',
   'list_creative_formats',
+  'list_transformers',
   'preview_creative',
   'list_creatives',
   'sync_creatives', // Also in MEDIA_BUY_TOOLS - serves both domains
@@ -307,7 +308,7 @@ export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const
 
 export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
 
-export const PROTOCOL_TOOLS = ['get_adcp_capabilities'] as const;
+export const PROTOCOL_TOOLS = ['get_adcp_capabilities', 'get_task_status', 'list_tasks'] as const;
 
 /**
  * Build synthetic capabilities from a list of available tools.

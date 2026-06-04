@@ -50,6 +50,7 @@ export type KnownToolRequestSchemas = {
   get_media_buy_delivery: typeof schemas.GetMediaBuyDeliveryRequestSchema;
   provide_performance_feedback: typeof schemas.ProvidePerformanceFeedbackRequestSchema;
   list_creative_formats: typeof schemas.ListCreativeFormatsRequestSchema;
+  list_transformers: typeof schemas.ListTransformersRequestSchema;
   build_creative: typeof schemas.BuildCreativeRequestSchema;
   preview_creative: typeof schemas.PreviewCreativeRequestSchema;
   sync_creatives: typeof schemas.SyncCreativesRequestSchema;
@@ -63,6 +64,8 @@ export type KnownToolRequestSchemas = {
   sync_audiences: typeof schemas.SyncAudiencesRequestSchema;
   report_usage: typeof schemas.ReportUsageRequestSchema;
   get_account_financials: typeof schemas.GetAccountFinancialsRequestSchema;
+  get_task_status: typeof schemas.GetTaskStatusRequestSchema;
+  list_tasks: typeof schemas.ListTasksRequestSchema;
   sync_catalogs: typeof schemas.SyncCatalogsRequestSchema;
   sync_event_sources: typeof schemas.SyncEventSourcesRequestSchema;
   log_event: typeof schemas.LogEventRequestSchema;
@@ -118,6 +121,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
 
   // Creative
   list_creative_formats: schemas.ListCreativeFormatsRequestSchema,
+  list_transformers: schemas.ListTransformersRequestSchema,
   build_creative: schemas.BuildCreativeRequestSchema,
   preview_creative: schemas.PreviewCreativeRequestSchema,
   sync_creatives: schemas.SyncCreativesRequestSchema,
@@ -180,6 +184,8 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
 
   // Capabilities
   get_adcp_capabilities: schemas.GetAdCPCapabilitiesRequestSchema,
+  get_task_status: schemas.GetTaskStatusRequestSchema,
+  list_tasks: schemas.ListTasksRequestSchema,
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerRequestSchema,

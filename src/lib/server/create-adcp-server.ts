@@ -183,6 +183,7 @@ import type {
   GetMediaBuyDeliveryRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
   ListCreativeFormatsRequestSchema,
+  ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
   GetCreativeDeliveryRequestSchema,
   ListCreativesRequestSchema,
@@ -250,6 +251,7 @@ import type {
   GetMediaBuyDeliveryResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
+  ListTransformersResponse,
   ProvidePerformanceFeedbackSuccess,
   ProvidePerformanceFeedbackResponse,
   BuildCreativeSuccess,
@@ -546,6 +548,11 @@ export interface AdcpToolMap {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
     result: ServerPayload<ListCreativeFormatsResponse>;
     response: ListCreativeFormatsResponse;
+  };
+  list_transformers: {
+    params: z.input<typeof ListTransformersRequestSchema>;
+    result: ServerPayload<ListTransformersResponse>;
+    response: ListTransformersResponse;
   };
   build_creative: {
     params: z.input<typeof BuildCreativeRequestSchema>;
@@ -865,6 +872,7 @@ export interface SignalsHandlers<TAccount = unknown> {
 
 export interface CreativeHandlers<TAccount = unknown> {
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
+  listTransformers?: DomainHandler<'list_transformers', TAccount>;
   buildCreative?: DomainHandler<'build_creative', TAccount>;
   previewCreative?: DomainHandler<'preview_creative', TAccount>;
   listCreatives?: DomainHandler<'list_creatives', TAccount>;
@@ -2155,6 +2163,7 @@ const TOOL_META: Record<string, ToolMeta> = {
 
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
+  list_transformers: { wrap: null, annotations: RO },
   build_creative: { wrap: wrapBuildCreative, annotations: MUT },
   preview_creative: { wrap: null, annotations: RO },
   get_creative_delivery: { wrap: creativeDeliveryResponse, annotations: RO },
@@ -2255,6 +2264,7 @@ const SIGNALS_ENTRIES: HandlerEntry[] = [
 
 const CREATIVE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
+  { handlerKey: 'listTransformers', toolName: 'list_transformers' },
   { handlerKey: 'buildCreative', toolName: 'build_creative' },
   { handlerKey: 'previewCreative', toolName: 'preview_creative' },
   { handlerKey: 'listCreatives', toolName: 'list_creatives' },
@@ -3382,7 +3392,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     {
       domain: 'creative' as const,
       wired: isWired(config.creative as Record<string, unknown> | undefined),
-      specialisms: ['creative-ad-server', 'creative-generative', 'creative-template'] as const,
+      specialisms: ['creative-ad-server', 'creative-generative', 'creative-template', 'creative-transformers'] as const,
     },
     {
       domain: 'signals' as const,

@@ -1399,6 +1399,33 @@ function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   return output;
 }
 
+function addCanonicalToolTypeAliases(typeDefinitions: string, tools: ToolDefinition[]): string {
+  let output = typeDefinitions;
+  const exportedTypes = collectExportedTypeNames(output);
+  const aliases: string[] = [];
+
+  const addAlias = (canonical: string) => {
+    if (exportedTypes.has(canonical)) return;
+
+    const candidates = [...exportedTypes].filter(name => new RegExp(`^${canonical}[A-Z]\\w+$`).test(name));
+    if (candidates.length !== 1) return;
+
+    aliases.push(`export type ${canonical} = ${candidates[0]};`);
+    exportedTypes.add(canonical);
+  };
+
+  for (const tool of tools) {
+    const baseName = methodNameToTypeName(tool.methodName);
+    addAlias(`${baseName}Request`);
+    addAlias(`${baseName}Response`);
+  }
+
+  if (aliases.length === 0) return output;
+
+  output += `\n// Canonical tool aliases for schemas whose titles include domain qualifiers.\n${aliases.join('\n')}\n`;
+  return output;
+}
+
 async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set<string> = new Set()) {
   console.log('🔧 Generating tool parameter and response types...');
 
@@ -1876,10 +1903,12 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'PackageSignalTargetingGroup1', base: 'PackageSignalTargetingGroup' },
   { numbered: 'LegacyManifestNamedFormatReference1', base: 'LegacyManifestNamedFormatReference' },
   { numbered: 'ManifestCanonicalFormatKind1', base: 'ManifestCanonicalFormatKind' },
+  { numbered: 'LegacyManifestNamedFormatReference2', base: 'LegacyManifestNamedFormatReference' },
+  { numbered: 'ManifestCanonicalFormatKind2', base: 'ManifestCanonicalFormatKind' },
   { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
   { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
   { numbered: 'CreateMediaBuySubmitted1', base: 'CreateMediaBuySubmitted' },
-  ...Array.from({ length: 6 }, (_, index) => index + 2).flatMap(suffix => [
+  ...Array.from({ length: 10 }, (_, index) => index + 2).flatMap(suffix => [
     { numbered: `VASTAsset${suffix}`, base: 'VASTAsset' },
     { numbered: `DAASTAsset${suffix}`, base: 'DAASTAsset' },
     { numbered: `AssetVariant${suffix}`, base: 'AssetVariant' },
@@ -2675,7 +2704,10 @@ async function generateTypes() {
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes));
+  const processedToolTypes = addCanonicalToolTypeAliases(
+    applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)),
+    tools
+  );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
