@@ -180,24 +180,16 @@ describe('inlineCreativesForPackages', () => {
   test('throws when explicit assignments do not match package format selectors', () => {
     assert.throws(
       () =>
-        inlineCreativesForPackages(
-          [{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }],
-          [imageCreative],
-          {
-            assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
-          }
-        ),
+        inlineCreativesForPackages([{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }], [imageCreative], {
+          assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
+        }),
       /creative_id "cre_image" does not match package_id "pkg_1" format selectors/
     );
 
-    const ignored = inlineCreativesForPackages(
-      [{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }],
-      [imageCreative],
-      {
-        assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
-        onIncompatibleAssignment: 'ignore',
-      }
-    );
+    const ignored = inlineCreativesForPackages([{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }], [imageCreative], {
+      assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
+      onIncompatibleAssignment: 'ignore',
+    });
     assert.equal(ignored[0].creatives, undefined);
   });
 

@@ -1511,10 +1511,10 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
       : taskAdcpError?.code !== undefined
         ? '/adcp_error/code'
         : adcpError?.code !== undefined
-        ? '/adcp_error/code'
-        : data?.error_code !== undefined
-          ? '/error_code'
-          : null;
+          ? '/adcp_error/code'
+          : data?.error_code !== undefined
+            ? '/error_code'
+            : null;
 
   if (validation.allowed_values?.length) {
     const actualCode = errorCode !== undefined && errorCode !== null ? String(errorCode) : undefined;

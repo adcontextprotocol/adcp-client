@@ -1530,12 +1530,12 @@ describe('createAdcpServer', () => {
       assert.ok(!tools.includes('list_tasks'));
     });
 
-    it('registers protocol task tools for the release-precision 3.1-rc.8 pin', async () => {
+    it('registers protocol task tools for the release-precision 3.1-rc.9 pin', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
-        adcpVersion: '3.1-rc.8',
+        adcpVersion: '3.1-rc.9',
         taskRegistry,
       });
       const tools = registeredTools(server);

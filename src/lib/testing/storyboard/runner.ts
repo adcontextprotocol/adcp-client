@@ -343,6 +343,17 @@ export function evaluateCapabilityPredicate(
   // a real spec-coverage gap (under-declared agent) rather than a behavior
   // the agent affirmatively refused. Skip ONLY when the agent declared a
   // value AND that value disagrees with the predicate.
+  //
+  // Exception: media_buy.features.inline_creative_management is an optional
+  // feature flag whose rc.9 storyboard states that non-advertising sellers
+  // grade not_applicable. Treat absence as unsupported only for that feature.
+  if (
+    actual === undefined &&
+    predicate.path === 'media_buy.features.inline_creative_management' &&
+    predicate.equals === true
+  ) {
+    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare the feature.`;
+  }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
       `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
