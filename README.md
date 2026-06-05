@@ -700,6 +700,12 @@ await new RegistryClient({ apiKey: process.env.ADCP_REGISTRY_API_KEY }).upsertCo
   catalog_etag: 'meta-creative-formats-2026-05',
   formats: catalog.formats,
 });
+
+await new RegistryClient({ apiKey: process.env.ADCP_REGISTRY_API_KEY }).upsertCommunityMirrorAdagents({
+  platform: 'meta',
+  catalog_etag: 'meta-creative-formats-2026-05',
+  formats: catalog.formats,
+});
 ```
 
 `upsertCommunityMirrorAdagents()` writes to the hosted mirror lifecycle endpoint, while `createCommunityMirrorAdagents()` remains a side-effect-free generator helper.

@@ -782,7 +782,9 @@ export class RegistryClient {
    *
    * This persists the mirror under `/api/registry/mirrors/:platform`. Use
    * `previewCommunityMirrorAdagents()` when you only need to validate or
-   * preview the generated document without saving it.
+   * preview the generated document without saving it. Use
+   * `upsertCommunityMirrorAdagents(...)` when you want the client to infer the
+   * platform key from config.
    *
    * @remarks
    * Catalog content may include registry-supplied strings. Treat them as
@@ -1079,8 +1081,9 @@ export class RegistryClient {
   }
 
   private communityMirrorPlatformFromConfig(config: CreateCommunityMirrorAdagentsConfig): string {
-    if (typeof config.platform === 'string' && config.platform.trim()) {
-      return config.platform;
+    if (typeof config.platform === 'string') {
+      const platform = config.platform.trim();
+      if (platform) return platform;
     }
 
     const properties = (config as { properties?: unknown }).properties;
