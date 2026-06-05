@@ -223,30 +223,30 @@ function creativeMatchesPackage(pkg: InlineCreativePackage, creative: CreativeAs
   const packageFormatIds = arrayOfObjects(pkg.format_ids);
   const packageFormatOptionRefs = arrayOfObjects(pkg.format_option_refs);
   const packageFormatKind = typeof pkg.format_kind === 'string' ? pkg.format_kind : undefined;
-
-  if (packageFormatIds.length === 0 && packageFormatOptionRefs.length === 0 && packageFormatKind === undefined) {
-    return true;
-  }
+  const packageParams = plainObject(pkg.params);
 
   const creativeRecord = creative as unknown as Record<string, unknown>;
-  if (packageFormatKind !== undefined && creativeRecord.format_kind === packageFormatKind) {
-    return true;
-  }
-
   const creativeFormatId = plainObject(creativeRecord.format_id);
-  if (creativeFormatId && packageFormatIds.some(formatId => formatIdMatches(formatId, creativeFormatId))) {
-    return true;
-  }
-
   const creativeFormatOptionRef = plainObject(creativeRecord.format_option_ref);
-  if (
-    creativeFormatOptionRef &&
-    packageFormatOptionRefs.some(formatOptionRef => deepEqual(formatOptionRef, creativeFormatOptionRef))
-  ) {
-    return true;
+
+  if (packageFormatOptionRefs.length > 0) {
+    if (creativeFormatOptionRef) {
+      return packageFormatOptionRefs.some(formatOptionRef => deepEqual(formatOptionRef, creativeFormatOptionRef));
+    }
+    if (packageFormatIds.length === 0 && packageFormatKind === undefined) return false;
   }
 
-  return false;
+  if (packageFormatKind !== undefined) {
+    return creativeRecord.format_kind === packageFormatKind && paramsMatchCreative(packageParams, creativeFormatId);
+  }
+
+  if (packageFormatIds.length > 0) {
+    return (
+      creativeFormatId !== undefined && packageFormatIds.some(formatId => formatIdMatches(formatId, creativeFormatId))
+    );
+  }
+
+  return true;
 }
 
 function arrayOfObjects(value: unknown): Record<string, unknown>[] {
@@ -277,6 +277,99 @@ function formatIdMatches(expected: Record<string, unknown>, actual: Record<strin
   }
 
   return true;
+}
+
+function paramsMatchCreative(
+  packageParams: Record<string, unknown> | undefined,
+  creativeFormatId: Record<string, unknown> | undefined
+): boolean {
+  if (!packageParams) return true;
+
+  let constrained = false;
+  const actualWidth = numberValue(creativeFormatId, 'width');
+  const actualHeight = numberValue(creativeFormatId, 'height');
+  const actualDuration =
+    numberValue(creativeFormatId, 'duration_ms') ?? numberValue(creativeFormatId, 'duration_ms_exact');
+
+  const sizes = Array.isArray(packageParams.sizes)
+    ? packageParams.sizes.flatMap(size => (plainObject(size) ? [size] : []))
+    : [];
+  if (sizes.length > 0) {
+    constrained = true;
+    if (
+      actualWidth === undefined ||
+      actualHeight === undefined ||
+      !sizes.some(size => numberValue(size, 'width') === actualWidth && numberValue(size, 'height') === actualHeight)
+    ) {
+      return false;
+    }
+  }
+
+  const expectedWidth = numberValue(packageParams, 'width');
+  if (expectedWidth !== undefined) {
+    constrained = true;
+    if (actualWidth !== expectedWidth) return false;
+  }
+
+  const expectedHeight = numberValue(packageParams, 'height');
+  if (expectedHeight !== undefined) {
+    constrained = true;
+    if (actualHeight !== expectedHeight) return false;
+  }
+
+  const minWidth = numberValue(packageParams, 'min_width');
+  if (minWidth !== undefined) {
+    constrained = true;
+    if (actualWidth === undefined || actualWidth < minWidth) return false;
+  }
+
+  const maxWidth = numberValue(packageParams, 'max_width');
+  if (maxWidth !== undefined) {
+    constrained = true;
+    if (actualWidth === undefined || actualWidth > maxWidth) return false;
+  }
+
+  const minHeight = numberValue(packageParams, 'min_height');
+  if (minHeight !== undefined) {
+    constrained = true;
+    if (actualHeight === undefined || actualHeight < minHeight) return false;
+  }
+
+  const maxHeight = numberValue(packageParams, 'max_height');
+  if (maxHeight !== undefined) {
+    constrained = true;
+    if (actualHeight === undefined || actualHeight > maxHeight) return false;
+  }
+
+  const exactDuration = numberValue(packageParams, 'duration_ms_exact') ?? numberValue(packageParams, 'duration_ms');
+  if (exactDuration !== undefined) {
+    constrained = true;
+    if (actualDuration !== exactDuration) return false;
+  }
+
+  const durationRange = numberRange(packageParams.duration_ms_range);
+  if (durationRange) {
+    constrained = true;
+    const [minDuration, maxDuration] = durationRange;
+    if (actualDuration === undefined) return false;
+    if (minDuration !== undefined && actualDuration < minDuration) return false;
+    if (maxDuration !== undefined && actualDuration > maxDuration) return false;
+  }
+
+  return constrained ? creativeFormatId !== undefined : true;
+}
+
+function numberValue(object: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = object?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function numberRange(value: unknown): [number | undefined, number | undefined] | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const [min, max] = value;
+  const minValue = min === null ? undefined : typeof min === 'number' && Number.isFinite(min) ? min : undefined;
+  const maxValue = max === null ? undefined : typeof max === 'number' && Number.isFinite(max) ? max : undefined;
+  return minValue === undefined && maxValue === undefined ? undefined : [minValue, maxValue];
 }
 
 function normalizeAgentUrl(value: unknown): string | undefined {

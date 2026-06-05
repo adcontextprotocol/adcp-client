@@ -159,6 +159,81 @@ describe('inlineCreativesForPackages', () => {
     );
   });
 
+  test('does not treat format_kind alone as enough when package params conflict', () => {
+    const largeImageCreative = {
+      creative_id: 'cre_image_728x90',
+      name: 'Image Leaderboard',
+      format_kind: 'image',
+      format_id: { id: 'display_728x90', width: 728, height: 90 },
+      assets: { image: { asset_type: 'image', url: 'https://cdn.example.com/leaderboard.png' } },
+    };
+
+    const result = inlineCreativesForPackages(
+      [
+        {
+          product_id: 'prod_mrec',
+          pricing_option_id: 'cpm',
+          budget: 1000,
+          format_kind: 'image',
+          params: { width: 300, height: 250 },
+        },
+      ],
+      [largeImageCreative]
+    );
+
+    assert.equal(result[0].creatives, undefined);
+  });
+
+  test('does not let legacy format_id override a conflicting format option reference', () => {
+    const nativeStoryCreative = {
+      creative_id: 'cre_native_story',
+      name: 'Native Story',
+      format_id: IMAGE_FORMAT,
+      format_option_ref: { scope: 'product', format_option_id: 'native_story' },
+      assets: { title: { asset_type: 'text', content: 'Hello' } },
+    };
+
+    const result = inlineCreativesForPackages(
+      [
+        {
+          product_id: 'prod_native_feed',
+          pricing_option_id: 'cpm',
+          budget: 1000,
+          format_ids: [IMAGE_FORMAT],
+          format_option_refs: [{ scope: 'product', format_option_id: 'native_feed' }],
+        },
+      ],
+      [nativeStoryCreative]
+    );
+
+    assert.equal(result[0].creatives, undefined);
+  });
+
+  test('honors open-ended duration range package params', () => {
+    const sixtySecondVideo = {
+      creative_id: 'cre_video_60s',
+      name: 'Video 60s',
+      format_kind: 'video_hosted',
+      format_id: { id: 'video_60s', duration_ms: 60000 },
+      assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video-60s.mp4' } },
+    };
+
+    const result = inlineCreativesForPackages(
+      [
+        {
+          product_id: 'prod_video_max_30s',
+          pricing_option_id: 'cpm',
+          budget: 1000,
+          format_kind: 'video_hosted',
+          params: { duration_ms_range: [null, 30000] },
+        },
+      ],
+      [sixtySecondVideo]
+    );
+
+    assert.equal(result[0].creatives, undefined);
+  });
+
   test('throws on assignment references that cannot be represented inline', () => {
     assert.throws(
       () =>

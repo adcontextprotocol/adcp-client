@@ -144,10 +144,11 @@ describe('Synthetic Capabilities Builder', () => {
     assert.strictEqual(capabilities._synthetic, true);
   });
 
-  test('should not infer inline creative upload support from sync_creatives tool presence', () => {
+  test('should not infer creative library or inline upload support from sync_creatives tool presence', () => {
     const capabilities = buildSyntheticCapabilities([{ name: 'sync_creatives' }]);
 
     assert.strictEqual(capabilities.features.inlineCreativeManagement, false);
+    assert.strictEqual(capabilities.creative, undefined);
     assert.strictEqual(supportsSyncCreatives(capabilities), false);
   });
 

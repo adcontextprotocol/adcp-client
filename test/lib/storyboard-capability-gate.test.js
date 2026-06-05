@@ -184,6 +184,24 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.ok(step.skip.detail.includes('did not declare'));
   });
 
+  test('optional inline creative feature skips when raw capabilities are unavailable', async () => {
+    const result = await runStoryboard('http://fake-local-99993', inlineCreativeGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no raw capabilities available)',
+        tools: ['create_media_buy'],
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
+
   test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to unsatisfied_contract', () => {
     assert.equal(
       DETAILED_SKIP_TO_CANONICAL['capability_unsupported'],
