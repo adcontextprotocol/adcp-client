@@ -23,6 +23,8 @@ import type {
   CreateAdagentsResponse,
   CommunityMirrorAdagentsConfig,
   CommunityMirrorAdagentsCatalog,
+  PublishCommunityMirrorAdagentsResponse,
+  ListCommunityMirrorAdagentsResponse,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -95,6 +97,9 @@ export type {
   CreatedAdagentsJson,
   CommunityMirrorAdagentsConfig,
   CommunityMirrorAdagentsCatalog,
+  PublishCommunityMirrorAdagentsResponse,
+  CommunityMirrorAdagentsSummary,
+  ListCommunityMirrorAdagentsResponse,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -172,6 +177,7 @@ const DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const ERROR_BODY_PREVIEW_CHARS = 200;
 const MAX_BULK_DOMAINS = 100;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
+const COMMUNITY_MIRROR_PLATFORM_RE = /^[a-z0-9_-]{1,64}$/;
 
 /**
  * Build a catalog-only community mirror adagents.json descriptor.
@@ -730,6 +736,46 @@ export class RegistryClient {
     return this.createAdagents(buildCommunityMirrorAdagents(config));
   }
 
+  /**
+   * Publish or update a catalog-only community mirror adagents.json descriptor.
+   *
+   * This persists the mirror under `/api/registry/mirrors/:platform`. Use
+   * `createCommunityMirrorAdagents()` when you only need to validate or preview
+   * the generated document without saving it.
+   */
+  async publishCommunityMirrorAdagents(
+    platform: string,
+    config: CommunityMirrorAdagentsConfig
+  ): Promise<PublishCommunityMirrorAdagentsResponse> {
+    const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
+    if (!this.apiKey) throw new Error('apiKey is required for save operations');
+    return this.put(
+      `${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`,
+      buildCommunityMirrorAdagents(config)
+    );
+  }
+
+  /** Retrieve a published catalog-only community mirror adagents.json descriptor. */
+  async getCommunityMirrorAdagents(platform: string): Promise<CommunityMirrorAdagentsCatalog | null> {
+    const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
+    const response = await this.get<{
+      adagents_json: CommunityMirrorAdagentsCatalog;
+    }>(`${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`, { nullOn404: true });
+    return response?.adagents_json ?? null;
+  }
+
+  /** List published community mirror catalogs with their current etags. */
+  async listCommunityMirrorAdagents(options?: {
+    limit?: number;
+    offset?: number;
+  }): Promise<ListCommunityMirrorAdagentsResponse> {
+    const params = new URLSearchParams();
+    if (options?.limit != null) params.set('limit', String(options.limit));
+    if (options?.offset != null) params.set('offset', String(options.offset));
+    const qs = params.toString();
+    return this.get(`${this.baseUrl}/api/registry/mirrors${qs ? `?${qs}` : ''}`);
+  }
+
   // ====== Search & Discovery ======
 
   /** Search brands, publishers, and properties. */
@@ -920,6 +966,27 @@ export class RegistryClient {
     return this.parseJson(text);
   }
 
+  private async put<T = any>(url: string, body: unknown): Promise<T> {
+    const { res, text } = await this.requestText(url, {
+      method: 'PUT',
+      headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+    }
+    return this.parseJson(text);
+  }
+
+  private normalizeCommunityMirrorPlatform(platform: string): string {
+    const normalizedPlatform = platform?.trim().toLowerCase();
+    if (!normalizedPlatform) throw new Error('platform is required');
+    if (!COMMUNITY_MIRROR_PLATFORM_RE.test(normalizedPlatform)) {
+      throw new Error('platform must match ^[a-z0-9_-]{1,64}$');
+    }
+    return normalizedPlatform;
+  }
+
   private async requestText(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
     const controller = new AbortController();
     let timedOut = false;
@@ -973,6 +1040,7 @@ export class RegistryClient {
       path === '/api/registry/agents' ||
       path === '/api/registry/publishers' ||
       path === '/api/registry/feed' ||
+      path === '/api/registry/mirrors' ||
       path === '/api/registry/agents/search' ||
       path === '/api/registry/authorizations' ||
       path === '/api/registry/authorizations/snapshot' ||
@@ -985,6 +1053,7 @@ export class RegistryClient {
       path === '/api/public/validate-publisher' ||
       path === '/api/registry/agents/storyboard-status' ||
       (path.startsWith('/api/registry/agents/') && path.endsWith('/storyboard-status')) ||
+      path.startsWith('/api/registry/mirrors/') ||
       path.startsWith('/api/properties/check')
     ) {
       return DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES;

@@ -178,6 +178,29 @@ export type CommunityMirrorAdagentsCatalog = Omit<
   formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
 };
 
+/** Response from PUT /api/registry/mirrors/:platform. */
+export interface PublishCommunityMirrorAdagentsResponse {
+  success: boolean;
+  platform: string;
+  catalog_etag: string | null;
+  superseded_by: string | null;
+  updated_at: string;
+}
+
+/** Summary item from GET /api/registry/mirrors. */
+export interface CommunityMirrorAdagentsSummary {
+  platform: string;
+  catalog_etag: string | null;
+  superseded_by: string | null;
+  updated_at: string;
+}
+
+/** Response from GET /api/registry/mirrors. */
+export interface ListCommunityMirrorAdagentsResponse {
+  mirrors: CommunityMirrorAdagentsSummary[];
+  total: number;
+}
+
 /** Request body for POST /api/registry/validate/product-authorization */
 export type ValidateProductAuthorizationRequest = NonNullable<
   operations['validateProductAuthorization']['requestBody']
