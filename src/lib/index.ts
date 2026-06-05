@@ -49,6 +49,7 @@ export type {
   AdagentsPlacementTag,
   CreatedAdagentsJson,
   CommunityMirrorAdagentsConfig,
+  CreateCommunityMirrorAdagentsConfig,
   CommunityMirrorAdagentsCatalog,
   PublishCommunityMirrorAdagentsResponse,
   CommunityMirrorAdagentsSummary,

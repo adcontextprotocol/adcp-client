@@ -158,7 +158,7 @@ export type CreateAdagentsResponse = Omit<RegistryCreateAdagentsResponse, 'data'
 /** Input for building a catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsConfig = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp'
+  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp' | 'platform'
 > & {
   /** Community mirror catalogs should be cacheable static artifacts with stable content identity. */
   catalog_etag: string;
@@ -174,10 +174,19 @@ export type CommunityMirrorAdagentsConfig = Omit<
   include_timestamp?: never;
 };
 
+/** Input for publishing/upserting a catalog-only community mirror descriptor. */
+export type CreateCommunityMirrorAdagentsConfig = CommunityMirrorAdagentsConfig & {
+  /**
+   * Stable platform key for the hosted mirror. If omitted, RegistryClient can
+   * infer it only when every `properties[].platform` value is the same.
+   */
+  platform?: string;
+};
+
 /** Catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsCatalog = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp'
+  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp' | 'platform'
 > & {
   authorized_agents: [];
   catalog_etag: string;
