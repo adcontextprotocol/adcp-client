@@ -1,5 +1,18 @@
 # Changelog
 
+## 9.0.0-beta.25
+
+### Minor Changes
+
+- b61e999: Bump the bundled AdCP schema pin to `3.1.0-rc.9`, refresh generated types, schemas, docs, and registry metadata, and include the rc9 release in the SDK version-compatibility list. The rc9 request surface adds optional `account` context on task status/listing requests.
+- 952ff49: Add RegistryClient methods to publish, fetch, and list persisted community mirror adagents catalogs.
+- b61e999: Add buyer-side creative delivery helpers for sellers without a creative library. `supportsSyncCreatives(caps)` now keys off `creative.has_creative_library`, and `inlineCreativesForPackages()` projects creative assets into package-scoped `packages[].creatives` payloads for create/update media-buy fallback flows.
+
+### Patch Changes
+
+- c0a63ee: Support keyed subset matching for storyboard array wildcard checks.
+- 3fd9e7f: Fix storyboard `expect_error` grading for failed AdCP payloads when the SDK task result omits `success: false`.
+
 ## 9.0.0-beta.24
 
 ### Minor Changes
