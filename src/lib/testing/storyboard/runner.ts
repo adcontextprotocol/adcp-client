@@ -3896,7 +3896,11 @@ async function executeStep(
       if (taskResult) {
         responseRecord = {
           transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
-          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          payload: redactSecrets(
+            taskResult.data ??
+              taskResult.error ??
+              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : null)
+          ),
           duration_ms: durationMs,
         };
       }
@@ -3932,7 +3936,11 @@ async function executeStep(
       if (taskResult) {
         responseRecord = {
           transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
-          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          payload: redactSecrets(
+            taskResult.data ??
+              taskResult.error ??
+              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : null)
+          ),
           duration_ms: stepResult.duration_ms,
         };
       }
