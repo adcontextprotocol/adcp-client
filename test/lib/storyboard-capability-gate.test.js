@@ -52,6 +52,32 @@ const disabledProfile = {
   raw_capabilities: { adcp: { idempotency: { supported: false } } },
 };
 
+const inlineCreativeGatedStoryboard = {
+  id: 'inline_creatives_optional_feature_gate_test',
+  version: '1.0.0',
+  title: 'Inline creative management (optional feature gated)',
+  category: 'test',
+  summary: 'Skipped when media-buy inline creative management is not advertised.',
+  narrative: '',
+  agent: { interaction_model: 'media_buy_seller', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: { path: 'media_buy.features.inline_creative_management', equals: true },
+  phases: [
+    {
+      id: 'inline_creatives',
+      title: 'Inline creative phase',
+      steps: [
+        {
+          id: 'create_inline_buy',
+          title: 'Create media buy with inline creative',
+          task: 'create_media_buy',
+          sample_request: { brand_id: 'brand_test', packages: [] },
+        },
+      ],
+    },
+  ],
+};
+
 describe('requires_capability storyboard skip gate (#933)', () => {
   test('emits capability_unsupported skip when agent declares supported: false', async () => {
     // _profile bypasses discoverAgentProfile; no network calls made because
@@ -137,6 +163,43 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     // matches `actual === equals` against scalars) is unaffected: a
     // function or any complex value will fail the equality predicate.
     assert.ok(typeof result === 'function' || result === undefined);
+  });
+
+  test('optional inline creative feature skips when omitted', async () => {
+    const result = await runStoryboard('http://fake-local-99994', inlineCreativeGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no inline creative feature declared)',
+        tools: ['get_adcp_capabilities', 'create_media_buy'],
+        raw_capabilities: { media_buy: { features: {} } },
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
+
+  test('optional inline creative feature skips when raw capabilities are unavailable', async () => {
+    const result = await runStoryboard('http://fake-local-99993', inlineCreativeGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no raw capabilities available)',
+        tools: ['create_media_buy'],
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
+    assert.ok(step.skip.detail.includes('did not declare'));
   });
 
   test('DETAILED_SKIP_TO_CANONICAL maps capability_unsupported to unsatisfied_contract', () => {
@@ -269,6 +332,10 @@ describe('requires_capability `present:` matcher (#1811)', () => {
     const presentTrue = { path: 'x.y', present: true };
     const presentFalse = { path: 'x.y', present: false };
     const equalsTrue = { path: 'x.y', equals: true };
+    const inlineFeatureEqualsTrue = {
+      path: 'media_buy.features.inline_creative_management',
+      equals: true,
+    };
 
     // present: true
     assert.equal(evaluateCapabilityPredicate(presentTrue, undefined)?.includes('must be present'), true);
@@ -291,6 +358,12 @@ describe('requires_capability `present:` matcher (#1811)', () => {
       true,
       'declared mismatch skips with `not satisfied` detail'
     );
+    assert.equal(
+      evaluateCapabilityPredicate(inlineFeatureEqualsTrue, undefined)?.includes('did not declare'),
+      true,
+      'inline_creative_management is an optional feature gate: absent skips'
+    );
+    assert.equal(evaluateCapabilityPredicate(inlineFeatureEqualsTrue, true), null);
   });
 });
 

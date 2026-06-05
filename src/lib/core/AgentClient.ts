@@ -623,6 +623,16 @@ export class AgentClient {
    * `format_ids` is omitted entirely when every chosen format option is V2-only
    * (the spec's "neither present" fallback fires for v1 sellers in that case).
    *
+   * **Inline creative fallback.** Sellers that do not advertise a creative
+   * library (`supportsSyncCreatives(await agent.getCapabilities()) === false`)
+   * can still accept package-scoped creative uploads when they advertise
+   * `caps.features.inlineCreativeManagement`. Use
+   * `inlineCreativesForPackages(packages, creatives, { assignments })` to
+   * project `sync_creatives`-style creative assets into create-media-buy
+   * package payloads without rewriting a raw `sync_creatives` call. If using
+   * assignments for create payloads, give each package a stable key such as
+   * `context.buyer_ref`, or pass a custom `packageId` resolver.
+   *
    * For adopters writing strictly to v1 sellers — or for products whose
    * `format_options[]` entries don't publish `format_option_id` — see the
    * `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
@@ -650,7 +660,14 @@ export class AgentClient {
   }
 
   /**
-   * Update an existing media buy
+   * Update an existing media buy.
+   *
+   * For sellers without a creative library but with
+   * `caps.features.inlineCreativeManagement`, post-create creative replacement
+   * can be represented as package-scoped inline `packages[].creatives` on this
+   * request. Build the package patch with `inlineCreativesForPackages()` and
+   * preflight it with `preflightUpdateMediaBuy(currentBuy, patch)` so
+   * `available_actions[]` allows `replace_creative` before dispatch.
    */
   async updateMediaBuy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
@@ -667,7 +684,17 @@ export class AgentClient {
   }
 
   /**
-   * Sync creative assets
+   * Sync creative assets into the seller's reusable creative library.
+   *
+   * This is library-scoped: assignments can reference packages, but a raw
+   * `sync_creatives` request does not contain enough media-buy context for the
+   * SDK to safely rewrite it into inline package creatives. When the seller
+   * lacks `creative.has_creative_library` but does advertise
+   * `media_buy.features.inline_creative_management`, use
+   * `inlineCreativesForPackages()` with explicit package/media-buy context and
+   * send a separate `create_media_buy` or `update_media_buy` request with its
+   * own idempotency key. If neither capability is advertised, creative upload
+   * is not available through this SDK helper surface.
    */
   async syncCreatives(
     params: MutatingRequestInput<SyncCreativesRequest>,

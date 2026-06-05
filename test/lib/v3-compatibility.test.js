@@ -15,6 +15,7 @@ const {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  supportsSyncCreatives,
   supportsExperimentalFeature,
   requiresOperatorAuth,
   requiresAccountForProducts,
@@ -143,6 +144,14 @@ describe('Synthetic Capabilities Builder', () => {
     assert.strictEqual(capabilities._synthetic, true);
   });
 
+  test('should not infer creative library or inline upload support from sync_creatives tool presence', () => {
+    const capabilities = buildSyntheticCapabilities([{ name: 'sync_creatives' }]);
+
+    assert.strictEqual(capabilities.features.inlineCreativeManagement, false);
+    assert.strictEqual(capabilities.creative, undefined);
+    assert.strictEqual(supportsSyncCreatives(capabilities), false);
+  });
+
   test('should detect protocols from A2A skill IDs, not display names', () => {
     // A2A agent cards have skill.id (machine name) and skill.name (display name).
     // The client must use skill.id so buildSyntheticCapabilities matches tool names.
@@ -204,11 +213,32 @@ describe('parseCapabilitiesResponse', () => {
 
     assert.strictEqual(capabilities.version, 'v3');
     assert.ok(capabilities.protocols.includes('media_buy'));
+    assert.strictEqual(capabilities.features.inlineCreativeManagement, true);
     assert.strictEqual(capabilities.features.propertyListFiltering, true);
     assert.strictEqual(capabilities.features.contentStandards, true);
     assert.deepStrictEqual(capabilities.extensions, ['scope3']);
     assert.strictEqual(capabilities._synthetic, false);
     assert.strictEqual(capabilities.account, undefined);
+  });
+
+  test('supportsSyncCreatives follows creative.has_creative_library, not media_buy inline support', () => {
+    const libraryCaps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy', 'creative'],
+      media_buy: { features: { inline_creative_management: false } },
+      creative: { has_creative_library: true },
+      extensions_supported: [],
+    });
+    const inlineOnlyCaps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      media_buy: { features: { inline_creative_management: true } },
+      creative: { has_creative_library: false },
+      extensions_supported: [],
+    });
+
+    assert.strictEqual(supportsSyncCreatives(libraryCaps), true);
+    assert.strictEqual(supportsSyncCreatives(inlineOnlyCaps), false);
   });
 
   test('should parse account capabilities when present', () => {

@@ -219,5 +219,14 @@ export {
 // Re-export sync creatives adapter (v2/v3 compatibility)
 export { adaptSyncCreativesRequestForV2 } from './sync-creatives-adapter';
 
+// Re-export creative delivery helpers for package-scoped inline creatives
+export { inlineCreativesForPackages } from './creative-delivery';
+export type {
+  InlineCreativeAssignment,
+  InlineCreativePackage,
+  InlineCreativePackagePatch,
+  InlineCreativesForPackagesOptions,
+} from './creative-delivery';
+
 // Re-export pagination utilities
 export { paginate, paginatePages, type PaginateOptions } from './pagination';

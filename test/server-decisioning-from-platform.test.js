@@ -3702,7 +3702,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.8');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.9');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',

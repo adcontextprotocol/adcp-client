@@ -1400,6 +1400,7 @@ export {
   supportsProtocol,
   supportsPropertyListFiltering,
   supportsContentStandards,
+  supportsSyncCreatives,
   requiresOperatorAuth,
   requiresAccountForProducts,
   supportsSandbox,
@@ -1425,6 +1426,15 @@ export type {
   ToolInfo,
   FeatureName,
 } from './utils/capabilities';
+
+// Buyer-side creative delivery helpers
+export { inlineCreativesForPackages } from './utils/creative-delivery';
+export type {
+  InlineCreativeAssignment,
+  InlineCreativePackage,
+  InlineCreativePackagePatch,
+  InlineCreativesForPackagesOptions,
+} from './utils/creative-delivery';
 
 // Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)
 export {

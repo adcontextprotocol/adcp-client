@@ -29,7 +29,14 @@ export type AdcpProtocol =
  * Media buy features available on the agent
  */
 export interface MediaBuyFeatures {
-  /** Agent supports inline creative upload in create/update_media_buy */
+  /**
+   * Agent accepts package-scoped inline creative uploads in
+   * create_media_buy/update_media_buy via `packages[].creatives`.
+   *
+   * This is distinct from creative-library support. Use
+   * `supportsSyncCreatives(caps)` when deciding whether to call the
+   * library-scoped `sync_creatives` tool.
+   */
   inlineCreativeManagement?: boolean;
   /** Agent supports property_list filtering in get_products */
   propertyListFiltering?: boolean;
@@ -389,8 +396,8 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
 
   // Detect features from tool presence
   const features: MediaBuyFeatures = {
-    // v2 servers support inline creative management if they have sync_creatives
-    inlineCreativeManagement: toolNames.has('sync_creatives'),
+    // Tool lists do not declare package-scoped inline creative upload support.
+    inlineCreativeManagement: false,
     // Property list filtering is v3 only
     propertyListFiltering: false,
     // Content standards is v3 only
@@ -440,7 +447,8 @@ export function buildSyntheticV3Capabilities(tools: ToolInfo[]): AdcpCapabilitie
   const protocols = detectProtocolsFromTools(toolNames);
 
   const features: MediaBuyFeatures = {
-    inlineCreativeManagement: toolNames.has('sync_creatives'),
+    // Tool lists do not declare package-scoped inline creative upload support.
+    inlineCreativeManagement: false,
     propertyListFiltering: false,
     contentStandards: false,
     conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
@@ -617,6 +625,19 @@ export function supportsPropertyListFiltering(capabilities: AdcpCapabilities): b
  */
 export function supportsContentStandards(capabilities: AdcpCapabilities): boolean {
   return capabilities.features.contentStandards ?? false;
+}
+
+/**
+ * Check whether the seller advertises a creative library suitable for the
+ * library-scoped `sync_creatives` workflow.
+ *
+ * This intentionally keys off `creative.has_creative_library`, not tool-list
+ * presence. A seller can expose inline package creatives without a reusable
+ * library, and `sync_creatives` is not safe to replace with inline
+ * create/update media-buy calls unless the buyer supplies package context.
+ */
+export function supportsSyncCreatives(capabilities: AdcpCapabilities): boolean {
+  return capabilities.creative?.hasCreativeLibrary === true;
 }
 
 /**

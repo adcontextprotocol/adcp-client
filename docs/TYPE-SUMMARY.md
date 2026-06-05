@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-06-04
-> @adcp/sdk v9.0.0-beta.23
+> Generated at: 2026-06-05
+> @adcp/sdk v9.0.0-beta.24
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -134,6 +134,7 @@ _Request:_
 ```
 {
   task_id: string  // required
+  account: Account Ref
   include_history: boolean
   include_result: boolean
   context: Context
@@ -164,6 +165,7 @@ _Response (success branch):_
 _Request:_
 ```
 {
+  account: Account Ref
   filters: object
   sort: object
   pagination: Pagination Request

@@ -8,6 +8,7 @@
  */
 
 import type { TaskResult } from '../types';
+import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
 
 /**
@@ -74,12 +75,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeStoryboardTaskSuccess(result: unknown, taskName: string): boolean {
+function readAdcpError(value: unknown): AdcpErrorInfo | undefined {
+  if (!isRecord(value)) return undefined;
+  const error = value.adcp_error;
+  if (!isRecord(error) || typeof error.code !== 'string') return undefined;
+  return error as unknown as AdcpErrorInfo;
+}
+
+function readFirstError(value: unknown): AdcpErrorInfo | undefined {
+  if (!isRecord(value) || !Array.isArray(value.errors)) return undefined;
+  const first = value.errors[0];
+  if (!isRecord(first) || typeof first.code !== 'string') return undefined;
+  return {
+    code: first.code,
+    message: typeof first.message === 'string' ? first.message : String(first.code),
+    ...(typeof first.recovery === 'string' && { recovery: first.recovery as AdcpErrorInfo['recovery'] }),
+    ...(typeof first.field === 'string' && { field: first.field }),
+    ...(typeof first.suggestion === 'string' && { suggestion: first.suggestion }),
+    ...(typeof first.retry_after === 'number' && { retry_after: first.retry_after }),
+    ...(isRecord(first.details) && { details: first.details }),
+  };
+}
+
+function errorMessageFrom(error: AdcpErrorInfo | undefined, fallback: unknown): string | undefined {
+  if (typeof error?.message === 'string' && error.message.length > 0) return error.message;
+  if (typeof error?.code === 'string') return error.code;
+  return typeof fallback === 'string' && fallback.length > 0 ? fallback : undefined;
+}
+
+function normalizeStoryboardTaskSuccess(
+  result: unknown,
+  taskName: string,
+  terminalDataError?: boolean,
+  adcpError?: AdcpErrorInfo
+): boolean {
   if (!isRecord(result)) return true;
   if (typeof result.success === 'boolean') return result.success;
   if (result.status === 'failed' || result.status === 'rejected') return false;
-  if (result.adcpError || result.adcp_error) return false;
-  if (isTerminalAdcpError(result.data, taskName)) return false;
+  if (adcpError || result.adcpError || result.adcp_error) return false;
+  if (terminalDataError ?? isTerminalAdcpError(result.data, taskName)) return false;
   return true;
 }
 
@@ -156,12 +190,20 @@ export async function executeStoryboardTask(
     }
   }
 
-  const extractionPath = readExtractionPath(result.data);
-  const adcpError = result.adcpError ?? (isRecord(result.adcp_error) ? result.adcp_error : undefined);
+  const terminalDataError = isTerminalAdcpError(result.data, taskName);
+  const adcpError =
+    result.adcpError ??
+    result.adcp_error ??
+    readAdcpError(result.data) ??
+    (terminalDataError ? readFirstError(result.data) : undefined);
+  const data = result.data ?? (adcpError ? { adcp_error: adcpError } : undefined);
+  const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError);
+  const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
+  const extractionPath = readExtractionPath(data);
   return {
-    success: normalizeStoryboardTaskSuccess(result, taskName),
-    data: result.data,
-    error: result.error,
+    success,
+    data,
+    error,
     ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };

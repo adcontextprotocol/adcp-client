@@ -343,6 +343,13 @@ export function evaluateCapabilityPredicate(
   // a real spec-coverage gap (under-declared agent) rather than a behavior
   // the agent affirmatively refused. Skip ONLY when the agent declared a
   // value AND that value disagrees with the predicate.
+  //
+  // Exception: media_buy.features.inline_creative_management is an optional
+  // feature flag whose rc.9 storyboard states that non-advertising sellers
+  // grade not_applicable. Treat absence as unsupported only for that feature.
+  if (actual === undefined && isInlineCreativeManagementGate(predicate)) {
+    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare the feature.`;
+  }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
       `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
@@ -350,6 +357,19 @@ export function evaluateCapabilityPredicate(
     );
   }
   return null;
+}
+
+function isInlineCreativeManagementGate(
+  predicate:
+    | { path: string; equals: boolean | string | number | null }
+    | { path: string; present: boolean }
+    | { path: string; contains: boolean | string | number }
+): predicate is { path: 'media_buy.features.inline_creative_management'; equals: true } {
+  return (
+    'equals' in predicate &&
+    predicate.path === 'media_buy.features.inline_creative_management' &&
+    predicate.equals === true
+  );
 }
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
@@ -1958,6 +1978,19 @@ async function executeStoryboardPass(
       const cap = storyboard.requires_capability;
       const actual = resolveCapabilityPath(rawCaps, cap.path);
       const unmetDetail = evaluateCapabilityPredicate(cap, actual);
+      if (unmetDetail !== null) {
+        if (!callerOwnsClients) await closeConnections(options.protocol);
+        return {
+          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+          notices: preflightNotices,
+        };
+      }
+    } else if (
+      isInlineCreativeManagementGate(storyboard.requires_capability) &&
+      profile !== undefined &&
+      !profile.tools.includes('get_adcp_capabilities')
+    ) {
+      const unmetDetail = evaluateCapabilityPredicate(storyboard.requires_capability, undefined);
       if (unmetDetail !== null) {
         if (!callerOwnsClients) await closeConnections(options.protocol);
         return {
@@ -3898,8 +3931,9 @@ async function executeStep(
           transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
+              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
               taskResult.error ??
-              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : null)
+              null
           ),
           duration_ms: durationMs,
         };
@@ -3938,8 +3972,9 @@ async function executeStep(
           transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
           payload: redactSecrets(
             taskResult.data ??
+              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : undefined) ??
               taskResult.error ??
-              (taskResult.adcp_error ? { adcp_error: taskResult.adcp_error } : null)
+              null
           ),
           duration_ms: stepResult.duration_ms,
         };
