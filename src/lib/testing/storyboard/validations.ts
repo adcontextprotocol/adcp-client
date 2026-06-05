@@ -872,9 +872,9 @@ function containsValueMatches(actual: unknown, expected: unknown): boolean {
 
   if (isRecord(expected)) {
     if (!isRecord(actual)) return false;
-    return Object.entries(expected).every(([key, expectedValue]) =>
-      Object.prototype.hasOwnProperty.call(actual, key) &&
-      containsValueMatches(actual[key], expectedValue)
+    return Object.entries(expected).every(
+      ([key, expectedValue]) =>
+        Object.prototype.hasOwnProperty.call(actual, key) && containsValueMatches(actual[key], expectedValue)
     );
   }
 
