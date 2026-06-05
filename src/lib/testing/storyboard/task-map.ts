@@ -8,7 +8,7 @@
  */
 
 import type { TaskResult } from '../types';
-import { readExtractionPath } from '../../utils/response-unwrapper';
+import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -69,6 +69,19 @@ export const TASK_TO_METHOD: Record<string, string> = {
   si_send_message: 'siSendMessage',
   si_terminate_session: 'siTerminateSession',
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeStoryboardTaskSuccess(result: unknown, taskName: string): boolean {
+  if (!isRecord(result)) return true;
+  if (typeof result.success === 'boolean') return result.success;
+  if (result.status === 'failed' || result.status === 'rejected') return false;
+  if (result.adcpError || result.adcp_error) return false;
+  if (isTerminalAdcpError(result.data, taskName)) return false;
+  return true;
+}
 
 /**
  * Execute a storyboard task against a SingleAgentClient.
@@ -144,11 +157,12 @@ export async function executeStoryboardTask(
   }
 
   const extractionPath = readExtractionPath(result.data);
+  const adcpError = result.adcpError ?? (isRecord(result.adcp_error) ? result.adcp_error : undefined);
   return {
-    success: result.success ?? true,
+    success: normalizeStoryboardTaskSuccess(result, taskName),
     data: result.data,
     error: result.error,
-    ...(result.adcpError && { adcp_error: result.adcpError }),
+    ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
 }

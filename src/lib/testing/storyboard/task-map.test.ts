@@ -9,6 +9,27 @@ const INVALID_REQUEST_ERROR = {
   details: { validation_errors: [{ field: 'packages.0.product_id', message: 'Field required' }] },
 };
 
+const MULTI_FINALIZE_FAILED_PAYLOAD = {
+  products: [],
+  proposals: [],
+  errors: [
+    {
+      code: 'MULTI_FINALIZE_UNSUPPORTED',
+      message:
+        'Atomic multi-proposal finalize is not supported; sequence individual create_media_buy(proposal_id=...) calls instead.',
+      field: 'refine',
+      recovery: 'correctable',
+    },
+  ],
+  adcp_version: '3.1',
+  status: 'failed',
+};
+
+const ADVISORY_ERROR = {
+  code: 'NON_BLOCKING_DIAGNOSTIC',
+  message: 'Advisory warning',
+};
+
 function makeFailureClient(adcpError?: object) {
   return {
     createMediaBuy: async () => ({
@@ -74,5 +95,61 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     };
     const result = await executeStoryboardTask(client, 'unknown_task', {});
     expect(result.adcp_error?.code).toBe('UNKNOWN_ERROR');
+  });
+
+  it('infers failure from a failed AdCP payload when TaskResult.success is omitted', async () => {
+    const client = {
+      getProducts: async () => ({
+        data: MULTI_FINALIZE_FAILED_PAYLOAD,
+      }),
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(false);
+    expect(result.data).toEqual(MULTI_FINALIZE_FAILED_PAYLOAD);
+  });
+
+  it('uses canonical terminal AdCP error detection when TaskResult.success is omitted', async () => {
+    const cases = [
+      { name: 'rejected status', data: { status: 'rejected' } },
+      { name: 'failed status', data: { status: 'failed' } },
+      { name: 'errors without success payload', data: { status: 'completed', errors: [ADVISORY_ERROR] } },
+    ];
+
+    for (const testCase of cases) {
+      const client = {
+        getProducts: async () => ({ data: testCase.data }),
+      };
+
+      const result = await executeStoryboardTask(client, 'get_products', {});
+
+      expect(result.success, testCase.name).toBe(false);
+    }
+  });
+
+  it('does not treat advisory errors on a success payload as failure', async () => {
+    const client = {
+      getProducts: async () => ({
+        data: { status: 'completed', products: [], errors: [ADVISORY_ERROR] },
+      }),
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(true);
+  });
+
+  it('forwards top-level adcp_error from a TaskResult when adcpError is absent', async () => {
+    const client = {
+      getProducts: async () => ({
+        adcp_error: INVALID_REQUEST_ERROR,
+      }),
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+
+    expect(result.success).toBe(false);
+    expect(result.adcp_error).toEqual(INVALID_REQUEST_ERROR);
   });
 });
