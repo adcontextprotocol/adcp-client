@@ -189,9 +189,16 @@ const COMMUNITY_MIRROR_PLATFORM_RE = /^[a-z0-9_-]{1,64}$/;
  * platform adoption or seller authorization.
  */
 export function buildCommunityMirrorAdagents(config: CommunityMirrorAdagentsConfig): CommunityMirrorAdagentsCatalog {
-  const maybeConfig = config as CommunityMirrorAdagentsConfig & { authorized_agents?: unknown };
+  const maybeConfig = config as CommunityMirrorAdagentsConfig & {
+    authorized_agents?: unknown;
+    include_schema?: unknown;
+    include_timestamp?: unknown;
+  };
   if ('authorized_agents' in maybeConfig) {
     throw new Error('authorized_agents is not accepted for community mirror adagents catalogs');
+  }
+  if ('include_schema' in maybeConfig || 'include_timestamp' in maybeConfig) {
+    throw new Error('include_schema and include_timestamp are not accepted for community mirror adagents catalogs');
   }
   if (!config.catalog_etag?.trim()) {
     throw new Error('catalog_etag is required');
@@ -749,19 +756,37 @@ export class RegistryClient {
   ): Promise<PublishCommunityMirrorAdagentsResponse> {
     const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
-    return this.put(
-      `${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`,
-      buildCommunityMirrorAdagents(config)
-    );
+    const catalog = buildCommunityMirrorAdagents(config);
+    this.assertCommunityMirrorPropertiesMatchPlatform(normalizedPlatform, catalog);
+    return this.put(`${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`, catalog);
   }
 
   /** Retrieve a published catalog-only community mirror adagents.json descriptor. */
   async getCommunityMirrorAdagents(platform: string): Promise<CommunityMirrorAdagentsCatalog | null> {
     const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
     const response = await this.get<{
-      adagents_json: CommunityMirrorAdagentsCatalog;
+      platform?: unknown;
+      superseded_by?: unknown;
+      adagents_json?: unknown;
     }>(`${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`, { nullOn404: true });
-    return response?.adagents_json ?? null;
+    if (!response) return null;
+    if (response.platform !== undefined && response.platform !== normalizedPlatform) {
+      throw new Error('Registry returned mismatched community mirror platform');
+    }
+    const catalog = response.adagents_json;
+    if (!catalog || typeof catalog !== 'object' || Array.isArray(catalog)) {
+      throw new Error('Registry returned invalid community mirror catalog');
+    }
+    const typedCatalog = catalog as CommunityMirrorAdagentsCatalog & { authorized_agents?: unknown };
+    if (!Array.isArray(typedCatalog.authorized_agents) || typedCatalog.authorized_agents.length !== 0) {
+      throw new Error('Registry returned invalid community mirror catalog');
+    }
+    if (response.superseded_by != null && typeof response.superseded_by !== 'string') {
+      throw new Error('Registry returned invalid community mirror catalog');
+    }
+    return response.superseded_by && !typedCatalog.superseded_by
+      ? { ...typedCatalog, superseded_by: response.superseded_by }
+      : typedCatalog;
   }
 
   /** List published community mirror catalogs with their current etags. */
@@ -985,6 +1010,25 @@ export class RegistryClient {
       throw new Error('platform must match ^[a-z0-9_-]{1,64}$');
     }
     return normalizedPlatform;
+  }
+
+  private assertCommunityMirrorPropertiesMatchPlatform(
+    normalizedPlatform: string,
+    catalog: CommunityMirrorAdagentsCatalog
+  ): void {
+    const properties = (catalog as { properties?: unknown }).properties;
+    if (!Array.isArray(properties)) return;
+    for (const property of properties) {
+      if (!property || typeof property !== 'object' || Array.isArray(property)) continue;
+      const propertyPlatform = (property as { platform?: unknown }).platform;
+      if (propertyPlatform == null) continue;
+      if (
+        typeof propertyPlatform !== 'string' ||
+        this.normalizeCommunityMirrorPlatform(propertyPlatform) !== normalizedPlatform
+      ) {
+        throw new Error(`properties[].platform must match ${normalizedPlatform}`);
+      }
+    }
   }
 
   private async requestText(url: string, init: RequestInit): Promise<{ res: Response; text: string }> {
