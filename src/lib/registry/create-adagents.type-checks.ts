@@ -35,6 +35,7 @@ const feedPlacement: AdagentsPlacementDefinition = {
 
 const communityMirrorConfig: CommunityMirrorAdagentsConfig = {
   catalog_etag: 'meta-creative-formats-2026-05',
+  superseded_by: 'https://meta.example/.well-known/adagents.json',
   properties: [
     {
       domain: 'creative.adcontextprotocol.org',
@@ -70,6 +71,11 @@ void directCreateRequest;
 async function registryListCompatibility(client: RegistryClient): Promise<void> {
   await client.listAgents({ type: 'si' });
   await client.createCommunityMirrorAdagents(communityMirrorConfig);
+  await client.publishCommunityMirrorAdagents('meta', communityMirrorConfig);
+
+  const mirror = await client.getCommunityMirrorAdagents('meta');
+  const supersededBy: string | undefined = mirror?.superseded_by;
+  void supersededBy;
 
   const agents = await client.listAgents();
   const agentSources: Record<string, unknown> = agents.sources;

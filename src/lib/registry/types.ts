@@ -158,25 +158,55 @@ export type CreateAdagentsResponse = Omit<RegistryCreateAdagentsResponse, 'data'
 /** Input for building a catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsConfig = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats'
+  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp'
 > & {
   /** Community mirror catalogs should be cacheable static artifacts with stable content identity. */
   catalog_etag: string;
   /** Community mirror catalogs exist to publish format-shape metadata. */
   formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+  /** Optional pointer to a successor adagents.json after a platform adopts AdCP directly. */
+  superseded_by?: string;
   /** Seller authorization claims are intentionally not accepted by this helper. */
   authorized_agents?: never;
+  /** Generator-only flag; community mirrors are persisted adagents.json documents. */
+  include_schema?: never;
+  /** Generator-only flag; community mirrors are persisted adagents.json documents. */
+  include_timestamp?: never;
 };
 
 /** Catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsCatalog = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats'
+  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp'
 > & {
   authorized_agents: [];
   catalog_etag: string;
   formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+  superseded_by?: string;
 };
+
+/** Response from PUT /api/registry/mirrors/:platform. */
+export interface PublishCommunityMirrorAdagentsResponse {
+  success: boolean;
+  platform: string;
+  catalog_etag: string | null;
+  superseded_by: string | null;
+  updated_at: string;
+}
+
+/** Summary item from GET /api/registry/mirrors. */
+export interface CommunityMirrorAdagentsSummary {
+  platform: string;
+  catalog_etag: string | null;
+  superseded_by: string | null;
+  updated_at: string;
+}
+
+/** Response from GET /api/registry/mirrors. */
+export interface ListCommunityMirrorAdagentsResponse {
+  mirrors: CommunityMirrorAdagentsSummary[];
+  total: number;
+}
 
 /** Request body for POST /api/registry/validate/product-authorization */
 export type ValidateProductAuthorizationRequest = NonNullable<
