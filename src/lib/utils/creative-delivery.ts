@@ -280,7 +280,12 @@ function formatIdMatches(expected: Record<string, unknown>, actual: Record<strin
 }
 
 function normalizeAgentUrl(value: unknown): string | undefined {
-  return typeof value === 'string' ? value.replace(/\/+$/, '') : undefined;
+  if (typeof value !== 'string') return undefined;
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
 }
 
 function deepEqual(a: unknown, b: unknown): boolean {
