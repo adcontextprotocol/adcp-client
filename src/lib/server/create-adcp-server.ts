@@ -3486,6 +3486,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     protocolBundleKey === '3.1-rc.7' ||
     protocolBundleKey === '3.1.0-rc.8' ||
     protocolBundleKey === '3.1-rc.8' ||
+    protocolBundleKey === '3.1.0-rc.9' ||
+    protocolBundleKey === '3.1-rc.9' ||
     protocolBundleKey === '3.1-rc';
 
   // Tool-name set for two-layer error emission. Computed once at server

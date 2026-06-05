@@ -1423,7 +1423,8 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
     firstError && typeof firstError === 'object' && typeof (firstError as Record<string, unknown>).code === 'string'
       ? ((firstError as Record<string, unknown>).code as string)
       : undefined;
-  const adcpError = data?.adcp_error as Record<string, unknown> | undefined;
+  const taskAdcpError = taskResult.adcp_error as Record<string, unknown> | undefined;
+  const adcpError = taskAdcpError ?? (data?.adcp_error as Record<string, unknown> | undefined);
   const errorCode =
     firstErrorCode ??
     adcpError?.code ??
@@ -1435,7 +1436,9 @@ function validateErrorCode(validation: StoryboardValidation, taskResult: TaskRes
   const pointer =
     firstErrorCode !== undefined
       ? '/errors/0/code'
-      : adcpError?.code !== undefined
+      : taskAdcpError?.code !== undefined
+        ? '/adcp_error/code'
+        : adcpError?.code !== undefined
         ? '/adcp_error/code'
         : data?.error_code !== undefined
           ? '/error_code'

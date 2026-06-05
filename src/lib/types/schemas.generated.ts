@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-06-04T19:40:20.198Z
+// Generated at: 2026-06-05T16:47:09.259Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1519,7 +1519,7 @@ export const PropertySchema = z.object({
     publisher_domain: z.string().optional()
 }).passthrough();
 
-export const TaskTypeSchema = z.union([z.literal("get_products"), z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("activate_signal"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights")]);
+export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("activate_signal"), z.literal("get_products"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights")]);
 
 export const AdCPProtocolSchema = z.union([z.literal("media-buy"), z.literal("signals"), z.literal("governance"), z.literal("creative"), z.literal("brand"), z.literal("sponsored-intelligence"), z.literal("measurement")]);
 
@@ -3044,6 +3044,7 @@ export const TasksGetRequestSchema = z.object({
     adcp_version: z.string().regex(/^\d+\.\d+(-[a-zA-Z0-9.-]+)?$/).optional(),
     adcp_major_version: z.number().min(1).max(99).optional(),
     task_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     include_history: z.boolean().optional(),
     include_result: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
@@ -3273,6 +3274,7 @@ export const SortDirectionSchema = z.union([z.literal("asc"), z.literal("desc")]
 export const TasksListRequestSchema = z.object({
     adcp_version: z.string().regex(/^\d+\.\d+(-[a-zA-Z0-9.-]+)?$/).optional(),
     adcp_major_version: z.number().min(1).max(99).optional(),
+    account: AccountReferenceSchema.optional(),
     filters: z.object({
         protocol: AdCPProtocolSchema.optional(),
         protocols: z.array(AdCPProtocolSchema).optional(),
@@ -4265,6 +4267,7 @@ export const GetTaskStatusRequestSchema = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     task_id: z.string(),
+    account: AccountReferenceSchema.optional(),
     include_history: z.boolean().optional(),
     include_result: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
@@ -4274,6 +4277,7 @@ export const GetTaskStatusRequestSchema = z.object({
 export const ListTasksRequestSchema = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
+    account: AccountReferenceSchema.optional(),
     filters: z.object({
         protocol: AdCPProtocolSchema.optional(),
         protocols: z.array(AdCPProtocolSchema).optional(),

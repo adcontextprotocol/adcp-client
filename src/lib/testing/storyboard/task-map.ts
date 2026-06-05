@@ -8,7 +8,8 @@
  */
 
 import type { TaskResult } from '../types';
-import { readExtractionPath } from '../../utils/response-unwrapper';
+import type { AdcpErrorInfo } from '../../core/ConversationTypes';
+import { isTerminalAdcpError, readExtractionPath } from '../../utils/response-unwrapper';
 
 /**
  * Map of AdCP task names to SingleAgentClient method names.
@@ -69,6 +70,38 @@ export const TASK_TO_METHOD: Record<string, string> = {
   si_send_message: 'siSendMessage',
   si_terminate_session: 'siTerminateSession',
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readAdcpError(value: unknown): AdcpErrorInfo | undefined {
+  if (!isRecord(value)) return undefined;
+  const error = value.adcp_error;
+  if (!isRecord(error) || typeof error.code !== 'string') return undefined;
+  return error as unknown as AdcpErrorInfo;
+}
+
+function readFirstError(value: unknown): AdcpErrorInfo | undefined {
+  if (!isRecord(value) || !Array.isArray(value.errors)) return undefined;
+  const first = value.errors[0];
+  if (!isRecord(first) || typeof first.code !== 'string') return undefined;
+  return {
+    code: first.code,
+    message: typeof first.message === 'string' ? first.message : String(first.code),
+    ...(typeof first.recovery === 'string' && { recovery: first.recovery as AdcpErrorInfo['recovery'] }),
+    ...(typeof first.field === 'string' && { field: first.field }),
+    ...(typeof first.suggestion === 'string' && { suggestion: first.suggestion }),
+    ...(typeof first.retry_after === 'number' && { retry_after: first.retry_after }),
+    ...(isRecord(first.details) && { details: first.details }),
+  };
+}
+
+function errorMessageFrom(error: AdcpErrorInfo | undefined, fallback: unknown): string | undefined {
+  if (typeof error?.message === 'string' && error.message.length > 0) return error.message;
+  if (typeof error?.code === 'string') return error.code;
+  return typeof fallback === 'string' && fallback.length > 0 ? fallback : undefined;
+}
 
 /**
  * Execute a storyboard task against a SingleAgentClient.
@@ -143,12 +176,27 @@ export async function executeStoryboardTask(
     }
   }
 
-  const extractionPath = readExtractionPath(result.data);
+  const terminalDataError = isTerminalAdcpError(result.data, taskName);
+  const adcpError =
+    result.adcpError ??
+    result.adcp_error ??
+    readAdcpError(result.data) ??
+    (terminalDataError ? readFirstError(result.data) : undefined);
+  const data = result.data ?? (adcpError ? { adcp_error: adcpError } : undefined);
+  const failedByEnvelope =
+    result.status === 'failed' ||
+    result.status === 'rejected' ||
+    result.status === 'governance-denied' ||
+    terminalDataError ||
+    (adcpError !== undefined && result.success !== true);
+  const success = result.success ?? !failedByEnvelope;
+  const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
+  const extractionPath = readExtractionPath(data);
   return {
-    success: result.success ?? true,
-    data: result.data,
-    error: result.error,
-    ...(result.adcpError && { adcp_error: result.adcpError }),
+    success,
+    data,
+    error,
+    ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
 }

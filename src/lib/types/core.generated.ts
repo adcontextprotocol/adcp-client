@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.8
-// Generated at: 2026-06-04T19:39:56.761Z
+// Generated AdCP core types from official schemas v3.1.0-rc.9
+// Generated at: 2026-06-05T16:46:43.025Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -7883,12 +7883,12 @@ export interface Property {
  * Type of AdCP operation that triggered this webhook. Enables webhook handlers to route to appropriate processing logic.
  */
 export type TaskType =
-  | 'get_products'
   | 'create_media_buy'
   | 'update_media_buy'
   | 'media_buy_delivery'
   | 'sync_creatives'
   | 'activate_signal'
+  | 'get_products'
   | 'get_signals'
   | 'create_property_list'
   | 'update_property_list'
@@ -15202,6 +15202,7 @@ export interface TasksGetRequest {
    * Unique identifier of the task to retrieve
    */
   task_id: string;
+  account?: AccountReference;
   /**
    * Include full conversation history for this task (may increase response size)
    */
@@ -16232,6 +16233,7 @@ export interface TasksListRequest {
    * @maximum 99
    */
   adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Filter criteria for querying tasks
    */
@@ -18237,7 +18239,7 @@ export type BuildCreativeRequest = {
   ext?: ExtensionObject;
 };
 /**
- * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
+ * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
  */
 export type EvaluatorSpec =
   | {
@@ -18257,7 +18259,7 @@ export type EvaluatorSpec =
     }
   | {
       /**
-       * Account-scoped house evaluator selected by the buyer. Discovery via `list_evaluators` is a committed 3.x follow-on; until it lands, this resolves out-of-band by prior buyer/seller arrangement (the reason the surface is experimental). An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
+       * Account-scoped house evaluator preset selected by the buyer. This id is pre-provisioned/account-arranged, not discovered from get_adcp_capabilities governance.creative_features. That catalog only discovers the feature vocabulary the preset emits. An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
        */
       evaluator_id: string;
     }
@@ -18547,7 +18549,7 @@ export interface PackageRequest {
    */
   creative_assignments?: CreativeAssignment[];
   /**
-   * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
+   * Upload creative assets inline and assign to this package. When the seller also advertises creative.has_creative_library: true, these creatives enter the seller's creative library and can be reused by creative_id while retained; inline-only sellers may store them as package-scoped assets. Use creative_assignments instead for existing library creatives.
    */
   creatives?: CreativeAsset[];
   /**
@@ -20179,7 +20181,7 @@ export interface ProductFilters {
  */
 export interface MediaBuyFeatures {
   /**
-   * Supports creatives provided inline in create_media_buy requests
+   * Supports creatives provided inline in create_media_buy and update_media_buy package payloads. This flag does not imply a creative library: an inline-only seller can accept packages[].creatives without advertising sync_creatives, list_creatives, or reusable creative IDs.
    */
   inline_creative_management?: boolean;
   /**
@@ -21400,7 +21402,7 @@ export interface PackageUpdate {
    */
   creative_assignments?: CreativeAssignment[];
   /**
-   * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
+   * Replace this package's inline creative assets. When the seller also advertises creative.has_creative_library: true, new inline creatives enter the seller's creative library and can be reused by creative_id while retained; inline-only sellers may store them as package-scoped assets. Use creative_assignments instead for existing library creatives.
    */
   creatives?: CreativeAsset[];
   context?: ContextObject;
@@ -22872,7 +22874,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supports_spend_controls?: boolean;
     /**
-     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer) and populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
+     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
      */
     supports_evaluator?: boolean;
     /**
@@ -23351,6 +23353,7 @@ export interface GetTaskStatusRequest {
    * Unique identifier of the task to retrieve
    */
   task_id: string;
+  account?: AccountReference;
   /**
    * Include full conversation history for this task (may increase response size)
    */
@@ -23496,6 +23499,7 @@ export interface ListTasksRequest {
    * @maximum 99
    */
   adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Filter criteria for querying tasks
    */

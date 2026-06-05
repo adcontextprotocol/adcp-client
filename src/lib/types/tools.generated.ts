@@ -1177,7 +1177,7 @@ export interface FormatReferenceStructuredObject {
  */
 export interface MediaBuyFeatures {
   /**
-   * Supports creatives provided inline in create_media_buy requests
+   * Supports creatives provided inline in create_media_buy and update_media_buy package payloads. This flag does not imply a creative library: an inline-only seller can accept packages[].creatives without advertising sync_creatives, list_creatives, or reusable creative IDs.
    */
   inline_creative_management?: boolean;
   /**
@@ -7980,7 +7980,7 @@ export interface PackageRequest {
    */
   creative_assignments?: CreativeAssignment[];
   /**
-   * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
+   * Upload creative assets inline and assign to this package. When the seller also advertises creative.has_creative_library: true, these creatives enter the seller's creative library and can be reused by creative_id while retained; inline-only sellers may store them as package-scoped assets. Use creative_assignments instead for existing library creatives.
    */
   creatives?: CreativeAsset[];
   /**
@@ -10372,7 +10372,7 @@ export interface PackageUpdate {
    */
   creative_assignments?: CreativeAssignment[];
   /**
-   * Upload new creative assets and assign to this package (creatives will be added to library). Use creative_assignments instead for existing library creatives.
+   * Replace this package's inline creative assets. When the seller also advertises creative.has_creative_library: true, new inline creatives enter the seller's creative library and can be reused by creative_id while retained; inline-only sellers may store them as package-scoped assets. Use creative_assignments instead for existing library creatives.
    */
   creatives?: CreativeAsset[];
   context?: ContextObject;
@@ -13721,7 +13721,7 @@ export type CreativeSelectionStrategy =
  */
 export type CreativeQuality = 'draft' | 'production';
 /**
- * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
+ * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
  */
 export type EvaluatorSpec = {
   /**
@@ -13789,7 +13789,7 @@ export type EvaluatorSpec = {
     }
   | {
       /**
-       * Account-scoped house evaluator selected by the buyer. Discovery via `list_evaluators` is a committed 3.x follow-on; until it lands, this resolves out-of-band by prior buyer/seller arrangement (the reason the surface is experimental). An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
+       * Account-scoped house evaluator preset selected by the buyer. This id is pre-provisioned/account-arranged, not discovered from get_adcp_capabilities governance.creative_features. That catalog only discovers the feature vocabulary the preset emits. An unknown id degrades to seller-default ranking (advisory errors[] note), not a failure.
        */
       evaluator_id: string;
     }
@@ -22868,7 +22868,7 @@ export interface GetAdCPCapabilitiesResponse {
      */
     supports_spend_controls?: boolean;
     /**
-     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer) and populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
+     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
      */
     supports_evaluator?: boolean;
     /**
@@ -23220,6 +23220,7 @@ export interface GetTaskStatusRequest {
    * Unique identifier of the task to retrieve
    */
   task_id: string;
+  account?: AccountReference;
   /**
    * Include full conversation history for this task (may increase response size)
    */
@@ -23237,12 +23238,12 @@ export interface GetTaskStatusRequest {
  * Type of AdCP operation
  */
 export type TaskType =
-  | 'get_products'
   | 'create_media_buy'
   | 'update_media_buy'
   | 'media_buy_delivery'
   | 'sync_creatives'
   | 'activate_signal'
+  | 'get_products'
   | 'get_signals'
   | 'create_property_list'
   | 'update_property_list'
@@ -24071,6 +24072,7 @@ export interface ListTasksRequest {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  account?: AccountReference;
   /**
    * Filter criteria for querying tasks
    */
@@ -25165,7 +25167,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths — see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades — adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context — cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings — new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'force_create_media_buy_arm', 'force_get_products_arm', and 'force_get_signals_arm' register one-shot response-arm directives for the next matching operation from the caller's authenticated sandbox account + principal pair. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths - see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades - adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context - cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -25310,16 +25312,16 @@ export interface ComplyTestControllerRequest {
      */
     spend_percentage?: number;
     /**
-     * Response arm for the next create_media_buy call. Used by force_create_media_buy_arm. v1 supports the two arms a buyer-supplied directive can shape without fabricating server state: 'submitted' (async task envelope) and 'input-required' (errors-branch). 'completed' is covered by seed_media_buy + a normal flow; 'working' is an out-of-band progress signal, not an initial response arm.
+     * Response arm for the next forced operation call. Used by force_create_media_buy_arm, force_get_products_arm, and force_get_signals_arm. v1 supports 'submitted' for all three operations; create_media_buy also supports 'input-required'. 'completed' is covered by force_task_completion after a submitted task exists; 'working' is an out-of-band progress signal, not an initial response arm.
      */
     arm?: 'submitted' | 'input-required';
     /**
-     * Deterministic task handle the seller MUST emit verbatim on the next create_media_buy response when arm is 'submitted'. The seller MUST accept this exact value on subsequent tasks/get calls within the same authenticated sandbox account. Sandbox task_ids are caller-opaque strings — the seller's production task-id format rules do not apply.
+     * Deterministic task handle the seller MUST emit verbatim on the next forced operation response when arm is 'submitted'. The seller MUST accept this exact value on subsequent tasks/get or get_task_status calls within the same authenticated sandbox account + principal pair and MUST return REFERENCE_NOT_FOUND for the same task_id under any other account or principal. Sandbox task_ids are caller-opaque strings - the seller's production task-id format rules do not apply.
      * @maxLength 128
      */
     task_id?: string;
     /**
-     * Optional human-readable explanation surfaced on the next create_media_buy response. Used by force_create_media_buy_arm for the 'submitted' and 'working' arms. Plain text only.
+     * Optional human-readable explanation surfaced on the next forced operation response. Used by force_create_media_buy_arm, force_get_products_arm, and force_get_signals_arm for the submitted arm. Plain text only.
      * @maxLength 2000
      */
     message?: string;
@@ -25487,16 +25489,16 @@ export interface SimulationSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A force_create_media_buy_arm directive was registered. The directive shapes the next create_media_buy call from this caller's authenticated sandbox account into the requested arm, then is consumed. No entity transitioned — there is no media buy yet — so this branch carries 'forced' rather than previous_state/current_state.
+ * A forced response-arm directive was registered. The directive shapes the next matching operation call from this caller's authenticated sandbox account into the requested arm, then is consumed. No entity transitioned yet, so this branch carries 'forced' rather than previous_state/current_state.
  */
 export interface ForcedDirectiveSuccess {
   success: true;
   /**
-   * Echo of the registered directive. The next create_media_buy call from this sandbox account will return the named arm.
+   * Echo of the registered directive. The next matching operation call from this sandbox account will return the named arm.
    */
   forced: {
     /**
-     * Arm the seller will emit on the next create_media_buy response.
+     * Arm the seller will emit on the next forced operation response.
      */
     arm: 'submitted' | 'input-required';
     /**

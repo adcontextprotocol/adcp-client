@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-06-04
-> Library: @adcp/sdk v9.0.0-beta.23
+> Generated at: 2026-06-05
+> Library: @adcp/sdk v9.0.0-beta.24
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -270,7 +270,7 @@ Request parameters for get_task_status, the 3.
 
 **Request:**
 - Required: `task_id: string`
-- Optional: `include_history: boolean`, `include_result: boolean`, `context: Context`
+- Optional: `account: Account Ref`, `include_history: boolean`, `include_result: boolean`, `context: Context`
 
 **Response (success branch):**
 - Required: `task_id: string`, `task_type: Task Type`, `protocol: Adcp Protocol`, `status: Task Status`, `created_at: string`, `updated_at: string`
@@ -281,7 +281,7 @@ Request parameters for get_task_status, the 3.
 Request parameters for list_tasks, the 3.
 
 **Request:**
-- Optional: `filters: object`, `sort: object`, `pagination: Pagination Request`, `include_history: boolean`, `context: Context`
+- Optional: `account: Account Ref`, `filters: object`, `sort: object`, `pagination: Pagination Request`, `include_history: boolean`, `context: Context`
 
 **Response (success branch):**
 - Required: `query_summary: object`, `tasks: object[]`, `pagination: Pagination Response`
@@ -1073,6 +1073,9 @@ Flow: `sync_accounts → get_products → sync_event_sources → create_media_bu
 **Seller honors a package-level frequency cap and reports observed frequency at-or-below the cap** — Verifies that a seller advertising frequency_capping accepts a package-level frequency_cap (max_impressions + per + window form) on create_media_buy and, after simulated delivery, reports observed reach and frequency on get_media_buy_delivery with the observed frequency at-or-below the requested cap. Runtime-enforcement scenario — no rejection arm. Sellers without frequency_capping grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
+**Seller returns and completes async get_products discovery tasks** — Forces curated get_products discovery into the submitted arm, verifies the task is visible through task APIs, completes it deterministically, and observes the terminal webhook result.
+Flow: `comply_test_controller → get_products → list_tasks → comply_test_controller → get_task_status → expect_webhook`
+
 **Seller creates buy when governance approves** — Verifies that the seller creates a media buy when governance approves the transaction.
 Flow: `sync_plans → sync_accounts → sync_governance → get_products → create_media_buy`
 
@@ -1084,6 +1087,9 @@ Flow: `sync_plans → sync_accounts → sync_governance → get_products → cre
 
 **Seller accepts corrected buy after governance denial** — Verifies that a buyer can recover from GOVERNANCE_DENIED by shrinking the buy to within plan limits and retrying.
 Flow: `sync_plans → sync_accounts → sync_governance → get_products → create_media_buy`
+
+**Inline media-buy creatives without sync_creatives** — Verifies that a seller advertising inline_creative_management accepts package creatives on create_media_buy and update_media_buy without requiring the Creative Protocol or sync_creatives.
+Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy → get_products → create_media_buy → update_media_buy → get_media_buys`
 
 **Seller rejects illegal state transitions and unknown references** — Validates that the seller returns structured AdCP errors (MEDIA_BUY_NOT_FOUND, PACKAGE_NOT_FOUND, NOT_CANCELLABLE) rather than 500s or undefined behavior when the buyer references missing entities or attempts forbidden state transitions.
 Flow: `update_media_buy → get_products → create_media_buy → update_media_buy`
@@ -1143,7 +1149,7 @@ Flow: `sync_accounts → comply_test_controller → create_media_buy`
 Flow: `sync_accounts → get_products → create_media_buy`
 
 **Media buy state machine lifecycle** — Validates media buy state transitions: create, pause, resume, cancel, and terminal state enforcement.
-Flow: `get_adcp_capabilities → get_products → create_media_buy → update_media_buy`
+Flow: `get_adcp_capabilities → get_products → sync_creatives → create_media_buy → update_media_buy`
 
 **Generative seller agent** — Seller agent that generates creatives from briefs at buy time — no pre-built assets required.
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
@@ -1198,6 +1204,9 @@ Flow: `get_products → create_media_buy`
 
 **Signals baseline** — Baseline domain storyboard — every signals agent must declare signals support and return discoverable signals.
 Flow: `get_adcp_capabilities → get_signals`
+
+**Signals agent returns and completes async get_signals discovery tasks** — Forces semantic get_signals discovery into the submitted arm, verifies task visibility, completes it deterministically, and observes the terminal webhook result.
+Flow: `comply_test_controller → get_signals → list_tasks → comply_test_controller → get_task_status → expect_webhook`
 
 **Marketplace signal agent** — Signal agent that resells third-party data provider signals with verifiable provider-published provenance.
 Flow: `get_adcp_capabilities → get_signals → activate_signal`

@@ -34,9 +34,9 @@ describe('buildSyntheticV3Capabilities', () => {
     assert.equal(caps._synthetic, true);
   });
 
-  it('detects features from tool list (sync_creatives → inlineCreativeManagement)', () => {
+  it('keeps inline creative upload support false when only tool-list evidence is available', () => {
     const caps = buildSyntheticV3Capabilities([{ name: 'sync_creatives' }]);
-    assert.equal(caps.features.inlineCreativeManagement, true);
+    assert.equal(caps.features.inlineCreativeManagement, false);
   });
 
   it('detects features from tool list (sync_audiences → audienceTargeting)', () => {

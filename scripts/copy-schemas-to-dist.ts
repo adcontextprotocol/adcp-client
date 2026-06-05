@@ -137,13 +137,15 @@ function relaxAdagentsAuthorizedAgentsMinItems(schemaRoot: string): void {
   );
 }
 
-function patchRc8GetProductsTaskType(schemaRoot: string): void {
+function patchPrereleaseGetProductsTaskType(schemaRoot: string): void {
   const submittedPath = path.join(schemaRoot, 'media-buy', 'get-products-async-response-submitted.json');
   const taskTypePath = path.join(schemaRoot, 'enums', 'task-type.json');
   if (!existsSync(submittedPath) || !existsSync(taskTypePath)) return;
 
   const schema = JSON.parse(readFileSync(taskTypePath, 'utf8'));
-  if (typeof schema.$id !== 'string' || !schema.$id.includes('3.1.0-rc.8')) return;
+  if (typeof schema.$id !== 'string' || (!schema.$id.includes('3.1.0-rc.8') && !schema.$id.includes('3.1.0-rc.9'))) {
+    return;
+  }
   if (!Array.isArray(schema.enum) || schema.enum.includes('get_products')) return;
 
   schema.enum = ['get_products', ...schema.enum];
@@ -157,7 +159,7 @@ function patchRc8GetProductsTaskType(schemaRoot: string): void {
   patchInlineTaskTypeEnums(schemaRoot);
   console.log(
     `[copy-schemas-to-dist] added get_products to task-type enum in ${taskTypePath} ` +
-      `(rc8 async get_products response declares poll/webhook support)`
+      `(3.1 prerelease async get_products response declares poll/webhook support)`
   );
 }
 
@@ -261,7 +263,7 @@ function main(): void {
       },
     });
     relaxAdagentsAuthorizedAgentsMinItems(destRoot);
-    patchRc8GetProductsTaskType(destRoot);
+    patchPrereleaseGetProductsTaskType(destRoot);
     const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
   }
