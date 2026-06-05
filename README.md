@@ -691,7 +691,18 @@ const catalog = buildCommunityMirrorAdagents({
 await new RegistryClient().createAdagents(catalog);
 ```
 
-`RegistryClient.createAdagents()` and `createCommunityMirrorAdagents()` are intended for build-time generation, cache fills, or write-through publishing. Public `/.well-known/adagents.json` routes should serve generated JSON from static storage or an application cache rather than calling the registry on every request.
+`RegistryClient.createAdagents()` and `createCommunityMirrorAdagents()` are intended for build-time generation and cache fills. Public `/.well-known/adagents.json` routes should serve generated JSON from static storage or an application cache rather than calling the registry on every request.
+
+To persist an AAO/community mirror in the registry, use the keyed upsert path:
+
+```typescript
+await new RegistryClient({ apiKey: process.env.ADCP_REGISTRY_API_KEY }).upsertCommunityMirrorAdagents('meta', {
+  catalog_etag: 'meta-creative-formats-2026-05',
+  formats: catalog.formats,
+});
+```
+
+`upsertCommunityMirrorAdagents()` writes to the hosted mirror lifecycle endpoint, while `createCommunityMirrorAdagents()` remains a side-effect-free generator helper.
 
 ## Database Schema
 

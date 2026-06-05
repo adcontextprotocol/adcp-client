@@ -1699,8 +1699,10 @@ describe('RegistryClient', () => {
 
     test('passes catalog-only community mirror fields through to the registry', async () => {
       const created = { success: true, data: { success: true, adagents_json: {} } };
+      let capturedUrl;
       let capturedOpts;
       restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
         capturedOpts = opts;
         return new Response(JSON.stringify(created), { status: 200 });
       });
@@ -1722,6 +1724,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await client.createAdagents(config);
 
+      assert.ok(capturedUrl.endsWith('/api/adagents/create'));
       const body = JSON.parse(capturedOpts.body);
       assert.deepStrictEqual(body.authorized_agents, []);
       assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');
@@ -1732,6 +1735,7 @@ describe('RegistryClient', () => {
 
     test('builds community mirror catalogs without authorization claims', () => {
       const catalog = buildCommunityMirrorAdagents({
+        platform: 'meta',
         catalog_etag: 'meta-creative-formats-2026-05',
         formats: [
           {
@@ -1753,6 +1757,7 @@ describe('RegistryClient', () => {
       });
 
       assert.deepStrictEqual(catalog.authorized_agents, []);
+      assert.strictEqual(catalog.platform, undefined);
       assert.strictEqual(catalog.catalog_etag, 'meta-creative-formats-2026-05');
       assert.strictEqual(catalog.formats[0].format_kind, 'image');
       assert.strictEqual(catalog.placements[0].format_options[0].format_option_id, 'meta-feed-image');
@@ -1786,10 +1791,12 @@ describe('RegistryClient', () => {
       );
     });
 
-    test('creates community mirror catalogs via the high-level helper', async () => {
+    test('creates community mirror catalogs via the generator endpoint', async () => {
       const created = { success: true, data: { success: true, adagents_json: {} } };
+      let capturedUrl;
       let capturedOpts;
       restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
         capturedOpts = opts;
         return new Response(JSON.stringify(created), { status: 200 });
       });
@@ -1800,6 +1807,152 @@ describe('RegistryClient', () => {
         formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
       });
 
+      assert.ok(capturedUrl.endsWith('/api/adagents/create'));
+      assert.strictEqual(capturedOpts.method, 'POST');
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');
+    });
+
+    test('upserts community mirror catalogs via keyed helper', async () => {
+      const published = {
+        success: true,
+        platform: 'meta',
+        catalog_etag: 'meta-creative-formats-2026-05',
+        superseded_by: null,
+        updated_at: '2026-06-05T12:00:00.000Z',
+      };
+      let capturedUrl;
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(JSON.stringify(published), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.upsertCommunityMirrorAdagents({
+        platform: 'Meta',
+        catalog_etag: 'meta-creative-formats-2026-05',
+        formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
+      });
+
+      assert.strictEqual(result.platform, 'meta');
+      assert.ok(capturedUrl.endsWith('/api/registry/mirrors/meta'));
+      assert.strictEqual(capturedOpts.method, 'PUT');
+      assert.strictEqual(capturedOpts.headers.Authorization, 'Bearer sk_test');
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');
+      assert.strictEqual(body.platform, undefined);
+    });
+
+    test('upsertCommunityMirrorAdagents accepts platform as first argument', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            platform: 'meta',
+            catalog_etag: 'meta-creative-formats-2026-05',
+            superseded_by: null,
+            updated_at: '2026-06-05T12:00:00.000Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.upsertCommunityMirrorAdagents('Meta', {
+        catalog_etag: 'meta-creative-formats-2026-05',
+        formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
+      });
+
+      assert.ok(capturedUrl.endsWith('/api/registry/mirrors/meta'));
+    });
+
+    test('upsertCommunityMirrorAdagents infers platform from a single property platform', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            platform: 'meta',
+            catalog_etag: 'meta-creative-formats-2026-05',
+            superseded_by: null,
+            updated_at: '2026-06-05T12:00:00.000Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.upsertCommunityMirrorAdagents({
+        catalog_etag: 'meta-creative-formats-2026-05',
+        properties: [{ domain: 'creative.adcontextprotocol.org', platform: 'Meta' }],
+        formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
+      });
+
+      assert.ok(capturedUrl.endsWith('/api/registry/mirrors/meta'));
+    });
+
+    test('upsertCommunityMirrorAdagents requires a platform identity', async () => {
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await assert.rejects(
+        () =>
+          client.upsertCommunityMirrorAdagents({
+            catalog_etag: 'meta-creative-formats-2026-05',
+            formats: [
+              { format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } },
+            ],
+          }),
+        /platform is required for community mirror publish/
+      );
+    });
+
+    test('upsertCommunityMirrorAdagents rejects ambiguous property platforms', async () => {
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await assert.rejects(
+        () =>
+          client.upsertCommunityMirrorAdagents({
+            catalog_etag: 'meta-creative-formats-2026-05',
+            properties: [
+              { domain: 'creative.adcontextprotocol.org', platform: 'meta' },
+              { domain: 'creative.adcontextprotocol.org', platform: 'tiktok' },
+            ],
+            formats: [
+              { format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } },
+            ],
+          }),
+        /platform is ambiguous; pass upsertCommunityMirrorAdagents\(platform, config\)/
+      );
+    });
+
+    test('upsertCommunityMirrorAdagents requires config with first-argument platform', async () => {
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await assert.rejects(() => client.upsertCommunityMirrorAdagents('meta'), /config is required/);
+    });
+
+    test('previews community mirror catalogs via the generator endpoint', async () => {
+      const created = { success: true, data: { success: true, adagents_json: {} } };
+      let capturedUrl;
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(JSON.stringify(created), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.previewCommunityMirrorAdagents({
+        catalog_etag: 'meta-creative-formats-2026-05',
+        formats: [{ format_option_id: 'meta-feed-image', format_kind: 'image', params: { width: 1080, height: 1080 } }],
+      });
+
+      assert.ok(capturedUrl.endsWith('/api/adagents/create'));
+      assert.strictEqual(capturedOpts.method, 'POST');
       const body = JSON.parse(capturedOpts.body);
       assert.deepStrictEqual(body.authorized_agents, []);
       assert.strictEqual(body.catalog_etag, 'meta-creative-formats-2026-05');

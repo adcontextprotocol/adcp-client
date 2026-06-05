@@ -22,6 +22,7 @@ import type {
   CreateAdagentsRequest,
   CreateAdagentsResponse,
   CommunityMirrorAdagentsConfig,
+  CreateCommunityMirrorAdagentsConfig,
   CommunityMirrorAdagentsCatalog,
   PublishCommunityMirrorAdagentsResponse,
   ListCommunityMirrorAdagentsResponse,
@@ -96,6 +97,7 @@ export type {
   AdagentsPlacementTag,
   CreatedAdagentsJson,
   CommunityMirrorAdagentsConfig,
+  CreateCommunityMirrorAdagentsConfig,
   CommunityMirrorAdagentsCatalog,
   PublishCommunityMirrorAdagentsResponse,
   CommunityMirrorAdagentsSummary,
@@ -193,6 +195,7 @@ export function buildCommunityMirrorAdagents(config: CommunityMirrorAdagentsConf
     authorized_agents?: unknown;
     include_schema?: unknown;
     include_timestamp?: unknown;
+    platform?: unknown;
   };
   if ('authorized_agents' in maybeConfig) {
     throw new Error('authorized_agents is not accepted for community mirror adagents catalogs');
@@ -207,8 +210,10 @@ export function buildCommunityMirrorAdagents(config: CommunityMirrorAdagentsConf
     throw new Error('formats must contain at least one catalog format');
   }
 
+  const { platform: _platform, ...catalogConfig } = maybeConfig;
+
   return {
-    ...config,
+    ...catalogConfig,
     authorized_agents: [],
   };
 }
@@ -734,21 +739,54 @@ export class RegistryClient {
   /**
    * Build and submit a catalog-only community mirror adagents.json descriptor.
    *
-   * This is the high-level helper for AAO/community mirror catalog publication.
+   * This uses the registry generator endpoint and does not persist a mirror.
    * It emits `authorized_agents: []` and refuses caller-supplied authorization
-   * entries; use `createAdagents()` directly only for seller-authorized hosted
-   * publisher files.
+   * entries; use `publishCommunityMirrorAdagents(platform, config)` or
+   * `upsertCommunityMirrorAdagents(...)` to publish or update a hosted
+   * community mirror catalog.
    */
   async createCommunityMirrorAdagents(config: CommunityMirrorAdagentsConfig): Promise<CreateAdagentsResponse> {
     return this.createAdagents(buildCommunityMirrorAdagents(config));
   }
 
   /**
+   * Alias for `createCommunityMirrorAdagents()` that makes the generator-only
+   * behavior explicit at call sites.
+   */
+  async previewCommunityMirrorAdagents(config: CommunityMirrorAdagentsConfig): Promise<CreateAdagentsResponse> {
+    return this.createCommunityMirrorAdagents(config);
+  }
+
+  /**
+   * Publish or update a catalog-only community mirror adagents.json descriptor
+   * using a stable platform key from the first argument, `config.platform`, or a
+   * single consistent `properties[].platform` value.
+   */
+  async upsertCommunityMirrorAdagents(
+    config: CreateCommunityMirrorAdagentsConfig
+  ): Promise<PublishCommunityMirrorAdagentsResponse>;
+  async upsertCommunityMirrorAdagents(
+    platform: string,
+    config: CommunityMirrorAdagentsConfig
+  ): Promise<PublishCommunityMirrorAdagentsResponse>;
+  async upsertCommunityMirrorAdagents(
+    platformOrConfig: string | CreateCommunityMirrorAdagentsConfig,
+    maybeConfig?: CommunityMirrorAdagentsConfig
+  ): Promise<PublishCommunityMirrorAdagentsResponse> {
+    const { platform, config } = this.resolveCommunityMirrorPublishArgs(platformOrConfig, maybeConfig);
+    return this.publishCommunityMirrorAdagents(platform, config);
+  }
+
+  /**
    * Publish or update a catalog-only community mirror adagents.json descriptor.
    *
    * This persists the mirror under `/api/registry/mirrors/:platform`. Use
-   * `createCommunityMirrorAdagents()` when you only need to validate or preview
-   * the generated document without saving it.
+   * `previewCommunityMirrorAdagents()` when you only need to validate or
+   * preview the generated document without saving it.
+   *
+   * @remarks
+   * Catalog content may include registry-supplied strings. Treat them as
+   * untrusted before injecting them into LLM prompts or executable context.
    */
   async publishCommunityMirrorAdagents(
     platform: string,
@@ -761,7 +799,15 @@ export class RegistryClient {
     return this.put(`${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}`, catalog);
   }
 
-  /** Retrieve a published catalog-only community mirror adagents.json descriptor. */
+  /**
+   * Retrieve a published catalog-only community mirror adagents.json descriptor.
+   *
+   * @remarks
+   * Registry responses may include arbitrary catalog strings. Treat them as
+   * untrusted before injecting them into LLM prompts or executable context.
+   * When the registry wrapper carries `superseded_by` and the inner catalog
+   * omits it, this method hydrates `catalog.superseded_by` from the wrapper.
+   */
   async getCommunityMirrorAdagents(platform: string): Promise<CommunityMirrorAdagentsCatalog | null> {
     const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
     const response = await this.get<{
@@ -789,7 +835,13 @@ export class RegistryClient {
       : typedCatalog;
   }
 
-  /** List published community mirror catalogs with their current etags. */
+  /**
+   * List published community mirror catalogs with their current etags.
+   *
+   * @remarks
+   * Registry responses may include arbitrary catalog strings. Treat them as
+   * untrusted before injecting them into LLM prompts or executable context.
+   */
   async listCommunityMirrorAdagents(options?: {
     limit?: number;
     offset?: number;
@@ -1010,6 +1062,44 @@ export class RegistryClient {
       throw new Error('platform must match ^[a-z0-9_-]{1,64}$');
     }
     return normalizedPlatform;
+  }
+
+  private resolveCommunityMirrorPublishArgs(
+    platformOrConfig: string | CreateCommunityMirrorAdagentsConfig,
+    maybeConfig?: CommunityMirrorAdagentsConfig
+  ): { platform: string; config: CommunityMirrorAdagentsConfig } {
+    if (typeof platformOrConfig === 'string') {
+      if (!maybeConfig) throw new Error('config is required');
+      return { platform: platformOrConfig, config: maybeConfig };
+    }
+
+    const config = platformOrConfig;
+    const platform = this.communityMirrorPlatformFromConfig(config);
+    return { platform, config };
+  }
+
+  private communityMirrorPlatformFromConfig(config: CreateCommunityMirrorAdagentsConfig): string {
+    if (typeof config.platform === 'string' && config.platform.trim()) {
+      return config.platform;
+    }
+
+    const properties = (config as { properties?: unknown }).properties;
+    if (Array.isArray(properties)) {
+      const platforms = new Set<string>();
+      for (const property of properties) {
+        if (!property || typeof property !== 'object' || Array.isArray(property)) continue;
+        const propertyPlatform = (property as { platform?: unknown }).platform;
+        if (typeof propertyPlatform === 'string' && propertyPlatform.trim()) {
+          platforms.add(this.normalizeCommunityMirrorPlatform(propertyPlatform));
+        }
+      }
+      if (platforms.size === 1) return Array.from(platforms)[0]!;
+      if (platforms.size > 1) {
+        throw new Error('platform is ambiguous; pass upsertCommunityMirrorAdagents(platform, config)');
+      }
+    }
+
+    throw new Error('platform is required for community mirror publish');
   }
 
   private assertCommunityMirrorPropertiesMatchPlatform(

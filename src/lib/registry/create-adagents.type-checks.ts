@@ -8,6 +8,7 @@ import type {
   AdagentsPlacementDefinition,
   CreateAdagentsRequest,
   CommunityMirrorAdagentsConfig,
+  CreateCommunityMirrorAdagentsConfig,
 } from './types';
 
 const metaFeedImageFormat: AdagentsCatalogFormat = {
@@ -50,6 +51,11 @@ const communityMirrorConfig: CommunityMirrorAdagentsConfig = {
   },
 };
 
+const communityMirrorPublishConfig: CreateCommunityMirrorAdagentsConfig = {
+  ...communityMirrorConfig,
+  platform: 'meta',
+};
+
 const communityMirrorManifest: CreateAdagentsRequest = buildCommunityMirrorAdagents(communityMirrorConfig);
 void communityMirrorManifest;
 
@@ -70,7 +76,10 @@ void directCreateRequest;
 
 async function registryListCompatibility(client: RegistryClient): Promise<void> {
   await client.listAgents({ type: 'si' });
+  await client.previewCommunityMirrorAdagents(communityMirrorConfig);
   await client.createCommunityMirrorAdagents(communityMirrorConfig);
+  await client.upsertCommunityMirrorAdagents(communityMirrorPublishConfig);
+  await client.upsertCommunityMirrorAdagents('meta', communityMirrorConfig);
   await client.publishCommunityMirrorAdagents('meta', communityMirrorConfig);
 
   const mirror = await client.getCommunityMirrorAdagents('meta');
