@@ -103,6 +103,20 @@ function errorMessageFrom(error: AdcpErrorInfo | undefined, fallback: unknown): 
   return typeof fallback === 'string' && fallback.length > 0 ? fallback : undefined;
 }
 
+function normalizeStoryboardTaskSuccess(
+  result: unknown,
+  taskName: string,
+  terminalDataError?: boolean,
+  adcpError?: AdcpErrorInfo
+): boolean {
+  if (!isRecord(result)) return true;
+  if (typeof result.success === 'boolean') return result.success;
+  if (result.status === 'failed' || result.status === 'rejected') return false;
+  if (adcpError || result.adcpError || result.adcp_error) return false;
+  if (terminalDataError ?? isTerminalAdcpError(result.data, taskName)) return false;
+  return true;
+}
+
 /**
  * Execute a storyboard task against a SingleAgentClient.
  *
@@ -183,13 +197,7 @@ export async function executeStoryboardTask(
     readAdcpError(result.data) ??
     (terminalDataError ? readFirstError(result.data) : undefined);
   const data = result.data ?? (adcpError ? { adcp_error: adcpError } : undefined);
-  const failedByEnvelope =
-    result.status === 'failed' ||
-    result.status === 'rejected' ||
-    result.status === 'governance-denied' ||
-    terminalDataError ||
-    (adcpError !== undefined && result.success !== true);
-  const success = result.success ?? !failedByEnvelope;
+  const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError);
   const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
   const extractionPath = readExtractionPath(data);
   return {

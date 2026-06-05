@@ -1,6 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations');
+const { toJsonPointer } = require('../../dist/lib/testing/storyboard/path');
 
 function errorCodeValidation(value) {
   return { check: 'error_code', value, description: `Expected ${value}` };
@@ -642,6 +643,164 @@ describe('field_contains (adcp#3803 item 2)', () => {
     assert.strictEqual(result.passed, true, result.error);
   });
 
+  it('passes when any allowed_values object candidate matches as a subset', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        available_actions: [
+          { action: 'cancel', mode: 'requires_approval' },
+          { action: 'increase_budget', mode: 'self_serve', sla: { response_max: 'PT5M' } },
+        ],
+      },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'available_actions[]',
+          allowed_values: [
+            { action: 'extend_flight', mode: 'requires_approval' },
+            { action: 'increase_budget', sla: { response_max: 'PT5M' } },
+          ],
+          description: 'one keyed action candidate is acceptable',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('treats [] as an array wildcard for keyed allowed_actions subset matches', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        products: [
+          {
+            product_id: 'available_actions_display',
+            allowed_actions: [
+              {
+                action: 'cancel',
+                modes: ['requires_approval'],
+                allowed_statuses: ['active'],
+                terms_ref: 'terms://available-actions/cancel',
+              },
+              {
+                action: 'increase_budget',
+                modes: ['self_serve', 'automatic'],
+                sla: { response_max: 'PT5M', completion_max: 'PT1H' },
+              },
+              {
+                action: 'extend_flight',
+                modes: ['requires_approval'],
+                sla: { response_max: 'PT1H' },
+                terms_ref: 'terms://available-actions/extension',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'products[0].allowed_actions[]',
+          value: {
+            action: 'increase_budget',
+            modes: ['self_serve'],
+            sla: { response_max: 'PT5M' },
+          },
+          description: 'increase_budget allowed action is present regardless of ordering or optional fields',
+        },
+      ],
+      'get_products',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.json_pointer, '/products/0/allowed_actions/*');
+  });
+
+  it('fails when an explicit empty nested array expectation is not actually empty', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        available_actions: [{ action: 'increase_budget', modes: ['self_serve'] }],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'available_actions[]',
+          value: { action: 'increase_budget', modes: [] },
+          description: 'empty expected modes means modes must be empty',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /increase_budget/);
+  });
+
+  it('fails when duplicate expected array items would reuse one actual item', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        available_actions: [{ action: 'increase_budget', modes: ['self_serve'] }],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'available_actions[]',
+          value: { action: 'increase_budget', modes: ['self_serve', 'self_serve'] },
+          description: 'duplicate expected modes require duplicate actual modes',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, false);
+  });
+
+  it('fails keyed subset matching when the matching array entry has the wrong nested value', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        available_actions: [
+          { action: 'cancel', mode: 'requires_approval' },
+          { action: 'increase_budget', mode: 'self_serve' },
+        ],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'available_actions[]',
+          value: { action: 'increase_budget', mode: 'requires_approval' },
+          description: 'same keyed action must also match the requested mode',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /increase_budget/);
+    assert.deepStrictEqual(result.actual, taskResult.data.available_actions);
+  });
+
   it('fails when no resolved value matches', () => {
     const taskResult = {
       success: true,
@@ -738,7 +897,33 @@ describe('field_contains (adcp#3803 item 2)', () => {
     // toJsonPointer renders [*] as /* (literal asterisk) — `*` isn't a
     // forbidden character in RFC 6901, so it round-trips unescaped.
     assert.strictEqual(result.json_pointer, '/creatives/0/errors/*/code');
+    assert.strictEqual(toJsonPointer('allowed_actions[]'), '/allowed_actions/*');
   });
+});
+
+describe('scalar field checks reject wildcard path syntax', () => {
+  for (const validation of [
+    { check: 'field_present', path: 'available_actions[]', description: 'present wildcard rejected' },
+    { check: 'field_absent', path: 'available_actions[]', description: 'absent wildcard rejected' },
+    { check: 'field_value', path: 'available_actions[]', value: [], description: 'value wildcard rejected' },
+    {
+      check: 'field_value_or_absent',
+      path: 'available_actions[]',
+      value: [],
+      description: 'value_or_absent wildcard rejected',
+    },
+    { check: 'field_pattern', path: 'available_actions[]', pattern: 'x', description: 'pattern wildcard rejected' },
+  ]) {
+    it(`${validation.check} rejects [] wildcard shorthand`, () => {
+      const [result] = runOne([validation], 'create_media_buy', {
+        success: true,
+        data: { available_actions: [] },
+      });
+      assert.strictEqual(result.passed, false);
+      assert.match(result.error, /does not support wildcard path syntax/);
+      assert.strictEqual(result.expected, 'path without [] or [*] wildcard syntax');
+    });
+  }
 });
 
 describe('array_length (adcp#4685 / adcp-client#1830)', () => {
