@@ -6,7 +6,8 @@
  */
 
 /**
- * Wildcard marker produced by `parsePathWithWildcards` for `[*]` segments.
+ * Wildcard marker produced by `parsePathWithWildcards` for `[*]` / `[]`
+ * segments.
  * The plain `parsePath` tokenizer does not emit it — callers that need
  * wildcard semantics (`resolvePathAll`) use the wildcard-aware parser.
  */
@@ -54,17 +55,19 @@ export function parsePath(path: string): Array<string | number> {
 }
 
 /**
- * Parse a path string into segments, preserving `[*]` wildcards.
+ * Parse a path string into segments, preserving `[*]` wildcards. Empty
+ * brackets (`[]`) are accepted as a shorthand wildcard for storyboard
+ * assertions written in the same style as schema prose (`allowed_actions[]`).
  * "products[*].format_ids[*]" → ["products", WILDCARD, "format_ids", WILDCARD]
  */
 export function parsePathWithWildcards(path: string): Array<string | number | typeof WILDCARD> {
   if (path.length > MAX_PATH_LENGTH) return [];
   const segments: Array<string | number | typeof WILDCARD> = [];
-  const re = /([^.\[\]]+)|\[(\d+)\]|\[(\*)\]/g;
+  const re = /([^.\[\]]+)|\[(\d+)\]|\[(\*)?\]/g;
   let match: RegExpExecArray | null;
 
   while ((match = re.exec(path)) !== null) {
-    if (match[3] !== undefined) {
+    if (match[3] !== undefined || match[0] === '[]') {
       segments.push(WILDCARD);
     } else if (match[2] !== undefined) {
       segments.push(parseInt(match[2], 10));
@@ -255,12 +258,18 @@ function walk(current: unknown, segments: Array<string | number | typeof WILDCAR
  * as `~1`.
  */
 export function toJsonPointer(path: string): string {
-  const segments = parsePath(path);
+  const segments = parsePathWithWildcards(path);
   if (segments.length === 0) return '';
   return (
     '/' +
     segments
-      .map(seg => (typeof seg === 'number' ? String(seg) : String(seg).replace(/~/g, '~0').replace(/\//g, '~1')))
+      .map(seg =>
+        seg === WILDCARD
+          ? '*'
+          : typeof seg === 'number'
+            ? String(seg)
+            : String(seg).replace(/~/g, '~0').replace(/\//g, '~1')
+      )
       .join('/')
   );
 }

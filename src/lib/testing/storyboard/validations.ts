@@ -745,6 +745,8 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
       actual: null,
     };
   }
+  const wildcardError = rejectWildcardScalarPath(validation, checkName);
+  if (wildcardError) return wildcardError;
 
   const value = resolvePath(taskResult.data, validation.path);
   const present = value !== undefined && value !== null;
@@ -796,6 +798,8 @@ function validateFieldAbsent(validation: StoryboardValidation, taskResult: TaskR
       actual: null,
     };
   }
+  const wildcardError = rejectWildcardScalarPath(validation, checkName);
+  if (wildcardError) return wildcardError;
 
   const value = resolvePath(taskResult.data, validation.path);
   const absent = value === undefined || value === null;
@@ -834,6 +838,67 @@ function valuesMatch(actual: unknown, expected: unknown): boolean {
   return actual === expected;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Matching used by `field_contains`.
+ *
+ * Scalar expectations keep exact equality, while object/array expectations are
+ * treated as deep subsets. This lets a storyboard assert the keyed parts of an
+ * unordered response entry such as:
+ *
+ *   path: products[0].allowed_actions[]
+ *   value: { action: "extend_flight", modes: ["requires_approval"] }
+ *
+ * without requiring the seller to omit additional optional fields or keep a
+ * fixed array order.
+ */
+function containsValueMatches(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false;
+    if (expected.length === 0) return actual.length === 0;
+    const used = new Set<number>();
+    return expected.every(expectedItem => {
+      const matchIndex = actual.findIndex(
+        (actualItem, index) => !used.has(index) && containsValueMatches(actualItem, expectedItem)
+      );
+      if (matchIndex === -1) return false;
+      used.add(matchIndex);
+      return true;
+    });
+  }
+
+  if (isRecord(expected)) {
+    if (!isRecord(actual)) return false;
+    return Object.entries(expected).every(([key, expectedValue]) =>
+      Object.prototype.hasOwnProperty.call(actual, key) &&
+      containsValueMatches(actual[key], expectedValue)
+    );
+  }
+
+  return valuesMatch(actual, expected);
+}
+
+function pathUsesWildcardSyntax(path: string): boolean {
+  return /\[(?:\*|)\]/.test(path);
+}
+
+function rejectWildcardScalarPath(validation: StoryboardValidation, checkName: string): ValidationResult | undefined {
+  if (!validation.path || !pathUsesWildcardSyntax(validation.path)) return undefined;
+  return {
+    check: checkName,
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `${checkName} does not support wildcard path syntax (${validation.path}); use field_contains for array wildcard membership checks`,
+    json_pointer: toJsonPointer(validation.path),
+    expected: 'path without [] or [*] wildcard syntax',
+    actual: validation.path,
+  };
+}
+
 function validateFieldValue(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
   // `check` is either `field_value` or `envelope_field_value` (adcp#3429);
   // result echoes the storyboard's choice so reporters can distinguish.
@@ -850,6 +915,8 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
       actual: null,
     };
   }
+  const wildcardError = rejectWildcardScalarPath(validation, checkName);
+  if (wildcardError) return wildcardError;
 
   const actual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
@@ -927,6 +994,8 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
       actual: null,
     };
   }
+  const wildcardError = rejectWildcardScalarPath(validation, checkName);
+  if (wildcardError) return wildcardError;
 
   const rawActual = resolvePath(taskResult.data, validation.path);
   const pointer = toJsonPointer(validation.path);
@@ -1031,6 +1100,8 @@ function validateFieldPattern(validation: StoryboardValidation, taskResult: Task
       actual: null,
     };
   }
+  const wildcardError = rejectWildcardScalarPath(validation, checkName);
+  if (wildcardError) return wildcardError;
 
   const pointer = toJsonPointer(validation.path);
   const expected = { pattern: validation.pattern };
@@ -1108,11 +1179,11 @@ function validateFieldPattern(validation: StoryboardValidation, taskResult: Task
 // ────────────────────────────────────────────────────────────
 // field_contains: wildcard-aware membership check
 //
-// Resolves `path` via `resolvePathAll` (which understands `[*]` segments)
-// and passes when ANY resolved value matches `value` or any of
-// `allowed_values`. Lets storyboards assert "this code appears somewhere
-// in errors[]" without pinning a positional index that breaks if the
-// seller's emit order shifts or co-emits additional errors.
+// Resolves `path` via `resolvePathAll` (which understands `[*]` and `[]`
+// segments) and passes when ANY resolved value matches `value` or any of
+// `allowed_values`. Object/array expectations are deep subset matches, so
+// keyed entries like `allowed_actions[]` can be asserted without pinning a
+// positional index or requiring exact object shape.
 // ────────────────────────────────────────────────────────────
 
 function validateFieldContains(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
@@ -1147,7 +1218,7 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
   const pointer = toJsonPointer(validation.path);
 
   const candidates = validation.allowed_values?.length ? validation.allowed_values : [validation.value];
-  const matched = resolved.some(actual => candidates.some(c => valuesMatch(actual, c)));
+  const matched = resolved.some(actual => candidates.some(c => containsValueMatches(actual, c)));
 
   if (matched) {
     return {
