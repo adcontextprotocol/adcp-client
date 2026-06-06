@@ -1,5 +1,19 @@
 # Changelog
 
+## 9.0.0-beta.26
+
+### Minor Changes
+
+- 6e09e6a: Add RegistryClient.upsertCommunityMirrorAdagents for keyed community-mirror publishes, while keeping createCommunityMirrorAdagents as the generator-only helper.
+- 35c276b: Add operation-scoped webhook URL template filters and per-call webhook suppression, and capture build_creative variant context from storyboard responses.
+
+### Patch Changes
+
+- e8d05ea: Repair local compliance bundles whose `latest` selector leaked into `ComplianceIndex.adcp_version` by deriving the
+  real AdCP version from the matching schema bundle before storyboard execution.
+- 8681d6e: Preserve storyboard `create_media_buy` sample requests that set `start_time: "asap"` instead of rewriting them to a generated future timestamp.
+- a415b20: Avoid false-positive `missing-valid-actions` advisories when a later `get_media_buys` observation in the same compliance run includes `valid_actions`.
+
 ## 9.0.0-beta.25
 
 ### Minor Changes
