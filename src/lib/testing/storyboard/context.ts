@@ -137,6 +137,26 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
       extracted.creative_manifests = manifests;
       if (manifests[0].format_id) extracted.format_id = manifests[0].format_id;
     }
+    // Variant response: creatives[].variants[] (BuildCreativeVariantSuccess).
+    const creatives = d?.creatives as Array<Record<string, unknown>> | undefined;
+    if (creatives?.[0]) {
+      extracted.creatives = creatives;
+
+      const variants = creatives.flatMap(creative => {
+        const creativeVariants = creative.variants as Array<Record<string, unknown>> | undefined;
+        return Array.isArray(creativeVariants) ? creativeVariants : [];
+      });
+      if (variants[0]) {
+        extracted.variants = variants;
+        if (variants[0].build_variant_id) extracted.build_variant_id = variants[0].build_variant_id;
+
+        const variantManifest = variants[0].creative_manifest as Record<string, unknown> | undefined;
+        if (variantManifest) {
+          extracted.creative_manifest ??= variantManifest;
+          if (!extracted.format_id && variantManifest.format_id) extracted.format_id = variantManifest.format_id;
+        }
+      }
+    }
     return extracted;
   },
 

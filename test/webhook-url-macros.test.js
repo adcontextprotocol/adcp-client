@@ -47,6 +47,48 @@ test('notification webhook URL', () => {
   assert.strictEqual(url, 'https://myapp.com/webhook/media_buy_delivery/test_agent/delivery_report_test_agent_2025-10');
 });
 
+test('scoped template allows configured tools', () => {
+  const client = new AdCPClient([agentConfig], {
+    webhookUrlTemplate: {
+      template: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
+      tools: ['sync_creatives'],
+    },
+  });
+
+  const url = client.agent('test_agent').getWebhookUrl('sync_creatives', 'op_123');
+  assert.strictEqual(url, 'https://myapp.com/webhook/sync_creatives/test_agent/op_123');
+});
+
+test('scoped template rejects unconfigured tools', () => {
+  const client = new AdCPClient([agentConfig], {
+    webhookUrlTemplate: {
+      template: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
+      tools: ['sync_creatives'],
+    },
+  });
+
+  assert.throws(
+    () => client.agent('test_agent').getWebhookUrl('get_products', 'op_123'),
+    /webhookUrlTemplate not configured for task type 'get_products'/
+  );
+});
+
+test('scoped template supports predicate filters', () => {
+  const client = new AdCPClient([agentConfig], {
+    webhookUrlTemplate: {
+      template: 'https://myapp.com/webhook/{task_type}/{agent_id}/{operation_id}',
+      tools: taskName => taskName.startsWith('sync_'),
+    },
+  });
+
+  const url = client.agent('test_agent').getWebhookUrl('sync_creatives', 'op_123');
+  assert.strictEqual(url, 'https://myapp.com/webhook/sync_creatives/test_agent/op_123');
+  assert.throws(
+    () => client.agent('test_agent').getWebhookUrl('create_media_buy', 'op_123'),
+    /webhookUrlTemplate not configured for task type 'create_media_buy'/
+  );
+});
+
 test('throws error if webhookUrlTemplate not configured', () => {
   const client = new AdCPClient([agentConfig], {});
 

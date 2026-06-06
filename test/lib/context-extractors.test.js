@@ -4,6 +4,60 @@ const assert = require('node:assert/strict');
 const { extractContext } = require('../../dist/lib/testing/storyboard/context.js');
 
 describe('context extractors', () => {
+  describe('build_creative', () => {
+    it('preserves single creative_manifest extraction', () => {
+      const data = {
+        creative_manifest: {
+          format_id: { agent_url: 'https://creative.example', id: 'display_300x250' },
+          assets: [],
+        },
+      };
+
+      const result = extractContext('build_creative', data);
+      assert.deepStrictEqual(result.creative_manifest, data.creative_manifest);
+      assert.deepStrictEqual(result.format_id, data.creative_manifest.format_id);
+    });
+
+    it('extracts variant groups and first variant context', () => {
+      const firstManifest = {
+        format_id: { agent_url: 'https://creative.example', id: 'display_300x250' },
+        assets: [{ slot: 'image', url: 'https://cdn.example/one.png' }],
+      };
+      const secondManifest = {
+        format_id: { agent_url: 'https://creative.example', id: 'display_728x90' },
+        assets: [{ slot: 'image', url: 'https://cdn.example/two.png' }],
+      };
+      const data = {
+        creatives: [
+          {
+            creative_ref: 'summer',
+            variants: [{ build_variant_id: 'bv_1', creative_manifest: firstManifest }],
+          },
+          {
+            creative_ref: 'winter',
+            variants: [{ build_variant_id: 'bv_2', creative_manifest: secondManifest }],
+          },
+        ],
+      };
+
+      const result = extractContext('build_creative', data);
+      assert.deepStrictEqual(result.creatives, data.creatives);
+      assert.deepStrictEqual(result.variants, [data.creatives[0].variants[0], data.creatives[1].variants[0]]);
+      assert.equal(result.build_variant_id, 'bv_1');
+      assert.deepStrictEqual(result.creative_manifest, firstManifest);
+      assert.deepStrictEqual(result.format_id, firstManifest.format_id);
+    });
+
+    it('retains creatives even when no variants are present', () => {
+      const data = { creatives: [{ creative_ref: 'summer', status: 'failed' }] };
+
+      const result = extractContext('build_creative', data);
+      assert.deepStrictEqual(result.creatives, data.creatives);
+      assert.equal(result.variants, undefined);
+      assert.equal(result.build_variant_id, undefined);
+    });
+  });
+
   describe('list_creatives', () => {
     it('extracts creative_id and creatives array', () => {
       const data = {

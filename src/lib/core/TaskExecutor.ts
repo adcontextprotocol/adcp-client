@@ -37,6 +37,7 @@ import type {
   TaskInfo,
   DeferredContinuation,
   SubmittedContinuation,
+  WebhookUrlTemplate,
 } from './ConversationTypes';
 import { normalizeHandlerResponse, isDeferResponse, isAbortResponse } from '../handlers/types';
 import { ProtocolResponseParser, ADCP_STATUS, type ADCPStatus } from './ProtocolResponseParser';
@@ -44,6 +45,7 @@ import type { Activity } from './AsyncHandler';
 import { GovernanceMiddleware } from './GovernanceMiddleware';
 import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
 import { attachMatch } from './match';
+import { resolveWebhookUrl } from './webhook-url';
 /**
  * Custom errors for task execution
  */
@@ -289,7 +291,7 @@ export class TaskExecutor {
       /** Storage for deferred task state */
       deferredStorage?: Storage<DeferredTaskState>;
       /** Webhook URL template for protocol-level webhook support */
-      webhookUrlTemplate?: string;
+      webhookUrlTemplate?: WebhookUrlTemplate;
       /** Agent ID for webhook URL generation */
       agentId?: string;
       /** Webhook secret for HMAC authentication (min 32 chars) */
@@ -459,15 +461,8 @@ export class TaskExecutor {
     return adcpErrorToTypedError(adcpError, key);
   }
 
-  private generateWebhookUrl(taskName: string, operationId: string): string | undefined {
-    if (!this.config.webhookUrlTemplate || !this.config.agentId) {
-      return undefined;
-    }
-
-    return this.config.webhookUrlTemplate
-      .replace(/{agent_id}/g, this.config.agentId)
-      .replace(/{task_type}/g, taskName)
-      .replace(/{operation_id}/g, operationId);
+  private generateWebhookUrl(taskName: string, operationId: string, options?: TaskOptions): string | undefined {
+    return resolveWebhookUrl(this.config.webhookUrlTemplate, this.config.agentId, taskName, operationId, options);
   }
 
   /**
@@ -535,7 +530,7 @@ export class TaskExecutor {
     const debugLogs: any[] = [];
 
     // Generate webhook URL if template is configured
-    const webhookUrl = this.generateWebhookUrl(taskName, taskId);
+    const webhookUrl = this.generateWebhookUrl(taskName, taskId, options);
 
     // Governance state (scoped outside try so catch can access)
     let governanceCheckId: string | undefined;

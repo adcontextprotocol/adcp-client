@@ -251,6 +251,8 @@ export type {
   InputHandlerResponse,
   ConversationContext,
   TaskOptions,
+  WebhookToolPredicate,
+  WebhookUrlTemplate,
   TaskResult,
   TaskResultCompleted,
   TaskResultIntermediate,
