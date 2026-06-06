@@ -21,6 +21,16 @@ function writeComplianceIndex(complianceDir, version = '3.0.12') {
   );
 }
 
+function writeComplianceIndexJson(complianceDir, index) {
+  fs.mkdirSync(complianceDir, { recursive: true });
+  fs.writeFileSync(path.join(complianceDir, 'index.json'), JSON.stringify(index));
+}
+
+function writeSchemaIndex(schemaRoot, version) {
+  fs.mkdirSync(schemaRoot, { recursive: true });
+  fs.writeFileSync(path.join(schemaRoot, 'index.json'), JSON.stringify({ adcp_version: version }));
+}
+
 function writeGetProductsRequestSchema(schemaRoot, idVersion, sentinel = 'external') {
   fs.mkdirSync(path.join(schemaRoot, 'bundled', 'media-buy'), { recursive: true });
   fs.writeFileSync(
@@ -549,6 +559,172 @@ describe('storyboard runner AdCP version negotiation', () => {
       });
     } finally {
       _resetValidationLoader('3.0.12');
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('latest compliance metadata is repaired from schemaRoot index before storyboard annotation', () => {
+    const {
+      applyAdcpVersionRunOptions,
+      listBundles,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-version-'));
+    const complianceDir = path.join(tempRoot, 'dist', 'compliance', 'latest');
+    const schemaRoot = path.join(tempRoot, 'dist', 'schemas', 'latest');
+    try {
+      writeComplianceIndexJson(complianceDir, {
+        published_version: 'latest',
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: ['capability-discovery'],
+        protocols: [],
+        specialisms: [],
+      });
+      writeSchemaIndex(schemaRoot, CURRENT_PRERELEASE_VERSION);
+
+      const index = loadComplianceIndex({ complianceDir, schemaRoot });
+      assert.strictEqual(index.published_version, 'latest');
+      assert.strictEqual(index.adcp_version, CURRENT_PRERELEASE_VERSION);
+
+      const bundles = listBundles({ complianceDir, schemaRoot });
+      assert.strictEqual(bundles[0].adcp_version, CURRENT_PRERELEASE_VERSION);
+
+      const options = applyAdcpVersionRunOptions(index.adcp_version, { schemaRoot });
+      assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
+      assert.strictEqual(options.versionEnvelope, 'auto');
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('latest compliance metadata can be repaired from published_version', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-published-version-'));
+    const complianceDir = path.join(tempRoot, 'dist', 'compliance', 'latest');
+    try {
+      writeComplianceIndexJson(complianceDir, {
+        published_version: CURRENT_PRERELEASE_VERSION,
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: [],
+        protocols: [],
+        specialisms: [],
+      });
+
+      const index = loadComplianceIndex({ complianceDir });
+      assert.strictEqual(index.adcp_version, CURRENT_PRERELEASE_VERSION);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('latest compliance metadata is repaired from index-less schemaRoot ids', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-schema-ids-'));
+    const complianceDir = path.join(tempRoot, 'dist', 'compliance', 'latest');
+    const schemaRoot = path.join(tempRoot, 'schema-bundles', CURRENT_PRERELEASE_VERSION);
+    try {
+      writeComplianceIndexJson(complianceDir, {
+        published_version: 'latest',
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: [],
+        protocols: [],
+        specialisms: [],
+      });
+      writeGetProductsRequestSchema(schemaRoot, CURRENT_PRERELEASE_VERSION, 'schema-id-version');
+
+      const index = loadComplianceIndex({ complianceDir, schemaRoot });
+      assert.strictEqual(index.adcp_version, CURRENT_PRERELEASE_VERSION);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('latest compliance metadata is repaired from sibling schema bundle without schemaRoot', () => {
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-sibling-'));
+    const complianceDir = path.join(tempRoot, 'package', 'dist', 'compliance', 'latest');
+    const schemaRoot = path.join(tempRoot, 'package', 'dist', 'lib', 'schemas-data', CURRENT_PRERELEASE_VERSION);
+    try {
+      writeComplianceIndexJson(complianceDir, {
+        published_version: 'latest',
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: [],
+        protocols: [],
+        specialisms: [],
+      });
+      writeGetProductsRequestSchema(schemaRoot, CURRENT_PRERELEASE_VERSION, 'sibling-schema-id-version');
+
+      const index = loadComplianceIndex({ complianceDir });
+      assert.strictEqual(index.adcp_version, CURRENT_PRERELEASE_VERSION);
+      assert.strictEqual(getExternalSchemaRootForCompliance({ complianceDir }, index.adcp_version), schemaRoot);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('ADCP_SCHEMA_ROOT repairs latest compliance metadata from the matching schema index', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-env-'));
+    const complianceDir = path.join(tempRoot, 'dist', 'compliance', 'latest');
+    const schemaRoot = path.join(tempRoot, 'dist', 'schemas', 'latest');
+    const oldSchemaRoot = process.env.ADCP_SCHEMA_ROOT;
+    try {
+      writeComplianceIndexJson(complianceDir, {
+        published_version: 'latest',
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: [],
+        protocols: [],
+        specialisms: [],
+      });
+      writeSchemaIndex(schemaRoot, CURRENT_PRERELEASE_VERSION);
+
+      process.env.ADCP_SCHEMA_ROOT = schemaRoot;
+      const index = loadComplianceIndex({ complianceDir });
+      assert.strictEqual(index.adcp_version, CURRENT_PRERELEASE_VERSION);
+    } finally {
+      if (oldSchemaRoot === undefined) delete process.env.ADCP_SCHEMA_ROOT;
+      else process.env.ADCP_SCHEMA_ROOT = oldSchemaRoot;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('unrepairable latest compliance metadata fails before it can reach the wire', () => {
+    const { loadComplianceIndex } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-latest-compliance-invalid-'));
+    const complianceDir = path.join(tempRoot, 'dist', 'compliance', 'latest');
+    const oldSchemaRoot = process.env.ADCP_SCHEMA_ROOT;
+    try {
+      delete process.env.ADCP_SCHEMA_ROOT;
+      writeComplianceIndexJson(complianceDir, {
+        published_version: 'latest',
+        adcp_version: 'latest',
+        generated_at: '2026-06-05T00:00:00.000Z',
+        universal: [],
+        protocols: [],
+        specialisms: [],
+      });
+
+      assert.throws(
+        () => loadComplianceIndex({ complianceDir }),
+        /declares invalid adcp_version "latest".*ADCP_SCHEMA_ROOT/
+      );
+    } finally {
+      if (oldSchemaRoot === undefined) delete process.env.ADCP_SCHEMA_ROOT;
+      else process.env.ADCP_SCHEMA_ROOT = oldSchemaRoot;
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
   });

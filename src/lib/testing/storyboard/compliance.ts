@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
@@ -94,6 +94,7 @@ export interface ComplianceIndexSpecialism {
 }
 
 export interface ComplianceIndex {
+  published_version?: string;
   adcp_version: string;
   generated_at: string;
   universal: string[];
@@ -229,31 +230,208 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
     throw new Error(complianceMissingMessage('Compliance cache', dir));
   }
   const index = JSON.parse(readFileSync(indexPath, 'utf-8')) as ComplianceIndex;
-  return index;
+  return normalizeComplianceIndex(index, options, indexPath);
 }
 
 export function getExternalSchemaRootForCompliance(options: ResolveOptions, adcpVersion: string): string | undefined {
-  if (options.schemaRoot) {
-    return options.schemaRoot;
-  }
+  const configuredSchemaRoot = getConfiguredSchemaRoot(options);
+  if (configuredSchemaRoot) return configuredSchemaRoot;
   if (!options.complianceDir) return undefined;
   return findExternalSchemaRoot(options.complianceDir, adcpVersion);
 }
 
+function getConfiguredSchemaRoot(options: Pick<ResolveOptions, 'schemaRoot'>): string | undefined {
+  return options.schemaRoot ?? process.env.ADCP_SCHEMA_ROOT;
+}
+
+function normalizeComplianceIndex(index: ComplianceIndex, options: ResolveOptions, indexPath: string): ComplianceIndex {
+  if (index.adcp_version === 'latest') {
+    const repairedVersion = findReplacementForLatestComplianceVersion(index, options);
+    if (repairedVersion) {
+      return { ...index, adcp_version: repairedVersion };
+    }
+  }
+
+  assertValidComplianceIndexVersion(index.adcp_version, indexPath);
+  return index;
+}
+
+function findReplacementForLatestComplianceVersion(
+  index: ComplianceIndex,
+  options: ResolveOptions
+): string | undefined {
+  if (isValidComplianceIndexVersion(index.published_version)) return index.published_version;
+
+  const schemaRoot = getConfiguredSchemaRoot(options);
+  const configuredVersion = schemaRoot ? readSchemaRootAdcpVersion(schemaRoot) : undefined;
+  if (configuredVersion) return configuredVersion;
+
+  if (!options.complianceDir) return undefined;
+  return readSiblingSchemaAdcpVersion(options.complianceDir);
+}
+
+function readSchemaRootAdcpVersion(schemaRoot: string): string | undefined {
+  const roots = [schemaRoot];
+  if (basename(schemaRoot) === 'bundled') roots.push(dirname(schemaRoot));
+
+  for (const root of roots) {
+    const indexPath = join(root, 'index.json');
+    if (!existsSync(indexPath)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(indexPath, 'utf-8')) as { adcp_version?: unknown };
+      if (isValidComplianceIndexVersion(parsed.adcp_version)) return parsed.adcp_version;
+    } catch {
+      // Schema-root discovery is best-effort; the final compliance-index
+      // validation below owns the actionable error when no replacement exists.
+    }
+  }
+  for (const root of roots) {
+    const version = readSchemaIdVersion(root);
+    if (version) return version;
+  }
+  return undefined;
+}
+
+function readSchemaIdVersion(root: string): string | undefined {
+  const versions = new Set<string>();
+  const scanRoot = existsSync(join(root, 'bundled')) ? join(root, 'bundled') : root;
+  for (const file of walkJsonFiles(scanRoot)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { $id?: unknown };
+      if (typeof parsed.$id !== 'string') continue;
+      const version = parsed.$id.match(/\/schemas\/([^/]+)\//)?.[1];
+      if (isValidComplianceIndexVersion(version)) versions.add(version);
+    } catch {
+      // Best-effort discovery; malformed schemas are handled by validation.
+    }
+  }
+  return versions.size === 1 ? [...versions][0] : undefined;
+}
+
+function readSiblingSchemaAdcpVersion(complianceDir: string): string | undefined {
+  for (const schemaRoot of schemaRootCandidatesForComplianceDir(complianceDir)) {
+    const version = readSchemaRootAdcpVersion(schemaRoot);
+    if (version) return version;
+  }
+  return undefined;
+}
+
+function isValidComplianceIndexVersion(version: unknown): version is string {
+  if (typeof version !== 'string') return false;
+  try {
+    resolveBundleKey(version);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertValidComplianceIndexVersion(version: string, indexPath: string): void {
+  try {
+    resolveBundleKey(version);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Compliance cache ${indexPath} declares invalid adcp_version ${JSON.stringify(version)}. ` +
+        `adcp_version must be a real AdCP bundle version, not a selector alias such as "latest". ` +
+        `If this is a local development bundle, pass ADCP_SCHEMA_ROOT or --schema-root pointing at the matching schema bundle. ` +
+        reason
+    );
+  }
+}
+
 function findExternalSchemaRoot(complianceDir: string, adcpVersion: string): string | undefined {
-  const key = resolveBundleKey(adcpVersion);
-  const packageRoot = dirname(dirname(dirname(resolve(complianceDir))));
-  const candidates = [
-    complianceDir,
-    join(packageRoot, 'dist', 'lib', 'schemas-data', key),
-    join(packageRoot, 'schemas', 'cache', adcpVersion),
-    join(packageRoot, 'schemas', 'cache', key),
-  ];
+  const candidates = [complianceDir, ...schemaRootCandidatesForComplianceDir(complianceDir, adcpVersion)];
   return candidates.find(hasSchemaRootShape);
 }
 
+function schemaRootCandidatesForComplianceDir(complianceDir: string, adcpVersion?: string): string[] {
+  const candidates = new Set<string>();
+  const packageRoots = packageRootCandidatesForComplianceDir(complianceDir);
+  const add = (candidate: string) => candidates.add(candidate);
+
+  for (const packageRoot of packageRoots) {
+    addVersionedSchemaRoots(packageRoot, adcpVersion ?? ADCP_VERSION, add);
+  }
+  for (const packageRoot of packageRoots) {
+    add(join(packageRoot, 'dist', 'schemas', 'latest'));
+    add(join(packageRoot, 'schemas', 'cache', 'latest'));
+    add(join(packageRoot, 'dist', 'lib', 'schemas-data', 'latest'));
+  }
+  if (adcpVersion === undefined) {
+    for (const packageRoot of packageRoots) {
+      addSchemaContainerChildren(join(packageRoot, 'dist', 'lib', 'schemas-data'), add);
+      addSchemaContainerChildren(join(packageRoot, 'dist', 'schemas'), add);
+      addSchemaContainerChildren(join(packageRoot, 'schemas', 'cache'), add);
+    }
+  }
+
+  return [...candidates];
+}
+
+function addVersionedSchemaRoots(packageRoot: string, adcpVersion: string, add: (candidate: string) => void): void {
+  const key = resolveBundleKey(adcpVersion);
+  add(join(packageRoot, 'dist', 'lib', 'schemas-data', key));
+  add(join(packageRoot, 'dist', 'schemas', adcpVersion));
+  add(join(packageRoot, 'dist', 'schemas', key));
+  add(join(packageRoot, 'schemas', 'cache', adcpVersion));
+  add(join(packageRoot, 'schemas', 'cache', key));
+}
+
+function addSchemaContainerChildren(container: string, add: (candidate: string) => void): void {
+  if (!existsSync(container)) return;
+  for (const entry of readdirSync(container).sort().reverse()) {
+    const full = join(container, entry);
+    try {
+      if (statSync(full).isDirectory()) add(full);
+    } catch {
+      // Best-effort sibling discovery; ignore entries that disappear mid-scan.
+    }
+  }
+}
+
+function packageRootCandidatesForComplianceDir(complianceDir: string): string[] {
+  const roots = new Set<string>();
+  const resolved = resolve(complianceDir);
+  let current = resolved;
+
+  while (true) {
+    if (basename(current) === 'compliance') {
+      const parent = dirname(current);
+      if (basename(parent) === 'dist') roots.add(dirname(parent));
+      roots.add(parent);
+    }
+    const next = dirname(current);
+    if (next === current) break;
+    current = next;
+  }
+
+  roots.add(dirname(dirname(dirname(resolved))));
+  return [...roots];
+}
+
 function hasSchemaRootShape(root: string): boolean {
-  return existsSync(join(root, 'bundled')) || existsSync(join(root, 'core'));
+  if (!existsSync(root)) return false;
+  const scanRoot = existsSync(join(root, 'bundled')) ? join(root, 'bundled') : root;
+  return walkJsonFiles(scanRoot).some(file => {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { $id?: unknown; $schema?: unknown };
+      return typeof parsed.$id === 'string' || typeof parsed.$schema === 'string';
+    } catch {
+      return false;
+    }
+  });
+}
+
+function walkJsonFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkJsonFiles(full));
+    else if (entry.isFile() && entry.name.endsWith('.json')) out.push(full);
+  }
+  return out;
 }
 
 /**
