@@ -1763,6 +1763,27 @@ describe('RegistryClient', () => {
       assert.strictEqual(catalog.placements[0].format_options[0].format_option_id, 'meta-feed-image');
     });
 
+    test('builds community mirror catalogs from non-format content', () => {
+      const catalog = buildCommunityMirrorAdagents({
+        properties: [{ domain: 'example.com', platform: 'meta' }],
+      });
+
+      assert.deepStrictEqual(catalog.authorized_agents, []);
+      assert.strictEqual(catalog.catalog_etag, undefined);
+      assert.strictEqual(catalog.properties[0].domain, 'example.com');
+      assert.strictEqual(catalog.formats, undefined);
+    });
+
+    test('rejects empty community mirror catalogs', () => {
+      assert.throws(
+        () =>
+          buildCommunityMirrorAdagents({
+            catalog_etag: 'meta-empty-2026-06',
+          }),
+        /at least one non-empty catalog collection/
+      );
+    });
+
     test('rejects authorization claims in community mirror helper', () => {
       assert.throws(
         () =>
@@ -2195,6 +2216,53 @@ describe('RegistryClient', () => {
       assert.strictEqual(url.pathname, '/api/registry/mirrors');
       assert.strictEqual(url.searchParams.get('limit'), '25');
       assert.strictEqual(url.searchParams.get('offset'), '50');
+    });
+
+    test('deletes community mirror catalogs with auth', async () => {
+      let capturedUrl;
+      let capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(JSON.stringify({ success: true, platform: 'meta' }), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.deleteCommunityMirrorAdagents('Meta');
+
+      assert.strictEqual(result.platform, 'meta');
+      assert.ok(capturedUrl.endsWith('/api/registry/mirrors/meta'));
+      assert.strictEqual(capturedOpts.method, 'DELETE');
+      assert.strictEqual(capturedOpts.headers.Authorization, 'Bearer sk_test');
+    });
+
+    test('deleteCommunityMirrorAdagents encodes force option', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ success: true, platform: 'meta' }), { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.deleteCommunityMirrorAdagents('meta', { force: true });
+
+      const url = new URL(capturedUrl);
+      assert.strictEqual(url.pathname, '/api/registry/mirrors/meta');
+      assert.strictEqual(url.searchParams.get('force'), 'true');
+    });
+
+    test('deleteCommunityMirrorAdagents requires an api key', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.deleteCommunityMirrorAdagents('meta'),
+          /apiKey is required for save operations/
+        );
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
     });
   });
 

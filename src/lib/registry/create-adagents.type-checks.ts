@@ -81,6 +81,7 @@ async function registryListCompatibility(client: RegistryClient): Promise<void> 
   await client.upsertCommunityMirrorAdagents(communityMirrorPublishConfig);
   await client.upsertCommunityMirrorAdagents('meta', communityMirrorConfig);
   await client.publishCommunityMirrorAdagents('meta', communityMirrorConfig);
+  await client.deleteCommunityMirrorAdagents('meta', { force: true });
 
   const mirror = await client.getCommunityMirrorAdagents('meta');
   const supersededBy: string | undefined = mirror?.superseded_by;
