@@ -85,6 +85,23 @@ describe('Request Builder', () => {
       assert.strictEqual(result.end_time, FUTURE_END);
     });
 
+    test('preserves fixture start_time asap for active-buy storyboards', () => {
+      withDateNow('2026-06-06T12:00:00.000Z', () => {
+        const s = step('create_media_buy', {
+          sample_request: {
+            start_time: 'asap',
+            end_time: '2099-07-31T23:59:59Z',
+            packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+          },
+        });
+
+        const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+
+        assert.strictEqual(result.start_time, 'asap');
+        assert.strictEqual(result.end_time, '2099-07-31T23:59:59Z');
+      });
+    });
+
     test('keeps create_media_buy window ordered when stale start meets same-day future end (#2143)', () => {
       withDateNow('2026-05-31T12:28:07.525Z', () => {
         const sampleStart = '2026-05-01T00:00:00Z';

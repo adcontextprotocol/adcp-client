@@ -121,16 +121,22 @@ function resolveMediaBuyWindow(
   const defaultEnd = new Date(now + 8 * DAY_MS).toISOString();
   const sampleStartMs = parseTime(sampleStart);
   const sampleEndMs = parseTime(sampleEnd);
+  const startIsAsap = sampleStart === 'asap';
 
-  const startTime = sampleStart && sampleStartMs !== undefined && sampleStartMs >= now ? sampleStart : defaultStart;
+  const startTime = startIsAsap
+    ? 'asap'
+    : sampleStart && sampleStartMs !== undefined && sampleStartMs >= now
+      ? sampleStart
+      : defaultStart;
   let endTime = sampleEnd && sampleEndMs !== undefined && sampleEndMs >= now ? sampleEnd : defaultEnd;
 
-  if (Date.parse(endTime) <= Date.parse(startTime)) {
+  const startTimeMs = startIsAsap ? now : Date.parse(startTime);
+  if (Date.parse(endTime) <= startTimeMs) {
     const sampleDurationMs =
       sampleStartMs !== undefined && sampleEndMs !== undefined && sampleEndMs > sampleStartMs
         ? sampleEndMs - sampleStartMs
         : DEFAULT_MEDIA_BUY_WINDOW_MS;
-    endTime = new Date(Date.parse(startTime) + sampleDurationMs).toISOString();
+    endTime = new Date(startTimeMs + sampleDurationMs).toISOString();
   }
 
   return { startTime, endTime };
