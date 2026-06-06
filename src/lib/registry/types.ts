@@ -186,19 +186,19 @@ export type CommunityMirrorAdagentsConfig = Omit<
   'authorized_agents' | 'catalog_etag' | 'include_schema' | 'include_timestamp' | 'platform'
 > &
   CommunityMirrorCatalogContent & {
-  /** Community mirror catalogs should be cacheable static artifacts with stable content identity when available. */
-  catalog_etag?: string;
-  /** Community mirror catalogs must include at least one non-empty catalog collection. */
-  formats?: AdagentsCatalogFormat[];
-  /** Optional pointer to a successor adagents.json after a platform adopts AdCP directly. */
-  superseded_by?: string;
-  /** Seller authorization claims are intentionally not accepted by this helper. */
-  authorized_agents?: never;
-  /** Generator-only flag; community mirrors are persisted adagents.json documents. */
-  include_schema?: never;
-  /** Generator-only flag; community mirrors are persisted adagents.json documents. */
-  include_timestamp?: never;
-};
+    /** Community mirror catalogs should be cacheable static artifacts with stable content identity when available. */
+    catalog_etag?: string;
+    /** Community mirror catalogs must include at least one non-empty catalog collection. */
+    formats?: AdagentsCatalogFormat[];
+    /** Optional pointer to a successor adagents.json after a platform adopts AdCP directly. */
+    superseded_by?: string;
+    /** Seller authorization claims are intentionally not accepted by this helper. */
+    authorized_agents?: never;
+    /** Generator-only flag; community mirrors are persisted adagents.json documents. */
+    include_schema?: never;
+    /** Generator-only flag; community mirrors are persisted adagents.json documents. */
+    include_timestamp?: never;
+  };
 
 /** Input for publishing/upserting a catalog-only community mirror descriptor. */
 export type CreateCommunityMirrorAdagentsConfig = CommunityMirrorAdagentsConfig & {
@@ -215,11 +215,11 @@ export type CommunityMirrorAdagentsCatalog = Omit<
   'authorized_agents' | 'catalog_etag' | 'include_schema' | 'include_timestamp' | 'platform'
 > &
   CommunityMirrorCatalogContent & {
-  authorized_agents: [];
-  catalog_etag?: string;
-  formats?: AdagentsCatalogFormat[];
-  superseded_by?: string;
-};
+    authorized_agents: [];
+    catalog_etag?: string;
+    formats?: AdagentsCatalogFormat[];
+    superseded_by?: string;
+  };
 
 /** Response from PUT /api/registry/mirrors/:platform. */
 export type PublishCommunityMirrorAdagentsResponse = CommunityMirrorPublishResponse;

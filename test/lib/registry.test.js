@@ -2256,7 +2256,10 @@ describe('RegistryClient', () => {
       delete process.env.ADCP_REGISTRY_API_KEY;
       try {
         const client = new RegistryClient();
-        await assert.rejects(() => client.deleteCommunityMirrorAdagents('meta'), /apiKey is required for save operations/);
+        await assert.rejects(
+          () => client.deleteCommunityMirrorAdagents('meta'),
+          /apiKey is required for save operations/
+        );
       } finally {
         if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
       }
