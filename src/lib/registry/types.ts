@@ -40,6 +40,14 @@ export type {
   OperatorLookupResult,
   PublisherLookupResult,
   AuthorizationEntry,
+  CommunityMirrorListResponse,
+  CommunityMirrorSummary,
+  CommunityMirrorGetResponse,
+  CommunityMirrorAdagentsJson,
+  CommunityMirrorPublishResponse,
+  CommunityMirrorPublishError,
+  CommunityMirrorPublishRequest,
+  CommunityMirrorDeleteResponse,
 } from './types.generated';
 
 // Re-export the full generated module for advanced usage (paths, operations, etc.)
@@ -48,7 +56,16 @@ export type { paths, operations, components } from './types.generated';
 // ====== Operation-derived types ======
 // Types extracted from inline OpenAPI operation schemas
 
-import type { operations } from './types.generated';
+import type {
+  operations,
+  CommunityMirrorListResponse,
+  CommunityMirrorSummary,
+  CommunityMirrorGetResponse,
+  CommunityMirrorPublishResponse,
+  CommunityMirrorPublishError,
+  CommunityMirrorPublishRequest,
+  CommunityMirrorDeleteResponse,
+} from './types.generated';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
 
 /** Request body for POST /api/brands/save */
@@ -155,15 +172,24 @@ export type CreateAdagentsResponse = Omit<RegistryCreateAdagentsResponse, 'data'
   };
 };
 
+type CommunityMirrorContentKey = 'formats' | 'properties' | 'placements' | 'collections' | 'signals';
+type CommunityMirrorCatalogContent = Partial<
+  Pick<CreateAdagentsRequest, Extract<CommunityMirrorContentKey, keyof CreateAdagentsRequest>>
+> & {
+  collections?: Record<string, unknown>[];
+  signals?: Record<string, unknown>[];
+};
+
 /** Input for building a catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsConfig = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp' | 'platform'
-> & {
-  /** Community mirror catalogs should be cacheable static artifacts with stable content identity. */
-  catalog_etag: string;
-  /** Community mirror catalogs exist to publish format-shape metadata. */
-  formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+  'authorized_agents' | 'catalog_etag' | 'include_schema' | 'include_timestamp' | 'platform'
+> &
+  CommunityMirrorCatalogContent & {
+  /** Community mirror catalogs should be cacheable static artifacts with stable content identity when available. */
+  catalog_etag?: string;
+  /** Community mirror catalogs must include at least one non-empty catalog collection. */
+  formats?: AdagentsCatalogFormat[];
   /** Optional pointer to a successor adagents.json after a platform adopts AdCP directly. */
   superseded_by?: string;
   /** Seller authorization claims are intentionally not accepted by this helper. */
@@ -186,36 +212,35 @@ export type CreateCommunityMirrorAdagentsConfig = CommunityMirrorAdagentsConfig 
 /** Catalog-only community mirror adagents.json descriptor. */
 export type CommunityMirrorAdagentsCatalog = Omit<
   CreateAdagentsRequest,
-  'authorized_agents' | 'catalog_etag' | 'formats' | 'include_schema' | 'include_timestamp' | 'platform'
-> & {
+  'authorized_agents' | 'catalog_etag' | 'include_schema' | 'include_timestamp' | 'platform'
+> &
+  CommunityMirrorCatalogContent & {
   authorized_agents: [];
-  catalog_etag: string;
-  formats: [AdagentsCatalogFormat, ...AdagentsCatalogFormat[]];
+  catalog_etag?: string;
+  formats?: AdagentsCatalogFormat[];
   superseded_by?: string;
 };
 
 /** Response from PUT /api/registry/mirrors/:platform. */
-export interface PublishCommunityMirrorAdagentsResponse {
-  success: boolean;
-  platform: string;
-  catalog_etag: string | null;
-  superseded_by: string | null;
-  updated_at: string;
-}
+export type PublishCommunityMirrorAdagentsResponse = CommunityMirrorPublishResponse;
 
 /** Summary item from GET /api/registry/mirrors. */
-export interface CommunityMirrorAdagentsSummary {
-  platform: string;
-  catalog_etag: string | null;
-  superseded_by: string | null;
-  updated_at: string;
-}
+export type CommunityMirrorAdagentsSummary = CommunityMirrorSummary;
 
 /** Response from GET /api/registry/mirrors. */
-export interface ListCommunityMirrorAdagentsResponse {
-  mirrors: CommunityMirrorAdagentsSummary[];
-  total: number;
-}
+export type ListCommunityMirrorAdagentsResponse = CommunityMirrorListResponse;
+
+/** Raw response from GET /api/registry/mirrors/:platform. */
+export type GetCommunityMirrorAdagentsResponse = CommunityMirrorGetResponse;
+
+/** Raw request body for PUT /api/registry/mirrors/:platform. */
+export type PublishCommunityMirrorAdagentsRequest = CommunityMirrorPublishRequest;
+
+/** Validation error from PUT /api/registry/mirrors/:platform. */
+export type PublishCommunityMirrorAdagentsError = CommunityMirrorPublishError;
+
+/** Response from DELETE /api/registry/mirrors/:platform. */
+export type DeleteCommunityMirrorAdagentsResponse = CommunityMirrorDeleteResponse;
 
 /** Request body for POST /api/registry/validate/product-authorization */
 export type ValidateProductAuthorizationRequest = NonNullable<

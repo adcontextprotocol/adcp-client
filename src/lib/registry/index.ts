@@ -26,6 +26,7 @@ import type {
   CommunityMirrorAdagentsCatalog,
   PublishCommunityMirrorAdagentsResponse,
   ListCommunityMirrorAdagentsResponse,
+  DeleteCommunityMirrorAdagentsResponse,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -102,6 +103,10 @@ export type {
   PublishCommunityMirrorAdagentsResponse,
   CommunityMirrorAdagentsSummary,
   ListCommunityMirrorAdagentsResponse,
+  GetCommunityMirrorAdagentsResponse,
+  PublishCommunityMirrorAdagentsRequest,
+  PublishCommunityMirrorAdagentsError,
+  DeleteCommunityMirrorAdagentsResponse,
   ValidateProductAuthorizationRequest,
   ExpandProductIdentifiersRequest,
   PublisherPropertySelector,
@@ -158,6 +163,14 @@ export type {
   PolicySummary,
   Policy,
   PolicyHistory,
+  CommunityMirrorListResponse,
+  CommunityMirrorSummary,
+  CommunityMirrorGetResponse,
+  CommunityMirrorAdagentsJson,
+  CommunityMirrorPublishResponse,
+  CommunityMirrorPublishError,
+  CommunityMirrorPublishRequest,
+  CommunityMirrorDeleteResponse,
 } from './types';
 
 // Re-export RegistrySync
@@ -203,11 +216,13 @@ export function buildCommunityMirrorAdagents(config: CommunityMirrorAdagentsConf
   if ('include_schema' in maybeConfig || 'include_timestamp' in maybeConfig) {
     throw new Error('include_schema and include_timestamp are not accepted for community mirror adagents catalogs');
   }
-  if (!config.catalog_etag?.trim()) {
-    throw new Error('catalog_etag is required');
-  }
-  if (!Array.isArray(config.formats) || config.formats.length === 0) {
-    throw new Error('formats must contain at least one catalog format');
+  const contentKeys = ['formats', 'properties', 'placements', 'collections', 'signals'] as const;
+  const hasCatalogContent = contentKeys.some(key => {
+    const value = (config as Record<string, unknown>)[key];
+    return Array.isArray(value) && value.length > 0;
+  });
+  if (!hasCatalogContent) {
+    throw new Error('community mirror catalogs require at least one non-empty catalog collection');
   }
 
   const { platform: _platform, ...catalogConfig } = maybeConfig;
@@ -855,6 +870,27 @@ export class RegistryClient {
     return this.get(`${this.baseUrl}/api/registry/mirrors${qs ? `?${qs}` : ''}`);
   }
 
+  /**
+   * Delete a published community mirror and retire its derived catalog rows.
+   *
+   * By default, the registry refuses to delete mirrors without a
+   * `superseded_by` successor URL. Pass `force: true` only for moderator
+   * cleanup where no migration URL exists.
+   */
+  async deleteCommunityMirrorAdagents(
+    platform: string,
+    options?: { force?: boolean }
+  ): Promise<DeleteCommunityMirrorAdagentsResponse> {
+    const normalizedPlatform = this.normalizeCommunityMirrorPlatform(platform);
+    if (!this.apiKey) throw new Error('apiKey is required for save operations');
+    const params = new URLSearchParams();
+    if (options?.force) params.set('force', 'true');
+    const qs = params.toString();
+    return this.deleteRequest(
+      `${this.baseUrl}/api/registry/mirrors/${encodeURIComponent(normalizedPlatform)}${qs ? `?${qs}` : ''}`
+    );
+  }
+
   // ====== Search & Discovery ======
 
   /** Search brands, publishers, and properties. */
@@ -1050,6 +1086,17 @@ export class RegistryClient {
       method: 'PUT',
       headers: { ...this.getHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+    }
+    return this.parseJson(text);
+  }
+
+  private async deleteRequest<T = any>(url: string): Promise<T> {
+    const { res, text } = await this.requestText(url, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
     });
     if (!res.ok) {
       throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);

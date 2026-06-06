@@ -159,6 +159,14 @@ export type AgentComplianceDetail = components['schemas']['AgentComplianceDetail
 export type StoryboardStatus = components['schemas']['StoryboardStatus'];
 export type OperatorLookupResult = components['schemas']['OperatorLookupResult'];
 export type PublisherLookupResult = components['schemas']['PublisherLookupResult'];
+export type CommunityMirrorListResponse = components['schemas']['CommunityMirrorListResponse'];
+export type CommunityMirrorSummary = components['schemas']['CommunityMirrorSummary'];
+export type CommunityMirrorGetResponse = components['schemas']['CommunityMirrorGetResponse'];
+export type CommunityMirrorAdagentsJson = components['schemas']['CommunityMirrorAdagentsJson'];
+export type CommunityMirrorPublishResponse = components['schemas']['CommunityMirrorPublishResponse'];
+export type CommunityMirrorPublishError = components['schemas']['CommunityMirrorPublishError'];
+export type CommunityMirrorPublishRequest = components['schemas']['CommunityMirrorPublishRequest'];
+export type CommunityMirrorDeleteResponse = components['schemas']['CommunityMirrorDeleteResponse'];
 
 // ====== Inline operation types ======
 // The following types are defined inline in operation responses (not in components.schemas)
