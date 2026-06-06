@@ -9,7 +9,7 @@
  */
 
 import { createTestClient, discoverAgentProfile } from '../client';
-import type { TestOptions, TestResult, AgentProfile } from '../types';
+import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
@@ -174,90 +174,125 @@ export function collectObservations(
 
   // Media buy track observations
   if (track === 'media_buy') {
-    // Check for valid_actions support (first match only)
-    let checkedValidActions = false;
+    const hasValidActions = (obs: { valid_actions?: unknown; media_buys?: unknown }): boolean => {
+      if (obs.valid_actions !== undefined && obs.valid_actions !== null) {
+        return true;
+      }
+
+      if (!Array.isArray(obs.media_buys)) {
+        return false;
+      }
+
+      return obs.media_buys.some(
+        buy =>
+          buy !== null &&
+          typeof buy === 'object' &&
+          (buy as { valid_actions?: unknown }).valid_actions !== undefined &&
+          (buy as { valid_actions?: unknown }).valid_actions !== null
+      );
+    };
+
+    const getMediaBuyObservations: Array<{
+      result: TestResult;
+      step: TestStepResult;
+      obs: {
+        valid_actions?: unknown;
+        media_buys?: unknown;
+        history_entries?: number;
+        history_valid?: boolean;
+        has_creative_deadline?: boolean;
+        sandbox?: unknown;
+      };
+    }> = [];
     for (const result of results) {
-      if (checkedValidActions) break;
       for (const step of result.steps ?? []) {
         if (step.task === 'get_media_buys' && step.observation_data) {
-          const obs = step.observation_data as {
-            valid_actions?: unknown;
-            history_entries?: number;
-            history_valid?: boolean;
-            has_creative_deadline?: boolean;
-            sandbox?: unknown;
-          };
-          if (obs.valid_actions === undefined || obs.valid_actions === null) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'warning',
-              track,
-              message:
-                'Agent does not return valid_actions in get_media_buys response. ' +
-                'Without valid_actions, buyer agents must hardcode the state machine to know what operations are permitted.',
-              source: {
-                kind: 'storyboard_step',
-                code: 'missing-valid-actions',
-                storyboard_id: result.scenario,
-                step_id: step.step,
-              },
-            });
-          }
-
-          if (obs.has_creative_deadline === false) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'suggestion',
-              track,
-              message:
-                'Agent does not return creative_deadline on media buys or packages. ' +
-                'Buyers need to know when creative uploads must be finalized to avoid rejected submissions.',
-              source: {
-                kind: 'storyboard_step',
-                code: 'missing-creative-deadline',
-                storyboard_id: result.scenario,
-                step_id: step.step,
-              },
-            });
-          }
-
-          if (obs.history_entries && obs.history_entries > 0 && obs.history_valid === false) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'warning',
-              track,
-              message:
-                'Agent returns history entries but some lack required fields (timestamp, action). ' +
-                'History entries must include at least timestamp and action to be useful for audit.',
-              source: {
-                kind: 'storyboard_step',
-                code: 'invalid-history-entries',
-                storyboard_id: result.scenario,
-                step_id: step.step,
-              },
-            });
-          }
-
-          if (obs.sandbox === undefined || obs.sandbox === null) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'suggestion',
-              track,
-              message:
-                'Agent does not confirm sandbox mode in get_media_buys response. ' +
-                'Include sandbox: true so buyers can verify the agent honored sandbox mode.',
-              source: {
-                kind: 'storyboard_step',
-                code: 'missing-sandbox-echo',
-                storyboard_id: result.scenario,
-                step_id: step.step,
-              },
-            });
-          }
-
-          checkedValidActions = true;
-          break;
+          getMediaBuyObservations.push({
+            result,
+            step,
+            obs: step.observation_data as {
+              valid_actions?: unknown;
+              media_buys?: unknown;
+              history_entries?: number;
+              history_valid?: boolean;
+              has_creative_deadline?: boolean;
+              sandbox?: unknown;
+            },
+          });
         }
+      }
+    }
+
+    const firstGetMediaBuysObservation = getMediaBuyObservations[0];
+    if (firstGetMediaBuysObservation) {
+      const hasAnyValidActions = getMediaBuyObservations.some(({ obs }) => hasValidActions(obs));
+      if (!hasAnyValidActions) {
+        observations.push({
+          category: 'best_practice',
+          severity: 'warning',
+          track,
+          message:
+            'Agent does not return valid_actions in get_media_buys response. ' +
+            'Without valid_actions, buyer agents must hardcode the state machine to know what operations are permitted.',
+          source: {
+            kind: 'storyboard_step',
+            code: 'missing-valid-actions',
+            storyboard_id: firstGetMediaBuysObservation.result.scenario,
+            step_id: firstGetMediaBuysObservation.step.step,
+          },
+        });
+      }
+
+      const { result, step, obs } = firstGetMediaBuysObservation;
+      if (obs.has_creative_deadline === false) {
+        observations.push({
+          category: 'best_practice',
+          severity: 'suggestion',
+          track,
+          message:
+            'Agent does not return creative_deadline on media buys or packages. ' +
+            'Buyers need to know when creative uploads must be finalized to avoid rejected submissions.',
+          source: {
+            kind: 'storyboard_step',
+            code: 'missing-creative-deadline',
+            storyboard_id: result.scenario,
+            step_id: step.step,
+          },
+        });
+      }
+
+      if (obs.history_entries && obs.history_entries > 0 && obs.history_valid === false) {
+        observations.push({
+          category: 'best_practice',
+          severity: 'warning',
+          track,
+          message:
+            'Agent returns history entries but some lack required fields (timestamp, action). ' +
+            'History entries must include at least timestamp and action to be useful for audit.',
+          source: {
+            kind: 'storyboard_step',
+            code: 'invalid-history-entries',
+            storyboard_id: result.scenario,
+            step_id: step.step,
+          },
+        });
+      }
+
+      if (obs.sandbox === undefined || obs.sandbox === null) {
+        observations.push({
+          category: 'best_practice',
+          severity: 'suggestion',
+          track,
+          message:
+            'Agent does not confirm sandbox mode in get_media_buys response. ' +
+            'Include sandbox: true so buyers can verify the agent honored sandbox mode.',
+          source: {
+            kind: 'storyboard_step',
+            code: 'missing-sandbox-echo',
+            storyboard_id: result.scenario,
+            step_id: step.step,
+          },
+        });
       }
     }
 

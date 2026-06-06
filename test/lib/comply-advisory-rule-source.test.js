@@ -122,6 +122,76 @@ describe('collectObservations — create_media_buy advisories (#1736)', () => {
   });
 });
 
+describe('collectObservations — valid_actions advisory (#5319)', () => {
+  function mediaBuyResultWithGetMediaBuysObservations(observations) {
+    return {
+      agent_url: 'https://example.com/mcp',
+      scenario: 'media_buy_seller/pending_creatives_to_start',
+      overall_passed: true,
+      summary: '',
+      total_duration_ms: 100,
+      tested_at: '2026-01-01T00:00:00.000Z',
+      steps: observations.map((observation_data, index) => ({
+        step: `Get media buys ${index + 1}`,
+        task: 'get_media_buys',
+        passed: true,
+        duration_ms: 100,
+        observation_data,
+      })),
+    };
+  }
+
+  test('does not emit missing-valid-actions when a later get_media_buys observation has valid_actions', () => {
+    const result = mediaBuyResultWithGetMediaBuysObservations([
+      { valid_actions: undefined },
+      { valid_actions: ['cancel', 'update_budget'], sandbox: true },
+    ]);
+
+    const observations = collectObservations('media_buy', [result], dummyProfile);
+    const missingValidActions = observations.filter(o => o.source?.code === 'missing-valid-actions');
+
+    assert.equal(
+      missingValidActions.length,
+      0,
+      `Expected no missing-valid-actions advisory when any get_media_buys observation includes valid_actions, got ${JSON.stringify(missingValidActions)}`
+    );
+  });
+
+  test('does not emit missing-valid-actions when returned media buys include valid_actions', () => {
+    const result = mediaBuyResultWithGetMediaBuysObservations([
+      {
+        media_buys: [
+          {
+            media_buy_id: 'mb1',
+            status: 'pending_start',
+            valid_actions: ['cancel'],
+          },
+        ],
+      },
+    ]);
+
+    const observations = collectObservations('media_buy', [result], dummyProfile);
+    const missingValidActions = observations.filter(o => o.source?.code === 'missing-valid-actions');
+
+    assert.equal(
+      missingValidActions.length,
+      0,
+      `Expected no missing-valid-actions advisory when returned media buys include valid_actions, got ${JSON.stringify(missingValidActions)}`
+    );
+  });
+
+  test('still emits missing-valid-actions when no get_media_buys observation has valid_actions', () => {
+    const result = mediaBuyResultWithGetMediaBuysObservations([{ sandbox: true }, { valid_actions: null }]);
+
+    const observations = collectObservations('media_buy', [result], dummyProfile);
+    const missingValidActions = observations.filter(o => o.source?.code === 'missing-valid-actions');
+
+    assert.equal(missingValidActions.length, 1);
+    assert.equal(missingValidActions[0].source.storyboard_id, 'media_buy_seller/pending_creatives_to_start');
+    assert.equal(missingValidActions[0].source.step_id, 'Get media buys 1');
+  });
+});
+
 // ────────────────────────────────────────────────────────────────────────────
 // #1746 — Every advisory carries traceable source coordinates.
 //
