@@ -174,11 +174,30 @@ export function collectObservations(
 
   // Media buy track observations
   if (track === 'media_buy') {
+    const hasValidActions = (obs: { valid_actions?: unknown; media_buys?: unknown }): boolean => {
+      if (obs.valid_actions !== undefined && obs.valid_actions !== null) {
+        return true;
+      }
+
+      if (!Array.isArray(obs.media_buys)) {
+        return false;
+      }
+
+      return obs.media_buys.some(
+        buy =>
+          buy !== null &&
+          typeof buy === 'object' &&
+          (buy as { valid_actions?: unknown }).valid_actions !== undefined &&
+          (buy as { valid_actions?: unknown }).valid_actions !== null
+      );
+    };
+
     const getMediaBuyObservations: Array<{
       result: TestResult;
       step: TestStepResult;
       obs: {
         valid_actions?: unknown;
+        media_buys?: unknown;
         history_entries?: number;
         history_valid?: boolean;
         has_creative_deadline?: boolean;
@@ -193,6 +212,7 @@ export function collectObservations(
             step,
             obs: step.observation_data as {
               valid_actions?: unknown;
+              media_buys?: unknown;
               history_entries?: number;
               history_valid?: boolean;
               has_creative_deadline?: boolean;
@@ -205,9 +225,7 @@ export function collectObservations(
 
     const firstGetMediaBuysObservation = getMediaBuyObservations[0];
     if (firstGetMediaBuysObservation) {
-      const hasAnyValidActions = getMediaBuyObservations.some(
-        ({ obs }) => obs.valid_actions !== undefined && obs.valid_actions !== null
-      );
+      const hasAnyValidActions = getMediaBuyObservations.some(({ obs }) => hasValidActions(obs));
       if (!hasAnyValidActions) {
         observations.push({
           category: 'best_practice',
