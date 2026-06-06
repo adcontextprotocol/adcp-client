@@ -123,6 +123,24 @@ export type TaskStatus =
   | 'governance-denied';
 
 /**
+ * Predicate used by scoped webhook URL templates to decide which operations
+ * receive protocol-level webhook URLs.
+ */
+export type WebhookToolPredicate = (toolName: string) => boolean;
+
+/**
+ * Webhook URL template with macro substitution. A bare string preserves the
+ * legacy behavior: every operation receives a generated webhook URL. The
+ * object form scopes webhook URL generation to a tool allowlist or predicate.
+ */
+export type WebhookUrlTemplate =
+  | string
+  | {
+      template: string;
+      tools?: string[] | WebhookToolPredicate;
+    };
+
+/**
  * Options for task execution
  */
 export interface TaskOptions {
@@ -145,6 +163,8 @@ export interface TaskOptions {
   taskId?: string;
   /** Enable debug logging for this task */
   debug?: boolean;
+  /** Suppress automatic webhook URL generation for this call. */
+  disableWebhook?: boolean;
   /** Additional metadata to include */
   metadata?: Record<string, any>;
   /**

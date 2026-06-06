@@ -102,7 +102,14 @@ import {
   probeAuthChallenge,
 } from '../auth/oauth/authorization-required';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
-import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
+import type {
+  InputHandler,
+  TaskOptions,
+  TaskResult,
+  ConversationConfig,
+  TaskInfo,
+  WebhookUrlTemplate,
+} from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
 import { verifyWebhookRequest, type WebhookHeaderValue, type WebhookHeadersLike } from '../webhooks';
@@ -129,6 +136,7 @@ import {
 } from '../utils/capabilities';
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
+import { resolveWebhookUrl } from './webhook-url';
 import { getV25Adapter } from '../adapters/legacy/v2-5';
 import {
   ProductPropertyPolicyError,
@@ -365,7 +373,7 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * Query string: "https://myapp.com/webhook?agent={agent_id}&op={operation_id}&type={task_type}"
    * Custom: "https://myapp.com/api/v1/adcp/{agent_id}?operation={operation_id}"
    */
-  webhookUrlTemplate?: string;
+  webhookUrlTemplate?: WebhookUrlTemplate;
   /**
    * Reporting webhook frequency
    *
@@ -1400,11 +1408,11 @@ export class SingleAgentClient {
       throw new Error('webhookUrlTemplate not configured - cannot generate webhook URL');
     }
 
-    // Macro substitution
-    return this.config.webhookUrlTemplate
-      .replace(/{agent_id}/g, this.agent.id)
-      .replace(/{task_type}/g, taskType)
-      .replace(/{operation_id}/g, operationId);
+    const webhookUrl = resolveWebhookUrl(this.config.webhookUrlTemplate, this.agent.id, taskType, operationId);
+    if (!webhookUrl) {
+      throw new Error(`webhookUrlTemplate not configured for task type '${taskType}'`);
+    }
+    return webhookUrl;
   }
 
   /**
@@ -2294,35 +2302,43 @@ export class SingleAgentClient {
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
-    if (this.config.webhookUrlTemplate) {
+    if (this.config.webhookUrlTemplate && !options?.disableWebhook) {
       const now = new Date();
       const year = now.getUTCFullYear();
       const month = String(now.getUTCMonth() + 1).padStart(2, '0');
       const operationId = `delivery_report_${this.agent.id}_${year}-${month}`;
-      const deliveryWebhookUrl = this.getWebhookUrl('media_buy_delivery', operationId);
+      const deliveryWebhookUrl = resolveWebhookUrl(
+        this.config.webhookUrlTemplate,
+        this.agent.id,
+        'media_buy_delivery',
+        operationId,
+        options
+      );
 
-      // Library defaults
-      const libraryDefaults = {
-        url: deliveryWebhookUrl,
-        authentication: {
-          schemes: ['HMAC-SHA256'] as const,
-          credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
-        },
-        reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
-      };
-
-      // Deep merge: consumer overrides library defaults
-      params = {
-        ...params,
-        reporting_webhook: {
-          ...libraryDefaults,
-          ...params.reporting_webhook,
+      if (deliveryWebhookUrl) {
+        // Library defaults
+        const libraryDefaults = {
+          url: deliveryWebhookUrl,
           authentication: {
-            ...libraryDefaults.authentication,
-            ...params.reporting_webhook?.authentication,
+            schemes: ['HMAC-SHA256'] as const,
+            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
           },
-        },
-      } as CreateMediaBuyRequest;
+          reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
+        };
+
+        // Deep merge: consumer overrides library defaults
+        params = {
+          ...params,
+          reporting_webhook: {
+            ...libraryDefaults,
+            ...params.reporting_webhook,
+            authentication: {
+              ...libraryDefaults.authentication,
+              ...params.reporting_webhook?.authentication,
+            },
+          },
+        } as CreateMediaBuyRequest;
+      }
     }
 
     return this.executeAndHandle<CreateMediaBuyResponse>(
