@@ -1619,6 +1619,35 @@ function postProcessBackwardCompatOptionalFields(content: string): string {
   );
 }
 
+function postProcessPostalAreaSupportCatchall(content: string): string {
+  return content.replace(
+    /(export const PostalAreaSupportSchema = z\.object\(\{[\s\S]*?\}\)\.passthrough\(\)\.catchall\()[\s\S]*?(\);\n\nexport const \w+Schema)/m,
+    `$1z.array(z.union([z.literal("postal_code"), z.literal("custom")]))).superRefine((value, ctx) => {
+    const legacyPostalSystems = new Set([
+        "us_zip",
+        "us_zip_plus_four",
+        "gb_outward",
+        "gb_full",
+        "ca_fsa",
+        "ca_full",
+        "de_plz",
+        "fr_code_postal",
+        "au_postcode",
+        "ch_plz",
+        "at_plz"
+    ]);
+    for (const key of Object.keys(value)) {
+        if (/^[A-Z]{2}$/.test(key) || legacyPostalSystems.has(key)) continue;
+        ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message: "PostalAreaSupport keys must be ISO 3166-1 alpha-2 country codes or deprecated legacy postal-system aliases"
+        });
+    }
+}$2`
+  );
+}
+
 async function generateZodSchemas() {
   console.log('🔄 Generating Zod v4 schemas from TypeScript types...');
   console.log(`📥 Core source: ${CORE_SOURCE_FILE}`);
@@ -1759,6 +1788,7 @@ async function generateZodSchemas() {
     // Keep runtime Zod validation aligned with the TypeScript-side backward
     // compatibility relaxations for legacy seller responses.
     zodSchemas = postProcessBackwardCompatOptionalFields(zodSchemas);
+    zodSchemas = postProcessPostalAreaSupportCatchall(zodSchemas);
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);

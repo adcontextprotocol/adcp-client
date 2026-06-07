@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-06-05
-> Library: @adcp/sdk v9.0.0-beta.24
+> Generated at: 2026-06-07
+> Library: @adcp/sdk v9.0.0-beta.26
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -390,7 +390,7 @@ Request parameters for creating a media buy.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Account Ref`, `brand: Brand Ref`, `start_time: Start Timing`, `end_time: string`
-- Optional: `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, `po_number: string`, +5 more
+- Optional: `plan_id: string`, `proposal_id: string`, `total_budget: object`, `packages: object[]`, `advertiser_industry: Advertiser Industry`, `invoice_recipient: Business Entity`, `io_acceptance: object`, `po_number: string`, +6 more
 
 **Response (success branch):**
 - Required: `media_buy_id: string`, `confirmed_at: string,null`, `revision: integer`, `packages: object[]`
@@ -510,11 +510,11 @@ Request parameters for AI-powered creative generation.
 
 **Request:**
 - Required: `idempotency_key: string`
-- Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_id: string`, `concept_id: string`, `media_buy_id: string`, `package_id: string`, `target_format_id: Format Id`, `target_format_ids: object[]`, +22 more
+- Optional: `message: string`, `creative_manifest: Creative Manifest`, `creative_id: string`, `concept_id: string`, `media_buy_id: string`, `package_id: string`, `target_format_id: Format Id`, `target_format_ids: object[]`, +23 more
 
 **Response (success branch):**
 - Required: `creative_manifest: Creative Manifest`
-- Optional: `build_variant_id: string`, `sandbox: boolean`, `expires_at: string`, `preview: object`, `preview_error: Error`, `pricing_option_id: string`, `vendor_cost: number`, `currency: string`, +2 more
+- Optional: `build_variant_id: string`, `recipe_hash: string`, `sandbox: boolean`, `expires_at: string`, `preview: object`, `preview_error: Error`, `pricing_option_id: string`, `vendor_cost: number`, +3 more
 
 **Watch out:**
 - Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.
@@ -1000,6 +1000,9 @@ Flow: `get_adcp_capabilities → build_creative`
 **Creative lifecycle webhooks** — Registers account-level creative lifecycle notifications, forces a seller-side status transition, observes creative.status_changed, and verifies list_creatives snapshot repair plus optional creative.purged coverage.
 Flow: `sync_accounts → sync_creatives → comply_test_controller → expect_webhook → list_creatives → comply_test_controller → expect_webhook → comply_test_controller → expect_webhook → list_creatives → comply_test_controller → expect_webhook → list_creatives`
 
+**Creative evaluator authentication boundary** — Verifies that build_creative evaluator pointers use the verifier allowlist, keep credentials out of payloads, and invoke accepted evaluator agents through get_creative_features.
+Flow: `get_adcp_capabilities → build_creative → comply_test_controller → build_creative`
+
 **Native in-feed creative lifecycle** — End-to-end native_in_feed conformance: format discovery, full 12-slot asset bundle submission with pixel trackers, per-constraint validation rejection paths, and feed-rendered preview.
 Flow: `get_adcp_capabilities → list_creative_formats → sync_creatives → preview_creative`
 
@@ -1047,7 +1050,7 @@ Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_produ
 Flow: `sync_accounts → get_products → sync_audiences → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Seller carries product allowed actions into per-buy available actions** — Validates the AdCP 3.1 media-buy action-discovery flow: product allowed_actions[], buy available_actions[], SLAWindow duration fields, self-serve mutation, and ACTION_NOT_ALLOWED enforcement.
-Flow: `get_products → create_media_buy → get_media_buys → update_media_buy`
+Flow: `get_products → sync_creatives → create_media_buy → get_media_buys → update_media_buy`
 
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1300,8 +1303,8 @@ Flow: `get_adcp_capabilities`
 **Release-precision version negotiation** — Sellers advertise supported releases on capabilities and echo the served release on every response.
 Flow: `get_adcp_capabilities`
 
-**Webhook emission — outbound webhook conformance (operation ID + signing + idempotency)** — Any agent that emits webhooks MUST echo the caller-supplied operation_id in every payload, carry a stable idempotency_key across retries, and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
-Flow: `get_adcp_capabilities → expect_webhook → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
+**Webhook emission — outbound webhook conformance (operation ID + signing + idempotency + sync silence)** — Any agent that emits webhooks MUST echo the caller-supplied operation_id in every payload, carry a stable idempotency_key across retries, and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Sellers MUST NOT emit task webhooks for inline terminal responses; any future sync-completion notification mode would be explicit and capability-advertised. Graded by a runner hosting a webhook receiver during storyboard execution.
+Flow: `get_adcp_capabilities → expect_webhook → get_products → expect_webhook_retry_keys_stable → fetch_brand_jwks → assert_jwks_purpose → expect_webhook_signature_valid`
 
 **Webhook receiver envelope: inbound POST conformance** — Buyer webhook receivers MUST accept full MCP webhook envelopes, reject bare delivery-result payloads, preserve raw-body signature verification, and dedupe retries by a stable idempotency_key.
 Flow: `replay_webhook_vector`
@@ -1393,7 +1396,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `CREATIVE_NOT_FOUND` | correctable | Referenced creative does not exist in the agent's creative library. Sellers MUST return this code uniformly for any creative_id not owned by the calling account — never distinguish 'exists in another tenant' from 'does not exist', which would enable cross-tenant enumeration. |
 | `CREATIVE_REJECTED` | correctable | Creative failed content policy review. For deadline violations, see CREATIVE_DEADLINE_EXCEEDED. |
 | `CREATIVE_VALUE_NOT_ALLOWED` | correctable | A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic content-policy failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling. |
-| `CREDENTIAL_IN_ARGS` | terminal | The seller detected a buyer-principal credential placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the transport's authentication channel. Buyer-principal credentials MUST arrive on the transport's authentication channel (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3) and MUST NOT travel inside the task payload. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date. |
+| `CREDENTIAL_IN_ARGS` | terminal | The seller detected authentication material or caller-supplied trust material placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the relevant transport authentication or trust channel. This includes buyer-principal credentials that should arrive on the inbound transport (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3), and evaluator-call credentials or JWK/JWKS/JWKS-URI trust material smuggled into evaluator-related payload fields instead of being established through the creative agent's outbound transport authentication to the evaluator. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal or evaluator-call credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date. |
 | `EVALUATOR_AGENT_NOT_ACCEPTED` | correctable | Buyer attached an evaluator agent pointer on `build_creative` — `evaluator.feature_agent.agent_url` or the `evaluator` agent-form `agent_url` — that does not match (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) any entry in the seller's `creative_policy.accepted_verifiers[].agent_url`. The producing agent does not call buyer-asserted endpoints outside its allowlist; this mirrors `PROVENANCE_VERIFIER_NOT_ACCEPTED` for the gate/rank evaluator path — the buyer represents which on-list agent it used, the seller is the agent-of-record and calls only allowlisted agents. `error.field` MUST point at the offending `agent_url` path; `error.details` SHOULD include a reference to the product whose `creative_policy.accepted_verifiers` the buyer should consult. |
 | `FEED_FETCH_FAILED` | correctable | Platform could not fetch the catalog feed URL during sync_catalogs. |
 | `FIELD_NOT_PERMITTED` | correctable | A request field is not in the caller's `field_scopes` allowlist for this task. Sellers declaring `field_scopes` on the account's `authorization` object MUST reject any request that sets a non-allowlisted field with this code. Distinct from `VALIDATION_ERROR` (schema/business-rule violation) - the field is valid, just not writable by this caller. `error.field` MUST identify the exact offending field path (e.g., `packages[0].budget`); when multiple fields are disallowed, sellers SHOULD return one error per field, or MAY enumerate them in `error.details.fields`. |

@@ -131,6 +131,65 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(cs.supports_webhook_delivery, false);
   });
 
+  it('targeting projects postal-area capabilities in native and deprecated forms', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        targeting: {
+          geo_countries: true,
+          geo_postal_areas: {
+            us_zip: true,
+            US: ['zip_plus_four'],
+            GB: ['outward'],
+            gb_full: true,
+            NL: ['postal_code'],
+            ca_fsa: false,
+          },
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    const targeting = result.structuredContent?.media_buy?.execution?.targeting;
+    assert.ok(targeting, `targeting missing: ${JSON.stringify(result.structuredContent?.media_buy)}`);
+    assert.strictEqual(targeting.geo_countries, true);
+    assert.deepStrictEqual(targeting.geo_postal_areas.US, ['zip', 'zip_plus_four']);
+    assert.deepStrictEqual(targeting.geo_postal_areas.GB, ['outward', 'full']);
+    assert.deepStrictEqual(targeting.geo_postal_areas.NL, ['postal_code']);
+    assert.strictEqual(targeting.geo_postal_areas.us_zip, true);
+    assert.strictEqual(targeting.geo_postal_areas.us_zip_plus_four, true);
+    assert.strictEqual(targeting.geo_postal_areas.gb_outward, true);
+    assert.strictEqual(targeting.geo_postal_areas.gb_full, true);
+    assert.strictEqual(targeting.geo_postal_areas.ca_fsa, undefined);
+  });
+
+  it('targeting rejects invalid postal-area capability keys and systems before projection', () => {
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(
+          basePlatform({
+            targeting: {
+              geo_postal_areas: { NL: ['outward'] },
+            },
+          }),
+          { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+        ),
+      /Invalid geo_postal_areas support for NL/
+    );
+
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(
+          basePlatform({
+            targeting: {
+              geo_postal_areas: { foo: ['postal_code'] },
+            },
+          }),
+          { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+        ),
+      /Invalid geo_postal_areas key "foo"/
+    );
+  });
+
   it('all three blocks project together when declared together', async () => {
     const server = createAdcpServerFromPlatform(
       basePlatform({

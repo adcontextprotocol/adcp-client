@@ -992,6 +992,32 @@ describe('Zod Schema Validation', () => {
     assert.ok(valid.success, 'metro record should accept boolean values');
   });
 
+  test('PostalAreaSupportSchema enforces country-key and deprecated-alias property names', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(
+      schemas.PostalAreaSupportSchema.safeParse({ US: ['zip'], NL: ['postal_code'], us_zip: true }).success,
+      'postal support should accept explicit countries, generic future country keys, and deprecated aliases'
+    );
+
+    assert.ok(
+      !schemas.PostalAreaSupportSchema.safeParse({ nl: ['postal_code'] }).success,
+      'postal support should reject lowercase country keys'
+    );
+
+    assert.ok(
+      !schemas.PostalAreaSupportSchema.safeParse({ foo: ['custom'] }).success,
+      'postal support should reject arbitrary property names'
+    );
+
+    assert.ok(
+      !schemas.PostalAreaSupportSchema.safeParse({ NL: ['outward'] }).success,
+      'postal support should keep future country keys restricted to postal_code/custom'
+    );
+  });
+
   test('per-asset-type requirements schemas are typed (not z.any)', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

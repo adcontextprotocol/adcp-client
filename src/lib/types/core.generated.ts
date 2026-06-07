@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.9
-// Generated at: 2026-06-05T16:46:43.025Z
+// Generated AdCP core types from official schemas v3.1.0-rc.10
+// Generated at: 2026-06-07T21:45:55.361Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -243,9 +243,40 @@ export type CanonicalFormatKind =
  */
 export type MetroAreaSystem = 'nielsen_dma' | 'uk_itl1' | 'uk_itl2' | 'eurostat_nuts2' | 'custom';
 /**
- * Postal code system (e.g., 'us_zip', 'gb_outward'). System name encodes country and precision.
+ * Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
+ */
+export type PostalArea = PostalArea1 | LegacyPostalArea;
+/**
+ * Country-local postal code system (e.g., 'zip', 'outward', 'plz', 'postal_code').
  */
 export type PostalCodeSystem =
+  | 'postal_code'
+  | 'zip'
+  | 'zip_plus_four'
+  | 'outward'
+  | 'full'
+  | 'fsa'
+  | 'plz'
+  | 'code_postal'
+  | 'postcode'
+  | 'cep'
+  | 'pin'
+  | 'custom'
+  | 'us_zip'
+  | 'us_zip_plus_four'
+  | 'gb_outward'
+  | 'gb_full'
+  | 'ca_fsa'
+  | 'ca_full'
+  | 'de_plz'
+  | 'fr_code_postal'
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
+/**
+ * Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system.
+ */
+export type LegacyPostalCodeSystem =
   | 'us_zip'
   | 'us_zip_plus_four'
   | 'gb_outward'
@@ -1756,25 +1787,13 @@ export interface TargetingOverlay {
     values: string[];
   }[];
   /**
-   * Restrict delivery to specific postal areas. Each entry specifies the postal system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   * Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
    */
-  geo_postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  geo_postal_areas?: PostalArea[];
   /**
-   * Exclude specific postal areas from delivery. Each entry specifies the postal system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   * Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
    */
-  geo_postal_areas_exclude?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  geo_postal_areas_exclude?: PostalArea[];
   /**
    * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
    */
@@ -1985,6 +2004,34 @@ export interface TargetingOverlay {
     keyword: string;
     match_type: MatchType;
   }[];
+}
+export interface PostalCountryArea {
+  /**
+   * ISO 3166-1 alpha-2 country code for the postal values.
+   * @pattern ^[A-Z]{2}$
+   */
+  country: string;
+  system: PostalCodeSystem;
+  /**
+   * Postal codes within the country and system.
+   */
+  values: string[];
+}
+/**
+ * Re-export of `PostalCountryArea` under the legacy codegen artifact name.
+ *
+ * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea1 = PostalCountryArea;
+/**
+ * @deprecated
+ */
+export interface LegacyPostalArea {
+  system: LegacyPostalCodeSystem;
+  /**
+   * Postal codes within the legacy system.
+   */
+  values: string[];
 }
 /**
  * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
@@ -6990,9 +7037,14 @@ export interface GeoForecastDimension {
   kind: 'geo';
   geo_level: GeographicTargetingLevel;
   /**
-   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; postal rows use postal-system enum values such as 'us_zip'. Omit for country and region rows.
+   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.
    */
   system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
   /**
    * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
    */
@@ -7291,12 +7343,68 @@ export interface GeographicBreakdownSupport {
   metro?: {
     [k: string]: boolean | undefined;
   };
+  postal_area?: PostalAreaSupport;
+}
+/**
+ * Postal area breakdown support. Prefer the native country-keyed map where each ISO 3166-1 alpha-2 country lists supported country-local postal systems. Deprecated legacy country-fused postal-system boolean maps remain accepted for compatibility.
+ */
+export interface PostalAreaSupport {
+  US?: ('zip' | 'zip_plus_four')[];
+  GB?: ('outward' | 'full')[];
+  CA?: ('fsa' | 'full')[];
+  DE?: 'plz'[];
+  CH?: 'plz'[];
+  AT?: 'plz'[];
+  FR?: 'code_postal'[];
+  AU?: 'postcode'[];
+  BR?: 'cep'[];
+  IN?: 'pin'[];
+  ZA?: 'postal_code'[];
   /**
-   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   * @deprecated
    */
-  postal_area?: {
-    [k: string]: boolean | undefined;
-  };
+  us_zip?: boolean;
+  /**
+   * @deprecated
+   */
+  us_zip_plus_four?: boolean;
+  /**
+   * @deprecated
+   */
+  gb_outward?: boolean;
+  /**
+   * @deprecated
+   */
+  gb_full?: boolean;
+  /**
+   * @deprecated
+   */
+  ca_fsa?: boolean;
+  /**
+   * @deprecated
+   */
+  ca_full?: boolean;
+  /**
+   * @deprecated
+   */
+  de_plz?: boolean;
+  /**
+   * @deprecated
+   */
+  fr_code_postal?: boolean;
+  /**
+   * @deprecated
+   */
+  au_postcode?: boolean;
+  /**
+   * @deprecated
+   */
+  ch_plz?: boolean;
+  /**
+   * @deprecated
+   */
+  at_plz?: boolean;
+  [country: `${Uppercase<string>}`]: ('zip' | 'zip_plus_four' | 'outward' | 'full' | 'fsa' | 'plz' | 'code_postal' | 'postcode' | 'cep' | 'pin' | 'postal_code' | 'custom')[] | undefined;
 }
 /**
  * A measurement maturation stage for any channel where billing-grade data is produced in phases rather than arriving final on day one. Each window represents an accumulation or processing stage with its own expected availability. Examples: broadcast/linear TV (live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital (raw impressions → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads), audio/radio (tentative → diary/panel-certified). Sellers whose data is final on first delivery omit this.
@@ -7887,6 +7995,7 @@ export type TaskType =
   | 'update_media_buy'
   | 'media_buy_delivery'
   | 'sync_creatives'
+  | 'build_creative'
   | 'activate_signal'
   | 'get_products'
   | 'get_signals'
@@ -10652,9 +10761,13 @@ export interface VendorMetricValue {
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
   /**
-   * Leaf handle for this produced creative — present when the agent supports refinement (creative.supports_refinement). Pass it as refine_from_build_variant_id to refine this build. Same namespace as BuildCreativeVariantSuccess leaves; distinct from served variant_id / preview_id. Lazily earns a creative_id on trafficking.
+   * Leaf handle for this produced creative — present when the agent supports refinement (creative.supports_refinement). Pass it as refine_from_build_variant_id to refine this build. Same namespace as BuildCreativeVariantSuccess leaves; distinct from served variant_id / preview_id. On the canonical promotion path, this value becomes the creative_id when the produced leaf is trafficked or added to the library.
    */
   build_variant_id?: string;
+  /**
+   * Optional agent-computed, opaque, agent-scoped identity for the build-determining inputs that produced this creative. Stable for identical inputs as defined by the agent, and comparable only within the same agent. ETag-style semantics: the protocol defines the field and contract, not the hash algorithm or canonical input set. Identifies generative-input identity, not output equality, legal/disclosure equivalence, or the build-to-delivery join.
+   */
+  recipe_hash?: string;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -10987,9 +11100,13 @@ export interface BuildCreativeVariantSuccess {
      */
     variants?: {
       /**
-       * Build-time handle for this produced variant — the leaf-level lineage anchor for the creative. Minted per produced variant. Its OWN namespace — MUST NOT reuse a `preview_id` (preview renders) or a served `variant_id` (delivery). Lineage and joins (refinement parentage, build→delivery learning, QA re-rolls) anchor on this leaf id, NOT on the call-level `build_creative_id`. A leaf lazily earns a durable `creative_id` only when trafficked / added to the library; that `creative_id` is what flows into `report_usage`. An untrafficked leaf has no `report_usage` key — it is billed via the inline per-leaf `vendor_cost` only, and `report_usage` reconciliation applies once the leaf earns a `creative_id`.
+       * Build-time handle for this produced variant — the leaf-level lineage anchor for the creative. Minted per produced variant. Its OWN namespace — MUST NOT reuse a `preview_id` (preview renders) or a served `variant_id` (delivery). Refinement parentage and build-time QA re-rolls anchor on this leaf id, NOT on the call-level `build_creative_id`. On the canonical promotion path, this value becomes the durable `creative_id` when the leaf is trafficked / added to the library; delivery outcomes and `report_usage` then join by `creative_id`. An untrafficked leaf has no `report_usage` key — it is billed via the inline per-leaf `vendor_cost` only, and `report_usage` reconciliation applies once the leaf earns a `creative_id`.
        */
       build_variant_id: string;
+      /**
+       * Optional agent-computed, opaque, agent-scoped identity for the build-determining inputs that produced this variant leaf. Stable for identical inputs as defined by the agent, and comparable only within the same agent. Multiple leaves from the same best-of-N recipe SHOULD carry the same value so clients can group alternative outputs by their shared source recipe. ETag-style semantics: the protocol defines the field and contract, not the hash algorithm or canonical input set. Identifies generative-input identity, not output equality, legal/disclosure equivalence, or the build-to-delivery join.
+       */
+      recipe_hash?: string;
       /**
        * When this variant was produced by refining a prior build (request `refine_from_build_variant_id`), the source leaf's `build_variant_id` — establishing refinement lineage (a leaf may itself be refined, forming a chain). Absent for first-generation builds. AI-derivative attribution rides the manifest's existing `provenance`; this field carries only the lineage edge.
        */
@@ -11038,12 +11155,12 @@ export interface BuildCreativeVariantSuccess {
        */
       pricing_option_id?: string;
       /**
-       * Cost incurred for this variant leaf, denominated in currency.
+       * Cost incurred for this variant leaf, denominated in currency. REQUIRED on every produced leaf whenever the build reports cost (the top-level aggregate `vendor_cost` is present) — leaves are the billing source of truth, and an untrafficked leaf is reconciled from this field alone (it never earns a `creative_id` / `report_usage` entry). A CPM-deferred leaf reports 0 here (a value, not an omission).
        * @minimum 0
        */
       vendor_cost?: number;
       /**
-       * ISO 4217 currency code for vendor_cost.
+       * ISO 4217 currency code for vendor_cost. Co-required with vendor_cost.
        * @pattern ^[A-Z]{3}$
        */
       currency?: string;
@@ -11065,7 +11182,7 @@ export interface BuildCreativeVariantSuccess {
    */
   items_returned?: number;
   /**
-   * Total leaves the request would have produced (≈ items_to_produce × variants_per_item). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
+   * Total leaves the request would have produced (≈ items_to_produce × variants_per_item, × conditions_total when signal_conditions was sent). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
    * @minimum 0
    */
   leaves_total?: number;
@@ -11075,7 +11192,7 @@ export interface BuildCreativeVariantSuccess {
    */
   leaves_returned?: number;
   /**
-   * Aggregate cost across all variant leaves, denominated in currency. MUST equal the sum of the per-leaf vendor_cost values (leaves are the source of truth).
+   * Aggregate cost across all variant leaves, denominated in currency. MUST equal the sum of the per-leaf vendor_cost values (leaves are the source of truth). When present, every produced leaf MUST carry its own vendor_cost + currency (enforced) so the sum invariant is checkable; omit this aggregate only for a genuinely free build.
    * @minimum 0
    */
   vendor_cost?: number;
@@ -11188,7 +11305,7 @@ export interface BuildCreativeEstimate {
      */
     variants_per_item?: number;
     /**
-     * Total billable leaves = items_to_produce × variants_per_item.
+     * Total billable leaves = items_to_produce × variants_per_item (× conditions_total when signal_conditions was sent — see conditions_total).
      * @minimum 0
      */
     leaves_total?: number;
@@ -15332,6 +15449,65 @@ export type TasksGetResponse = ProtocolEnvelope & {
   ext?: ExtensionObject;
 };
 /**
+ * Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.
+ */
+export type PostalCountrySystem =
+  | {
+      country?: 'US';
+      system?: 'zip' | 'zip_plus_four';
+    }
+  | {
+      country?: 'GB';
+      system?: 'outward' | 'full';
+    }
+  | {
+      country?: 'CA';
+      system?: 'fsa' | 'full';
+    }
+  | {
+      country?: 'DE' | 'CH' | 'AT';
+      system?: 'plz';
+    }
+  | {
+      country?: 'FR';
+      system?: 'code_postal';
+    }
+  | {
+      country?: 'AU';
+      system?: 'postcode';
+    }
+  | {
+      country?: 'BR';
+      system?: 'cep';
+    }
+  | {
+      country?: 'IN';
+      system?: 'pin';
+    }
+  | {
+      country?: 'ZA';
+      system?: 'postal_code';
+    }
+  | {
+      country?: {
+        [k: string]: unknown | undefined;
+      };
+      system?: 'postal_code' | 'custom';
+    };
+/**
+ * Re-export of `PostalArea` under the legacy codegen artifact name.
+ *
+ * `PostalArea2` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `PostalArea` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `PostalArea`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `PostalArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea2 = PostalArea;
+export type PostalArea3 = PostalCountrySystem;
+/**
  * Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.
  */
 export type SignalTargetingExpression =
@@ -15373,6 +15549,32 @@ export type SignalTargetingExpression =
       max_value?: number;
     };
 /**
+ * Re-export of `PostalArea` under the legacy codegen artifact name.
+ *
+ * `PostalArea4` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `PostalArea` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `PostalArea`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `PostalArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea4 = PostalArea;
+export type PostalArea5 = PostalCountrySystem;
+/**
+ * Re-export of `PostalArea` under the legacy codegen artifact name.
+ *
+ * `PostalArea6` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `PostalArea` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `PostalArea`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `PostalArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea6 = PostalArea;
+export type PostalArea7 = PostalCountrySystem;
+/**
  * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
 export type PackageSignalTargeting1 = SignalTargetingExpression;
@@ -15382,7 +15584,7 @@ export type PackageSignalTargeting1 = SignalTargetingExpression;
  * `AssetVariant1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15394,7 +15596,7 @@ export type AssetVariant1 = AssetVariant;
  * `VASTAsset1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15406,7 +15608,7 @@ export type VASTAsset1 = VASTAsset;
  * `DAASTAsset1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15418,7 +15620,7 @@ export type DAASTAsset1 = DAASTAsset;
  * `AssetVariant2` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15430,7 +15632,7 @@ export type AssetVariant2 = AssetVariant;
  * `VASTAsset2` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15442,7 +15644,7 @@ export type VASTAsset2 = VASTAsset;
  * `DAASTAsset2` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15454,7 +15656,7 @@ export type DAASTAsset2 = DAASTAsset;
  * `AssetVariant3` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15466,7 +15668,7 @@ export type AssetVariant3 = AssetVariant;
  * `VASTAsset3` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15478,7 +15680,7 @@ export type VASTAsset3 = VASTAsset;
  * `DAASTAsset3` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15490,7 +15692,7 @@ export type DAASTAsset3 = DAASTAsset;
  * `AssetVariant4` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15502,7 +15704,7 @@ export type AssetVariant4 = AssetVariant;
  * `VASTAsset4` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15514,7 +15716,7 @@ export type VASTAsset4 = VASTAsset;
  * `DAASTAsset4` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15526,7 +15728,7 @@ export type DAASTAsset4 = DAASTAsset;
  * `AssetVariant5` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15538,7 +15740,7 @@ export type AssetVariant5 = AssetVariant;
  * `VASTAsset5` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15550,7 +15752,7 @@ export type VASTAsset5 = VASTAsset;
  * `DAASTAsset5` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15562,7 +15764,7 @@ export type DAASTAsset5 = DAASTAsset;
  * `AssetVariant6` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15574,7 +15776,7 @@ export type AssetVariant6 = AssetVariant;
  * `VASTAsset6` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15586,7 +15788,7 @@ export type VASTAsset6 = VASTAsset;
  * `DAASTAsset6` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15598,7 +15800,7 @@ export type DAASTAsset6 = DAASTAsset;
  * `AssetVariant7` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15610,7 +15812,7 @@ export type AssetVariant7 = AssetVariant;
  * `VASTAsset7` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15622,7 +15824,7 @@ export type VASTAsset7 = VASTAsset;
  * `DAASTAsset7` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15634,7 +15836,7 @@ export type DAASTAsset7 = DAASTAsset;
  * `AssetVariant8` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15646,7 +15848,7 @@ export type AssetVariant8 = AssetVariant;
  * `VASTAsset8` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15658,7 +15860,7 @@ export type VASTAsset8 = VASTAsset;
  * `DAASTAsset8` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15670,7 +15872,7 @@ export type DAASTAsset8 = DAASTAsset;
  * `AssetVariant9` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15682,7 +15884,7 @@ export type AssetVariant9 = AssetVariant;
  * `VASTAsset9` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15694,7 +15896,7 @@ export type VASTAsset9 = VASTAsset;
  * `DAASTAsset9` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15706,7 +15908,7 @@ export type DAASTAsset9 = DAASTAsset;
  * `AssetVariant10` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15718,7 +15920,7 @@ export type AssetVariant10 = AssetVariant;
  * `VASTAsset10` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15730,7 +15932,7 @@ export type VASTAsset10 = VASTAsset;
  * `DAASTAsset10` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15742,7 +15944,7 @@ export type DAASTAsset10 = DAASTAsset;
  * `AssetVariant11` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * discriminator, canonical wrapper, or named union); aliasing to `AssetVariant`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15754,7 +15956,7 @@ export type AssetVariant11 = AssetVariant;
  * `VASTAsset11` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `VASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15766,7 +15968,7 @@ export type VASTAsset11 = VASTAsset;
  * `DAASTAsset11` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `DAASTAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15947,7 +16149,7 @@ export interface CreateMediaBuyInputRequired {
  * `CreateMediaBuySubmitted1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `CreateMediaBuySubmitted` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `CreateMediaBuySubmitted`
+ * discriminator, canonical wrapper, or named union); aliasing to `CreateMediaBuySubmitted`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `CreateMediaBuySubmitted` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15959,7 +16161,7 @@ export type CreateMediaBuySubmitted1 = CreateMediaBuySubmitted;
  * `PackageSignalTargetingGroups1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `PackageSignalTargetingGroups` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `PackageSignalTargetingGroups`
+ * discriminator, canonical wrapper, or named union); aliasing to `PackageSignalTargetingGroups`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `PackageSignalTargetingGroups` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -15971,7 +16173,7 @@ export type PackageSignalTargetingGroups1 = PackageSignalTargetingGroups;
  * `PackageSignalTargetingGroup1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `PackageSignalTargetingGroup` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `PackageSignalTargetingGroup`
+ * discriminator, canonical wrapper, or named union); aliasing to `PackageSignalTargetingGroup`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `PackageSignalTargetingGroup` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -16021,7 +16223,7 @@ export interface UpdateMediaBuyInputRequired {
  * `LegacyManifestNamedFormatReference1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `LegacyManifestNamedFormatReference` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `LegacyManifestNamedFormatReference`
+ * discriminator, canonical wrapper, or named union); aliasing to `LegacyManifestNamedFormatReference`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `LegacyManifestNamedFormatReference` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -16033,7 +16235,7 @@ export type LegacyManifestNamedFormatReference1 = LegacyManifestNamedFormatRefer
  * `ManifestCanonicalFormatKind1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `ManifestCanonicalFormatKind` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `ManifestCanonicalFormatKind`
+ * discriminator, canonical wrapper, or named union); aliasing to `ManifestCanonicalFormatKind`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `ManifestCanonicalFormatKind` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -16045,7 +16247,7 @@ export type ManifestCanonicalFormatKind1 = ManifestCanonicalFormatKind;
  * `LegacyManifestNamedFormatReference2` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `LegacyManifestNamedFormatReference` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `LegacyManifestNamedFormatReference`
+ * discriminator, canonical wrapper, or named union); aliasing to `LegacyManifestNamedFormatReference`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `LegacyManifestNamedFormatReference` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -16057,7 +16259,7 @@ export type LegacyManifestNamedFormatReference2 = LegacyManifestNamedFormatRefer
  * `ManifestCanonicalFormatKind2` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `ManifestCanonicalFormatKind` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `ManifestCanonicalFormatKind`
+ * discriminator, canonical wrapper, or named union); aliasing to `ManifestCanonicalFormatKind`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `ManifestCanonicalFormatKind` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -16349,6 +16551,11 @@ export type TasksListResponse = ProtocolEnvelope & {
        * @minimum 0
        */
       signals?: number;
+      /**
+       * Number of creative tasks in results
+       * @minimum 0
+       */
+      creative?: number;
     };
     /**
      * Count of tasks by status
@@ -16383,7 +16590,7 @@ export type TasksListResponse = ProtocolEnvelope & {
     /**
      * AdCP domain this task belongs to
      */
-    domain: 'media-buy' | 'signals';
+    domain: 'media-buy' | 'signals' | 'creative';
     status: TaskStatus;
     /**
      * When the task was initially created (ISO 8601)
@@ -18235,11 +18442,12 @@ export type BuildCreativeRequest = {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
+  push_notification_config?: PushNotificationConfig;
   context?: ContextObject;
   ext?: ExtensionObject;
 };
 /**
- * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
+ * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. The outbound evaluator call authenticates on the transport (request signing/JWKS, mTLS, or a pre-provisioned static credential); credentials and caller-supplied trust material MUST NOT appear in evaluator, context, ext, or creative payload fields, and credential- or trust-material keys should be rejected with `CREDENTIAL_IN_ARGS`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
  */
 export type EvaluatorSpec =
   | {
@@ -18265,7 +18473,7 @@ export type EvaluatorSpec =
     }
   | {
       /**
-       * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable degrades to seller-default ranking (advisory errors[] note), not a failure.
+       * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable or rejects the producing agent's transport authentication degrades to seller-default ranking (advisory errors[] note), not a failure. Authentication and trust material for this call belongs on the transport or in account provisioning, not in the evaluator payload.
        * @pattern ^https:\/\/
        */
       agent_url: string;
@@ -18367,6 +18575,10 @@ export interface CreateMediaBuyRequest {
    * @format date-time
    */
   end_time: string;
+  /**
+   * Create the media buy in a paused delivery state. When true, and the buy would otherwise be active because creatives are assigned and the flight has started, the seller returns media_buy_status 'paused'. Setup blockers still take precedence: a buy with no creatives remains 'pending_creatives', and a future-dated buy remains 'pending_start' until its flight can start. Defaults to false.
+   */
+  paused?: boolean;
   push_notification_config?: PushNotificationConfig;
   reporting_webhook?: ReportingWebhook;
   /**
@@ -18692,9 +18904,14 @@ export interface GetMediaBuyDeliveryRequest {
     geo?: {
       geo_level: GeographicTargetingLevel;
       /**
-       * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Required when geo_level is 'metro' or 'postal_area'.
+       * Optional classification system for metro or postal_area levels. Metro uses metro-system values (e.g., 'nielsen_dma'); native postal_area uses country-local postal-system values with country (e.g., country 'US', system 'zip'); deprecated legacy postal_area requests may use legacy-postal-system values such as 'us_zip'. Omit to request the level without selecting a specific system.
        */
-      system?: MetroAreaSystem | PostalCodeSystem;
+      system?: MetroAreaSystem | PostalCodeSystem | LegacyPostalCodeSystem;
+      /**
+       * ISO 3166-1 alpha-2 country code. Required for native postal_area requests; omitted for legacy postal_area and non-postal geo requests.
+       * @pattern ^[A-Z]{2}$
+       */
+      country?: string;
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
        * @minimum 1
@@ -19361,9 +19578,14 @@ export type KeywordDeliveryMetrics = DeliveryMetrics & {
 export type GeoDeliveryMetrics = DeliveryMetrics & {
   geo_level?: GeographicTargetingLevel;
   /**
-   * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+   * Classification system for metro or postal_area levels. Metro rows use metro-system values. Native postal rows use country-local postal-system values with country; deprecated legacy postal rows may use legacy-postal-system values.
    */
   system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code for native postal_area rows.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
   /**
    * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
    */
@@ -20029,12 +20251,17 @@ export interface ProductFilters {
   };
   required_features?: MediaBuyFeatures;
   /**
-   * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems.
+   * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems. For native postal_area filters, include country plus the country-local postal system.
    */
   required_geo_targeting?: {
     level: GeographicTargetingLevel;
     /**
-     * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
+     * ISO 3166-1 alpha-2 country code. Required for native postal_area system filters; not applicable to country, region, or metro filters.
+     * @pattern ^[A-Z]{2}$
+     */
+    country?: string;
+    /**
+     * Optional classification system within the level. Use for a specific metro system (e.g., 'nielsen_dma'), native postal_area system (e.g., 'zip' with country 'US'), or deprecated legacy postal alias (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
      */
     system?: string;
   }[];
@@ -20043,15 +20270,9 @@ export interface ProductFilters {
    */
   signal_targeting?: SignalTargeting[];
   /**
-   * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Use when products have postal-area-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
+   * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
    */
-  postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  postal_areas?: PostalArea[];
   /**
    * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
    */
@@ -21221,7 +21442,7 @@ export interface SyncEventSourcesError {
  * `CreativeAsset1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `CreativeAsset` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `CreativeAsset`
+ * discriminator, canonical wrapper, or named union); aliasing to `CreativeAsset`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `CreativeAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -21414,7 +21635,7 @@ export interface PackageUpdate {
  * `LegacyCreativeNamedFormatReference1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `LegacyCreativeNamedFormatReference` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `LegacyCreativeNamedFormatReference`
+ * discriminator, canonical wrapper, or named union); aliasing to `LegacyCreativeNamedFormatReference`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `LegacyCreativeNamedFormatReference` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -21426,7 +21647,7 @@ export type LegacyCreativeNamedFormatReference1 = LegacyCreativeNamedFormatRefer
  * `CreativeCanonicalFormatKind1` is a json-schema-to-typescript under-resolution artifact —
  * the bundler inlined the same schema at two call sites and jsts emitted a numbered
  * sibling. The body it produced was strictly weaker than `CreativeCanonicalFormatKind` (missing the
- * `asset_type` discriminator or its containing wrapper); aliasing to `CreativeCanonicalFormatKind`
+ * discriminator, canonical wrapper, or named union); aliasing to `CreativeCanonicalFormatKind`
  * gives consumers the correctly-discriminated shape that matches the wire format.
  *
  * @deprecated Use `CreativeCanonicalFormatKind` from `@adcp/sdk/types`. Slated for removal in the next major.
@@ -22433,22 +22654,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
           uk_itl2?: boolean;
           eurostat_nuts2?: boolean;
         };
-        /**
-         * Postal area targeting. Properties indicate which postal code systems are supported.
-         */
-        geo_postal_areas?: {
-          us_zip?: boolean;
-          us_zip_plus_four?: boolean;
-          gb_outward?: boolean;
-          gb_full?: boolean;
-          ca_fsa?: boolean;
-          ca_full?: boolean;
-          de_plz?: boolean;
-          fr_code_postal?: boolean;
-          au_postcode?: boolean;
-          ch_plz?: boolean;
-          at_plz?: boolean;
-        };
+        geo_postal_areas?: PostalAreaSupport;
         /**
          * Age restriction capabilities for compliance (alcohol, gambling)
          */
@@ -22874,7 +23080,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supports_spend_controls?: boolean;
     /**
-     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
+     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED), and the producing agent authenticates the outbound evaluator call on the transport. Evaluator credentials and caller-supplied trust material MUST NOT be passed in the build_creative payload; credential- or trust-material payload keys should be rejected with CREDENTIAL_IN_ARGS. When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
      */
     supports_evaluator?: boolean;
     /**
@@ -23615,6 +23821,11 @@ export type ListTasksResponse = ProtocolEnvelope & {
        * @minimum 0
        */
       signals?: number;
+      /**
+       * Number of creative tasks in results
+       * @minimum 0
+       */
+      creative?: number;
     };
     /**
      * Count of tasks by status
@@ -23649,7 +23860,7 @@ export type ListTasksResponse = ProtocolEnvelope & {
     /**
      * AdCP domain this task belongs to
      */
-    domain: 'media-buy' | 'signals';
+    domain: 'media-buy' | 'signals' | 'creative';
     status: TaskStatus;
     /**
      * When the task was initially created (ISO 8601)
@@ -26635,15 +26846,9 @@ export interface Offering {
       values: string[];
     }[];
     /**
-     * Postal areas where this offering is relevant. Each entry specifies the postal system and target values.
+     * Postal areas where this offering is relevant. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
      */
-    postal_areas?: {
-      system: PostalCodeSystem;
-      /**
-       * Postal codes within the system
-       */
-      values: string[];
-    }[];
+    postal_areas?: PostalArea[];
   };
   /**
    * Keywords for matching this offering to user intent. Hosts use these for retrieval/relevance scoring.

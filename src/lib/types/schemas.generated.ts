@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-06-05T16:47:09.259Z
+// Generated at: 2026-06-07T21:46:56.825Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -77,7 +77,9 @@ export const CanonicalFormatKindSchema = z.union([z.literal("image"), z.literal(
 
 export const MetroAreaSystemSchema = z.union([z.literal("nielsen_dma"), z.literal("uk_itl1"), z.literal("uk_itl2"), z.literal("eurostat_nuts2"), z.literal("custom")]);
 
-export const PostalCodeSystemSchema = z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")]);
+export const PostalCodeSystemSchema = z.union([z.literal("postal_code"), z.literal("zip"), z.literal("zip_plus_four"), z.literal("outward"), z.literal("full"), z.literal("fsa"), z.literal("plz"), z.literal("code_postal"), z.literal("postcode"), z.literal("cep"), z.literal("pin"), z.literal("custom"), z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")]);
+
+export const LegacyPostalCodeSystemSchema = z.union([z.literal("us_zip"), z.literal("us_zip_plus_four"), z.literal("gb_outward"), z.literal("gb_full"), z.literal("ca_fsa"), z.literal("ca_full"), z.literal("de_plz"), z.literal("fr_code_postal"), z.literal("au_postcode"), z.literal("ch_plz"), z.literal("at_plz")]);
 
 export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"), z.literal("wednesday"), z.literal("thursday"), z.literal("friday"), z.literal("saturday"), z.literal("sunday")]);
 
@@ -345,6 +347,19 @@ export const CollectionListReferenceSchema = z.object({
     agent_url: z.string(),
     list_id: z.string().min(1),
     auth_token: z.string().optional()
+}).passthrough();
+
+export const PostalCountryAreaSchema = z.object({
+    country: z.string().regex(/^[A-Z]{2}$/),
+    system: PostalCodeSystemSchema,
+    values: z.array(z.string())
+}).passthrough();
+
+export const PostalArea1Schema = PostalCountryAreaSchema;
+
+export const LegacyPostalAreaSchema = z.object({
+    system: LegacyPostalCodeSystemSchema,
+    values: z.array(z.string())
 }).passthrough();
 
 export const PackageSignalTargetingSchema = z.object({
@@ -813,6 +828,7 @@ export const GeoForecastDimensionSchema = z.object({
     kind: z.literal("geo"),
     geo_level: GeographicTargetingLevelSchema,
     system: z.string().optional(),
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
     geo_code: z.string(),
     geo_name: z.string().optional()
 }).passthrough();
@@ -1419,13 +1435,6 @@ export const SLAWindowSchema = z.object({
     completion_max: z.string().regex(/^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(\d+H)?(\d+M)?(\d+S)?)?$/).optional()
 }).passthrough();
 
-export const GeographicBreakdownSupportSchema = z.object({
-    country: z.boolean().optional(),
-    region: z.boolean().optional(),
-    metro: z.record(z.string(), z.boolean()).optional(),
-    postal_area: z.record(z.string(), z.boolean()).optional()
-}).passthrough();
-
 export const MeasurementWindowSchema = z.object({
     window_id: z.string().max(50),
     description: z.string().max(500).optional(),
@@ -1433,6 +1442,53 @@ export const MeasurementWindowSchema = z.object({
     expected_availability_days: z.number().min(0).optional(),
     is_guarantee_basis: z.boolean().optional()
 }).passthrough();
+
+export const PostalAreaSupportSchema = z.object({
+    US: z.array(z.union([z.literal("zip"), z.literal("zip_plus_four")])).optional(),
+    GB: z.array(z.union([z.literal("outward"), z.literal("full")])).optional(),
+    CA: z.array(z.union([z.literal("fsa"), z.literal("full")])).optional(),
+    DE: z.array(z.literal("plz")).optional(),
+    CH: z.array(z.literal("plz")).optional(),
+    AT: z.array(z.literal("plz")).optional(),
+    FR: z.array(z.literal("code_postal")).optional(),
+    AU: z.array(z.literal("postcode")).optional(),
+    BR: z.array(z.literal("cep")).optional(),
+    IN: z.array(z.literal("pin")).optional(),
+    ZA: z.array(z.literal("postal_code")).optional(),
+    us_zip: z.boolean().optional(),
+    us_zip_plus_four: z.boolean().optional(),
+    gb_outward: z.boolean().optional(),
+    gb_full: z.boolean().optional(),
+    ca_fsa: z.boolean().optional(),
+    ca_full: z.boolean().optional(),
+    de_plz: z.boolean().optional(),
+    fr_code_postal: z.boolean().optional(),
+    au_postcode: z.boolean().optional(),
+    ch_plz: z.boolean().optional(),
+    at_plz: z.boolean().optional()
+}).passthrough().catchall(z.array(z.union([z.literal("postal_code"), z.literal("custom")]))).superRefine((value, ctx) => {
+    const legacyPostalSystems = new Set([
+        "us_zip",
+        "us_zip_plus_four",
+        "gb_outward",
+        "gb_full",
+        "ca_fsa",
+        "ca_full",
+        "de_plz",
+        "fr_code_postal",
+        "au_postcode",
+        "ch_plz",
+        "at_plz"
+    ]);
+    for (const key of Object.keys(value)) {
+        if (/^[A-Z]{2}$/.test(key) || legacyPostalSystems.has(key)) continue;
+        ctx.addIssue({
+            code: "custom",
+            path: [key],
+            message: "PostalAreaSupport keys must be ISO 3166-1 alpha-2 country codes or deprecated legacy postal-system aliases"
+        });
+    }
+});
 
 export const CreativePolicySchema = z.object({
     co_branding: CoBrandingRequirementSchema,
@@ -1519,7 +1575,7 @@ export const PropertySchema = z.object({
     publisher_domain: z.string().optional()
 }).passthrough();
 
-export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("activate_signal"), z.literal("get_products"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights")]);
+export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights")]);
 
 export const AdCPProtocolSchema = z.union([z.literal("media-buy"), z.literal("signals"), z.literal("governance"), z.literal("creative"), z.literal("brand"), z.literal("sponsored-intelligence"), z.literal("measurement")]);
 
@@ -3051,6 +3107,42 @@ export const TasksGetRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const PostalCountrySystemSchema = z.union([z.object({
+        country: z.literal("US").optional(),
+        system: z.union([z.literal("zip"), z.literal("zip_plus_four")]).optional()
+    }).passthrough(), z.object({
+        country: z.literal("GB").optional(),
+        system: z.union([z.literal("outward"), z.literal("full")]).optional()
+    }).passthrough(), z.object({
+        country: z.literal("CA").optional(),
+        system: z.union([z.literal("fsa"), z.literal("full")]).optional()
+    }).passthrough(), z.object({
+        country: z.union([z.literal("DE"), z.literal("CH"), z.literal("AT")]).optional(),
+        system: z.literal("plz").optional()
+    }).passthrough(), z.object({
+        country: z.literal("FR").optional(),
+        system: z.literal("code_postal").optional()
+    }).passthrough(), z.object({
+        country: z.literal("AU").optional(),
+        system: z.literal("postcode").optional()
+    }).passthrough(), z.object({
+        country: z.literal("BR").optional(),
+        system: z.literal("cep").optional()
+    }).passthrough(), z.object({
+        country: z.literal("IN").optional(),
+        system: z.literal("pin").optional()
+    }).passthrough(), z.object({
+        country: z.literal("ZA").optional(),
+        system: z.literal("postal_code").optional()
+    }).passthrough(), z.object({
+        country: z.record(z.string(), z.unknown()).optional(),
+        system: z.union([z.literal("postal_code"), z.literal("custom")]).optional()
+    }).passthrough()]);
+
+export const PostalAreaSchema = z.union([PostalArea1Schema, LegacyPostalAreaSchema]);
+
+export const PostalArea3Schema = PostalCountrySystemSchema;
+
 export const SignalTargetingExpressionSchema = z.union([z.object({
         signal_ref: SignalRefSchema,
         value_type: z.literal("binary"),
@@ -3065,6 +3157,14 @@ export const SignalTargetingExpressionSchema = z.union([z.object({
         min_value: z.number().optional(),
         max_value: z.number().optional()
     }).passthrough()]);
+
+export const PostalArea4Schema = PostalAreaSchema;
+
+export const PostalArea5Schema = PostalCountrySystemSchema;
+
+export const PostalArea6Schema = PostalAreaSchema;
+
+export const PostalArea7Schema = PostalCountrySystemSchema;
 
 export const PackageSignalTargeting1Schema = SignalTargetingExpressionSchema;
 
@@ -3308,7 +3408,8 @@ export const TasksListResponseSchema = ProtocolEnvelopeSchema.merge(z.object({
         returned: z.number().min(0).optional(),
         domain_breakdown: z.object({
             "media-buy": z.number().min(0).optional(),
-            signals: z.number().min(0).optional()
+            signals: z.number().min(0).optional(),
+            creative: z.number().min(0).optional()
         }).passthrough().optional(),
         status_breakdown: z.record(z.string(), z.number()).optional(),
         filters_applied: z.array(z.string()).optional(),
@@ -3320,7 +3421,7 @@ export const TasksListResponseSchema = ProtocolEnvelopeSchema.merge(z.object({
     tasks: z.array(z.object({
         task_id: z.string(),
         task_type: TaskTypeSchema,
-        domain: z.union([z.literal("media-buy"), z.literal("signals")]),
+        domain: z.union([z.literal("media-buy"), z.literal("signals"), z.literal("creative")]),
         status: TaskStatusSchema,
         created_at: z.iso.datetime(),
         updated_at: z.iso.datetime(),
@@ -3756,7 +3857,8 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
     reporting_dimensions: z.object({
         geo: z.object({
             geo_level: GeographicTargetingLevelSchema,
-            system: z.union([MetroAreaSystemSchema, PostalCodeSystemSchema]).optional(),
+            system: z.union([MetroAreaSystemSchema, PostalCodeSystemSchema, LegacyPostalCodeSystemSchema]).optional(),
+            country: z.string().regex(/^[A-Z]{2}$/).optional(),
             limit: z.number().min(1).optional(),
             sort_by: SortMetricSchema.optional()
         }).passthrough().optional(),
@@ -3843,6 +3945,7 @@ export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object
 export const GeoDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     geo_level: GeographicTargetingLevelSchema,
     system: z.string().optional(),
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
     geo_code: z.string(),
     geo_name: z.string().optional()
 }).passthrough());
@@ -4322,7 +4425,8 @@ export const ListTasksResponseSchema = z.object({
         returned: z.number().min(0).optional(),
         domain_breakdown: z.object({
             "media-buy": z.number().min(0).optional(),
-            signals: z.number().min(0).optional()
+            signals: z.number().min(0).optional(),
+            creative: z.number().min(0).optional()
         }).passthrough().optional(),
         status_breakdown: z.record(z.string(), z.number()).optional(),
         filters_applied: z.array(z.string()).optional(),
@@ -4334,7 +4438,7 @@ export const ListTasksResponseSchema = z.object({
     tasks: z.array(z.object({
         task_id: z.string(),
         task_type: TaskTypeSchema,
-        domain: z.union([z.literal("media-buy"), z.literal("signals")]),
+        domain: z.union([z.literal("media-buy"), z.literal("signals"), z.literal("creative")]),
         status: TaskStatusSchema,
         created_at: z.iso.datetime(),
         updated_at: z.iso.datetime(),
@@ -5078,10 +5182,7 @@ export const OfferingSchema = z.object({
             system: MetroAreaSystemSchema,
             values: z.array(z.string())
         }).passthrough()).optional(),
-        postal_areas: z.array(z.object({
-            system: PostalCodeSystemSchema,
-            values: z.array(z.string())
-        }).passthrough()).optional()
+        postal_areas: z.array(PostalAreaSchema).optional()
     }).passthrough().optional(),
     keywords: z.array(z.string()).optional(),
     categories: z.array(z.string()).optional(),
@@ -6080,15 +6181,13 @@ export const ProductFiltersSchema = z.object({
     required_features: MediaBuyFeaturesSchema.optional(),
     required_geo_targeting: z.array(z.object({
         level: GeographicTargetingLevelSchema,
+        country: z.string().regex(/^[A-Z]{2}$/).optional(),
         system: z.string().optional()
     }).passthrough()).optional(),
     signal_targeting: z.array(z.object({
         targeting_mode: z.union([z.literal("include"), z.literal("exclude")]).optional()
     }).passthrough()).optional(),
-    postal_areas: z.array(z.object({
-        system: PostalCodeSystemSchema,
-        values: z.array(z.string())
-    }).passthrough()).optional(),
+    postal_areas: z.array(PostalAreaSchema).optional(),
     geo_proximity: z.array(z.union([z.object({
             lat: z.number().min(-90).max(90),
             lng: z.number().min(-180).max(180),
@@ -6180,28 +6279,6 @@ export const ProductAllowedActionSchema = z.object({
     terms_ref: z.string().optional()
 }).passthrough();
 
-export const ReportingCapabilitiesSchema = z.object({
-    available_reporting_frequencies: z.array(ReportingFrequencySchema),
-    expected_delay_minutes: z.number().min(0),
-    timezone: z.string(),
-    supports_webhooks: z.boolean(),
-    available_metrics: z.array(AvailableMetricSchema),
-    vendor_metrics: z.array(z.object({
-        vendor: BrandReferenceSchema,
-        metric_id: VendorMetricIDSchema
-    }).passthrough()).optional(),
-    supports_creative_breakdown: z.boolean().optional(),
-    supports_keyword_breakdown: z.boolean().optional(),
-    supports_geo_breakdown: GeographicBreakdownSupportSchema.optional(),
-    supports_device_type_breakdown: z.boolean().optional(),
-    supports_device_platform_breakdown: z.boolean().optional(),
-    supports_audience_breakdown: z.boolean().optional(),
-    supports_placement_breakdown: z.boolean().optional(),
-    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
-    windowed_pull_granularities: z.array(ReportingFrequencySchema).optional(),
-    measurement_windows: z.array(MeasurementWindowSchema).optional()
-}).passthrough();
-
 export const SignalListingSchema = z.object({
     signal_ref: SignalRefSchema.optional(),
     signal_id: SignalIDSchema.optional(),
@@ -6285,6 +6362,13 @@ export const FlatRatePricingOptionSchema = z.object({
     min_spend_per_package: z.number().min(0).optional(),
     price_breakdown: PriceBreakdownSchema.optional(),
     eligible_adjustments: z.array(PriceAdjustmentKindSchema).optional()
+}).passthrough();
+
+export const GeographicBreakdownSupportSchema = z.object({
+    country: z.boolean().optional(),
+    region: z.boolean().optional(),
+    metro: z.record(z.string(), z.boolean()).optional(),
+    postal_area: PostalAreaSupportSchema.optional()
 }).passthrough();
 
 export const InstallmentDeadlinesSchema = z.object({
@@ -6482,14 +6566,8 @@ export const TargetingOverlaySchema = z.object({
         system: MetroAreaSystemSchema,
         values: z.array(z.string())
     }).passthrough()).optional(),
-    geo_postal_areas: z.array(z.object({
-        system: PostalCodeSystemSchema,
-        values: z.array(z.string())
-    }).passthrough()).optional(),
-    geo_postal_areas_exclude: z.array(z.object({
-        system: PostalCodeSystemSchema,
-        values: z.array(z.string())
-    }).passthrough()).optional(),
+    geo_postal_areas: z.array(PostalAreaSchema).optional(),
+    geo_postal_areas_exclude: z.array(PostalAreaSchema).optional(),
     daypart_targets: z.array(DaypartTargetSchema).optional(),
     axe_include_segment: z.string().optional(),
     axe_exclude_segment: z.string().optional(),
@@ -6999,6 +7077,7 @@ export const BuildCreativeVariantSuccessSchema = z.object({
         signal_condition: SignalTargetingSchema.optional(),
         variants: z.array(z.object({
             build_variant_id: z.string(),
+            recipe_hash: z.string().optional(),
             parent_build_variant_id: z.string().optional(),
             creative_manifest: CreativeManifestSchema,
             variant_axis_value: z.unknown().optional(),
@@ -8377,19 +8456,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
                     uk_itl2: z.boolean().optional(),
                     eurostat_nuts2: z.boolean().optional()
                 }).passthrough().optional(),
-                geo_postal_areas: z.object({
-                    us_zip: z.boolean().optional(),
-                    us_zip_plus_four: z.boolean().optional(),
-                    gb_outward: z.boolean().optional(),
-                    gb_full: z.boolean().optional(),
-                    ca_fsa: z.boolean().optional(),
-                    ca_full: z.boolean().optional(),
-                    de_plz: z.boolean().optional(),
-                    fr_code_postal: z.boolean().optional(),
-                    au_postcode: z.boolean().optional(),
-                    ch_plz: z.boolean().optional(),
-                    at_plz: z.boolean().optional()
-                }).passthrough().optional(),
+                geo_postal_areas: PostalAreaSupportSchema.optional(),
                 age_restriction: z.object({
                     supported: z.boolean().optional(),
                     verification_methods: z.array(AgeVerificationMethodSchema).optional()
@@ -9044,6 +9111,28 @@ export const LegacyCreativeNamedFormatReferenceSchema = z.object({
 
 export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);
 
+export const ReportingCapabilitiesSchema = z.object({
+    available_reporting_frequencies: z.array(ReportingFrequencySchema),
+    expected_delay_minutes: z.number().min(0),
+    timezone: z.string(),
+    supports_webhooks: z.boolean(),
+    available_metrics: z.array(AvailableMetricSchema),
+    vendor_metrics: z.array(z.object({
+        vendor: BrandReferenceSchema,
+        metric_id: VendorMetricIDSchema
+    }).passthrough()).optional(),
+    supports_creative_breakdown: z.boolean().optional(),
+    supports_keyword_breakdown: z.boolean().optional(),
+    supports_geo_breakdown: GeographicBreakdownSupportSchema.optional(),
+    supports_device_type_breakdown: z.boolean().optional(),
+    supports_device_platform_breakdown: z.boolean().optional(),
+    supports_audience_breakdown: z.boolean().optional(),
+    supports_placement_breakdown: z.boolean().optional(),
+    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
+    windowed_pull_granularities: z.array(ReportingFrequencySchema).optional(),
+    measurement_windows: z.array(MeasurementWindowSchema).optional()
+}).passthrough();
+
 export const InstallmentSchema = z.object({
     installment_id: z.string(),
     collection_id: z.string().optional(),
@@ -9108,6 +9197,7 @@ export const UpdateMediaBuySuccessSchema = z.object({
 export const BuildCreativeSuccessSchema = z.object({
     creative_manifest: CreativeManifestSchema,
     build_variant_id: z.string().optional(),
+    recipe_hash: z.string().optional(),
     sandbox: z.boolean().optional(),
     expires_at: z.iso.datetime().optional(),
     preview: z.object({
@@ -9444,6 +9534,8 @@ export const ListContentStandardsResponseSchema = z.object({
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]));
 
+export const PostalArea2Schema = PostalAreaSchema;
+
 export const AssetVariant1Schema = AssetVariantSchema;
 
 export const VASTAsset1Schema = VASTAssetSchema;
@@ -9574,6 +9666,7 @@ export const BuildCreativeRequestSchema = z.object({
     preview_output_format: PreviewOutputFormatSchema.optional(),
     macro_values: z.record(z.string(), z.string()).optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    push_notification_config: PushNotificationConfigSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -10300,6 +10393,7 @@ export const CreateMediaBuyRequestSchema = z.object({
     agency_estimate_number: z.string().max(100).optional(),
     start_time: StartTimingSchema,
     end_time: z.iso.datetime(),
+    paused: z.boolean().optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
     reporting_webhook: ReportingWebhookSchema.optional(),
     artifact_webhook: z.object({

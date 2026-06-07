@@ -68,6 +68,7 @@ import {
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
+import { normalizeTargetingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
   AccountNotFoundError,
@@ -1005,6 +1006,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // empty support list as a positive 3.1 metric-optimization declaration.
   const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
+  const targeting = platform.capabilities.targeting
+    ? normalizeTargetingCapabilities(platform.capabilities.targeting)
+    : undefined;
   const hasSalesPlatform = platform.sales != null || platform.proposalManager != null;
   const supportsProposals =
     platform.capabilities.supportsProposals ??
@@ -1016,6 +1020,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     cs != null ||
     som != null ||
     fc != null ||
+    targeting != null ||
     supportsProposals !== undefined;
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
     ...(hasSalesPlatform && {
@@ -1026,6 +1031,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(cs != null && { content_standards: cs }),
     ...(som != null && { supported_optimization_metrics: som }),
     ...(fc != null && { frequency_capping: fc }),
+    ...(targeting != null && { execution: { targeting } }),
     ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
     ...(hasMediaBuyProjection && {
       features: {
