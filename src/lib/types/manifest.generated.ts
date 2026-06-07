@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.9/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.10/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-rc.9.
+ * Manifest-derived constants for AdCP 3.1.0-rc.10.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-rc.9/manifest.json` (adcp_version: 3.1.0-rc.9, generated_at:
- * 2026-06-05T16:17:48.746Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0-rc.10/manifest.json` (adcp_version: 3.1.0-rc.10, generated_at:
+ * 2026-06-07T20:54:24.564Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -199,9 +199,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "pick a value from error.details.allowed_values (or re-fetch the format) and resubmit"
   },
   CREDENTIAL_IN_ARGS: {
-    description: "The seller detected a buyer-principal credential placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the transport's authentication channel. Buyer-principal credentials MUST arrive on the transport's authentication channel (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3) and MUST NOT travel inside the task payload. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date.",
+    description: "The seller detected authentication material or caller-supplied trust material placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the relevant transport authentication or trust channel. This includes buyer-principal credentials that should arrive on the inbound transport (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3), and evaluator-call credentials or JWK/JWKS/JWKS-URI trust material smuggled into evaluator-related payload fields instead of being established through the creative agent's outbound transport authentication to the evaluator. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal or evaluator-call credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date.",
     recovery: "terminal",
-    suggestion: "do NOT auto-retry — auto-retry re-logs the credential on each attempt. Move the credential out of request args (top-level, `context`, `ext`, any nested location) onto the transport authentication channel (Authorization: Bearer, RFC 9421 signature, MCP/A2A authentication framing); rotate the leaked credential, then resubmit on the transport channel only"
+    suggestion: "do NOT auto-retry — auto-retry re-logs the credential on each attempt. Move authentication material or caller-supplied trust material out of request args (top-level, `context`, `ext`, any nested location) onto the relevant transport authentication/trust channel or account provisioning path (Authorization: Bearer, RFC 9421 signature/JWKS, mTLS, MCP/A2A authentication framing); rotate any leaked credential, then resubmit"
   },
   EVALUATOR_AGENT_NOT_ACCEPTED: {
     description: "Buyer attached an evaluator agent pointer on `build_creative` — `evaluator.feature_agent.agent_url` or the `evaluator` agent-form `agent_url` — that does not match (canonicalized per /docs/reference/url-canonicalization: lowercase scheme and host, strip default port, normalize path dot-segments) any entry in the seller's `creative_policy.accepted_verifiers[].agent_url`. The producing agent does not call buyer-asserted endpoints outside its allowlist; this mirrors `PROVENANCE_VERIFIER_NOT_ACCEPTED` for the gate/rank evaluator path — the buyer represents which on-list agent it used, the seller is the agent-of-record and calls only allowlisted agents. `error.field` MUST point at the offending `agent_url` path; `error.details` SHOULD include a reference to the product whose `creative_policy.accepted_verifiers` the buyer should consult.",

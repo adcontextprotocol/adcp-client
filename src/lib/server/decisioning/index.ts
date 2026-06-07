@@ -79,8 +79,10 @@ export type {
   ComplianceTestingCapabilities,
   CreativeAgentRef,
   TargetingCapabilities,
+  TargetingPostalAreaSupport,
   ReportingCapabilities,
 } from './capabilities';
+export { normalizePostalAreaSupport, normalizeTargetingCapabilities } from './capabilities';
 
 // Account model
 export type {

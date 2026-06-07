@@ -19,6 +19,7 @@ import type {
   PaymentTerms,
   PricingModel,
   GetAdCPCapabilitiesResponse,
+  PostalAreaSupport,
 } from '../../types/tools.generated';
 import type { ProductMetricOptimizationLike } from '../../utils/capability-rollups';
 
@@ -31,6 +32,7 @@ import type { ProductMetricOptimizationLike } from '../../utils/capability-rollu
  * budget on the published `.d.ts` and tsc OOMs.
  */
 type _MediaBuyCapabilities = NonNullable<GetAdCPCapabilitiesResponse['media_buy']>;
+type _MediaBuyTargetingCapabilities = NonNullable<NonNullable<_MediaBuyCapabilities['execution']>['targeting']>;
 type _ComplianceTestingScenario = NonNullable<
   NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']>['scenarios']
 >[number];
@@ -296,20 +298,16 @@ export interface TargetingCapabilities {
     eurostat_nuts2?: boolean;
   };
 
-  /** Postal-code identifier systems. */
-  geo_postal_areas?: {
-    us_zip?: boolean;
-    us_zip_plus_four?: boolean;
-    gb_outward?: boolean;
-    gb_full?: boolean;
-    ca_fsa?: boolean;
-    ca_full?: boolean;
-    de_plz?: boolean;
-    fr_code_postal?: boolean;
-    au_postcode?: boolean;
-    ch_plz?: boolean;
-    at_plz?: boolean;
-  };
+  /**
+   * Postal-code identifier systems.
+   *
+   * AdCP 3.1.0-rc.10 prefers country-keyed arrays, e.g.
+   * `{ US: ['zip'], GB: ['outward'] }`. Deprecated country-fused booleans
+   * such as `{ us_zip: true }` remain accepted for 3.x adopters; the
+   * framework projects both forms with `normalizePostalAreaSupport()` so old
+   * and new buyers can read the capability safely during the migration.
+   */
+  geo_postal_areas?: TargetingPostalAreaSupport;
 
   /** Geographic-proximity targeting (radius / drive-time / arbitrary geometry). */
   geo_proximity?: {
@@ -342,6 +340,168 @@ export interface TargetingCapabilities {
   negative_keywords?: {
     supported_match_types: ReadonlyArray<'broad' | 'phrase' | 'exact'>;
   };
+}
+
+export type TargetingPostalAreaSupport = {
+  US?: readonly ('zip' | 'zip_plus_four')[];
+  GB?: readonly ('outward' | 'full')[];
+  CA?: readonly ('fsa' | 'full')[];
+  DE?: readonly 'plz'[];
+  CH?: readonly 'plz'[];
+  AT?: readonly 'plz'[];
+  FR?: readonly 'code_postal'[];
+  AU?: readonly 'postcode'[];
+  BR?: readonly 'cep'[];
+  IN?: readonly 'pin'[];
+  ZA?: readonly 'postal_code'[];
+  /** @deprecated Use `US: ['zip']`. */
+  us_zip?: boolean;
+  /** @deprecated Use `US: ['zip_plus_four']`. */
+  us_zip_plus_four?: boolean;
+  /** @deprecated Use `GB: ['outward']`. */
+  gb_outward?: boolean;
+  /** @deprecated Use `GB: ['full']`. */
+  gb_full?: boolean;
+  /** @deprecated Use `CA: ['fsa']`. */
+  ca_fsa?: boolean;
+  /** @deprecated Use `CA: ['full']`. */
+  ca_full?: boolean;
+  /** @deprecated Use `DE: ['plz']`. */
+  de_plz?: boolean;
+  /** @deprecated Use `FR: ['code_postal']`. */
+  fr_code_postal?: boolean;
+  /** @deprecated Use `AU: ['postcode']`. */
+  au_postcode?: boolean;
+  /** @deprecated Use `CH: ['plz']`. */
+  ch_plz?: boolean;
+  /** @deprecated Use `AT: ['plz']`. */
+  at_plz?: boolean;
+  [country: `${Uppercase<string>}`]:
+    | readonly (
+        | 'zip'
+        | 'zip_plus_four'
+        | 'outward'
+        | 'full'
+        | 'fsa'
+        | 'plz'
+        | 'code_postal'
+        | 'postcode'
+        | 'cep'
+        | 'pin'
+        | 'postal_code'
+        | 'custom'
+      )[]
+    | undefined;
+};
+
+const LEGACY_POSTAL_SYSTEMS = {
+  us_zip: { country: 'US', system: 'zip' },
+  us_zip_plus_four: { country: 'US', system: 'zip_plus_four' },
+  gb_outward: { country: 'GB', system: 'outward' },
+  gb_full: { country: 'GB', system: 'full' },
+  ca_fsa: { country: 'CA', system: 'fsa' },
+  ca_full: { country: 'CA', system: 'full' },
+  de_plz: { country: 'DE', system: 'plz' },
+  fr_code_postal: { country: 'FR', system: 'code_postal' },
+  au_postcode: { country: 'AU', system: 'postcode' },
+  ch_plz: { country: 'CH', system: 'plz' },
+  at_plz: { country: 'AT', system: 'plz' },
+} as const;
+
+const LEGACY_POSTAL_BY_COUNTRY_SYSTEM = new Map(
+  Object.entries(LEGACY_POSTAL_SYSTEMS).map(([legacy, { country, system }]) => [`${country}:${system}`, legacy])
+);
+
+const POSTAL_SYSTEMS_BY_COUNTRY: Record<string, readonly string[]> = {
+  US: ['zip', 'zip_plus_four'],
+  GB: ['outward', 'full'],
+  CA: ['fsa', 'full'],
+  DE: ['plz'],
+  CH: ['plz'],
+  AT: ['plz'],
+  FR: ['code_postal'],
+  AU: ['postcode'],
+  BR: ['cep'],
+  IN: ['pin'],
+  ZA: ['postal_code'],
+};
+
+const GENERIC_POSTAL_SYSTEMS = ['postal_code', 'custom'] as const;
+const POSTAL_COUNTRY_KEY_PATTERN = /^[A-Z]{2}$/;
+
+function appendUnique(target: string[], value: string): void {
+  if (!target.includes(value)) target.push(value);
+}
+
+function assertSupportedPostalSystems(country: string, systems: readonly string[]): void {
+  const allowed = POSTAL_SYSTEMS_BY_COUNTRY[country] ?? GENERIC_POSTAL_SYSTEMS;
+  const invalid = systems.filter(system => !allowed.includes(system));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid geo_postal_areas support for ${country}: ${invalid.join(', ')}. ` +
+        `Supported systems are: ${allowed.join(', ')}.`
+    );
+  }
+}
+
+/**
+ * Normalize postal-area capabilities across the AdCP 3.1.0-rc.10 migration.
+ *
+ * The wire schema now prefers `{ US: ['zip'] }` style country-local systems,
+ * while the old `{ us_zip: true }` booleans stay deprecated but accepted
+ * through 3.x. This helper is deliberately bidirectional:
+ *
+ * - legacy booleans add their country-keyed system;
+ * - country-keyed systems backfill the matching legacy boolean when one exists;
+ * - explicit unsupported legacy booleans are omitted unless the system is
+ *   otherwise advertised.
+ */
+export function normalizePostalAreaSupport(input: TargetingPostalAreaSupport): PostalAreaSupport {
+  const normalized: Record<string, string[] | boolean> = {};
+
+  for (const [key, value] of Object.entries(input)) {
+    if (Array.isArray(value)) {
+      if (!POSTAL_COUNTRY_KEY_PATTERN.test(key)) {
+        throw new Error(
+          `Invalid geo_postal_areas key "${key}". Use an ISO 3166-1 alpha-2 country code or a deprecated legacy boolean alias.`
+        );
+      }
+      assertSupportedPostalSystems(key, value);
+      const systems = (normalized[key] = Array.isArray(normalized[key]) ? (normalized[key] as string[]) : []);
+      for (const system of value) appendUnique(systems, system);
+      continue;
+    }
+    if (value === true && key in LEGACY_POSTAL_SYSTEMS) {
+      const { country, system } = LEGACY_POSTAL_SYSTEMS[key as keyof typeof LEGACY_POSTAL_SYSTEMS];
+      const systems = (normalized[country] = Array.isArray(normalized[country])
+        ? (normalized[country] as string[])
+        : []);
+      appendUnique(systems, system);
+      continue;
+    }
+    if (value === true) {
+      throw new Error(
+        `Invalid geo_postal_areas legacy alias "${key}". Use an ISO 3166-1 alpha-2 country key with supported postal systems.`
+      );
+    }
+  }
+
+  for (const [country, value] of Object.entries(normalized)) {
+    if (!Array.isArray(value)) continue;
+    for (const system of value) {
+      const legacy = LEGACY_POSTAL_BY_COUNTRY_SYSTEM.get(`${country}:${system}`);
+      if (legacy) normalized[legacy] = true;
+    }
+  }
+
+  return normalized as PostalAreaSupport;
+}
+
+export function normalizeTargetingCapabilities(input: TargetingCapabilities): _MediaBuyTargetingCapabilities {
+  return {
+    ...input,
+    ...(input.geo_postal_areas && { geo_postal_areas: normalizePostalAreaSupport(input.geo_postal_areas) }),
+  } as _MediaBuyTargetingCapabilities;
 }
 
 /**

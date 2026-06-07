@@ -282,6 +282,9 @@ describe('storyboard schema drift', () => {
     // to `field_value`.
     'media_buy_seller/pending_creatives_to_start/create_buy_no_creatives:status',
     'media_buy_seller/pending_creatives_to_start/assign_creative_to_package:status',
+    // 3.1.0-rc.10 makes create_media_buy `status` schema-required while the
+    // cached available_actions storyboard still uses the tolerant matcher.
+    'media_buy_seller/available_actions/create_media_buy_with_available_actions:status',
   ]);
 
   // Paths that are structurally valid in the spec schema but that

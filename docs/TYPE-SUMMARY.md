@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-06-05
-> @adcp/sdk v9.0.0-beta.24
+> Generated at: 2026-06-07
+> @adcp/sdk v9.0.0-beta.26
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -416,6 +416,7 @@ _Request:_
   io_acceptance: object
   po_number: string
   agency_estimate_number: string
+  paused: boolean
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
   artifact_webhook: object
@@ -719,6 +720,7 @@ _Request:_
   preview_quality: Creative Quality
   preview_output_format: Preview Output Format
   macro_values: object
+  push_notification_config: Push Notification Config
   context: Context
 }
 ```
@@ -728,6 +730,7 @@ _Response (success branch):_
 {
   creative_manifest: Creative Manifest  // required
   build_variant_id: string
+  recipe_hash: string
   sandbox: boolean
   expires_at: string
   preview: object

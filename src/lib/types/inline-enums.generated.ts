@@ -377,6 +377,15 @@ export const Placement_ModeValues = ["targetable", "included"] as const;
 /** single | PolicyEntry.source */
 export const PolicyEntry_SourceValues = ["registry", "inline"] as const;
 
+// ====== PostalAreaSupport ======
+
+/** array of | PostalAreaSupport.CA */
+export const PostalAreaSupport_CAValues = ["fsa", "full"] as const;
+/** array of | PostalAreaSupport.GB */
+export const PostalAreaSupport_GBValues = ["outward", "full"] as const;
+/** array of | PostalAreaSupport.US */
+export const PostalAreaSupport_USValues = ["zip", "zip_plus_four"] as const;
+
 // ====== PreviewCreativeRequest ======
 
 /** single | PreviewCreativeRequest.request_type */

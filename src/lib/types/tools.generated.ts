@@ -386,9 +386,40 @@ export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'dea
  */
 export type GeographicTargetingLevel = 'country' | 'region' | 'metro' | 'postal_area';
 /**
- * Postal code system (e.g., 'us_zip', 'gb_outward')
+ * Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
+ */
+export type PostalArea = PostalArea1 | LegacyPostalArea;
+/**
+ * Country-local postal code system (e.g., 'zip', 'outward', 'plz', 'postal_code').
  */
 export type PostalCodeSystem =
+  | 'postal_code'
+  | 'zip'
+  | 'zip_plus_four'
+  | 'outward'
+  | 'full'
+  | 'fsa'
+  | 'plz'
+  | 'code_postal'
+  | 'postcode'
+  | 'cep'
+  | 'pin'
+  | 'custom'
+  | 'us_zip'
+  | 'us_zip_plus_four'
+  | 'gb_outward'
+  | 'gb_full'
+  | 'ca_fsa'
+  | 'ca_full'
+  | 'de_plz'
+  | 'fr_code_postal'
+  | 'au_postcode'
+  | 'ch_plz'
+  | 'at_plz';
+/**
+ * Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system.
+ */
+export type LegacyPostalCodeSystem =
   | 'us_zip'
   | 'us_zip_plus_four'
   | 'gb_outward'
@@ -991,12 +1022,17 @@ export interface ProductFilters {
   };
   required_features?: MediaBuyFeatures;
   /**
-   * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems.
+   * Filter to products from sellers supporting specific geo targeting capabilities. Each entry specifies a targeting level (country, region, metro, postal_area) and optionally a system for levels that have multiple classification systems. For native postal_area filters, include country plus the country-local postal system.
    */
   required_geo_targeting?: {
     level: GeographicTargetingLevel;
     /**
-     * Classification system within the level. Required for metro (e.g., 'nielsen_dma') and postal_area (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
+     * ISO 3166-1 alpha-2 country code. Required for native postal_area system filters; not applicable to country, region, or metro filters.
+     * @pattern ^[A-Z]{2}$
+     */
+    country?: string;
+    /**
+     * Optional classification system within the level. Use for a specific metro system (e.g., 'nielsen_dma'), native postal_area system (e.g., 'zip' with country 'US'), or deprecated legacy postal alias (e.g., 'us_zip'). Not applicable for country/region which use ISO standards.
      */
     system?: string;
   }[];
@@ -1010,15 +1046,9 @@ export interface ProductFilters {
     targeting_mode?: 'include' | 'exclude';
   }[];
   /**
-   * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Use when products have postal-area-specific coverage. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
+   * Filter by postal area coverage for locally-bound inventory (direct mail, DOOH, local campaigns). Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility. For digital inventory where products have broad coverage, use required_geo_targeting instead to filter by seller capability.
    */
-  postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  postal_areas?: PostalArea[];
   /**
    * Filter by proximity to geographic points. Returns products with inventory coverage near these locations. Follows the same format as the targeting overlay — each entry uses exactly one method: travel_time + transport_mode, radius, or geometry. For locally-bound inventory (DOOH, radio), filters to products with coverage in the area. For digital inventory, filters to products from sellers supporting geo_proximity targeting.
    */
@@ -1193,6 +1223,34 @@ export interface MediaBuyFeatures {
    */
   committed_metrics_supported?: boolean;
   [k: string]: boolean | undefined;
+}
+export interface PostalCountryArea {
+  /**
+   * ISO 3166-1 alpha-2 country code for the postal values.
+   * @pattern ^[A-Z]{2}$
+   */
+  country: string;
+  system: PostalCodeSystem;
+  /**
+   * Postal codes within the country and system.
+   */
+  values: string[];
+}
+/**
+ * Re-export of `PostalCountryArea` under the legacy codegen artifact name.
+ *
+ * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type PostalArea1 = PostalCountryArea;
+/**
+ * @deprecated
+ */
+export interface LegacyPostalArea {
+  system: LegacyPostalCodeSystem;
+  /**
+   * Postal codes within the legacy system.
+   */
+  values: string[];
 }
 /**
  * A rate threshold for a performance metric, measured by a specified vendor. The threshold is a floor or ceiling depending on the metric: viewability, completion_rate, brand_safety, and attention_score are floors (must exceed); ivt is a ceiling (must not exceed).
@@ -5117,9 +5175,14 @@ export interface GeoForecastDimension {
   kind: 'geo';
   geo_level: GeographicTargetingLevel;
   /**
-   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; postal rows use postal-system enum values such as 'us_zip'. Omit for country and region rows.
+   * Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.
    */
   system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
   /**
    * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
    */
@@ -5466,12 +5529,68 @@ export interface GeographicBreakdownSupport {
   metro?: {
     [k: string]: boolean | undefined;
   };
+  postal_area?: PostalAreaSupport;
+}
+/**
+ * Postal area breakdown support. Prefer the native country-keyed map where each ISO 3166-1 alpha-2 country lists supported country-local postal systems. Deprecated legacy country-fused postal-system boolean maps remain accepted for compatibility.
+ */
+export interface PostalAreaSupport {
+  US?: ('zip' | 'zip_plus_four')[];
+  GB?: ('outward' | 'full')[];
+  CA?: ('fsa' | 'full')[];
+  DE?: 'plz'[];
+  CH?: 'plz'[];
+  AT?: 'plz'[];
+  FR?: 'code_postal'[];
+  AU?: 'postcode'[];
+  BR?: 'cep'[];
+  IN?: 'pin'[];
+  ZA?: 'postal_code'[];
   /**
-   * Postal area breakdown support. Keys are postal-system enum values; true means supported.
+   * @deprecated
    */
-  postal_area?: {
-    [k: string]: boolean | undefined;
-  };
+  us_zip?: boolean;
+  /**
+   * @deprecated
+   */
+  us_zip_plus_four?: boolean;
+  /**
+   * @deprecated
+   */
+  gb_outward?: boolean;
+  /**
+   * @deprecated
+   */
+  gb_full?: boolean;
+  /**
+   * @deprecated
+   */
+  ca_fsa?: boolean;
+  /**
+   * @deprecated
+   */
+  ca_full?: boolean;
+  /**
+   * @deprecated
+   */
+  de_plz?: boolean;
+  /**
+   * @deprecated
+   */
+  fr_code_postal?: boolean;
+  /**
+   * @deprecated
+   */
+  au_postcode?: boolean;
+  /**
+   * @deprecated
+   */
+  ch_plz?: boolean;
+  /**
+   * @deprecated
+   */
+  at_plz?: boolean;
+  [country: `${Uppercase<string>}`]: ('zip' | 'zip_plus_four' | 'outward' | 'full' | 'fsa' | 'plz' | 'code_postal' | 'postcode' | 'cep' | 'pin' | 'postal_code' | 'custom')[] | undefined;
 }
 /**
  * A measurement maturation stage for any channel where billing-grade data is produced in phases rather than arriving final on day one. Each window represents an accumulation or processing stage with its own expected availability. Examples: broadcast/linear TV (live → C3 → C7 DVR accumulation), DOOH (tentative plays → post-IVT/fraud-check final), digital (raw impressions → GIVT filtered → SIVT filtered), podcast (7-day downloads → 30-day downloads), audio/radio (tentative → diary/panel-certified). Sellers whose data is final on first delivery omit this.
@@ -7801,6 +7920,10 @@ export interface CreateMediaBuyRequest {
    * @format date-time
    */
   end_time: string;
+  /**
+   * Create the media buy in a paused delivery state. When true, and the buy would otherwise be active because creatives are assigned and the flight has started, the seller returns media_buy_status 'paused'. Setup blockers still take precedence: a buy with no creatives remains 'pending_creatives', and a future-dated buy remains 'pending_start' until its flight can start. Defaults to false.
+   */
+  paused?: boolean;
   push_notification_config?: PushNotificationConfig;
   reporting_webhook?: ReportingWebhook;
   /**
@@ -8078,25 +8201,13 @@ export interface TargetingOverlay {
     values: string[];
   }[];
   /**
-   * Restrict delivery to specific postal areas. Each entry specifies the postal system and target values. Seller must declare supported systems in get_adcp_capabilities.
+   * Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
    */
-  geo_postal_areas?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  geo_postal_areas?: PostalArea[];
   /**
-   * Exclude specific postal areas from delivery. Each entry specifies the postal system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+   * Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
    */
-  geo_postal_areas_exclude?: {
-    system: PostalCodeSystem;
-    /**
-     * Postal codes to exclude within the system (e.g., ['10001', '10002'] for us_zip)
-     */
-    values: string[];
-  }[];
+  geo_postal_areas_exclude?: PostalArea[];
   /**
    * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
    */
@@ -9546,7 +9657,7 @@ export interface ReportingWebhook {
 
 // create_media_buy response
 /**
- * Response payload for create_media_buy. Exactly one of three shapes: (1) synchronous success — media_buy_id and packages are issued in-line, media_buy_status MAY carry the lifecycle value (pending_creatives / pending_start / active), deprecated top-level status MAY carry the same MediaBuyStatus during the 3.1 migration window, and confirmed_at is either the seller commitment timestamp or null for a provisional buy that already exists; provisional buys with confirmed_at: null cannot be active and cannot carry packages[].committed_metrics; (2) terminal failure — an errors array with no media-buy artifact and status != 'submitted'; (3) submitted task envelope — status 'submitted' with task_id when no media_buy_id is being returned to the buyer and the media buy is queued or awaiting a human decision (e.g., IO signing). In the submitted branch, media_buy_id / packages land on the task's completion artifact, not this response. The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
+ * Response payload for create_media_buy. Exactly one of three shapes: (1) synchronous success — media_buy_id and packages are issued in-line, media_buy_status MAY carry the lifecycle value (pending_creatives / pending_start / active / paused), deprecated top-level status MAY carry the same MediaBuyStatus during the 3.1 migration window, and confirmed_at is either the seller commitment timestamp or null for a provisional buy that already exists; provisional buys with confirmed_at: null cannot be active and cannot carry packages[].committed_metrics; (2) terminal failure — an errors array with no media-buy artifact and status != 'submitted'; (3) submitted task envelope — status 'submitted' with task_id when no media_buy_id is being returned to the buyer and the media buy is queued or awaiting a human decision (e.g., IO signing). In the submitted branch, media_buy_id / packages land on the task's completion artifact, not this response. The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. These three shapes are mutually exclusive — a response has exactly one.
  */
 export type CreateMediaBuyResponse = {
   /**
@@ -11146,9 +11257,14 @@ export interface GetMediaBuyDeliveryRequest {
     geo?: {
       geo_level: GeographicTargetingLevel;
       /**
-       * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Required when geo_level is 'metro' or 'postal_area'.
+       * Optional classification system for metro or postal_area levels. Metro uses metro-system values (e.g., 'nielsen_dma'); native postal_area uses country-local postal-system values with country (e.g., country 'US', system 'zip'); deprecated legacy postal_area requests may use legacy-postal-system values such as 'us_zip'. Omit to request the level without selecting a specific system.
        */
-      system?: MetroAreaSystem | PostalCodeSystem;
+      system?: MetroAreaSystem | PostalCodeSystem | LegacyPostalCodeSystem;
+      /**
+       * ISO 3166-1 alpha-2 country code. Required for native postal_area requests; omitted for legacy postal_area and non-postal geo requests.
+       * @pattern ^[A-Z]{2}$
+       */
+      country?: string;
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
        * @minimum 1
@@ -11360,9 +11476,14 @@ export type KeywordDeliveryMetrics = DeliveryMetrics & {
 export type GeoDeliveryMetrics = DeliveryMetrics & {
   geo_level: GeographicTargetingLevel;
   /**
-   * Classification system for metro or postal_area levels (e.g., 'nielsen_dma', 'us_zip'). Present when geo_level is 'metro' or 'postal_area'.
+   * Classification system for metro or postal_area levels. Metro rows use metro-system values. Native postal rows use country-local postal-system values with country; deprecated legacy postal rows may use legacy-postal-system values.
    */
   system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code for native postal_area rows.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
   /**
    * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
    */
@@ -13652,6 +13773,7 @@ export type BuildCreativeRequest = {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
+  push_notification_config?: PushNotificationConfig;
   context?: ContextObject;
   ext?: ExtensionObject;
 };
@@ -13721,7 +13843,7 @@ export type CreativeSelectionStrategy =
  */
 export type CreativeQuality = 'draft' | 'production';
 /**
- * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
+ * Optional advisory evaluator (buyer-attached pointer, #5280) declaring how produced variants should be evaluated and ranked — the rank-side of the get_creative_features feature oracle. Experimental (x-status: experimental): the whole evaluator surface is new and unfrozen, and requires creative.supports_evaluator, which sellers MUST pair with `creative.evaluator` in experimental_features. Drives the producing agent's gate-then-rank pipeline over its best_of_n exploration: per leaf, evaluate (the chosen form) → optionally GATE (`evaluator.feature_requirement[]`, drop fails — internal pruning of which leaves the agent recommends, never an AdCP-layer block of an already-produced billable leaf) → RANK survivors (`evaluator.rank_by`, an explicit {feature_id, direction} ordering). Feature discovery uses get_adcp_capabilities governance.creative_features for rank_by, feature_requirement, and eval.features[]; evaluator_id is a pre-provisioned/account-arranged preset, not an ID discovered from that catalog. Populates a per-leaf `eval` block of creative-feature values (creative-feature-result[]) when supports_evaluator. When the evaluator names an external agent (`evaluator.feature_agent.agent_url` or the agent-form `agent_url`), that agent MUST appear in the seller's `creative_policy.accepted_verifiers[]` (the same allowlist #5280 established for provenance verify_agent); an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED`. The outbound evaluator call authenticates on the transport (request signing/JWKS, mTLS, or a pre-provisioned static credential); credentials and caller-supplied trust material MUST NOT appear in evaluator, context, ext, or creative payload fields, and credential- or trust-material keys should be rejected with `CREDENTIAL_IN_ARGS`. With no `feature_requirement`, evaluation is advisory only and does not change what is produced or billed; an unreachable/unknown on-list agent degrades to seller-default ranking (advisory errors[] note), not a failure. Requires creative.supports_evaluator; otherwise ignored.
  */
 export type EvaluatorSpec = {
   /**
@@ -13742,7 +13864,7 @@ export type EvaluatorSpec = {
     direction?: 'maximize' | 'minimize';
   }[];
   /**
-   * Optional buyer-attached pointer to a get_creative_features-capable creative-feature / governance agent the producing agent calls to evaluate each leaf (the gate's SOURCE of feature values). This is the buyer-represents → seller-calls pattern #5280 established for provenance, generalized to the evaluator gate: the buyer REPRESENTS which agent it used, but the seller is the verifier-of-record and decides which agent it actually calls. `agent_url` MUST appear (canonicalized per /docs/reference/url-canonicalization) in the seller's `creative_policy.accepted_verifiers[].agent_url`; an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED` (mirrors PROVENANCE_VERIFIER_NOT_ACCEPTED) before any outbound call. Reuses the same allowlist mechanism — no new allowlist is introduced. Distinct from the `agent_url` oneOf form, which names the evaluator's source directly; `feature_agent` attaches the gate's measurement source alongside any of the three forms.
+   * Optional buyer-attached pointer to a get_creative_features-capable creative-feature / governance agent the producing agent calls to evaluate each leaf (the gate's SOURCE of feature values). This is the buyer-represents → seller-calls pattern #5280 established for provenance, generalized to the evaluator gate: the buyer REPRESENTS which agent it used, but the seller is the verifier-of-record and decides which agent it actually calls. `agent_url` MUST appear (canonicalized per /docs/reference/url-canonicalization) in the seller's `creative_policy.accepted_verifiers[].agent_url`; an off-list agent is rejected with `EVALUATOR_AGENT_NOT_ACCEPTED` (mirrors PROVENANCE_VERIFIER_NOT_ACCEPTED) before any outbound call. The outbound evaluator call authenticates on the transport; this pointer MUST NOT carry API keys, bearer tokens, client secrets, authorization values, JWKs, JWKS documents, or JWKS URIs. Reuses the same allowlist mechanism — no new allowlist is introduced. Distinct from the `agent_url` oneOf form, which names the evaluator's source directly; `feature_agent` attaches the gate's measurement source alongside any of the three forms.
    */
   feature_agent?: {
     /**
@@ -13795,7 +13917,7 @@ export type EvaluatorSpec = {
     }
   | {
       /**
-       * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable degrades to seller-default ranking (advisory errors[] note), not a failure.
+       * URL of an external get_creative_features-capable judge agent the seller calls to score the produced leaves. MUST match an entry in the seller's `creative_policy.accepted_verifiers[].agent_url` (off-list → `EVALUATOR_AGENT_NOT_ACCEPTED`); an on-list agent that is unreachable or rejects the producing agent's transport authentication degrades to seller-default ranking (advisory errors[] note), not a failure. Authentication and trust material for this call belongs on the transport or in account provisioning, not in the evaluator payload.
        * @pattern ^https:\/\/
        */
       agent_url: string;
@@ -13830,7 +13952,6 @@ export type AssetAccess =
  * Output format for preview renders when include_preview is true. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). Ignored when include_preview is false or omitted.
  */
 export type PreviewOutputFormat = 'url' | 'html';
-
 /**
  * Rights metadata attached to a creative manifest. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
  */
@@ -14405,9 +14526,13 @@ export type PreviewRender =
 export interface BuildCreativeSuccess {
   creative_manifest: CreativeManifest;
   /**
-   * Leaf handle for this produced creative — present when the agent supports refinement (creative.supports_refinement). Pass it as refine_from_build_variant_id to refine this build. Same namespace as BuildCreativeVariantSuccess leaves; distinct from served variant_id / preview_id. Lazily earns a creative_id on trafficking.
+   * Leaf handle for this produced creative — present when the agent supports refinement (creative.supports_refinement). Pass it as refine_from_build_variant_id to refine this build. Same namespace as BuildCreativeVariantSuccess leaves; distinct from served variant_id / preview_id. On the canonical promotion path, this value becomes the creative_id when the produced leaf is trafficked or added to the library.
    */
   build_variant_id?: string;
+  /**
+   * Optional agent-computed, opaque, agent-scoped identity for the build-determining inputs that produced this creative. Stable for identical inputs as defined by the agent, and comparable only within the same agent. ETag-style semantics: the protocol defines the field and contract, not the hash algorithm or canonical input set. Identifies generative-input identity, not output equality, legal/disclosure equivalence, or the build-to-delivery join.
+   */
+  recipe_hash?: string;
   /**
    * When true, this response contains simulated data from sandbox mode.
    */
@@ -14621,9 +14746,13 @@ export interface BuildCreativeVariantSuccess {
      */
     variants?: {
       /**
-       * Build-time handle for this produced variant — the leaf-level lineage anchor for the creative. Minted per produced variant. Its OWN namespace — MUST NOT reuse a `preview_id` (preview renders) or a served `variant_id` (delivery). Lineage and joins (refinement parentage, build→delivery learning, QA re-rolls) anchor on this leaf id, NOT on the call-level `build_creative_id`. A leaf lazily earns a durable `creative_id` only when trafficked / added to the library; that `creative_id` is what flows into `report_usage`. An untrafficked leaf has no `report_usage` key — it is billed via the inline per-leaf `vendor_cost` only, and `report_usage` reconciliation applies once the leaf earns a `creative_id`.
+       * Build-time handle for this produced variant — the leaf-level lineage anchor for the creative. Minted per produced variant. Its OWN namespace — MUST NOT reuse a `preview_id` (preview renders) or a served `variant_id` (delivery). Refinement parentage and build-time QA re-rolls anchor on this leaf id, NOT on the call-level `build_creative_id`. On the canonical promotion path, this value becomes the durable `creative_id` when the leaf is trafficked / added to the library; delivery outcomes and `report_usage` then join by `creative_id`. An untrafficked leaf has no `report_usage` key — it is billed via the inline per-leaf `vendor_cost` only, and `report_usage` reconciliation applies once the leaf earns a `creative_id`.
        */
       build_variant_id: string;
+      /**
+       * Optional agent-computed, opaque, agent-scoped identity for the build-determining inputs that produced this variant leaf. Stable for identical inputs as defined by the agent, and comparable only within the same agent. Multiple leaves from the same best-of-N recipe SHOULD carry the same value so clients can group alternative outputs by their shared source recipe. ETag-style semantics: the protocol defines the field and contract, not the hash algorithm or canonical input set. Identifies generative-input identity, not output equality, legal/disclosure equivalence, or the build-to-delivery join.
+       */
+      recipe_hash?: string;
       /**
        * When this variant was produced by refining a prior build (request `refine_from_build_variant_id`), the source leaf's `build_variant_id` — establishing refinement lineage (a leaf may itself be refined, forming a chain). Absent for first-generation builds. AI-derivative attribution rides the manifest's existing `provenance`; this field carries only the lineage edge.
        */
@@ -14672,12 +14801,12 @@ export interface BuildCreativeVariantSuccess {
        */
       pricing_option_id?: string;
       /**
-       * Cost incurred for this variant leaf, denominated in currency.
+       * Cost incurred for this variant leaf, denominated in currency. REQUIRED on every produced leaf whenever the build reports cost (the top-level aggregate `vendor_cost` is present) — leaves are the billing source of truth, and an untrafficked leaf is reconciled from this field alone (it never earns a `creative_id` / `report_usage` entry). A CPM-deferred leaf reports 0 here (a value, not an omission).
        * @minimum 0
        */
       vendor_cost?: number;
       /**
-       * ISO 4217 currency code for vendor_cost.
+       * ISO 4217 currency code for vendor_cost. Co-required with vendor_cost.
        * @pattern ^[A-Z]{3}$
        */
       currency?: string;
@@ -14699,7 +14828,7 @@ export interface BuildCreativeVariantSuccess {
    */
   items_returned?: number;
   /**
-   * Total leaves the request would have produced (≈ items_to_produce × variants_per_item). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
+   * Total leaves the request would have produced (≈ items_to_produce × variants_per_item, × conditions_total when signal_conditions was sent). Present when a max_spend cap may have stopped production short. Counts LEAVES, not catalog items — so it expresses a shortfall even for a variant-only fan-out with no catalog.
    * @minimum 0
    */
   leaves_total?: number;
@@ -14709,7 +14838,7 @@ export interface BuildCreativeVariantSuccess {
    */
   leaves_returned?: number;
   /**
-   * Aggregate cost across all variant leaves, denominated in currency. MUST equal the sum of the per-leaf vendor_cost values (leaves are the source of truth).
+   * Aggregate cost across all variant leaves, denominated in currency. MUST equal the sum of the per-leaf vendor_cost values (leaves are the source of truth). When present, every produced leaf MUST carry its own vendor_cost + currency (enforced) so the sum invariant is checkable; omit this aggregate only for a genuinely free build.
    * @minimum 0
    */
   vendor_cost?: number;
@@ -14822,7 +14951,7 @@ export interface BuildCreativeEstimate {
      */
     variants_per_item?: number;
     /**
-     * Total billable leaves = items_to_produce × variants_per_item.
+     * Total billable leaves = items_to_produce × variants_per_item (× conditions_total when signal_conditions was sent — see conditions_total).
      * @minimum 0
      */
     leaves_total?: number;
@@ -22427,22 +22556,7 @@ export interface GetAdCPCapabilitiesResponse {
           uk_itl2?: boolean;
           eurostat_nuts2?: boolean;
         };
-        /**
-         * Postal area targeting. Properties indicate which postal code systems are supported.
-         */
-        geo_postal_areas?: {
-          us_zip?: boolean;
-          us_zip_plus_four?: boolean;
-          gb_outward?: boolean;
-          gb_full?: boolean;
-          ca_fsa?: boolean;
-          ca_full?: boolean;
-          de_plz?: boolean;
-          fr_code_postal?: boolean;
-          au_postcode?: boolean;
-          ch_plz?: boolean;
-          at_plz?: boolean;
-        };
+        geo_postal_areas?: PostalAreaSupport;
         /**
          * Age restriction capabilities for compliance (alcohol, gambling)
          */
@@ -22868,7 +22982,7 @@ export interface GetAdCPCapabilitiesResponse {
      */
     supports_spend_controls?: boolean;
     /**
-     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED). When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
+     * Experimental (x-status: experimental) — agents setting this true MUST also list `creative.evaluator` in `experimental_features`; the surface MAY change between 3.x releases with notice (see docs/reference/experimental-status). When true, build_creative accepts an advisory `evaluator` input (exemplars / account-arranged evaluator_id / agent_url, plus an optional `feature_requirement[]` gate, a `rank_by` ordering, and an allowlisted `feature_agent` pointer). Feature discovery uses this response's governance.creative_features catalog: rank_by, feature_requirement, and eval.features[] all share the same creative-feature vocabulary as get_creative_features. evaluator_id is not discovered from this catalog; it is a pre-provisioned account preset whose emitted feature_ids still come from it. The evaluator populates a per-leaf `eval` block of creative-feature values (creative-feature-result[], the same shape get_creative_features returns) on BuildCreativeVariantSuccess leaves, which is what the recommended/rank it sets on the best_of_n axis are computed over. The agent runs a gate-then-rank pipeline over its best_of_n exploration: it evaluates each leaf, DROPS leaves failing `feature_requirement[]` from its recommended survivors, then orders survivors by `rank_by`. The gate is internal pruning of which leaves the agent recommends/returns from its own exploration — it never blocks an already-produced billable leaf: what is produced and billed is governed by max_variants/max_creatives/max_spend, not the evaluator. When the evaluator names an external agent, it MUST appear in `creative_policy.accepted_verifiers[]` (off-list → EVALUATOR_AGENT_NOT_ACCEPTED), and the producing agent authenticates the outbound evaluator call on the transport. Evaluator credentials and caller-supplied trust material MUST NOT be passed in the build_creative payload; credential- or trust-material payload keys should be rejected with CREDENTIAL_IN_ARGS. When false or absent, the `evaluator` input is ignored and no `eval` block is emitted.
      */
     supports_evaluator?: boolean;
     /**
@@ -23242,6 +23356,7 @@ export type TaskType =
   | 'update_media_buy'
   | 'media_buy_delivery'
   | 'sync_creatives'
+  | 'build_creative'
   | 'activate_signal'
   | 'get_products'
   | 'get_signals'
@@ -24221,6 +24336,11 @@ export interface ListTasksResponse {
        * @minimum 0
        */
       signals?: number;
+      /**
+       * Number of creative tasks in results
+       * @minimum 0
+       */
+      creative?: number;
     };
     /**
      * Count of tasks by status
@@ -24255,7 +24375,7 @@ export interface ListTasksResponse {
     /**
      * AdCP domain this task belongs to
      */
-    domain: 'media-buy' | 'signals';
+    domain: 'media-buy' | 'signals' | 'creative';
     status: TaskStatus;
     /**
      * When the task was initially created (ISO 8601)
@@ -24869,7 +24989,7 @@ export interface ReportUsageRequest {
      */
     creative_id?: string;
     /**
-     * Optional. When the reported creative_id was promoted from a specific build_creative variant leaf (a fan-out or best-of-N produce), the source build_variant_id — lets billing reconciliation link this usage record back to the exact produced leaf for audit (pricing_option_id alone is not unique across leaves). Omit for creatives with no build-variant lineage.
+     * Optional. When the reported creative_id was promoted from a specific build_creative variant leaf but the creative_id differs from the source build_variant_id, carry that source build_variant_id so billing reconciliation can link this usage record back to the exact produced leaf for audit (pricing_option_id alone is not unique across leaves). On the canonical path where creative_id is the build_variant_id, omit this field and use creative_id as the join key. Omit for creatives with no build-variant lineage.
      */
     build_variant_id?: string;
     /**

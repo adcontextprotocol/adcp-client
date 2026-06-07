@@ -17,6 +17,7 @@ import type {
   AccountStore,
   DecisioningCapabilities,
   TargetingCapabilities,
+  TargetingPostalAreaSupport,
   StatusMappers,
   CreativeBuilderPlatform,
   CreativeTemplatePlatform,
@@ -285,12 +286,21 @@ function _targeting_capabilities_nested(): TargetingCapabilities {
   return {
     geo_countries: true,
     geo_metros: { nielsen_dma: true, eurostat_nuts2: true },
-    geo_postal_areas: { us_zip: true, gb_outward: true },
+    geo_postal_areas: { us_zip: true, US: ['zip_plus_four'] as const, gb_outward: true },
     keyword_targets: { supported_match_types: ['broad', 'exact'] as const },
     age_restriction: {
       supported: true,
       verification_methods: ['credit_card', 'id_document'] as const,
     },
+  };
+}
+
+function _postal_area_support_accepts_native_and_deprecated_forms(): TargetingPostalAreaSupport {
+  return {
+    US: ['zip', 'zip_plus_four'] as const,
+    GB: ['outward'] as const,
+    NL: ['postal_code'] as const,
+    us_zip: true,
   };
 }
 
@@ -959,6 +969,7 @@ export const _references = [
   _capabilities_supported_billings_advertiser,
   _capabilities_supported_billings_invalid,
   _targeting_capabilities_nested,
+  _postal_area_support_accepts_native_and_deprecated_forms,
   _targeting_capabilities_rejects_unknown_geo_metro,
   _new_codes_compile,
   _check_sales_required,

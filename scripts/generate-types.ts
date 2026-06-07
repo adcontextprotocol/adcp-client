@@ -1666,6 +1666,40 @@ function fixTypedIndexSignatures(typeDefinitions: string): string {
   );
 }
 
+const POSTAL_AREA_SUPPORT_INDEX_TYPE =
+  "('zip' | 'zip_plus_four' | 'outward' | 'full' | 'fsa' | 'plz' | 'code_postal' | 'postcode' | 'cep' | 'pin' | 'postal_code' | 'custom')[]";
+
+/**
+ * AdCP 3.1.0-rc.10 models PostalAreaSupport with explicit country keys and
+ * deprecated legacy boolean keys, plus a narrower catch-all for future country
+ * keys. TypeScript index signatures apply to matching named properties, so the
+ * generated uppercase-country catch-all is widened enough to include explicit
+ * country fields without also allowing arbitrary lowercase boolean keys.
+ * Runtime Zod generation restores the schema's propertyNames rule and narrower
+ * catch-all.
+ */
+function widenPostalAreaSupportIndexSignature(typeDefinitions: string): string {
+  return typeDefinitions.replace(
+    /(export interface PostalAreaSupport \{[\s\S]*?\n)\s+\[k: string\]: \('postal_code' \| 'custom'\)\[] \| undefined;\n(\})/g,
+    '$1  [country: `${Uppercase<string>}`]: ' + `${POSTAL_AREA_SUPPORT_INDEX_TYPE} | undefined;\n$2`
+  );
+}
+
+function namePostalAreaCountryBranch(typeDefinitions: string): string {
+  return typeDefinitions.replace(
+    /(export interface )PostalArea1(\s*\{[\s\S]*?\n\})/,
+    [
+      '$1PostalCountryArea$2',
+      '/**',
+      ' * Re-export of `PostalCountryArea` under the legacy codegen artifact name.',
+      ' *',
+      ' * @deprecated Use `PostalCountryArea` from `@adcp/sdk/types`. Slated for removal in the next major.',
+      ' */',
+      'export type PostalArea1 = PostalCountryArea;',
+    ].join('\n')
+  );
+}
+
 /**
  * Align optional TypeScript properties with Zod .nullish() behavior.
  *
@@ -1929,6 +1963,10 @@ export function filterDuplicateTypeDefinitions(typeDefinitions: string, generate
  *   AssetVariant   = ImageAsset | … | VASTAsset | … | BriefAsset | CatalogAsset
  *   AssetVariant1  = ImageAsset | … | VASTAsset1 | … | BriefAsset1 | CatalogAsset1            ← references the under-resolved variants
  *
+ * AdCP 3.1.0-rc.10 added the same pattern for repeated PostalArea references;
+ * the country-area branch is first stabilized as `PostalCountryArea`, then the
+ * repeated union wrappers are aliased to `PostalArea`.
+ *
  * The spec converged these via `core/assets/asset-union.json` (adcp#3462) — both
  * `creative-asset.json` and `creative-manifest.json` `$ref` the same union. The
  * bundler inlines both occurrences though, so jsts sees two anonymous-but-identically-
@@ -1957,6 +1995,9 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'LegacyCreativeNamedFormatReference1', base: 'LegacyCreativeNamedFormatReference' },
   { numbered: 'CreativeCanonicalFormatKind1', base: 'CreativeCanonicalFormatKind' },
   { numbered: 'CreateMediaBuySubmitted1', base: 'CreateMediaBuySubmitted' },
+  { numbered: 'PostalArea2', base: 'PostalArea' },
+  { numbered: 'PostalArea4', base: 'PostalArea' },
+  { numbered: 'PostalArea6', base: 'PostalArea' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = ['VASTAsset', 'DAASTAsset', 'AssetVariant'] as const;
@@ -2063,7 +2104,7 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
       ` * \`${numbered}\` is a json-schema-to-typescript under-resolution artifact —`,
       ` * the bundler inlined the same schema at two call sites and jsts emitted a numbered`,
       ` * sibling. The body it produced was strictly weaker than \`${base}\` (missing the`,
-      ` * \`asset_type\` discriminator or its containing wrapper); aliasing to \`${base}\``,
+      ` * discriminator, canonical wrapper, or named union); aliasing to \`${base}\``,
       ' * gives consumers the correctly-discriminated shape that matches the wire format.',
       ' *',
       ` * @deprecated Use \`${base}\` from \`@adcp/sdk/types\`. Slated for removal in the next major.`,
@@ -2736,7 +2777,10 @@ async function generateTypes() {
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
   toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
+  toolTypes = namePostalAreaCountryBranch(toolTypes);
+  toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
+  toolTypes = widenPostalAreaSupportIndexSignature(toolTypes);
   toolTypes = addReferencedCoreTypeImports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
   toolTypes = addCoreGeneratedTypeReExports(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
 
@@ -2762,7 +2806,13 @@ async function generateTypes() {
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
   const processedCoreTypes = applyIndividualAssetDiscriminators(
     addBackwardCompatTypeAliases(
-      fixTypedIndexSignatures(applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))))
+      widenPostalAreaSupportIndexSignature(
+        fixTypedIndexSignatures(
+          applyKnownJstsAliases(
+            namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+          )
+        )
+      )
     )
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
