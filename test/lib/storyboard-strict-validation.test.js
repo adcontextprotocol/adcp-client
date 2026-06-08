@@ -123,6 +123,27 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     assert.match(v.warning, /format/);
   });
 
+  test('strictness warning preserves authored validation id', () => {
+    const response = {
+      formats: [
+        {
+          format_id: { agent_url: 'not-a-uri', id: 'display_static' },
+          name: 'Display Static',
+          description: 'Static display format',
+          assets: [],
+        },
+      ],
+    };
+    const results = runValidations(
+      [{ id: 'check_format_agent_url_uri', check: 'response_schema', description: 'response conforms' }],
+      ctx('list_creative_formats', response, 'creative/list-creative-formats-response.json')
+    );
+    const v = results[0];
+    assert.strictEqual(v.passed, true);
+    assert.ok(typeof v.warning === 'string', 'warning surfaced on strict-only failure');
+    assert.strictEqual(v.id, 'check_format_agent_url_uri');
+  });
+
   test('warning absent when both Zod and AJV pass cleanly', () => {
     const results = runValidations(
       [{ check: 'response_schema', description: 'response conforms' }],

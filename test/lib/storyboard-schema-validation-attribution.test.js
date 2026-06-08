@@ -113,6 +113,7 @@ describe('adcp-client#1709 — Zod-reject error attribution', () => {
     const schemaValidation = result.validations.find(v => v.check === 'response_schema');
     assert.ok(schemaValidation, 'response_schema validation must be present in step.validations');
     assert.equal(schemaValidation.passed, false);
+    assert.equal(schemaValidation.id, undefined, 'synthesized response_schema validation must not invent an id');
     assert.match(schemaValidation.description, /get_products/);
     assert.match(schemaValidation.error, /authorization/, 'error message names the rejected field');
   });

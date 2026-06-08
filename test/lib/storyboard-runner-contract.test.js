@@ -28,6 +28,7 @@ function runOne(validation, overrides = {}) {
     agentUrl: overrides.agentUrl ?? 'https://example.com/mcp',
     contributions: overrides.contributions ?? new Set(),
     responseSchemaRef: overrides.responseSchemaRef,
+    crossResponses: overrides.crossResponses,
     request: overrides.request,
     response: overrides.response,
   })[0];
@@ -384,6 +385,77 @@ describe('runner-output contract: validation_result', () => {
     assert.strictEqual(result.passed, true);
     assert.strictEqual(result.request, undefined);
     assert.strictEqual(result.response, undefined);
+  });
+
+  test('authored validation id echoes on pass, fail, and not_applicable results', () => {
+    const results = runValidations(
+      [
+        {
+          id: 'check_health_impaired',
+          check: 'field_value',
+          path: 'health',
+          value: 'impaired',
+          description: 'Health is impaired',
+        },
+        {
+          id: 'check_status_active',
+          check: 'field_value',
+          path: 'status',
+          value: 'active',
+          description: 'Status is active',
+        },
+        {
+          id: 'check_future_rule',
+          check: 'future_check_kind',
+          description: 'Future check grades not_applicable',
+        },
+      ],
+      {
+        taskName: 'get_products',
+        taskResult: { success: true, data: { health: 'impaired', status: 'paused' } },
+        agentUrl: 'https://example.com/mcp',
+        contributions: new Set(),
+      }
+    );
+
+    assert.strictEqual(results[0].passed, true);
+    assert.strictEqual(results[0].id, 'check_health_impaired');
+    assert.strictEqual(results[1].passed, false);
+    assert.strictEqual(results[1].id, 'check_status_active');
+    assert.strictEqual(results[2].passed, true);
+    assert.strictEqual(results[2].not_applicable, true);
+    assert.strictEqual(results[2].id, 'check_future_rule');
+  });
+
+  test('authored cross-response validation id is preserved', () => {
+    const dispatchA = { success: true, data: { media_buy_id: 'mb-1' } };
+    const dispatchB = { success: true, data: { media_buy_id: 'mb-1' } };
+    const result = runOne(
+      {
+        id: 'check_parallel_same_media_buy',
+        check: 'cross_response_field_equal',
+        path: 'media_buy_id',
+        description: 'Parallel dispatches resolve to the same media buy',
+      },
+      {
+        crossResponses: {
+          dispatches: [{ taskResult: dispatchA }, { taskResult: dispatchB }],
+          resolved: [dispatchA, dispatchB],
+        },
+      }
+    );
+
+    assert.strictEqual(result.passed, true);
+    assert.strictEqual(result.id, 'check_parallel_same_media_buy');
+  });
+
+  test('runner does not invent validation id when authored validation omits one', () => {
+    const result = runOne(
+      { check: 'field_present', path: 'status', description: 'status present' },
+      { taskResult: { success: true, data: { status: 'active' } } }
+    );
+
+    assert.strictEqual(result.id, undefined);
   });
 });
 

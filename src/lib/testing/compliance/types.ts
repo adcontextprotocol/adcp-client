@@ -115,6 +115,7 @@ export interface ComplianceFailure {
    * any validation ran.
    */
   validation?: {
+    id?: string;
     check: string;
     description: string;
     json_pointer?: string | null;

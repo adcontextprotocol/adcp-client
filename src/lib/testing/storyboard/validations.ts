@@ -222,7 +222,7 @@ export interface UpstreamTrafficQueryResult {
  * Run all validations for a storyboard step.
  */
 export function runValidations(validations: StoryboardValidation[], context: ValidationContext): ValidationResult[] {
-  return validations.map(v => attachOnFailure(runValidation(v, context), context));
+  return validations.map(v => attachOnFailure(runValidation(v, context), context, v));
 }
 
 /**
@@ -231,9 +231,20 @@ export function runValidations(validations: StoryboardValidation[], context: Val
  * minimal — carrying the full payload on every passing check bloats the
  * JSON surface without diagnostic value.
  */
-function attachOnFailure(result: ValidationResult, context: ValidationContext): ValidationResult {
-  if (result.passed) return result;
-  const augmented: ValidationResult = { ...result };
+function attachOnFailure(
+  result: ValidationResult,
+  context: ValidationContext,
+  validation: StoryboardValidation
+): ValidationResult {
+  const withId: ValidationResult =
+    validation.id === undefined
+      ? result
+      : {
+          ...result,
+          id: validation.id,
+        };
+  if (withId.passed) return withId;
+  const augmented: ValidationResult = { ...withId };
   if (context.request && augmented.request === undefined) augmented.request = context.request;
   if (context.response && augmented.response === undefined) augmented.response = context.response;
   return augmented;

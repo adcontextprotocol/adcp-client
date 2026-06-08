@@ -148,6 +148,28 @@ describe('extractFailures parity guard (#1708): assertion-only failure surface',
     assert.equal(failures[0].validation.check, 'assertion');
     assert.match(failures[0].validation.description, /context\.no_secret_echo/);
   });
+
+  test('authored validation id survives the compliance failure summary', () => {
+    const sb = buildStoryboardDef('parity_validation_id');
+    const result = buildStoryboardResult('parity_validation_id', {
+      stepPassed: false,
+      validations: [
+        {
+          id: 'check_health_impaired',
+          check: 'field_value',
+          passed: false,
+          description: 'Health is impaired',
+          json_pointer: '/health',
+          expected: 'impaired',
+          actual: 'healthy',
+        },
+      ],
+    });
+    const failures = extractFailures([result], [sb], 'parity_test_agent');
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].validation.id, 'check_health_impaired');
+    assert.equal(failures[0].validation.check, 'field_value');
+  });
 });
 
 // ────────────────────────────────────────────────────────────
