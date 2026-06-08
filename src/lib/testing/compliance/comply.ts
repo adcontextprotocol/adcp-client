@@ -1003,6 +1003,7 @@ export function extractFailures(
         const firstFailedValidation = step.validations.find(v => !v.passed);
         const validationSummary = firstFailedValidation
           ? {
+              ...(firstFailedValidation.id !== undefined && { id: firstFailedValidation.id }),
               check: firstFailedValidation.check,
               description: firstFailedValidation.description,
               ...(firstFailedValidation.json_pointer !== undefined && {

@@ -1087,6 +1087,8 @@ export interface RefsResolveScope {
 }
 
 export interface StoryboardValidation {
+  /** Stable authored validation identifier echoed into runner results when present. */
+  id?: string;
   check: StoryboardValidationCheck;
   /** JSON path for field checks, e.g. "accounts[0].account_id" */
   path?: string;
@@ -1959,6 +1961,8 @@ export interface RunnerNotice {
 // ────────────────────────────────────────────────────────────
 
 export interface ValidationResult {
+  /** Stable authored validation identifier, echoed unchanged when provided by the storyboard. */
+  id?: string;
   check: string;
   passed: boolean;
   description: string;
