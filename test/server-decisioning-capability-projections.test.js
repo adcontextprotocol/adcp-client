@@ -229,6 +229,68 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.notStrictEqual(features.content_standards, true);
   });
 
+  it('forwards AdcpCapabilitiesConfig passthroughs declared on DecisioningCapabilities', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        features: {
+          inlineCreativeManagement: true,
+          propertyListFiltering: true,
+          audienceTargeting: false,
+        },
+        audience_targeting: {
+          supported_identifier_types: ['hashed_email'],
+          minimum_audience_size: 50,
+        },
+        targeting: {
+          geo_countries: true,
+        },
+        creative: {
+          supportsCompliance: false,
+          hasCreativeLibrary: false,
+          supportsGeneration: true,
+          supportsTransformation: false,
+        },
+        account: {
+          requireOperatorAuth: false,
+          supportedBilling: ['agent'],
+          defaultBilling: 'agent',
+          requiredForProducts: true,
+          sandbox: true,
+        },
+        requireOperatorAuth: true,
+        supportedBillings: ['operator'],
+        supported_versions: ['3.1'],
+        overrides: {
+          media_buy: {
+            execution: {
+              targeting: {
+                keyword_targets: {
+                  supported_match_types: ['exact'],
+                },
+              },
+            },
+          },
+        },
+      }),
+      { name: 'h', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+
+    const result = await dispatchCapabilities(server);
+    const caps = result.structuredContent;
+
+    assert.deepStrictEqual(caps?.adcp?.supported_versions, ['3.1']);
+    assert.strictEqual(caps?.media_buy?.features?.inline_creative_management, true);
+    assert.strictEqual(caps?.media_buy?.features?.property_list_filtering, true);
+    assert.strictEqual(caps?.media_buy?.features?.audience_targeting, true);
+    assert.strictEqual(caps?.media_buy?.execution?.targeting?.geo_countries, true);
+    assert.deepStrictEqual(caps?.media_buy?.execution?.targeting?.keyword_targets?.supported_match_types, ['exact']);
+    assert.strictEqual(caps?.creative?.supports_generation, true);
+    assert.strictEqual(caps?.account?.required_for_products, true);
+    assert.strictEqual(caps?.account?.sandbox, true);
+    assert.strictEqual(caps?.account?.require_operator_auth, true);
+    assert.deepStrictEqual(caps?.account?.supported_billing, ['operator']);
+  });
+
   it('brand-protocol capability block projects via overrides.brand', async () => {
     // Brand-rights adopters declare capabilities.brand; the framework
     // projects via the overrides.brand deep-merge seam. When

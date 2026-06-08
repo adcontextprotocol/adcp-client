@@ -6141,6 +6141,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     status: 'completed',
     adcp: {
       major_versions: capConfig?.major_versions ?? [3],
+      ...(capConfig?.supported_versions?.length && { supported_versions: [...capConfig.supported_versions] }),
       idempotency: idempotencyCapability,
     },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],
