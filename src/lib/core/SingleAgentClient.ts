@@ -5,7 +5,7 @@ import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
-import { isAdcpVersionSupported, resolveAdcpVersion } from '../utils/adcp-version-config';
+import { isAdcpVersionSupported, isPre31AdcpVersion, resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -91,6 +91,7 @@ import {
   AuthenticationRequiredError,
   ConfigurationError,
   FeatureUnsupportedError,
+  ProtocolFeatureUnsupportedError,
   TaskTimeoutError,
   VersionUnsupportedError,
   is401Error,
@@ -136,7 +137,7 @@ import {
 } from '../utils/capabilities';
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
-import { resolveWebhookUrl } from './webhook-url';
+import { resolveWebhookUrl, selectWebhookTemplate } from './webhook-url';
 import { getV25Adapter } from '../adapters/legacy/v2-5';
 import {
   ProductPropertyPolicyError,
@@ -1580,6 +1581,7 @@ export class SingleAgentClient {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
       skipAccountValidation: options?.skipAccountValidation,
     });
+    this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options);
 
     // Inject an idempotency_key for mutating tools before schema validation
     // so callers don't have to supply one. TaskExecutor also guards against
@@ -2970,6 +2972,7 @@ export class SingleAgentClient {
         skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
         skipAccountValidation: options?.skipAccountValidation,
       });
+      this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
       await this.validateTaskFeatures(taskName);
       if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
         await this.requireSupportedMajor(taskName);
@@ -3930,6 +3933,66 @@ export class SingleAgentClient {
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
     await this.require(...requiredFeatures);
+  }
+
+  /**
+   * Fail version-incompatible request shapes before schema validation.
+   *
+   * Some 3.1 request controls change behavior rather than merely filtering a
+   * result set. A pre-3.1 client pin should not silently drop those controls
+   * or let a generic schema error hide the recovery path.
+   */
+  private assertRequestSupportedByConfiguredVersion(taskName: string, params: unknown, options?: TaskOptions): void {
+    if (!isPre31AdcpVersion(this.resolvedAdcpVersion)) return;
+    const request =
+      params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+    const willInjectDiscoveryWebhook =
+      !options?.disableWebhook && selectWebhookTemplate(this.config.webhookUrlTemplate, taskName) !== undefined;
+
+    if (taskName === 'get_signals' && request.discovery_mode === 'wholesale') {
+      this.throwPre31UnsupportedFeature(taskName, 'discovery_mode', 'get_signals.discovery_mode=wholesale', {
+        capabilityPath: 'signals.discovery_modes',
+        suffix: 'Probe get_adcp_capabilities at signals.discovery_modes before issuing wholesale calls.',
+      });
+    }
+
+    if (
+      (taskName === 'get_products' || taskName === 'get_signals') &&
+      (request.push_notification_config !== undefined || willInjectDiscoveryWebhook)
+    ) {
+      this.throwPre31UnsupportedFeature(taskName, 'push_notification_config', `${taskName}.push_notification_config`, {
+        capabilityPath: 'adcp.supported_versions',
+        suffix: 'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
+      });
+    }
+
+    // Intentionally do not guard `if_wholesale_feed_version` /
+    // `if_pricing_version`: 3.1 defines them as optimistic conditional
+    // probes, and pre-3.1 sellers may safely ignore them and return the full
+    // payload.
+  }
+
+  private throwPre31UnsupportedFeature(
+    taskName: string,
+    field: string,
+    feature: string,
+    opts: { capabilityPath: string; suffix: string }
+  ): never {
+    throw new ProtocolFeatureUnsupportedError([feature], [], this.agent.agent_uri, {
+      message:
+        `${taskName} ${field} requires AdCP 3.1 or later; ` +
+        `this client is pinned to ${this.resolvedAdcpVersion}. ${opts.suffix}`,
+      field,
+      suggestion: opts.suffix,
+      details: {
+        feature,
+        required_version: '3.1',
+        capability_path: opts.capabilityPath,
+        current_version: this.resolvedAdcpVersion,
+        tool: taskName,
+        field,
+      },
+    });
   }
 
   /**

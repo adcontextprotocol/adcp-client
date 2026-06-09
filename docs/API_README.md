@@ -196,6 +196,9 @@ The library also provides exception classes for transport-level failures:
 - [`TaskTimeoutError`](./classes/TaskTimeoutError.html) - Operation timeouts
 - [`AgentNotFoundError`](./classes/AgentNotFoundError.html) - Invalid agent ID
 - [`AuthenticationRequiredError`](./classes/AuthenticationRequiredError.html) - OAuth required
+- `ProtocolFeatureUnsupportedError` - Client-side protocol version preflight rejection. For example, a client pinned below AdCP 3.1 that sends 3.1-only discovery controls throws before schema validation or network dispatch. Catch this class when you need the protocol-shaped `error.adcpError` payload; catch `FeatureUnsupportedError` for broader feature-gate compatibility.
+
+`ProtocolFeatureUnsupportedError` uses `error.code === 'UNSUPPORTED_FEATURE'` and carries `error.adcpError` with the same fields buyers see on failed task results (`code`, `recovery`, `field`, `suggestion`, `details`). The older `UnsupportedFeatureError` export from `SingleAgentClient` is a legacy custom-validation helper and is not used for these version preflights.
 
 ## Type Safety
 
