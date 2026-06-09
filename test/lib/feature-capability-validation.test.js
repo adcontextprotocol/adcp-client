@@ -9,6 +9,9 @@ const {
   supportsContentStandards,
   listDeclaredFeatures,
   FeatureUnsupportedError,
+  ProtocolFeatureUnsupportedError,
+  getClientPreflightAdcpError,
+  mapSdkErrorCodeToProtocolErrorCode,
   SingleAgentClient,
   ProtocolClient,
   TASK_FEATURE_MAP,
@@ -200,6 +203,8 @@ describe('FeatureUnsupportedError', () => {
 
     assert.ok(err instanceof Error, 'should be an Error');
     assert.strictEqual(err.code, 'FEATURE_UNSUPPORTED');
+    assert.deepStrictEqual(err.details.unsupported_features, ['audience_targeting', 'ext:garm']);
+    assert.deepStrictEqual(err.details.declared_features, ['media_buy', 'inline_creative_management', 'ext:scope3']);
     assert.ok(err.message.includes('audience_targeting'), 'should mention missing feature');
     assert.ok(err.message.includes('ext:garm'), 'should mention missing extension');
     assert.ok(err.message.includes('inline_creative_management'), 'should list declared features');
@@ -209,6 +214,42 @@ describe('FeatureUnsupportedError', () => {
   test('handles empty declared features', () => {
     const err = new FeatureUnsupportedError(['signals'], [], 'https://empty.example.com');
     assert.ok(err.message.includes('(none)'), 'should say (none) for empty declared features');
+  });
+
+  test('keeps legacy SDK code separate from protocol error code mapping', () => {
+    const err = new FeatureUnsupportedError(['signals'], [], 'https://seller.example.com');
+
+    assert.strictEqual(err.code, 'FEATURE_UNSUPPORTED');
+    assert.strictEqual(mapSdkErrorCodeToProtocolErrorCode(err.code), 'UNSUPPORTED_FEATURE');
+    assert.strictEqual(getClientPreflightAdcpError(err), undefined);
+  });
+
+  test('ProtocolFeatureUnsupportedError exposes protocol-shaped preflight metadata', () => {
+    const err = new ProtocolFeatureUnsupportedError(['signals.wholesale'], [], 'https://seller.example.com', {
+      message: 'Wholesale signals require AdCP 3.1 or later',
+      field: 'discovery_mode',
+      suggestion: 'Probe get_adcp_capabilities before retrying.',
+      details: {
+        required_version: '3.1',
+        capability_path: 'signals.discovery_modes',
+      },
+    });
+
+    assert.ok(err instanceof FeatureUnsupportedError);
+    assert.strictEqual(err.code, 'UNSUPPORTED_FEATURE');
+    assert.deepStrictEqual(getClientPreflightAdcpError(err), {
+      code: 'UNSUPPORTED_FEATURE',
+      message: 'Wholesale signals require AdCP 3.1 or later',
+      recovery: 'correctable',
+      field: 'discovery_mode',
+      suggestion: 'Probe get_adcp_capabilities before retrying.',
+      details: {
+        unsupported_features: ['signals.wholesale'],
+        declared_features: [],
+        required_version: '3.1',
+        capability_path: 'signals.discovery_modes',
+      },
+    });
   });
 });
 

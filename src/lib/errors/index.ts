@@ -402,22 +402,104 @@ export class IdempotencyExpiredError extends ADCPError {
   }
 }
 
+export interface FeatureUnsupportedErrorOptions {
+  message?: string;
+  details?: Record<string, unknown>;
+}
+
+export type ClientPreflightAdcpErrorRecovery = 'transient' | 'correctable' | 'terminal';
+
 /**
- * Error thrown when a required feature is not supported by the seller
+ * Protocol-shaped error metadata attached to SDK-local preflight throws.
+ * Mirrors the public `TaskResult.adcpError` fields without importing core
+ * task types into the errors module.
+ */
+export interface ClientPreflightAdcpErrorInfo {
+  code: string;
+  message: string;
+  recovery?: ClientPreflightAdcpErrorRecovery;
+  field?: string;
+  suggestion?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ProtocolFeatureUnsupportedErrorOptions extends FeatureUnsupportedErrorOptions {
+  field?: string;
+  suggestion?: string;
+  recovery?: ClientPreflightAdcpErrorRecovery;
+}
+
+export const SDK_ERROR_TO_PROTOCOL_ERROR_CODE = {
+  FEATURE_UNSUPPORTED: 'UNSUPPORTED_FEATURE',
+} as const;
+
+export function mapSdkErrorCodeToProtocolErrorCode(code: string): string | undefined {
+  return SDK_ERROR_TO_PROTOCOL_ERROR_CODE[code as keyof typeof SDK_ERROR_TO_PROTOCOL_ERROR_CODE];
+}
+
+/**
+ * Error thrown when a required feature is not supported by the seller or by
+ * the configured AdCP version.
  */
 export class FeatureUnsupportedError extends ADCPError {
-  readonly code = 'FEATURE_UNSUPPORTED';
+  readonly code: string = 'FEATURE_UNSUPPORTED';
 
   constructor(
     public readonly unsupportedFeatures: string[],
     public readonly declaredFeatures: string[],
-    public readonly agentUrl?: string
+    public readonly agentUrl?: string,
+    options: FeatureUnsupportedErrorOptions = {}
   ) {
     const missing = unsupportedFeatures.join(', ');
     const declared = declaredFeatures.length > 0 ? declaredFeatures.join(', ') : '(none)';
     const urlPart = agentUrl ? ` at ${agentUrl}` : '';
-    super(`Seller${urlPart} does not support: ${missing}\n  Declared features: ${declared}`);
+    super(options.message ?? `Seller${urlPart} does not support: ${missing}\n  Declared features: ${declared}`);
+    this.details = {
+      unsupported_features: unsupportedFeatures,
+      declared_features: declaredFeatures,
+      ...(options.details ?? {}),
+    };
   }
+}
+
+/**
+ * Version-gate error for requests that use a protocol feature outside the
+ * configured AdCP release. Kept as a FeatureUnsupportedError subclass so
+ * existing catch sites keep working, while `code` carries the AdCP wire code
+ * expected by probe/recovery layers.
+ */
+export class ProtocolFeatureUnsupportedError extends FeatureUnsupportedError {
+  readonly code: string = 'UNSUPPORTED_FEATURE';
+
+  readonly adcpError: ClientPreflightAdcpErrorInfo;
+
+  constructor(
+    unsupportedFeatures: string[],
+    declaredFeatures: string[],
+    agentUrl?: string,
+    options: ProtocolFeatureUnsupportedErrorOptions = {}
+  ) {
+    super(unsupportedFeatures, declaredFeatures, agentUrl, options);
+    this.adcpError = {
+      code: this.code,
+      message: this.message,
+      recovery: options.recovery ?? 'correctable',
+      ...(options.field && { field: options.field }),
+      ...(options.suggestion && { suggestion: options.suggestion }),
+      ...(isRecord(this.details) && { details: this.details }),
+    };
+  }
+}
+
+export function getClientPreflightAdcpError(error: unknown): ClientPreflightAdcpErrorInfo | undefined {
+  if (error instanceof ProtocolFeatureUnsupportedError) {
+    return error.adcpError;
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
