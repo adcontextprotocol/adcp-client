@@ -4,7 +4,9 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const {
+  parseCapabilitiesResponse,
   resolveFeature,
+  supportsContentStandards,
   listDeclaredFeatures,
   FeatureUnsupportedError,
   SingleAgentClient,
@@ -51,6 +53,17 @@ function makeCapabilities(overrides = {}) {
   };
 }
 
+function makeClientWithCapabilities(capabilities) {
+  const client = new SingleAgentClient({
+    id: 'test',
+    name: 'Test',
+    agent_uri: 'https://seller.example.com/mcp',
+    protocol: 'mcp',
+  });
+  client.getCapabilities = async () => capabilities;
+  return client;
+}
+
 describe('resolveFeature', () => {
   test('checks supported_protocols for protocol names', () => {
     const caps = makeCapabilities();
@@ -78,6 +91,38 @@ describe('resolveFeature', () => {
     assert.strictEqual(resolveFeature(caps, 'conversion_tracking'), true);
     assert.strictEqual(resolveFeature(caps, 'property_list_filtering'), false);
     assert.strictEqual(resolveFeature(caps, 'content_standards'), false);
+  });
+
+  test('treats content-standards specialism as content_standards support', () => {
+    const caps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['governance'],
+      specialisms: ['content-standards'],
+      media_buy: { features: { content_standards: false } },
+      extensions_supported: [],
+    });
+
+    assert.strictEqual(caps.features.contentStandards, true);
+    assert.strictEqual(resolveFeature(caps, 'governance'), true);
+    assert.strictEqual(resolveFeature(caps, 'content_standards'), true);
+  });
+
+  test('treats hand-built content-standards specialism as content_standards support', () => {
+    const caps = makeCapabilities({
+      protocols: ['governance'],
+      specialisms: ['content-standards'],
+      features: {
+        inlineCreativeManagement: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+      },
+    });
+
+    assert.strictEqual(supportsContentStandards(caps), true);
+    assert.strictEqual(resolveFeature(caps, 'content_standards'), true);
+    assert.ok(listDeclaredFeatures(caps).includes('content_standards'));
   });
 
   test('returns false for unknown features', () => {
@@ -116,6 +161,21 @@ describe('listDeclaredFeatures', () => {
     assert.ok(features.includes('targeting.device_type'), 'should list targeting.device_type');
     // false features should not be listed
     assert.ok(!features.includes('targeting.geo_regions'), 'should not list false targeting feature');
+  });
+
+  test('lists declared specialisms for feature-gate diagnostics', () => {
+    const caps = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['governance'],
+      specialisms: ['content-standards', 'property-lists'],
+      extensions_supported: [],
+    });
+    const features = listDeclaredFeatures(caps);
+
+    assert.ok(features.includes('governance'), 'should list protocol');
+    assert.ok(features.includes('content_standards'), 'should list resolved internal content standards feature');
+    assert.ok(features.includes('specialism:content-standards'), 'should list public content standards specialism');
+    assert.ok(features.includes('specialism:property-lists'), 'should list other public specialisms');
   });
 
   test('returns empty-ish list for minimal capabilities', () => {
@@ -186,6 +246,41 @@ describe('SingleAgentClient feature API exists', () => {
       protocol: 'mcp',
     });
     assert.strictEqual(typeof client.refreshCapabilities, 'function');
+  });
+});
+
+describe('SingleAgentClient feature gate', () => {
+  test('allows content standards tasks for governance + content-standards specialism', async () => {
+    const capabilities = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['governance'],
+      specialisms: ['content-standards'],
+      extensions_supported: [],
+    });
+    const client = makeClientWithCapabilities(capabilities);
+
+    await assert.doesNotReject(() => client.require('governance', 'content_standards'));
+  });
+
+  test('content-standards specialism does not bypass missing governance protocol', async () => {
+    const capabilities = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: [],
+      specialisms: ['content-standards'],
+      extensions_supported: [],
+    });
+    const client = makeClientWithCapabilities(capabilities);
+
+    await assert.rejects(
+      () => client.require('governance', 'content_standards'),
+      err => {
+        assert.ok(err instanceof FeatureUnsupportedError);
+        assert.ok(err.message.includes('governance'));
+        assert.ok(err.message.includes('content_standards'));
+        assert.ok(err.message.includes('specialism:content-standards'));
+        return true;
+      }
+    );
   });
 });
 
