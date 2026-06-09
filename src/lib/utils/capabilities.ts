@@ -515,7 +515,9 @@ function declaresSpecialism(specialisms: readonly string[] | undefined, speciali
 }
 
 function hasContentStandardsSupport(capabilities: Pick<AdcpCapabilities, 'features' | 'specialisms'>): boolean {
-  return capabilities.features.contentStandards === true || declaresSpecialism(capabilities.specialisms, 'content-standards');
+  return (
+    capabilities.features.contentStandards === true || declaresSpecialism(capabilities.specialisms, 'content-standards')
+  );
 }
 
 /**
