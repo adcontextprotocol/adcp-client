@@ -54,10 +54,7 @@ function makePre31Client(config = {}) {
 }
 
 function assertPre31Unsupported(err, expected) {
-  assert.ok(
-    err instanceof FeatureUnsupportedError,
-    `expected FeatureUnsupportedError, got ${err?.constructor?.name}`
-  );
+  assert.ok(err instanceof FeatureUnsupportedError, `expected FeatureUnsupportedError, got ${err?.constructor?.name}`);
   assert.ok(
     err instanceof ProtocolFeatureUnsupportedError,
     `expected ProtocolFeatureUnsupportedError, got ${err?.constructor?.name}`
@@ -99,8 +96,7 @@ function assertPushConfigUnsupported(tool) {
       field: 'push_notification_config',
       feature: `${tool}.push_notification_config`,
       capabilityPath: 'adcp.supported_versions',
-      suggestion:
-        'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
+      suggestion: 'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
     });
 }
 

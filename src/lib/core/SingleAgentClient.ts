@@ -3944,7 +3944,8 @@ export class SingleAgentClient {
    */
   private assertRequestSupportedByConfiguredVersion(taskName: string, params: unknown, options?: TaskOptions): void {
     if (!isPre31AdcpVersion(this.resolvedAdcpVersion)) return;
-    const request = params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
+    const request =
+      params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
     const willInjectDiscoveryWebhook =
       !options?.disableWebhook && selectWebhookTemplate(this.config.webhookUrlTemplate, taskName) !== undefined;
 
@@ -3961,8 +3962,7 @@ export class SingleAgentClient {
     ) {
       this.throwPre31UnsupportedFeature(taskName, 'push_notification_config', `${taskName}.push_notification_config`, {
         capabilityPath: 'adcp.supported_versions',
-        suffix:
-          'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
+        suffix: 'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
       });
     }
 
@@ -3978,26 +3978,21 @@ export class SingleAgentClient {
     feature: string,
     opts: { capabilityPath: string; suffix: string }
   ): never {
-    throw new ProtocolFeatureUnsupportedError(
-      [feature],
-      [],
-      this.agent.agent_uri,
-      {
-        message:
-          `${taskName} ${field} requires AdCP 3.1 or later; ` +
-          `this client is pinned to ${this.resolvedAdcpVersion}. ${opts.suffix}`,
+    throw new ProtocolFeatureUnsupportedError([feature], [], this.agent.agent_uri, {
+      message:
+        `${taskName} ${field} requires AdCP 3.1 or later; ` +
+        `this client is pinned to ${this.resolvedAdcpVersion}. ${opts.suffix}`,
+      field,
+      suggestion: opts.suffix,
+      details: {
+        feature,
+        required_version: '3.1',
+        capability_path: opts.capabilityPath,
+        current_version: this.resolvedAdcpVersion,
+        tool: taskName,
         field,
-        suggestion: opts.suffix,
-        details: {
-          feature,
-          required_version: '3.1',
-          capability_path: opts.capabilityPath,
-          current_version: this.resolvedAdcpVersion,
-          tool: taskName,
-          field,
-        },
-      }
-    );
+      },
+    });
   }
 
   /**
