@@ -156,6 +156,9 @@ export interface AdcpCapabilities {
   /** Supported protocols */
   protocols: AdcpProtocol[];
 
+  /** Public specialism ids declared by this agent */
+  specialisms?: string[];
+
   /** Media buy specific features */
   features: MediaBuyFeatures;
 
@@ -507,12 +510,26 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function declaresSpecialism(specialisms: readonly string[] | undefined, specialism: string): boolean {
+  return specialisms?.includes(specialism) === true;
+}
+
+function hasContentStandardsSupport(capabilities: Pick<AdcpCapabilities, 'features' | 'specialisms'>): boolean {
+  return (
+    capabilities.features.contentStandards === true || declaresSpecialism(capabilities.specialisms, 'content-standards')
+  );
+}
+
 /**
  * Parse a get_adcp_capabilities response into normalized form
  */
 export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   const majorVersions = (response.adcp?.major_versions ?? [2]) as AdcpMajorVersion[];
   const highestVersion = Math.max(...majorVersions) as AdcpMajorVersion;
+  const specialisms = Array.isArray(response.specialisms)
+    ? response.specialisms.filter((s: unknown): s is string => typeof s === 'string')
+    : undefined;
+  const declaresContentStandardsSpecialism = declaresSpecialism(specialisms, 'content-standards');
 
   // AdCP 3.1+ release-precision capability fields per spec PR
   // `adcontextprotocol/adcp#3493`. Both fields are optional during the 3.x
@@ -541,7 +558,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   const features: MediaBuyFeatures = {
     inlineCreativeManagement: response.media_buy?.features?.inline_creative_management ?? false,
     propertyListFiltering: response.media_buy?.features?.property_list_filtering ?? false,
-    contentStandards: response.media_buy?.features?.content_standards ?? false,
+    contentStandards: response.media_buy?.features?.content_standards === true || declaresContentStandardsSpecialism,
     conversionTracking: response.media_buy?.features?.conversion_tracking ?? false,
     audienceTargeting: response.media_buy?.features?.audience_targeting ?? false,
   };
@@ -583,6 +600,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
     supportedVersions,
     buildVersion,
     protocols,
+    specialisms,
     features,
     account,
     creative,
@@ -624,7 +642,7 @@ export function supportsPropertyListFiltering(capabilities: AdcpCapabilities): b
  * Check if content standards are supported (v3 feature)
  */
 export function supportsContentStandards(capabilities: AdcpCapabilities): boolean {
-  return capabilities.features.contentStandards ?? false;
+  return hasContentStandardsSupport(capabilities);
 }
 
 /**
@@ -820,6 +838,9 @@ export function resolveFeature(capabilities: AdcpCapabilities, feature: FeatureN
   // Media buy features (e.g., 'audience_targeting', 'conversion_tracking')
   const featureKey = FEATURE_KEY_MAP[feature];
   if (featureKey) {
+    if (featureKey === 'contentStandards') {
+      return supportsContentStandards(capabilities);
+    }
     return capabilities.features[featureKey] ?? false;
   }
 
@@ -846,9 +867,18 @@ export function listDeclaredFeatures(capabilities: AdcpCapabilities): string[] {
 
   // Media buy features
   for (const [snakeKey, camelKey] of Object.entries(FEATURE_KEY_MAP)) {
-    if (capabilities.features[camelKey]) {
+    const declared =
+      camelKey === 'contentStandards'
+        ? supportsContentStandards(capabilities)
+        : (capabilities.features[camelKey] ?? false);
+    if (declared) {
       features.push(snakeKey);
     }
+  }
+
+  // Public specialism declarations
+  for (const specialism of capabilities.specialisms ?? []) {
+    features.push(`specialism:${specialism}`);
   }
 
   // Extensions
