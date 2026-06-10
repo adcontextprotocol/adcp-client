@@ -14,7 +14,7 @@ import { loadStoryboardFile } from './loader';
 import { ADCP_VERSION } from '../../version';
 import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
-import { resolveBundleKey } from '../../validation/schema-loader';
+import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
@@ -200,9 +200,8 @@ function getRepoRoot(): string {
  *   3. `{package-root}/compliance/cache/{version}` (default, ships with the npm package)
  */
 export function getComplianceCacheDir(options: ResolveOptions = {}): string {
-  if (options.complianceDir) return options.complianceDir;
-  const envOverride = process.env.ADCP_COMPLIANCE_DIR;
-  if (envOverride) return envOverride;
+  const configured = getConfiguredComplianceDir(options);
+  if (configured) return configured;
   const version = options.version || readAdcpVersion();
   return join(getRepoRoot(), 'compliance', 'cache', version);
 }
@@ -236,8 +235,36 @@ export function loadComplianceIndex(options: ResolveOptions = {}): ComplianceInd
 export function getExternalSchemaRootForCompliance(options: ResolveOptions, adcpVersion: string): string | undefined {
   const configuredSchemaRoot = getConfiguredSchemaRoot(options);
   if (configuredSchemaRoot) return configuredSchemaRoot;
-  if (!options.complianceDir) return undefined;
-  return findExternalSchemaRoot(options.complianceDir, adcpVersion);
+  const complianceDir = getConfiguredComplianceDir(options);
+  const siblingSchemaRoot = complianceDir ? findExternalSchemaRoot(complianceDir, adcpVersion) : undefined;
+  if (siblingSchemaRoot) return siblingSchemaRoot;
+  if (options.version !== undefined || complianceDir !== undefined) {
+    assertComplianceSchemaBundleAvailable(options, adcpVersion, complianceDir);
+  }
+  return undefined;
+}
+
+function assertComplianceSchemaBundleAvailable(
+  options: ResolveOptions,
+  adcpVersion: string,
+  complianceDir: string | undefined
+): void {
+  if (hasSchemaBundle(adcpVersion)) return;
+  const selector = options.version
+    ? `--compliance-version ${options.version}`
+    : `compliance cache ${complianceDir}`;
+  const bundleKey = resolveBundleKey(adcpVersion);
+  throw new Error(
+    `${selector} selected AdCP compliance version "${adcpVersion}", but no matching schema bundle was found. ` +
+      `Refusing to validate storyboard responses with the installed default schemas. ` +
+      `Pass --schema-root PATH or set ADCP_SCHEMA_ROOT to a schema-data root for "${adcpVersion}" ` +
+      `(for example dist/lib/schemas-data/${bundleKey} or schemas/cache/${adcpVersion}), ` +
+      `or install/sync an @adcp/sdk package that includes that schema bundle.`
+  );
+}
+
+function getConfiguredComplianceDir(options: Pick<ResolveOptions, 'complianceDir'>): string | undefined {
+  return options.complianceDir ?? process.env.ADCP_COMPLIANCE_DIR;
 }
 
 function getConfiguredSchemaRoot(options: Pick<ResolveOptions, 'schemaRoot'>): string | undefined {
