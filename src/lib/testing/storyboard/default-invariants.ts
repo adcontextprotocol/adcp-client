@@ -518,9 +518,10 @@ function extractAuthSecrets(auth: unknown): string[] {
   pushCredentialValue(out, a.token); // bearer
 
   // basic: the password is the secret; the base64 blob catches echoes of the
-  // full Authorization: Basic header. Username alone is not a secret.
-  if (typeof a.password === 'string' && a.password) {
-    out.push(a.password);
+  // full Authorization: Basic header, including RFC 7617-valid empty passwords.
+  // Username alone is not a secret.
+  if (typeof a.password === 'string') {
+    if (a.password) out.push(a.password);
     if (typeof a.username === 'string' && a.username) {
       out.push(Buffer.from(`${a.username}:${a.password}`, 'utf8').toString('base64'));
     }
@@ -552,14 +553,15 @@ function extractBasicSecrets(basic: unknown): string[] {
   const out: string[] = [];
   if (typeof b.credentials === 'string' && b.credentials) {
     const colonIndex = b.credentials.indexOf(':');
-    if (colonIndex > 0 && colonIndex < b.credentials.length - 1) {
-      out.push(b.credentials.slice(colonIndex + 1));
+    if (colonIndex > 0) {
+      const password = b.credentials.slice(colonIndex + 1);
+      if (password) out.push(password);
       out.push(Buffer.from(b.credentials, 'utf8').toString('base64'));
     }
     return out;
   }
-  if (typeof b.password === 'string' && b.password) {
-    out.push(b.password);
+  if (typeof b.password === 'string') {
+    if (b.password) out.push(b.password);
     if (typeof b.username === 'string' && b.username) {
       out.push(Buffer.from(`${b.username}:${b.password}`, 'utf8').toString('base64'));
     }

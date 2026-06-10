@@ -423,6 +423,16 @@ describe('defaultAuthHeadersForRawProbe', () => {
     assert.deepStrictEqual(h, { authorization: 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64') });
   });
 
+  test('basic allows an empty password in username/password form', () => {
+    const h = defaultAuthHeadersForRawProbe({ auth: { type: 'basic', username: 'user', password: '' } });
+    assert.deepStrictEqual(h, { authorization: 'Basic dXNlcjo=' });
+  });
+
+  test('basic allows an empty password in credentials form', () => {
+    const h = defaultAuthHeadersForRawProbe({ auth: { type: 'basic', credentials: 'user:' } });
+    assert.deepStrictEqual(h, { authorization: 'Basic dXNlcjo=' });
+  });
+
   test('oauth → undefined (SDK fallback; refresh semantics unreplicable)', () => {
     const h = defaultAuthHeadersForRawProbe({
       auth: { type: 'oauth', tokens: { access_token: 'x', refresh_token: 'y', token_type: 'Bearer' } },
@@ -444,6 +454,20 @@ describe('defaultAuthHeadersForRawProbe', () => {
           auth: { type: 'basic', username: 'has:colon', password: 'test-fixture' },
         }),
       /must not contain colon/
+    );
+  });
+
+  test('basic credentials form rejects empty username', () => {
+    assert.throws(
+      () => defaultAuthHeadersForRawProbe({ auth: { type: 'basic', credentials: ':pass' } }),
+      /credentials must be in unencoded username:password form/
+    );
+  });
+
+  test('basic username/password form rejects empty username', () => {
+    assert.throws(
+      () => defaultAuthHeadersForRawProbe({ auth: { type: 'basic', username: '', password: 'pass' } }),
+      /username must be a non-empty string/
     );
   });
 
