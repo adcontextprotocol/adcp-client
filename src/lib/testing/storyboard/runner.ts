@@ -5733,7 +5733,7 @@ function normalizeBasicCredentials(input: BasicCredentialInput, fieldPrefix: str
     }
     assertSafeAuthHeaderPart(input.credentials, `${fieldPrefix}.credentials`);
     const colonIndex = input.credentials.indexOf(':');
-    if (colonIndex <= 0 || colonIndex >= input.credentials.length - 1) {
+    if (colonIndex <= 0) {
       throw new Error(`${fieldPrefix}.credentials must be in unencoded username:password form`);
     }
     return input.credentials;
@@ -5741,8 +5741,8 @@ function normalizeBasicCredentials(input: BasicCredentialInput, fieldPrefix: str
   if (typeof input.username !== 'string' || input.username.length === 0) {
     throw new Error(`${fieldPrefix}.username must be a non-empty string`);
   }
-  if (typeof input.password !== 'string' || input.password.length === 0) {
-    throw new Error(`${fieldPrefix}.password must be a non-empty string`);
+  if (typeof input.password !== 'string') {
+    throw new Error(`${fieldPrefix}.password must be a string`);
   }
   if (input.username.includes(':')) {
     throw new Error(`${fieldPrefix}.username must not contain colon (RFC 7617)`);

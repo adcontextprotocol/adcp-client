@@ -635,6 +635,23 @@ describe('default-invariants: context.no_secret_echo', () => {
     assert.strictEqual(out[0].passed, false, 'must catch a leaked base64 Basic header');
   });
 
+  test('catches the base64-encoded Authorization: Basic header for options.auth empty-password Basic', () => {
+    const user = 'fixtureusername';
+    const basicHeader = Buffer.from(`${user}:`, 'utf8').toString('base64');
+    const out = runEcho({ auth: basicAuth(user, '') }, { leaked: `Authorization: Basic ${basicHeader}` });
+    assert.strictEqual(out[0].passed, false, 'must catch a leaked empty-password Basic header');
+  });
+
+  test('catches the base64-encoded Authorization: Basic header for test_kit.auth.basic empty-password credentials', () => {
+    const user = 'fixtureusername';
+    const basicHeader = Buffer.from(`${user}:`, 'utf8').toString('base64');
+    const out = runEcho(
+      { test_kit: { auth: { basic: { credentials: `${user}:` } } } },
+      { leaked: `Authorization: Basic ${basicHeader}` }
+    );
+    assert.strictEqual(out[0].passed, false, 'must catch a leaked test-kit empty-password Basic header');
+  });
+
   test('does NOT extract basic-auth username alone (RFC-like: username is a public identifier)', () => {
     // Username is a public identifier — welcome messages, audit logs, and
     // "last login by X" displays all legitimately echo it. Extracting it

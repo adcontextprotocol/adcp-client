@@ -923,14 +923,14 @@ describe('storyboard runner: auth-override dispatch', () => {
         test_kit: {
           auth: {
             probe_task: 'list_creatives',
-            basic: { credentials: 'demo-user:demo-password' },
+            basic: { credentials: 'demo-user:' },
           },
         },
         _profile: { name: 'T', tools: ['list_creatives'] },
         _client: { getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }) },
       });
       assert.strictEqual(result.overall_passed, true, JSON.stringify(result.phases[0].steps[0]));
-      assert.strictEqual(seenAuth, `Basic ${Buffer.from('demo-user:demo-password').toString('base64')}`);
+      assert.strictEqual(seenAuth, `Basic ${Buffer.from('demo-user:').toString('base64')}`);
       assert.doesNotMatch(seenAuth, /^Bearer /);
     } finally {
       server.close();
