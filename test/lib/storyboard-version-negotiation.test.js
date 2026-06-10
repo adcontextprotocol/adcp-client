@@ -563,6 +563,76 @@ describe('storyboard runner AdCP version negotiation', () => {
     }
   });
 
+  test('explicit compliance version fails fast when no matching schema bundle is available', () => {
+    const { getExternalSchemaRootForCompliance } = require('../../dist/lib/testing/storyboard/index.js');
+    const missingVersion = '9.9.0-beta.1';
+
+    assert.throws(
+      () => getExternalSchemaRootForCompliance({ version: missingVersion }, missingVersion),
+      /--compliance-version 9\.9\.0-beta\.1 selected AdCP compliance version "9\.9\.0-beta\.1".*installed default schemas.*--schema-root/
+    );
+  });
+
+  test('ADCP_COMPLIANCE_DIR resolves sibling schema bundle for scoped validation', () => {
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-env-compliance-schema-'));
+    const complianceDir = path.join(tempRoot, 'package', 'compliance', 'cache', '9.9.0-beta.1');
+    const schemaRoot = path.join(tempRoot, 'package', 'dist', 'lib', 'schemas-data', '9.9.0-beta.1');
+    const oldComplianceDir = process.env.ADCP_COMPLIANCE_DIR;
+    const oldSchemaRoot = process.env.ADCP_SCHEMA_ROOT;
+    try {
+      delete process.env.ADCP_SCHEMA_ROOT;
+      process.env.ADCP_COMPLIANCE_DIR = complianceDir;
+      writeComplianceIndex(complianceDir, '9.9.0-beta.1');
+      writeGetProductsRequestSchema(schemaRoot, '9.9.0-beta.1', 'env-sibling');
+
+      const index = loadComplianceIndex({});
+
+      assert.strictEqual(index.adcp_version, '9.9.0-beta.1');
+      assert.strictEqual(getExternalSchemaRootForCompliance({}, index.adcp_version), schemaRoot);
+    } finally {
+      if (oldComplianceDir === undefined) delete process.env.ADCP_COMPLIANCE_DIR;
+      else process.env.ADCP_COMPLIANCE_DIR = oldComplianceDir;
+      if (oldSchemaRoot === undefined) delete process.env.ADCP_SCHEMA_ROOT;
+      else process.env.ADCP_SCHEMA_ROOT = oldSchemaRoot;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('ADCP_COMPLIANCE_DIR fails fast when matching schemas are unavailable', () => {
+    const {
+      getExternalSchemaRootForCompliance,
+      loadComplianceIndex,
+    } = require('../../dist/lib/testing/storyboard/index.js');
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-env-compliance-missing-schema-'));
+    const complianceDir = path.join(tempRoot, 'package', 'compliance', 'cache', '9.9.0-beta.1');
+    const oldComplianceDir = process.env.ADCP_COMPLIANCE_DIR;
+    const oldSchemaRoot = process.env.ADCP_SCHEMA_ROOT;
+    try {
+      delete process.env.ADCP_SCHEMA_ROOT;
+      process.env.ADCP_COMPLIANCE_DIR = complianceDir;
+      writeComplianceIndex(complianceDir, '9.9.0-beta.1');
+
+      const index = loadComplianceIndex({});
+
+      assert.throws(
+        () => getExternalSchemaRootForCompliance({}, index.adcp_version),
+        /compliance cache .* selected AdCP compliance version "9\.9\.0-beta\.1".*installed default schemas.*--schema-root/
+      );
+    } finally {
+      if (oldComplianceDir === undefined) delete process.env.ADCP_COMPLIANCE_DIR;
+      else process.env.ADCP_COMPLIANCE_DIR = oldComplianceDir;
+      if (oldSchemaRoot === undefined) delete process.env.ADCP_SCHEMA_ROOT;
+      else process.env.ADCP_SCHEMA_ROOT = oldSchemaRoot;
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('latest compliance metadata is repaired from schemaRoot index before storyboard annotation', () => {
     const {
       applyAdcpVersionRunOptions,
