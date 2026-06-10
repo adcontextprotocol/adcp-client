@@ -48,6 +48,33 @@ async function startCaptureAgent() {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    if (rpc.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { tools: [{ name: 'get_products', inputSchema: { type: 'object' } }] },
+        })
+      );
+      return;
+    }
     if (rpc.params?.name) {
       seen.push({ name: rpc.params.name, args: rpc.params.arguments });
     }

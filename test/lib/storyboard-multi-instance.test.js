@@ -8,9 +8,9 @@
  * is exercised in CI.
  *
  * These tests stand up two local HTTP servers as fake MCP agents. Steps use
- * `auth: 'none'` so dispatch goes through `rawMcpProbe` (no MCP SDK session
- * handshake) — sufficient for the round-robin and attribution assertions,
- * and keeps the tests free of MCP initialization concerns.
+ * `auth: 'none'`, but the runner still initializes MCP transports before
+ * dispatch. The fake agents below implement that handshake and only record
+ * actual tool calls for round-robin attribution assertions.
  */
 
 const { describe, test, beforeEach, afterEach } = require('node:test');
@@ -25,6 +25,37 @@ const { closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 // Fake agent harness
 // ────────────────────────────────────────────────────────────
 
+function handleMcpHandshake(rpc, res, tools) {
+  if (rpc.method === 'initialize') {
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+      })
+    );
+    return true;
+  }
+  if (rpc.method === 'notifications/initialized') {
+    res.writeHead(202);
+    res.end();
+    return true;
+  }
+  if (rpc.method === 'tools/list') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { tools: tools.map(name => ({ name, inputSchema: { type: 'object' } })) },
+      })
+    );
+    return true;
+  }
+  return false;
+}
+
 /**
  * Start a fake MCP agent on an ephemeral port. `state` is a Map the handler
  * writes to for `create_*` tasks and reads from for `get_*` tasks — inject
@@ -37,6 +68,9 @@ async function startFakeAgent({ state, label }) {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (handleMcpHandshake(rpc, res, ['__test_write', '__test_read', '__test_probe', 'get_adcp_capabilities'])) {
+      return;
+    }
     const toolName = rpc.params?.name;
     const args = rpc.params?.arguments ?? {};
     requests.push({ tool: toolName, args, label });
@@ -382,6 +416,7 @@ describe('runStoryboard: multi-instance multi-pass', () => {
         const chunks = [];
         for await (const c of req) chunks.push(c);
         const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (handleMcpHandshake(rpc, res, ['__test_probe', 'get_adcp_capabilities'])) return;
         const tool = rpc.params?.name;
         if (tool === 'get_adcp_capabilities') {
           res.writeHead(200, { 'content-type': 'application/json' }).end(

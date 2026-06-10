@@ -21,6 +21,37 @@ const http = require('http');
 
 const { applyBrandInvariant, runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
+function handleMcpHandshake(rpc, res, tools) {
+  if (rpc.method === 'initialize') {
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+      })
+    );
+    return true;
+  }
+  if (rpc.method === 'notifications/initialized') {
+    res.writeHead(202);
+    res.end();
+    return true;
+  }
+  if (rpc.method === 'tools/list') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { tools: tools.map(name => ({ name, inputSchema: { type: 'object' } })) },
+      })
+    );
+    return true;
+  }
+  return false;
+}
+
 // ────────────────────────────────────────────────────────────
 // Unit: applyBrandInvariant omit_account flag
 // ────────────────────────────────────────────────────────────
@@ -87,6 +118,7 @@ describe('runStoryboard: omit_account wire-level behavior', () => {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (handleMcpHandshake(rpc, res, ['create_media_buy'])) return;
       seen.push({ name: rpc.params.name, args: rpc.params.arguments });
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(
@@ -159,6 +191,7 @@ describe('runStoryboard: omit_account wire-level behavior', () => {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (handleMcpHandshake(rpc, res, ['create_media_buy'])) return;
       seen.push({ name: rpc.params.name, args: rpc.params.arguments });
       res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
       res.end('{}');

@@ -355,7 +355,9 @@ function failedTaskResult(message: string): TaskResult {
 
 function taskResultFromPostFailure(posted: RawJsonRpcPostResult): TaskResult {
   if (posted.parseError) {
-    return failedTaskResult(`Non-JSON response body (content-type: ${posted.httpResult.headers['content-type'] ?? 'unknown'}).`);
+    return failedTaskResult(
+      `Non-JSON response body (content-type: ${posted.httpResult.headers['content-type'] ?? 'unknown'}).`
+    );
   }
   if (posted.parsed) return taskResultFromRpc(posted.httpResult, posted.parsed);
   return failedTaskResult(posted.httpResult.error ?? `HTTP ${posted.httpResult.status}`);
@@ -402,7 +404,12 @@ export async function rawMcpProbe(options: {
     allowPrivateIp,
     responseId: initializeId,
   });
-  if (initialize.httpResult.error || initialize.httpResult.status >= 400 || !initialize.parsed || initialize.parsed.error) {
+  if (
+    initialize.httpResult.error ||
+    initialize.httpResult.status >= 400 ||
+    !initialize.parsed ||
+    initialize.parsed.error
+  ) {
     return {
       httpResult: initialize.httpResult,
       taskResult: taskResultFromPostFailure(initialize),
@@ -437,7 +444,12 @@ export async function rawMcpProbe(options: {
     protocolVersion: negotiatedProtocolVersion,
     allowEmptyBody: true,
   });
-  if (initialized.httpResult.error || initialized.httpResult.status >= 400 || initialized.parseError || initialized.parsed?.error) {
+  if (
+    initialized.httpResult.error ||
+    initialized.httpResult.status >= 400 ||
+    initialized.parseError ||
+    initialized.parsed?.error
+  ) {
     return {
       httpResult: initialized.httpResult,
       taskResult: taskResultFromPostFailure(initialized),

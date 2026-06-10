@@ -547,7 +547,11 @@ describe('rawMcpProbe', () => {
           JSON.stringify({
             jsonrpc: '2.0',
             id: rpc.id,
-            result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'strict', version: '1.0.0' } },
+            result: {
+              protocolVersion: '2025-11-25',
+              capabilities: {},
+              serverInfo: { name: 'strict', version: '1.0.0' },
+            },
           })
         );
         return;
@@ -1362,6 +1366,22 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
           );
         }
         if (auth === `Bearer ${validApiKey}`) {
+          if (body.method === 'initialize') {
+            return reply(200, {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                protocolVersion: '2025-11-25',
+                capabilities: {},
+                serverInfo: { name: 'auth-test-agent', version: '1.0.0' },
+              },
+            });
+          }
+          if (body.method === 'notifications/initialized') {
+            res.writeHead(202);
+            res.end();
+            return;
+          }
           return reply(200, {
             jsonrpc: '2.0',
             id: body.id,
