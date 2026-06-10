@@ -11,6 +11,8 @@ export {
   clearPreviewCache,
   type PreviewResult,
   type BatchPreviewOptions,
+  type PreviewCacheBackend,
+  type PreviewCacheEntry,
 } from './preview-utils';
 
 // Configuration constants

@@ -26,22 +26,68 @@ export interface BatchPreviewOptions {
   cacheTtl?: number;
   /** Whether to skip cache and force fresh previews (defaults to false) */
   skipCache?: boolean;
+  /**
+   * Cache backend for preview results.
+   *
+   * The default backend is process-local memory. It is safe for tests,
+   * local development, and single-process CLIs, but it is not shared
+   * across pods and does not survive restarts. Production services that
+   * cache preview URLs should provide a shared backend such as Redis or
+   * Postgres, and the cached URL itself must still resolve to durable
+   * storage rather than process-local assets.
+   */
+  cacheBackend?: PreviewCacheBackend;
 }
 
 /**
  * Cache entry for preview results
  */
-interface CacheEntry {
+export interface PreviewCacheEntry {
   previewUrl: string;
   previewId: string;
   timestamp: number;
 }
 
 /**
- * Simple in-memory cache for preview results
- * Key format: `${itemType}:${formatId.agent_url}:${formatId.id}:${manifestHash}`
+ * Pluggable cache backend for preview results.
+ *
+ * This cache stores references returned by `preview_creative`; it is not
+ * an asset store. Preview URLs placed in any cache must already be
+ * durable across load-balancer hops, pod restarts, and later refinement
+ * calls.
  */
-const previewCache = new Map<string, CacheEntry>();
+export interface PreviewCacheBackend {
+  get(cacheKey: string): PreviewCacheEntry | null | undefined | Promise<PreviewCacheEntry | null | undefined>;
+  set(cacheKey: string, entry: PreviewCacheEntry): void | Promise<void>;
+  delete?(cacheKey: string): void | Promise<void>;
+  clear?(): void | Promise<void>;
+}
+
+/**
+ * Process-local in-memory cache for preview results.
+ *
+ * Development-only default: this map is not multi-pod-safe and does not
+ * survive process restarts. It must not be used as the backing store for
+ * MCPUI preview assets in production.
+ *
+ * Key format: `${formatId.agent_url}:${formatId.id}:${manifestHash}`
+ */
+const previewCache = new Map<string, PreviewCacheEntry>();
+
+const defaultPreviewCacheBackend: PreviewCacheBackend = {
+  get(cacheKey) {
+    return previewCache.get(cacheKey);
+  },
+  set(cacheKey, entry) {
+    previewCache.set(cacheKey, entry);
+  },
+  delete(cacheKey) {
+    previewCache.delete(cacheKey);
+  },
+  clear() {
+    previewCache.clear();
+  },
+};
 
 /**
  * Generate a cache key for a preview request
@@ -59,13 +105,17 @@ function getCacheKey(formatId: FormatID, manifest: any): string {
 /**
  * Get cached preview if available and not expired
  */
-function getCachedPreview(cacheKey: string, ttl: number): CacheEntry | null {
-  const entry = previewCache.get(cacheKey);
+async function getCachedPreview(
+  cacheBackend: PreviewCacheBackend,
+  cacheKey: string,
+  ttl: number
+): Promise<PreviewCacheEntry | null> {
+  const entry = await cacheBackend.get(cacheKey);
   if (!entry) return null;
 
   const now = Date.now();
   if (now - entry.timestamp > ttl) {
-    previewCache.delete(cacheKey);
+    await cacheBackend.delete?.(cacheKey);
     return null;
   }
 
@@ -75,8 +125,13 @@ function getCachedPreview(cacheKey: string, ttl: number): CacheEntry | null {
 /**
  * Set cached preview
  */
-function setCachedPreview(cacheKey: string, previewUrl: string, previewId: string): void {
-  previewCache.set(cacheKey, {
+async function setCachedPreview(
+  cacheBackend: PreviewCacheBackend,
+  cacheKey: string,
+  previewUrl: string,
+  previewId: string
+): Promise<void> {
+  await cacheBackend.set(cacheKey, {
     previewUrl,
     previewId,
     timestamp: Date.now(),
@@ -84,10 +139,10 @@ function setCachedPreview(cacheKey: string, previewUrl: string, previewId: strin
 }
 
 /**
- * Clear all cached previews
+ * Clear all previews from the default process-local cache.
  */
 export function clearPreviewCache(): void {
-  previewCache.clear();
+  defaultPreviewCacheBackend.clear?.();
 }
 
 /**
@@ -177,6 +232,7 @@ export async function batchPreviewFormats(
 ): Promise<PreviewResult[]> {
   const cacheTtl = options.cacheTtl ?? 3600000; // 1 hour default
   const skipCache = options.skipCache ?? false;
+  const cacheBackend = options.cacheBackend ?? defaultPreviewCacheBackend;
 
   // Collect all formats that have format_card manifests
   const previewRequests: {
@@ -189,20 +245,20 @@ export async function batchPreviewFormats(
 
   const results: PreviewResult[] = [];
 
-  formats.forEach(format => {
+  for (const format of formats) {
     if (format.format_card) {
       const cacheKey = getCacheKey(format.format_card.format_id, format.format_card.manifest);
 
       // Check cache first
       if (!skipCache) {
-        const cached = getCachedPreview(cacheKey, cacheTtl);
+        const cached = await getCachedPreview(cacheBackend, cacheKey, cacheTtl);
         if (cached) {
           results.push({
             item: format,
             previewUrl: cached.previewUrl,
             previewId: cached.previewId,
           });
-          return;
+          continue;
         }
       }
 
@@ -219,7 +275,7 @@ export async function batchPreviewFormats(
         item: format,
       });
     }
-  });
+  }
 
   // If all were cached or none have format_card, return early
   if (previewRequests.length === 0) {
@@ -270,7 +326,7 @@ export async function batchPreviewFormats(
 
           if (previewUrl) {
             // Cache the result
-            setCachedPreview(req.cacheKey, previewUrl, previewId);
+            await setCachedPreview(cacheBackend, req.cacheKey, previewUrl, previewId);
 
             results.push({
               item: req.format,

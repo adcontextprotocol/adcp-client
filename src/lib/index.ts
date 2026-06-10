@@ -1182,6 +1182,15 @@ export {
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
+export {
+  batchPreviewProducts,
+  batchPreviewFormats,
+  clearPreviewCache,
+  type PreviewResult,
+  type BatchPreviewOptions,
+  type PreviewCacheBackend,
+  type PreviewCacheEntry,
+} from './utils';
 export { detectProtocol, detectProtocolWithTimeout } from './utils';
 export { A2A_CARD_PATHS, isAgentCardPath, isWellKnownAgentCardUrl, buildCardUrls, stripAgentCardPath } from './utils';
 

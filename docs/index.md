@@ -17,6 +17,7 @@ Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript
 - [Validate Your Agent](./guides/VALIDATE-YOUR-AGENT.md) — five-command checklist + storyboard runner
 - [Account Resolution](./guides/account-resolution.md) — `'explicit'` vs `'implicit'` vs `'derived'` mode selection
 - [ctx_metadata Safety](./guides/CTX-METADATA-SAFETY.md) — don't store secrets there
+- [Preview Asset Durability](./guides/PREVIEW-ASSET-DURABILITY.md) — durable MCPUI preview URLs for generated creative assets
 - [Signing Guide](./guides/SIGNING-GUIDE.md) — RFC 9421 request signing + JWKS
 - [Conformance](./guides/CONFORMANCE.md) — property-based fuzzing against bundled JSON schemas
 - Worked reference adapters: `examples/hello_*` family (pick by specialism)
