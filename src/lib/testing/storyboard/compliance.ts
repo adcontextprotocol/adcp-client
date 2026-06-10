@@ -250,9 +250,7 @@ function assertComplianceSchemaBundleAvailable(
   complianceDir: string | undefined
 ): void {
   if (hasSchemaBundle(adcpVersion)) return;
-  const selector = options.version
-    ? `--compliance-version ${options.version}`
-    : `compliance cache ${complianceDir}`;
+  const selector = options.version ? `--compliance-version ${options.version}` : `compliance cache ${complianceDir}`;
   const bundleKey = resolveBundleKey(adcpVersion);
   throw new Error(
     `${selector} selected AdCP compliance version "${adcpVersion}", but no matching schema bundle was found. ` +
