@@ -1,5 +1,25 @@
 # Changelog
 
+## 9.0.0-beta.28
+
+### Minor Changes
+
+- 0ff96d8: feat(storyboard): echo authored validation ids in runner results
+
+  Storyboard validation entries may now declare stable `id` values, and the runner echoes those IDs unchanged on authored `ValidationResult` output across passing, failing, advisory, not-applicable, and cross-response checks. Compliance failure summaries preserve the first failed validation's ID, while runner-synthesized validations continue to omit IDs.
+
+### Patch Changes
+
+- fb802e9: Document durable MCPUI preview asset patterns and add a pluggable cache backend for batch preview helpers.
+- fdd5fea: Recognize the `content-standards` specialism as support for governance content standards feature gates and include declared specialisms in capability diagnostics.
+- 43a98bf: Throw a typed `ProtocolFeatureUnsupportedError` before schema validation when a client pinned below AdCP 3.1 sends 3.1-only discovery controls such as `get_signals` `discovery_mode: "wholesale"` or discovery `push_notification_config`, including `push_notification_config` injected from `webhookUrlTemplate`. This protocol preflight runs independently of request schema validation. The error remains catch-compatible with `FeatureUnsupportedError`, exposes protocol code `UNSUPPORTED_FEATURE`, and includes `required_version` and `capability_path` details for buyer recovery.
+- 1e2e9c7: Allow storyboard Basic-auth probes to use RFC 7617-valid empty passwords.
+- a5b2cd6: Fail fast when `adcp storyboard run --compliance-version` selects a compliance bundle whose matching schema bundle is unavailable.
+
+  The storyboard runner now refuses to proceed with installed default schemas in that case and points operators at `--schema-root` / `ADCP_SCHEMA_ROOT` or an SDK install that includes the requested schema bundle.
+
+- f582231: Fix storyboard webhook placeholder resolution for runner-provided requests and make raw MCP security probes complete the Streamable HTTP initialization boundary before dispatching tool calls.
+
 ## 9.0.0-beta.27
 
 ### Minor Changes
