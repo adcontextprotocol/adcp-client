@@ -30,6 +30,26 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function maybeHandleMcpHandshake(rpc, res) {
+  if (rpc.method === 'initialize') {
+    res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+    res.end(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: rpc.id,
+        result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+      })
+    );
+    return true;
+  }
+  if (rpc.method === 'notifications/initialized') {
+    res.writeHead(202);
+    res.end();
+    return true;
+  }
+  return false;
+}
+
 // ────────────────────────────────────────────────────────────
 // isPrivateIp
 // ────────────────────────────────────────────────────────────
@@ -383,10 +403,12 @@ describe('rawMcpProbe', () => {
   it('sends JSON-RPC tools/call and surfaces HTTP status + body', async () => {
     let seenBody, seenAuth;
     const server = http.createServer(async (req, res) => {
-      seenAuth = req.headers.authorization ?? null;
       const chunks = [];
       for await (const c of req) chunks.push(c);
-      seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      seenAuth = req.headers.authorization ?? null;
+      seenBody = rpc;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -415,6 +437,140 @@ describe('rawMcpProbe', () => {
     }
   });
 
+  it('initializes the MCP session before dispatching the auth probe tool call', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({
+        method: rpc.method,
+        session: req.headers['mcp-session-id'] ?? null,
+        protocol: req.headers['mcp-protocol-version'] ?? null,
+      });
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'sess-raw-probe' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            result: {
+              protocolVersion: '2025-06-18',
+              capabilities: {},
+              serverInfo: { name: 'strict', version: '1.0.0' },
+            },
+          })
+        );
+        return;
+      }
+      if (rpc.method === 'notifications/initialized') {
+        res.writeHead(
+          req.headers['mcp-session-id'] === 'sess-raw-probe' && req.headers['mcp-protocol-version'] === '2025-06-18'
+            ? 202
+            : 400
+        );
+        res.end();
+        return;
+      }
+      if (req.headers['mcp-session-id'] !== 'sess-raw-probe' || req.headers['mcp-protocol-version'] !== '2025-06-18') {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32002, message: 'not initialized' } }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { structuredContent: { ok: true } },
+        })
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: {},
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.deepStrictEqual(taskResult.data, { ok: true });
+      assert.deepStrictEqual(
+        seen.map(s => s.method),
+        ['initialize', 'notifications/initialized', 'tools/call']
+      );
+      assert.strictEqual(seen[2].session, 'sess-raw-probe');
+      assert.strictEqual(seen[1].protocol, '2025-06-18');
+      assert.strictEqual(seen[2].protocol, '2025-06-18');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('stops before notifications/initialized when initialize returns a JSON-RPC error', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push(rpc.method);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32600, message: 'bad initialize' } }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: {},
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.match(taskResult.error, /bad initialize/);
+      assert.deepStrictEqual(seen, ['initialize']);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('stops before tools/call when notifications/initialized is rejected', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push(rpc.method);
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'sess-raw-probe' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'strict', version: '1.0.0' } },
+          })
+        );
+        return;
+      }
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32002, message: 'initialized rejected' } }));
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: {},
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 400);
+      assert.match(taskResult.error, /initialized rejected/);
+      assert.deepStrictEqual(seen, ['initialize', 'notifications/initialized']);
+    } finally {
+      server.close();
+    }
+  });
+
   it('surfaces 401 + WWW-Authenticate from the agent', async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(401, {
@@ -433,6 +589,35 @@ describe('rawMcpProbe', () => {
       });
       assert.strictEqual(httpResult.status, 401);
       assert.match(httpResult.headers['www-authenticate'], /Bearer realm/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('preserves non-JSON MCP auth responses with a stable synthetic task error', async () => {
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      res.writeHead(401, {
+        'content-type': 'text/plain',
+        'www-authenticate': 'Bearer realm="adcp"',
+      });
+      res.end('plain unauthorized');
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: {},
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 401);
+      assert.strictEqual(httpResult.body, 'plain unauthorized');
+      assert.match(httpResult.headers['www-authenticate'], /Bearer/);
+      assert.match(taskResult.error, /Non-JSON response body/);
     } finally {
       server.close();
     }
@@ -485,10 +670,11 @@ describe('rawMcpProbe', () => {
     // MCP server).
     let seenAccept;
     const server = http.createServer(async (req, res) => {
-      seenAccept = req.headers.accept ?? '';
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(seenBody, res)) return;
+      seenAccept = req.headers.accept ?? '';
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end(
         `event: message\ndata: ${JSON.stringify({
@@ -526,6 +712,7 @@ describe('rawMcpProbe', () => {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(seenBody, res)) return;
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       // First frame: a server-initiated progress notification (no `id` field,
       // so it can never match a request id).
@@ -783,6 +970,7 @@ describe('storyboard runner: auth-override dispatch', () => {
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
       seenTool = rpc.params.name;
       res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
       res.end('{}');
@@ -865,10 +1053,11 @@ describe('storyboard runner: auth-override dispatch', () => {
   it('step auth.type=basic sends Basic from test_kit.auth.basic credentials', async () => {
     let seenAuth = null;
     const server = http.createServer(async (req, res) => {
-      seenAuth = req.headers.authorization ?? null;
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      seenAuth = req.headers.authorization ?? null;
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -940,10 +1129,11 @@ describe('storyboard runner: auth-override dispatch', () => {
   it('step auth.type=basic supports explicit username/password and random-invalid credentials', async () => {
     const observed = [];
     const server = http.createServer(async (req, res) => {
-      observed.push(req.headers.authorization ?? null);
       const chunks = [];
       for await (const c of req) chunks.push(c);
       const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (maybeHandleMcpHandshake(rpc, res)) return;
+      observed.push(req.headers.authorization ?? null);
       const isFirst = observed.length === 1;
       res.writeHead(isFirst ? 200 : 401, {
         'content-type': 'application/json',

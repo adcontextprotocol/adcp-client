@@ -28,6 +28,32 @@ function closeServer(server) {
   });
 }
 
+function createRecordingMcpServer(seen, handleTool) {
+  return http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+    handleTool(rpc, res);
+  });
+}
+
 describe('applyIdempotencyInvariant', () => {
   test('injects a UUID v4 on mutating tasks when the request omits one', () => {
     const result = applyIdempotencyInvariant({ name: 'p1' }, 'create_property_list', {});
@@ -98,11 +124,7 @@ describe('applyIdempotencyInvariant', () => {
 describe('runStoryboard: idempotency_key invariant on the wire', { concurrency: false }, () => {
   it('auto-injects idempotency_key on mutating steps whose sample_request omits it, including untyped tasks (acquire_rights) that fall through to executeTask', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+    const server = createRecordingMcpServer(seen, (_rpc, res) => {
       res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
       res.end('{}');
     });
@@ -185,13 +207,75 @@ describe('runStoryboard: idempotency_key invariant on the wire', { concurrency: 
     }
   });
 
+  it('resolves runner webhook placeholders on a mutating options.request before idempotency dispatch', async () => {
+    const seen = [];
+    const server = createRecordingMcpServer(seen, (_rpc, res) => {
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+      res.end('{}');
+    });
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'idempotency_webhook_options_request_sb',
+        version: '1.0.0',
+        title: 'Idempotency webhook invariant',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'mutating',
+            steps: [
+              {
+                id: 'create_buy',
+                title: 'mutating options request resolves webhook before idempotency dispatch',
+                task: 'create_media_buy',
+                auth: 'none',
+                sample_request: {
+                  start_time: '2099-10-01T00:00:00Z',
+                  end_time: '2099-12-31T23:59:59Z',
+                  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', pricing_option_id: 'cpm-1', budget: 100 }],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['create_media_buy'],
+        webhook_receiver: { mode: 'ephemeral' },
+        request: {
+          start_time: '2099-10-01T00:00:00Z',
+          end_time: '2099-12-31T23:59:59Z',
+          push_notification_config: { url: '{{runner.webhook_url:create_buy}}' },
+        },
+        _profile: { name: 'Test', tools: ['create_media_buy'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 1);
+      assert.match(String(seen[0].args.idempotency_key), UUID_V4);
+      const url = seen[0].args.push_notification_config?.url;
+      assert.ok(typeof url === 'string', 'push_notification_config.url must be forwarded');
+      assert.ok(/\/step\/create_buy\/[0-9a-f-]{36}$/i.test(url), `expected expanded runner webhook URL; got ${url}`);
+      assert.ok(!url.includes('{{runner.'), 'runner webhook token must not reach the agent');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it('injects on expect_error mutating steps so storyboards testing GOVERNANCE_DENIED / UNAUTHORIZED / brand_mismatch reach the error path they named', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+    const server = createRecordingMcpServer(seen, (rpc, res) => {
       res.writeHead(403, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -254,11 +338,7 @@ describe('runStoryboard: idempotency_key invariant on the wire', { concurrency: 
 
   it('leaves idempotency_key absent when step.omit_idempotency_key=true so the server sees a missing-key request', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+    const server = createRecordingMcpServer(seen, (rpc, res) => {
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({

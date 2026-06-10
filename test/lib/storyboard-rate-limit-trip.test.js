@@ -464,6 +464,30 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
     assert.equal(result.response_record.payload.trip_request.buyer_ref, 'override-ref');
   });
 
+  test('unresolved runner tokens in the rate-limit target request skip before dispatch', async () => {
+    const client = {
+      executeTask: async () => {
+        throw new Error('should not dispatch unresolved runner tokens');
+      },
+    };
+
+    const result = await runTripStep(client, makeStoryboard(), {
+      request: {
+        buyer_ref: 'override-ref',
+        packages: [{ product_id: 'override-prod', budget: 1234 }],
+        push_notification_config: {
+          url: 'https://hooks.example/{{runner.webhook_url:trip}}/{{prior_step.missing.operation_id}}',
+        },
+      },
+    });
+
+    assert.equal(result.passed, false);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'prerequisite_failed');
+    assert.match(result.skip.detail, /runner\.webhook_url:trip/);
+    assert.match(result.skip.detail, /prior_step\.missing\.operation_id/);
+  });
+
   test('expect_error trip target preserves authored sample request without enrichment', async () => {
     const calls = [];
     const client = {
