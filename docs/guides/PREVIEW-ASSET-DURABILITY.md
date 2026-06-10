@@ -85,17 +85,27 @@ Production services that cache preview results should pass a shared
 `PreviewCacheBackend`:
 
 ```ts
-import type { PreviewCacheBackend } from '@adcp/sdk';
+import { batchPreviewFormats, type PreviewCacheBackend } from '@adcp/sdk';
+import type { RedisClientType } from 'redis';
 
-const previewCache: PreviewCacheBackend = {
-  get: key => redis.get(key).then(raw => (raw ? JSON.parse(raw) : null)),
-  set: async (key, entry) => {
-    await redis.set(key, JSON.stringify(entry), { EX: 3600 });
-  },
-  delete: async key => {
-    await redis.del(key);
-  },
-};
+function redisPreviewCache(redis: RedisClientType): PreviewCacheBackend {
+  return {
+    get: key => redis.get(key).then(raw => (raw ? JSON.parse(raw) : null)),
+    set: async (key, entry) => {
+      const ttlSeconds = entry.expiresAt
+        ? Math.max(1, Math.floor((Date.parse(entry.expiresAt) - Date.now()) / 1000))
+        : 3600;
+      await redis.set(key, JSON.stringify(entry), { EX: ttlSeconds });
+    },
+    delete: async key => {
+      await redis.del(key);
+    },
+  };
+}
+
+const previews = await batchPreviewFormats(formats, creativeAgentClient, {
+  cacheBackend: redisPreviewCache(redis),
+});
 ```
 
 Only cache references that already resolve durably. If the cached `previewUrl`
@@ -112,9 +122,9 @@ For `urlRender` and `bothRender`, make sure `preview_url` is backed by a durable
 route:
 
 ```ts
-import { urlRender } from '@adcp/sdk';
+import { previewCreative, urlRender } from '@adcp/sdk';
 
-return {
+return previewCreative.single({
   previews: [
     {
       preview_id: variant.id,
@@ -127,7 +137,7 @@ return {
       ],
     },
   ],
-};
+});
 ```
 
 The route should be able to resolve `variant.assetId` from shared storage from

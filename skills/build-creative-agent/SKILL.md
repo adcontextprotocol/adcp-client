@@ -53,7 +53,7 @@ Both run with `NoAccountCtx<TCtxMeta>` — they don't carry an authenticated acc
 
 `preview_creative` should return `urlRender` or `bothRender`, **not `htmlRender` alone**. The creative-template storyboard asserts `previews[0].renders[0].preview_url` is renderable. If your platform can host a preview URL, use `urlRender`. If you only have inline HTML, use `bothRender` (emit both `preview_url` and `preview_html`).
 
-Preview URLs must resolve from durable storage in production; do not back MCPUI preview links with pod-local in-memory maps except in local demos. See [`docs/guides/PREVIEW-ASSET-DURABILITY.md`](../../docs/guides/PREVIEW-ASSET-DURABILITY.md).
+Preview URLs must resolve from durable storage in production; do not back MCPUI preview links with pod-local in-memory maps except in local demos. If you fork `hello_creative_adapter_template.ts`, replace the mock upstream `preview_url` plumbing with a route that reads preview bytes and session metadata from shared storage before shipping. See [`docs/guides/PREVIEW-ASSET-DURABILITY.md`](../../docs/guides/PREVIEW-ASSET-DURABILITY.md).
 
 ## Specialism deltas at a glance
 

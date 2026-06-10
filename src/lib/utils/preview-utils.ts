@@ -46,6 +46,8 @@ export interface PreviewCacheEntry {
   previewUrl: string;
   previewId: string;
   timestamp: number;
+  /** ISO 8601 timestamp from `preview_creative.expires_at`, when provided. */
+  expiresAt?: string;
 }
 
 /**
@@ -102,6 +104,12 @@ function getCacheKey(formatId: FormatID, manifest: any): string {
   return `${formatId.agent_url}:${formatId.id}:${manifestHash}`;
 }
 
+function hasExpiredAt(expiresAt: string | undefined, now: number): boolean {
+  if (!expiresAt) return false;
+  const expiresAtMs = Date.parse(expiresAt);
+  return Number.isNaN(expiresAtMs) ? false : expiresAtMs <= now;
+}
+
 /**
  * Get cached preview if available and not expired
  */
@@ -114,7 +122,7 @@ async function getCachedPreview(
   if (!entry) return null;
 
   const now = Date.now();
-  if (now - entry.timestamp > ttl) {
+  if (now - entry.timestamp > ttl || hasExpiredAt(entry.expiresAt, now)) {
     await cacheBackend.delete?.(cacheKey);
     return null;
   }
@@ -129,11 +137,13 @@ async function setCachedPreview(
   cacheBackend: PreviewCacheBackend,
   cacheKey: string,
   previewUrl: string,
-  previewId: string
+  previewId: string,
+  expiresAt?: string
 ): Promise<void> {
   await cacheBackend.set(cacheKey, {
     previewUrl,
     previewId,
+    expiresAt,
     timestamp: Date.now(),
   });
 }
@@ -251,7 +261,12 @@ export async function batchPreviewFormats(
 
       // Check cache first
       if (!skipCache) {
-        const cached = await getCachedPreview(cacheBackend, cacheKey, cacheTtl);
+        let cached: PreviewCacheEntry | null = null;
+        try {
+          cached = await getCachedPreview(cacheBackend, cacheKey, cacheTtl);
+        } catch {
+          cached = null;
+        }
         if (cached) {
           results.push({
             item: format,
@@ -325,14 +340,16 @@ export async function batchPreviewFormats(
           const previewId = preview.preview_id;
 
           if (previewUrl) {
-            // Cache the result
-            await setCachedPreview(cacheBackend, req.cacheKey, previewUrl, previewId);
-
             results.push({
               item: req.format,
               previewUrl,
               previewId,
             });
+            try {
+              await setCachedPreview(cacheBackend, req.cacheKey, previewUrl, previewId, responseData.expires_at);
+            } catch {
+              // Preview cache is an accelerator; successful previews should still return on cache write failures.
+            }
           } else {
             results.push({
               item: req.format,

@@ -274,6 +274,7 @@
     "docs/llms.txt",
     "docs/guides/BUILD-AN-AGENT.md",
     "docs/guides/CANONICAL-REFERENCE-RESOLVER.md",
+    "docs/guides/PREVIEW-ASSET-DURABILITY.md",
     "examples/**/*",
     "AGENTS.md",
     "README.md",
