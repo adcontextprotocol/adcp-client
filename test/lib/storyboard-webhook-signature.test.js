@@ -56,6 +56,39 @@ async function startSignedPublisher({ signerKey, tag } = {}) {
     const toolName = rpc.params?.name;
     const args = rpc.params?.arguments ?? {};
 
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            serverInfo: { name: 'signed-webhook-test-agent', version: '1.0.0' },
+          },
+        })
+      );
+      return;
+    }
+
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202).end();
+      return;
+    }
+
+    if (rpc.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: {
+            tools: [{ name: '__test_fire_webhook', inputSchema: { type: 'object' } }],
+          },
+        })
+      );
+      return;
+    }
+
     if (toolName === '__test_fire_webhook') {
       const url = args.push_notification_config?.url;
       const body = JSON.stringify({

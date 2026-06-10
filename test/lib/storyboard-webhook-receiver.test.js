@@ -257,6 +257,33 @@ async function startFakePublisher(config = {}) {
       res.writeHead(400).end();
       return;
     }
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    if (rpc.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { tools: [{ name: '__test_fire_webhook', inputSchema: { type: 'object' } }] },
+        })
+      );
+      return;
+    }
     const toolName = rpc.params?.name;
     const args = rpc.params?.arguments ?? {};
 

@@ -12,6 +12,7 @@
  *   prior steps that carried `contributes_to`.
  */
 import { randomBytes } from 'crypto';
+import { LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '@modelcontextprotocol/sdk/types.js';
 import {
   ssrfSafeFetch,
   decodeBodyAsJsonOrText,
@@ -188,21 +189,186 @@ function base64url(buf: Buffer): string {
 // ---------------------------------------------------------------------------
 
 let probeRequestId = 0;
+const MCP_SESSION_ID_HEADER = 'mcp-session-id';
+const MCP_PROTOCOL_VERSION_HEADER = 'mcp-protocol-version';
+
+type JsonRpcEnvelope = {
+  jsonrpc: '2.0';
+  id?: number;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: { structuredContent?: unknown; content?: unknown; isError?: boolean; protocolVersion?: string };
+  error?: { message?: string; code?: number };
+};
+
+interface RawJsonRpcPostResult {
+  httpResult: HttpProbeResult;
+  parsed?: JsonRpcEnvelope;
+  parseError?: boolean;
+}
+
+async function postRawMcpJsonRpc(options: {
+  agentUrl: string;
+  envelope: Record<string, unknown>;
+  headers: Record<string, string>;
+  allowPrivateIp: boolean;
+  sessionId?: string;
+  protocolVersion?: string;
+  responseId?: number;
+  parseBody?: boolean;
+  allowEmptyBody?: boolean;
+}): Promise<RawJsonRpcPostResult> {
+  const {
+    agentUrl,
+    envelope,
+    headers,
+    allowPrivateIp,
+    sessionId,
+    protocolVersion,
+    responseId,
+    parseBody = true,
+    allowEmptyBody = false,
+  } = options;
+  const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
+  try {
+    const res = await ssrfSafeFetch(agentUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        ...withoutMcpSessionHeaders(headers),
+        ...(sessionId ? { [MCP_SESSION_ID_HEADER]: sessionId } : {}),
+        ...(protocolVersion ? { [MCP_PROTOCOL_VERSION_HEADER]: protocolVersion } : {}),
+      },
+      body: JSON.stringify(envelope),
+      allowPrivateIp,
+    });
+    httpResult.status = res.status;
+    httpResult.headers = res.headers;
+
+    const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
+    if (!parseBody) {
+      httpResult.body = text || null;
+      return { httpResult };
+    }
+    if (allowEmptyBody && text.trim() === '') {
+      httpResult.body = null;
+      return { httpResult };
+    }
+    try {
+      const parsed = parseMcpJsonRpcResponse(text, httpResult.headers['content-type'], responseId);
+      httpResult.body = parsed;
+      return { httpResult, parsed };
+    } catch {
+      httpResult.body = text;
+      return { httpResult, parseError: true };
+    }
+  } catch (err) {
+    httpResult.error = err instanceof Error ? err.message : String(err);
+    return { httpResult };
+  }
+}
+
+function withoutMcpSessionHeaders(headers: Record<string, string>): Record<string, string> {
+  const cleaned: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    const normalized = key.toLowerCase();
+    if (normalized === MCP_SESSION_ID_HEADER || normalized === MCP_PROTOCOL_VERSION_HEADER) continue;
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
+function parseMcpJsonRpcResponse(text: string, contentType: string | undefined, responseId?: number): JsonRpcEnvelope {
+  if (contentType?.toLowerCase().includes('text/event-stream')) {
+    // Streamable-HTTP MCP: the response is one or more SSE events whose
+    // `data:` payloads are JSON-RPC envelopes. The spec lets a server emit
+    // notifications before the final response, so choose the matching id.
+    const dataLines = text.split(/\r?\n/).filter(l => l.startsWith('data:'));
+    if (dataLines.length === 0) throw new Error('SSE response with no data event');
+    let matched: JsonRpcEnvelope | undefined;
+    let lastParsed: JsonRpcEnvelope | undefined;
+    for (const line of dataLines) {
+      const payload = line.slice('data:'.length).trim();
+      if (!payload) continue;
+      try {
+        const envelope = JSON.parse(payload) as JsonRpcEnvelope;
+        lastParsed = envelope;
+        if (responseId !== undefined && envelope?.id === responseId) {
+          matched = envelope;
+          break;
+        }
+      } catch {
+        // Skip non-JSON data lines (heartbeats, etc.); keep walking.
+      }
+    }
+    const parsed = matched ?? lastParsed;
+    if (parsed === undefined) throw new Error('SSE response had data events but none were parseable JSON');
+    return parsed;
+  }
+  return JSON.parse(text) as JsonRpcEnvelope;
+}
+
+function taskResultFromRpc(httpResult: HttpProbeResult, rpc: JsonRpcEnvelope): TaskResult {
+  if (httpResult.status >= 400) {
+    return {
+      success: false,
+      data: undefined,
+      error: rpc.error?.message ?? `HTTP ${httpResult.status}`,
+      _extraction_path: 'error',
+    };
+  }
+  if (rpc.error) {
+    const code = rpc.error.code;
+    return {
+      success: false,
+      data: undefined,
+      error:
+        code !== undefined
+          ? `JSON-RPC error ${code}: ${rpc.error.message ?? 'no message'}`
+          : (rpc.error.message ?? 'JSON-RPC error (no code)'),
+      _extraction_path: 'error',
+    };
+  }
+  const structured = rpc.result?.structuredContent;
+  const hasStructured = structured !== undefined && structured !== null;
+  const data = hasStructured ? structured : rpc.result?.content;
+  const isError = !!rpc.result?.isError;
+  const extractionPath: 'structured_content' | 'text_fallback' | 'error' | 'none' = isError
+    ? 'error'
+    : hasStructured
+      ? 'structured_content'
+      : data !== undefined && data !== null
+        ? 'text_fallback'
+        : 'none';
+  return { success: !isError, data, _extraction_path: extractionPath };
+}
+
+function failedTaskResult(message: string): TaskResult {
+  return {
+    success: false,
+    data: undefined,
+    error: message,
+    _extraction_path: 'error',
+  };
+}
+
+function taskResultFromPostFailure(posted: RawJsonRpcPostResult): TaskResult {
+  if (posted.parseError) {
+    return failedTaskResult(
+      `Non-JSON response body (content-type: ${posted.httpResult.headers['content-type'] ?? 'unknown'}).`
+    );
+  }
+  if (posted.parsed) return taskResultFromRpc(posted.httpResult, posted.parsed);
+  return failedTaskResult(posted.httpResult.error ?? `HTTP ${posted.httpResult.status}`);
+}
 
 /**
  * POST a JSON-RPC `tools/call` request to the MCP endpoint with caller-provided
- * headers. Bypasses the MCP SDK so auth overrides (none / literal / strategy)
- * can be exercised and the raw HTTP status + `WWW-Authenticate` header can be
- * captured.
- *
- * **Known limitation**: this probe skips MCP Streamable HTTP session
- * initialization (`initialize` + `tools/list`). Agents that enforce
- * session-init before `tools/call` will return `-32002 Session not initialized`
- * (or similar). The probe detects that response and reports
- * `error: 'session_not_initialized'` on the synthetic TaskResult so callers
- * don't mistake it for a valid auth rejection. For agents that gate auth at
- * the HTTP/transport layer (the common pattern) the 401 + WWW-Authenticate
- * fires before the session check, which is what this probe is designed to see.
+ * headers. The probe first performs the Streamable HTTP initialize handshake,
+ * including `notifications/initialized`, so auth probes hit the same session
+ * boundary as normal MCP clients while still exposing raw HTTP status and
+ * `WWW-Authenticate` headers for security storyboards.
  *
  * **Args are not secret** — must not contain credentials or PII. The server's
  * response body lands in `httpResult.body` and is written to compliance
@@ -221,157 +387,100 @@ export async function rawMcpProbe(options: {
   allowPrivateIp?: boolean;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
   const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false } = options;
+  const initializeId = ++probeRequestId;
+  const initialize = await postRawMcpJsonRpc({
+    agentUrl,
+    envelope: {
+      jsonrpc: '2.0',
+      id: initializeId,
+      method: 'initialize',
+      params: {
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'AdCP Storyboard Raw MCP Probe', version: '1.0.0' },
+      },
+    },
+    headers,
+    allowPrivateIp,
+    responseId: initializeId,
+  });
+  if (
+    initialize.httpResult.error ||
+    initialize.httpResult.status >= 400 ||
+    !initialize.parsed ||
+    initialize.parsed.error
+  ) {
+    return {
+      httpResult: initialize.httpResult,
+      taskResult: taskResultFromPostFailure(initialize),
+    };
+  }
+  const negotiatedProtocolVersion = initialize.parsed.result?.protocolVersion;
+  if (
+    typeof negotiatedProtocolVersion !== 'string' ||
+    !SUPPORTED_PROTOCOL_VERSIONS.includes(negotiatedProtocolVersion)
+  ) {
+    return {
+      httpResult: initialize.httpResult,
+      taskResult: failedTaskResult(
+        negotiatedProtocolVersion
+          ? `Server's protocol version is not supported: ${negotiatedProtocolVersion}`
+          : 'Server sent invalid initialize result: missing protocolVersion'
+      ),
+    };
+  }
+
+  const sessionId = initialize.httpResult.headers[MCP_SESSION_ID_HEADER];
+  const initialized = await postRawMcpJsonRpc({
+    agentUrl,
+    envelope: {
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+      params: {},
+    },
+    headers,
+    allowPrivateIp,
+    ...(sessionId && { sessionId }),
+    protocolVersion: negotiatedProtocolVersion,
+    allowEmptyBody: true,
+  });
+  if (
+    initialized.httpResult.error ||
+    initialized.httpResult.status >= 400 ||
+    initialized.parseError ||
+    initialized.parsed?.error
+  ) {
+    return {
+      httpResult: initialized.httpResult,
+      taskResult: taskResultFromPostFailure(initialized),
+    };
+  }
+
   const requestId = ++probeRequestId;
-  const body = JSON.stringify({
+  const toolEnvelope = {
     jsonrpc: '2.0',
     id: requestId,
     method: 'tools/call',
     params: { name: toolName, arguments: args },
+  };
+  const posted = await postRawMcpJsonRpc({
+    agentUrl,
+    envelope: toolEnvelope,
+    headers,
+    allowPrivateIp,
+    ...(sessionId && { sessionId }),
+    protocolVersion: negotiatedProtocolVersion,
+    responseId: requestId,
   });
-
-  const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
-  try {
-    // Advertise both JSON and SSE so Streamable-HTTP MCP servers don't 406.
-    // Strict MCP servers (e.g. those built on the official SDK) require the
-    // client to accept both — they return SSE-framed responses for tools/call
-    // even though the payload is a single JSON-RPC envelope. The probe parses
-    // the SSE wire form below; the existing JSON branch is preserved for
-    // servers that downgrade to plain JSON when offered both.
-    const res = await ssrfSafeFetch(agentUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-        ...headers,
-      },
-      body,
-      allowPrivateIp,
-    });
-    httpResult.status = res.status;
-    httpResult.headers = res.headers;
-
-    const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
-    let parsed: unknown;
-    try {
-      const contentType = httpResult.headers['content-type'] ?? '';
-      if (contentType.toLowerCase().includes('text/event-stream')) {
-        // Streamable-HTTP MCP: the response is one or more SSE events whose
-        // `data:` payloads are JSON-RPC envelopes. The spec lets a server
-        // emit zero-or-more server-initiated frames (e.g.
-        // `notifications/progress`) before the final tools/call response —
-        // so picking the first `data:` line would parse the wrong envelope.
-        // Walk every `data:` line, JSON-parse each, and pick the envelope
-        // whose `id` matches the request. Fall back to the last parseable
-        // envelope when no id matches (defensive — servers SHOULD include
-        // `id` on the response per JSON-RPC 2.0).
-        const dataLines = text.split(/\r?\n/).filter(l => l.startsWith('data:'));
-        if (dataLines.length === 0) throw new Error('SSE response with no data event');
-        let matched: unknown;
-        let lastParsed: unknown;
-        for (const line of dataLines) {
-          const payload = line.slice('data:'.length).trim();
-          if (!payload) continue;
-          try {
-            const envelope = JSON.parse(payload) as { id?: unknown };
-            lastParsed = envelope;
-            if (envelope?.id === requestId) {
-              matched = envelope;
-              break;
-            }
-          } catch {
-            // Skip non-JSON data lines (heartbeats, etc.); keep walking.
-          }
-        }
-        parsed = matched ?? lastParsed;
-        if (parsed === undefined) throw new Error('SSE response had data events but none were parseable JSON');
-      } else {
-        parsed = JSON.parse(text);
-      }
-    } catch {
-      httpResult.body = text;
-      // HTTP 400 with a plain-text body that signals a missing MCP session — e.g.
-      // "Bad Request: Missing session ID" from strict Python-based servers.  Detect
-      // before falling back to the generic non-JSON message so compliance reports
-      // show the session-init diagnostic rather than a bare HTTP 400.
-      if (httpResult.status >= 400 && /missing session/i.test(text)) {
-        return {
-          httpResult,
-          taskResult: {
-            success: false,
-            data: undefined,
-            error: `MCP session not initialized (HTTP ${httpResult.status}: ${text.trim()}). rawMcpProbe skips the initialize handshake; strict servers will reject here before auth is evaluated.`,
-            _extraction_path: 'error',
-          },
-        };
-      }
-      return {
-        httpResult,
-        taskResult: {
-          success: false,
-          data: undefined,
-          error: `Non-JSON response body (content-type: ${httpResult.headers['content-type'] ?? 'unknown'}).`,
-          _extraction_path: 'error',
-        },
-      };
-    }
-    httpResult.body = parsed;
-
-    const rpc = parsed as {
-      result?: { structuredContent?: unknown; content?: unknown; isError?: boolean };
-      error?: { message?: string; code?: number };
+  const { httpResult, parsed } = posted;
+  if (httpResult.error) return { httpResult, taskResult: taskResultFromPostFailure(posted) };
+  if (!parsed) {
+    return {
+      httpResult,
+      taskResult: taskResultFromPostFailure(posted),
     };
-    // HTTP-level failure trumps the JSON-RPC envelope — a 401/500 with any body
-    // shape is still a failure.
-    if (httpResult.status >= 400) {
-      return {
-        httpResult,
-        taskResult: {
-          success: false,
-          data: undefined,
-          error: rpc.error?.message ?? `HTTP ${httpResult.status}`,
-          _extraction_path: 'error',
-        },
-      };
-    }
-    if (rpc.error) {
-      // MCP Streamable HTTP session-init errors — agents that require
-      // `initialize` before `tools/call`. Distinct from auth failures so
-      // downstream compliance reporting doesn't misdiagnose.
-      const code = rpc.error.code;
-      const isSessionInit =
-        code === -32002 ||
-        (typeof rpc.error.message === 'string' && /session.*(?:not.*)?initialized/i.test(rpc.error.message));
-      return {
-        httpResult,
-        taskResult: {
-          success: false,
-          data: undefined,
-          error: isSessionInit
-            ? `MCP session not initialized (${code}: ${rpc.error.message ?? 'no message'}). rawMcpProbe skips the initialize handshake; strict servers will reject here before auth is evaluated.`
-            : (rpc.error.message ?? `JSON-RPC error ${code}`),
-          _extraction_path: 'error',
-        },
-      };
-    }
-    // Record which branch produced the data — rawMcpProbe reads the JSON-RPC
-    // envelope directly, so the provenance is knowable here (unlike the SDK
-    // path where we have to plumb it through the unwrapper).
-    const structured = rpc.result?.structuredContent;
-    const hasStructured = structured !== undefined && structured !== null;
-    const data = hasStructured ? structured : rpc.result?.content;
-    const isError = !!rpc.result?.isError;
-    const extractionPath: 'structured_content' | 'text_fallback' | 'error' | 'none' = isError
-      ? 'error'
-      : hasStructured
-        ? 'structured_content'
-        : data !== undefined && data !== null
-          ? 'text_fallback'
-          : 'none';
-    return { httpResult, taskResult: { success: !isError, data, _extraction_path: extractionPath } };
-  } catch (err) {
-    httpResult.error = err instanceof Error ? err.message : String(err);
-    return { httpResult };
   }
+  return { httpResult, taskResult: taskResultFromRpc(httpResult, parsed) };
 }
 
 // ---------------------------------------------------------------------------

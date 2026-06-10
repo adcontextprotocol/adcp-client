@@ -3610,7 +3610,7 @@ async function executeStep(
   // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
   let request: Record<string, unknown>;
   if (options.request) {
-    request = { ...options.request };
+    request = injectContext({ ...options.request }, context, runState.runnerVars);
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else if (hasRequestEnricher(effectiveStep.task)) {
@@ -3707,6 +3707,38 @@ async function executeStep(
       ...responseDerivedContextResult(runState),
       ...(!allResponseDerived && { error: detail }),
       next,
+      extraction: { path: 'none' },
+    };
+  }
+
+  const unresolvedRunnerTokens = findUnresolvedRunnerTokens(request);
+  if (unresolvedRunnerTokens.length > 0) {
+    const isPrerequisiteFailure = hasUnresolvedPriorStepToken(unresolvedRunnerTokens);
+    const skipReason = isPrerequisiteFailure ? 'prerequisite_failed' : 'not_applicable';
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    const detail =
+      'Skipped: storyboard request references unresolved runner placeholders. ' +
+      `Unresolved token(s): ${unresolvedRunnerTokens.join(', ')}.`;
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: effectiveStep.task,
+      passed: !isPrerequisiteFailure,
+      skipped: true,
+      skip_reason: skipReason,
+      skip: buildSkip(skipReason, detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      next,
+      ...(isPrerequisiteFailure ? { error: detail } : {}),
+      request: {
+        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+        operation: effectiveStep.task,
+        payload: redactSecrets(request),
+        ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+      },
       extraction: { path: 'none' },
     };
   }
@@ -4604,6 +4636,31 @@ async function executeProbeStep(
           error: detail,
         };
       }
+      const unresolvedRunnerTokens = findUnresolvedRunnerTokens(resolvedTargetRequest);
+      if (unresolvedRunnerTokens.length > 0) {
+        const isPrerequisiteFailure = hasUnresolvedPriorStepToken(unresolvedRunnerTokens);
+        const skipReason = isPrerequisiteFailure ? 'prerequisite_failed' : 'not_applicable';
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        const detail =
+          'Skipped: rate_limit_trip target request references unresolved runner placeholders. ' +
+          `Unresolved token(s): ${unresolvedRunnerTokens.join(', ')}.`;
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: !isPrerequisiteFailure,
+          skipped: true,
+          skip_reason: skipReason,
+          skip: buildSkip(skipReason, detail),
+          duration_ms: Date.now() - start,
+          validations: [],
+          context,
+          next,
+          extraction: { path: 'none' },
+          ...(isPrerequisiteFailure ? { error: detail } : {}),
+        };
+      }
       const advertisedTools = resolveAdvertisedTools(options);
       if (advertisedTools && !advertisedTools.includes(rateLimitTrip.trip_target_task)) {
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
@@ -4757,7 +4814,7 @@ function buildEffectiveStepRequest(
 ): Record<string, unknown> {
   let request: Record<string, unknown>;
   if (options.request) {
-    request = { ...options.request };
+    request = injectContext({ ...options.request }, context, runState.runnerVars);
   } else if (step.expect_error && step.sample_request) {
     request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
   } else if (hasRequestEnricher(step.task)) {
@@ -6171,6 +6228,29 @@ function findUnresolvedContextVars(obj: unknown): Array<{ key: string; token: st
   };
   walk(obj);
   return vars;
+}
+
+const UNRESOLVED_RUNNER_TOKEN_RE =
+  /\{\{(?:runner\.(?:webhook_url:[A-Za-z0-9_]+|webhook_base)|prior_step\.[A-Za-z0-9_]+\.operation_id)\}\}/g;
+
+function findUnresolvedRunnerTokens(obj: unknown): string[] {
+  const vars: string[] = [];
+  const walk = (val: unknown) => {
+    if (typeof val === 'string') {
+      const matches = val.match(UNRESOLVED_RUNNER_TOKEN_RE);
+      if (matches) vars.push(...matches);
+    } else if (Array.isArray(val)) {
+      val.forEach(walk);
+    } else if (val !== null && typeof val === 'object') {
+      Object.values(val as Record<string, unknown>).forEach(walk);
+    }
+  };
+  walk(obj);
+  return [...new Set(vars)];
+}
+
+function hasUnresolvedPriorStepToken(tokens: string[]): boolean {
+  return tokens.some(token => token.startsWith('{{prior_step.'));
 }
 
 function flattenSteps(storyboard: Storyboard): FlatStep[] {

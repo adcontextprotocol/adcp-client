@@ -20,17 +20,37 @@ const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js')
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function createRecordingMcpServer(seen) {
+  return http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'test-session' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { protocolVersion: '2025-11-25', capabilities: {}, serverInfo: { name: 'test', version: '1.0.0' } },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    seen.push({ name: rpc.params.name, args: rpc.params.arguments });
+    res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32001, message: 'unauthorized' } }));
+  });
+}
+
 describe('runStoryboard: sample_request envelope pass-through with a request builder', () => {
   it('forwards push_notification_config from sample_request into the outbound create_media_buy args', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
-      res.end('{}');
-    });
+    const server = createRecordingMcpServer(seen);
     await new Promise(r => server.listen(0, r));
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
@@ -101,14 +121,7 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
 
   it('preserves the signal_owned activate_on_agent sample_request through runner dispatch (ADCP-4009)', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
-      res.end('{}');
-    });
+    const server = createRecordingMcpServer(seen);
     await new Promise(r => server.listen(0, r));
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
@@ -188,14 +201,7 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
 
   it('resolves {{runner.webhook_url:<step_id>}} inside push_notification_config.url against the runner webhook receiver', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
-      res.end('{}');
-    });
+    const server = createRecordingMcpServer(seen);
     await new Promise(r => server.listen(0, r));
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
@@ -259,14 +265,7 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
 
   it('still forwards push_notification_config on the non-builder path (acquire_rights) so no future "simplification" of the merge block breaks one path undetected', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
-      res.end('{}');
-    });
+    const server = createRecordingMcpServer(seen);
     await new Promise(r => server.listen(0, r));
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
@@ -326,14 +325,7 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
 
   it('does not let sample_request overwrite a push_notification_config already on the request (e.g. supplied via options.request) — the `=== undefined` guard is load-bearing', async () => {
     const seen = [];
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const c of req) chunks.push(c);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ name: rpc.params.name, args: rpc.params.arguments });
-      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="x"' });
-      res.end('{}');
-    });
+    const server = createRecordingMcpServer(seen);
     await new Promise(r => server.listen(0, r));
     const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
@@ -394,6 +386,191 @@ describe('runStoryboard: sample_request envelope pass-through with a request bui
         'https://buyer.example/FROM_CALLER',
         'caller-provided push_notification_config must win — sample_request only fills missing fields'
       );
+    } finally {
+      server.close();
+    }
+  });
+
+  it('resolves runner webhook placeholders supplied through options.request before dispatch', async () => {
+    const seen = [];
+    const server = createRecordingMcpServer(seen);
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'options_request_webhook_url_sb',
+        version: '1.0.0',
+        title: 'Options request webhook substitution',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'create',
+            steps: [
+              {
+                id: 'create_buy',
+                title: 'caller-provided request still gets runner substitutions',
+                task: 'create_media_buy',
+                auth: 'none',
+                sample_request: {
+                  start_time: '2099-10-01T00:00:00Z',
+                  end_time: '2099-12-31T23:59:59Z',
+                  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', pricing_option_id: 'cpm-1', budget: 100 }],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['create_media_buy'],
+        webhook_receiver: { mode: 'ephemeral' },
+        request: {
+          start_time: '2099-10-01T00:00:00Z',
+          end_time: '2099-12-31T23:59:59Z',
+          push_notification_config: { url: '{{runner.webhook_url:create_buy}}' },
+        },
+        _profile: { name: 'Test', tools: ['create_media_buy'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 1);
+      const url = seen[0].args.push_notification_config?.url;
+      assert.ok(typeof url === 'string', 'push_notification_config.url must be forwarded');
+      assert.ok(/\/step\/create_buy\/[0-9a-f-]{36}$/i.test(url), `expected expanded runner webhook URL; got ${url}`);
+      assert.ok(!url.includes('{{runner.'), 'options.request webhook token must not reach the agent');
+    } finally {
+      server.close();
+    }
+  });
+
+  it('skips instead of dispatching when options.request contains an unresolved runner webhook placeholder', async () => {
+    const seen = [];
+    const server = createRecordingMcpServer(seen);
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'options_request_webhook_url_no_receiver_sb',
+        version: '1.0.0',
+        title: 'Options request webhook substitution without receiver',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'create',
+            steps: [
+              {
+                id: 'create_buy',
+                title: 'unresolved runner webhook token must not be sent',
+                task: 'create_media_buy',
+                auth: 'none',
+                sample_request: {
+                  start_time: '2099-10-01T00:00:00Z',
+                  end_time: '2099-12-31T23:59:59Z',
+                  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', pricing_option_id: 'cpm-1', budget: 100 }],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['create_media_buy'],
+        request: {
+          start_time: '2099-10-01T00:00:00Z',
+          end_time: '2099-12-31T23:59:59Z',
+          push_notification_config: { url: '{{runner.webhook_url:create_buy}}' },
+        },
+        _profile: { name: 'Test', tools: ['create_media_buy'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 0, 'unresolved runner webhook token must not be dispatched');
+      const step = result.phases[0].steps[0];
+      assert.strictEqual(step.skipped, true);
+      assert.strictEqual(step.skip_reason, 'not_applicable');
+      assert.match(step.skip.detail, /unresolved runner placeholders/);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('skips instead of dispatching when options.request contains an unresolved prior_step operation placeholder', async () => {
+    const seen = [];
+    const server = createRecordingMcpServer(seen);
+    await new Promise(r => server.listen(0, r));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const storyboard = {
+        id: 'options_request_prior_step_unresolved_sb',
+        version: '1.0.0',
+        title: 'Options request prior step substitution without operation id',
+        category: 'compliance',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'p',
+            title: 'create',
+            steps: [
+              {
+                id: 'create_buy',
+                title: 'unresolved prior step token must not be sent',
+                task: 'create_media_buy',
+                auth: 'none',
+                sample_request: {
+                  start_time: '2099-10-01T00:00:00Z',
+                  end_time: '2099-12-31T23:59:59Z',
+                  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod-1', pricing_option_id: 'cpm-1', budget: 100 }],
+                },
+                validations: [{ check: 'http_status_in', allowed_values: [401], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['create_media_buy'],
+        request: {
+          start_time: '2099-10-01T00:00:00Z',
+          end_time: '2099-12-31T23:59:59Z',
+          push_notification_config: { url: 'https://hooks.example/{{prior_step.missing.operation_id}}' },
+        },
+        _profile: { name: 'Test', tools: ['create_media_buy'] },
+        _client: {
+          getAgentInfo: async () => ({ name: 'Test', tools: [{ name: 'create_media_buy' }] }),
+        },
+      });
+
+      assert.strictEqual(seen.length, 0, 'unresolved prior_step token must not be dispatched');
+      const step = result.phases[0].steps[0];
+      assert.strictEqual(step.skipped, true);
+      assert.strictEqual(step.passed, false);
+      assert.strictEqual(step.skip_reason, 'prerequisite_failed');
+      assert.match(step.skip.detail, /prior_step\.missing\.operation_id/);
     } finally {
       server.close();
     }
