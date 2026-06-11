@@ -1343,6 +1343,18 @@ export interface AdcpServerConfig<TAccount = unknown> {
   version: string;
 
   /**
+   * Expose generated top-level AdCP request shapes in MCP `tools/list`.
+   *
+   * Defaults to `false`, preserving the long-standing passthrough schema so
+   * the framework AJV validator remains the only validation gate shared by
+   * MCP and A2A. Set to `true` when generic MCP clients need argument hints
+   * from `tools/list`; known AdCP tools use shallow key hints derived from
+   * `TOOL_INPUT_SHAPES` and unknown/custom framework surfaces fall back to
+   * passthrough.
+   */
+  exposeToolSchemas?: boolean;
+
+  /**
    * AdCP protocol version this server speaks. Defaults to {@link ADCP_VERSION}
    * — the GA version the SDK ships against. Override to pin to an older
    * stable (e.g., `'3.0.0'`) or opt into a beta channel (`'3.1.0-beta.1'`)
@@ -2392,14 +2404,36 @@ const MUT: ToolAnnotation = { readOnlyHint: false, destructiveHint: false };
 const DEST: ToolAnnotation = { readOnlyHint: false, destructiveHint: true };
 const IDEMP: ToolAnnotation = { readOnlyHint: false, idempotentHint: true };
 
-// Passthrough schema for every framework-registered tool (#909). See
-// the comment at the registerTool call sites for rationale — short
-// version: makes our AJV validator authoritative on both transports
-// without destroying args on MCP when the SDK's tool dispatcher would
-// otherwise coerce `undefined` into the handler for schemaless tools.
-// This also keeps `tools/list` payloads small for LLM consumers (full
-// schemas live in `docs/llms.txt`, SKILL.md files, and `schemas/cache/`).
+// Passthrough schema for framework-registered tools by default (#909). See
+// the comment at the registerTool call sites for rationale — short version:
+// makes our AJV validator authoritative on both transports without destroying
+// args on MCP when the SDK's tool dispatcher would otherwise coerce
+// `undefined` into the handler for schemaless tools. Servers can opt into
+// shallow MCP discovery hints derived from `TOOL_INPUT_SHAPES` with
+// config.exposeToolSchemas.
 const PASSTHROUGH_INPUT_SCHEMA = z.object({}).passthrough();
+type ToolInputShapeMap = Readonly<Record<string, ZodRawShapeCompat | undefined>>;
+let cachedToolInputShapes: ToolInputShapeMap | undefined;
+const SHALLOW_HINT_FIELD_SCHEMA = z.unknown().optional();
+const SHALLOW_HINT_SCHEMAS = new Map<string, AnySchema>();
+
+function getToolInputShapes(): ToolInputShapeMap {
+  cachedToolInputShapes ??= require('../schemas').TOOL_INPUT_SHAPES as ToolInputShapeMap;
+  return cachedToolInputShapes;
+}
+
+function shallowToolInputHintSchema(toolName: string): AnySchema | undefined {
+  const inputShape = getToolInputShapes()[toolName];
+  if (inputShape === undefined) return undefined;
+
+  const cached = SHALLOW_HINT_SCHEMAS.get(toolName);
+  if (cached !== undefined) return cached;
+
+  const hintShape = Object.fromEntries(Object.keys(inputShape).map(key => [key, SHALLOW_HINT_FIELD_SCHEMA]));
+  const schema = z.object(hintShape).passthrough();
+  SHALLOW_HINT_SCHEMAS.set(toolName, schema);
+  return schema;
+}
 
 const TOOL_META: Record<string, ToolMeta> = {
   // Media Buy
@@ -3427,6 +3461,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
     responseEnhancer,
   } = config;
+  const frameworkInputSchemaFor = (toolName: string) =>
+    config.exposeToolSchemas === true
+      ? (shallowToolInputHintSchema(toolName) ?? PASSTHROUGH_INPUT_SCHEMA)
+      : PASSTHROUGH_INPUT_SCHEMA;
 
   // One-shot construction-time warn when `testController` is wired without
   // any account resolver. The dispatch-time sandbox gate admits requests
@@ -5739,15 +5777,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
       };
 
-      // Register a PASSTHROUGH input schema (#909). The MCP SDK's Zod
-      // validator only fires on the MCP transport — A2A calls the
-      // handler via AdcpServer.invoke(), bypassing it. Registering the
+      // Register a PASSTHROUGH input schema by default (#909). The MCP
+      // SDK's Zod validator only fires on the MCP transport — A2A calls
+      // the handler via AdcpServer.invoke(), bypassing it. Registering the
       // real per-tool Zod schema meant MCP and A2A produced different
-      // verdicts and different error shapes for the same malformed
-      // request. Our framework request validator (AJV, loaded from
-      // schemas/cache/<version>/) runs inside the handler closure on
-      // BOTH transports and produces a structured adcp_error envelope;
-      // make it authoritative.
+      // verdicts and different error shapes for the same malformed request.
+      // Our framework request validator (AJV, loaded from
+      // schemas/cache/<version>/) runs inside the handler closure on BOTH
+      // transports and produces a structured adcp_error envelope; make it
+      // authoritative unless the adopter opts into MCP discovery schemas.
       //
       // Passthrough (not omit): the SDK's `validateToolInput` returns
       // `undefined` when `inputSchema` is absent (see @modelcontextprotocol/sdk
@@ -5755,28 +5793,32 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       // handler — destroying the actual arguments. `z.object({}).passthrough()`
       // keeps every key intact, so args still reach the closure.
       //
-      // Trade-off: MCP `tools/list` publishes `{ type: 'object' }` for
-      // every tool (no per-tool parameter schema). This is intentional,
-      // not a wiring gap — inlining ~50 full request schemas in
-      // `tools/list` would balloon the context window for LLM consumers,
-      // who are the primary readers of MCP discovery. Tool shapes live
-      // in `docs/llms.txt`, the SKILL.md files, and `schemas/cache/`,
+      // Trade-off: default MCP `tools/list` publishes `{ type: 'object' }`
+      // for every tool (no per-tool parameter schema). This is intentional,
+      // not a wiring gap — inlining full request schemas in `tools/list`
+      // would balloon the context window for LLM consumers. Tool shapes
+      // live in `docs/llms.txt`, the SKILL.md files, and `schemas/cache/`,
       // which curated agents read on demand instead of paying the cost
       // every connection. AdCP-native discovery via `get_adcp_capabilities`
       // already works over both transports; upstream #3057 proposes a
       // `get_schema` capability tool for programmatic per-tool shape
-      // discovery.
+      // discovery. For generic MCP clients that need hints directly in
+      // `tools/list`, set `exposeToolSchemas: true` to publish shallow
+      // top-level key hints derived from `TOOL_INPUT_SHAPES`. Those hint
+      // schemas use optional `unknown` fields plus passthrough so MCP keeps
+      // all args intact and leaves substantive validation under the
+      // framework validator.
       //
       // Implication for downstream consumers: if you need a tool's shape
       // (cross-version field-stripping, gating, validation), read raw
       // JSON from `schemas/cache/{version}/` via `schema-loader.ts` —
       // see `schemaAllowsTopLevelField` for the canonical pattern (#940).
-      // Don't try to recover the shape from `tools/list`; it's empty by
-      // design and will fail open.
+      // Don't try to recover the canonical shape from `tools/list` when
+      // `exposeToolSchemas` is off; it's empty by design and will fail open.
       server.registerTool(
         toolName,
         {
-          inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+          inputSchema: frameworkInputSchemaFor(toolName),
           ...(meta?.annotations != null && { annotations: meta.annotations }),
         },
         toolHandler as Parameters<typeof server.registerTool>[2]
@@ -5790,7 +5832,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     server.registerTool(
       'get_task_status',
       {
-        inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+        inputSchema: frameworkInputSchemaFor('get_task_status'),
         annotations: RO,
       },
       (async (params: any, extra: any) => {
@@ -5868,7 +5910,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     server.registerTool(
       'list_tasks',
       {
-        inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+        inputSchema: frameworkInputSchemaFor('list_tasks'),
         annotations: RO,
       },
       (async (params: any, extra: any) => {
@@ -6175,7 +6217,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   server.registerTool(
     'get_adcp_capabilities',
     {
-      inputSchema: PASSTHROUGH_INPUT_SCHEMA,
+      inputSchema: frameworkInputSchemaFor('get_adcp_capabilities'),
       annotations: { readOnlyHint: true },
     },
     (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
