@@ -97,11 +97,10 @@ export async function ssrfSafeFetchAdAgents(
 
 export function validateSameRegistrableDomainRedirect(originUrl: string, currentUrl: string, nextUrl: string): void {
   let origin: URL;
-  let current: URL;
   let next: URL;
   try {
     origin = new URL(originUrl);
-    current = new URL(currentUrl);
+    new URL(currentUrl);
     next = new URL(nextUrl);
   } catch {
     throw new AdAgentsRedirectRefusedError('redirect_refused', 'Invalid adagents.json redirect URL', {
