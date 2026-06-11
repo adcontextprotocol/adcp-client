@@ -385,6 +385,45 @@ describe('NetworkConsistencyChecker', () => {
       }
     });
 
+    test('explicit authoritativeUrl follows same-site redirect and records final URL', async () => {
+      const authFile = makeAuthoritativeFile(
+        [
+          {
+            property_type: 'mobile_app',
+            name: 'redirected-app',
+            identifiers: [{ type: 'bundle_id', value: 'com.redirected.app' }],
+          },
+        ],
+        [{ url: 'https://seller.example.com/mcp', authorized_for: 'Sales' }]
+      );
+      const server = await startServer((req, res) => {
+        if (req.url === '/adagents.json') {
+          res.writeHead(301, { Location: '/canonical/adagents.json' });
+          res.end();
+          return;
+        }
+        if (req.url === '/canonical/adagents.json') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(authFile));
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      try {
+        const checker = new NetworkConsistencyChecker({
+          authoritativeUrl: `${server.url}/adagents.json`,
+          logLevel: 'silent',
+          timeoutMs: 1000,
+        });
+        const report = await checker.check();
+        assert.strictEqual(report.authoritativeUrl, `${server.url}/canonical/adagents.json`);
+        assert.strictEqual(report.schemaErrors.length, 0);
+      } finally {
+        await server.close();
+      }
+    });
+
     test('authoritative URL fetch failure returns early with schema error', async () => {
       // ECONNREFUSED on the authoritative URL. Bind + close to free the
       // port, then point `check()` at the dead URL.
@@ -404,6 +443,32 @@ describe('NetworkConsistencyChecker', () => {
       assert.ok(report.schemaErrors.length >= 1);
       assert.ok(report.schemaErrors.some(e => e.field === '$root'));
       assert.strictEqual(report.domains.length, 0);
+    });
+
+    test('redirect policy refusals surface diagnostic messages in reports', async () => {
+      const server = await startServer((req, res) => {
+        if (req.url === '/adagents.json') {
+          res.writeHead(301, { Location: 'http://cross.example.com/adagents.json' });
+          res.end();
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      try {
+        const checker = new NetworkConsistencyChecker({
+          authoritativeUrl: `${server.url}/adagents.json`,
+          logLevel: 'silent',
+          timeoutMs: 1000,
+        });
+        const report = await checker.check();
+        assert.ok(
+          report.schemaErrors.some(e => e.message.includes('adagents.json redirect crosses registrable domain')),
+          `expected redirect diagnostic, got: ${JSON.stringify(report.schemaErrors)}`
+        );
+      } finally {
+        await server.close();
+      }
     });
 
     test('self-referential authoritative_location is reported as schema error', async () => {
@@ -557,19 +622,10 @@ describe('NetworkConsistencyChecker', () => {
 
   describe('HTTP redirect following', () => {
     test('follows one redirect on pointer fetch (CDN www redirect)', async () => {
-      // `fetchJson` follows a single 301/302 with a Location header.
+      // `fetchJson` follows same-site 3xx responses with a Location header.
       // Serve a 301 → /v2/adagents.json, then 200 with the pointer body.
       const server = await startServer((req, res) => {
         if (req.url === '/.well-known/adagents.json') {
-          // ssrfSafeFetch sets redirect: 'manual', so fetchJson sees the
-          // 3xx + Location header and re-validates the target URL. The
-          // target must pass `validateAgentUrl` (allows http) and
-          // start with `https://` per the production guard. The
-          // production guard is strict: `redirectUrl.startsWith('https://')`.
-          // A loopback redirect target can't pass that guard, so the
-          // redirect-follow path is exercised but rejects. Use a same-
-          // origin target and assert the redirect is REJECTED with the
-          // non-HTTPS error.
           res.writeHead(301, { Location: '/v2/adagents.json' });
           res.end();
         } else if (req.url === '/v2/adagents.json') {
@@ -585,14 +641,8 @@ describe('NetworkConsistencyChecker', () => {
           authoritativeUrl: 'https://network.example.com/adagents.json',
           logLevel: 'silent',
         });
-        // Production rejects loopback redirect targets because they
-        // resolve to http://. The observable behavior: the redirect
-        // surfaces as a "Redirect to non-HTTPS URL not allowed" error.
-        await assert.rejects(
-          () => checker['fetchJson'](`${server.url}/.well-known/adagents.json`),
-          /not allowed|HTTP 301/,
-          'redirect-follow logic engages and re-validates the target'
-        );
+        const data = await checker['fetchJson'](`${server.url}/.well-known/adagents.json`);
+        assert.strictEqual(data.authoritative_location, 'https://network.example.com/adagents.json');
       } finally {
         await server.close();
       }
@@ -637,7 +687,7 @@ describe('NetworkConsistencyChecker', () => {
     });
 
     test('rejects redirect to non-HTTPS URL on pointer fetch', async () => {
-      // 301 → http://insecure-target/. The production guard rejects.
+      // 301 → a different registrable domain. The same-site policy rejects.
       const server = await startServer((req, res) => {
         if (req.url === '/.well-known/adagents.json') {
           res.writeHead(301, { Location: 'http://insecure.example.com/.well-known/adagents.json' });
@@ -654,8 +704,8 @@ describe('NetworkConsistencyChecker', () => {
         });
         await assert.rejects(
           () => checker['fetchJson'](`${server.url}/.well-known/adagents.json`),
-          /not allowed|HTTP 301/,
-          'non-HTTPS redirect target must be rejected'
+          /crosses registrable domain|HTTP 301/,
+          'cross-domain redirect target must be rejected'
         );
       } finally {
         await server.close();
