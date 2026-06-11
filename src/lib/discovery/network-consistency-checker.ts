@@ -240,14 +240,15 @@ export class NetworkConsistencyChecker {
       const firstDomain = this.domains[0];
       try {
         const pointerUrl = `https://${firstDomain}/.well-known/adagents.json`;
-        const pointerData = await this.fetchJson<AdAgentsJson>(pointerUrl, {
+        const pointer = await this.fetchJsonWithUrl<AdAgentsJson>(pointerUrl, {
           mode: 'same-registrable-domain',
           originUrl: pointerUrl,
         });
+        const pointerData = pointer.data;
         if (pointerData.authoritative_location) {
           url = pointerData.authoritative_location;
         } else {
-          return { url: `https://${firstDomain}/.well-known/adagents.json`, data: pointerData };
+          return { url: pointer.url, data: pointerData };
         }
       } catch (error) {
         report.schemaErrors.push({
@@ -259,7 +260,12 @@ export class NetworkConsistencyChecker {
     }
 
     try {
-      const data = await this.fetchJson<AdAgentsJson>(url, { mode: 'none' });
+      const authoritative = await this.fetchJsonWithUrl<AdAgentsJson>(url, {
+        mode: 'same-registrable-domain',
+        originUrl: url,
+      });
+      const data = authoritative.data;
+      const resolvedUrl = authoritative.url;
 
       // Follow at most one authoritative_location redirect
       if (data.authoritative_location && !data.authorized_agents) {
@@ -271,19 +277,20 @@ export class NetworkConsistencyChecker {
           });
           return { url, data: null };
         }
-        if (redirectUrl === url) {
+        if (redirectUrl === resolvedUrl) {
           report.schemaErrors.push({
             field: 'authoritative_location',
             message: 'authoritative_location points to itself',
           });
-          return { url, data: null };
+          return { url: resolvedUrl, data: null };
         }
-        const redirectData = await this.fetchJson<AdAgentsJson>(redirectUrl, { mode: 'none' });
+        const redirect = await this.fetchJsonWithUrl<AdAgentsJson>(redirectUrl, { mode: 'none' });
+        const redirectData = redirect.data;
         // Do not follow further redirects from the redirect target
-        return { url: redirectUrl, data: redirectData };
+        return { url: redirect.url, data: redirectData };
       }
 
-      return { url, data };
+      return { url: resolvedUrl, data };
     } catch (error) {
       report.schemaErrors.push({
         field: '$root',
@@ -475,10 +482,11 @@ export class NetworkConsistencyChecker {
     const url = `https://${domain}/.well-known/adagents.json`;
 
     try {
-      const data = await this.fetchJson<AdAgentsJson>(url, {
+      const pointer = await this.fetchJsonWithUrl<AdAgentsJson>(url, {
         mode: 'same-registrable-domain',
         originUrl: url,
       });
+      const data = pointer.data;
 
       if (data.authoritative_location) {
         if (data.authoritative_location === authoritativeUrl) {
@@ -508,7 +516,7 @@ export class NetworkConsistencyChecker {
       }
 
       // No authoritative_location — the domain hosts its own file
-      if (url === authoritativeUrl) {
+      if (pointer.url === authoritativeUrl) {
         return {
           detail: { domain, status: 'ok', errors: [] },
         };
@@ -522,7 +530,7 @@ export class NetworkConsistencyChecker {
         },
         stale: {
           domain,
-          pointerUrl: url,
+          pointerUrl: pointer.url,
           expectedUrl: authoritativeUrl,
         },
       };
@@ -553,14 +561,17 @@ export class NetworkConsistencyChecker {
       } | null> => {
         try {
           const pointerUrl = `https://${domain}/.well-known/adagents.json`;
-          const data = await this.fetchJson<AdAgentsJson>(pointerUrl, {
+          const pointer = await this.fetchJsonWithUrl<AdAgentsJson>(pointerUrl, {
             mode: 'same-registrable-domain',
             originUrl: pointerUrl,
           });
+          const data = pointer.data;
           const result =
             data.authoritative_location === authoritativeUrl
               ? { domain, orphaned: true, pointerUrl: data.authoritative_location }
-              : null;
+              : !data.authoritative_location && pointer.url === authoritativeUrl
+                ? { domain, orphaned: true, pointerUrl: pointer.url }
+                : null;
           return result;
         } catch {
           return null;
@@ -591,6 +602,13 @@ export class NetworkConsistencyChecker {
     url: string,
     redirectPolicy: AdAgentsRedirectPolicy = { mode: 'same-registrable-domain', originUrl: url }
   ): Promise<T> {
+    return (await this.fetchJsonWithUrl<T>(url, redirectPolicy)).data;
+  }
+
+  private async fetchJsonWithUrl<T>(
+    url: string,
+    redirectPolicy: AdAgentsRedirectPolicy = { mode: 'same-registrable-domain', originUrl: url }
+  ): Promise<{ data: T; url: string }> {
     validateAgentUrl(url);
     // Shared AbortController: total wall-clock bounded by `this.timeoutMs`
     // across the initial fetch + any 1-redirect follow. See `probeAgent`
@@ -626,18 +644,15 @@ export class NetworkConsistencyChecker {
         // The callers here (adagents.json) require JSON, so re-attempt parse
         // and surface a clear error if it's not.
         try {
-          return JSON.parse(parsed) as T;
+          return { data: JSON.parse(parsed) as T, url: result.url };
         } catch {
           throw new Error('Response was not valid JSON');
         }
       }
-      return parsed as T;
+      return { data: parsed as T, url: result.url };
     } catch (error) {
       if (error instanceof SsrfRefusedError && error.code === 'body_exceeds_limit') {
         throw new Error('Response too large');
-      }
-      if (error instanceof AdAgentsRedirectRefusedError) {
-        throw new Error(error.message);
       }
       throw error;
     }
@@ -660,6 +675,9 @@ export class NetworkConsistencyChecker {
       }
       // Policy refusal: prefix so the report makes the distinction visible.
       return `[SSRF refused] ${error.message}`;
+    }
+    if (error instanceof AdAgentsRedirectRefusedError) {
+      return error.message;
     }
     if (error instanceof Error) {
       if (error.name === 'AbortError') return 'Request timed out';

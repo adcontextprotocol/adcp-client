@@ -241,6 +241,36 @@ describe('validateAdAgents — discovery_method', () => {
     }
   });
 
+  test('redirected ads.txt reports an HTTP status, not an adagents redirect refusal', async () => {
+    const publisher = await startRoutedServer({
+      '/ads.txt': {
+        status: 301,
+        headers: { Location: '/ads2.txt' },
+        contentType: 'text/plain',
+      },
+      '/ads2.txt': {
+        body: 'MANAGERDOMAIN=manager.example\n',
+        contentType: 'text/plain',
+      },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.ok(
+        result.errors.some(e => e.includes('ads.txt unavailable: HTTP 301')),
+        `expected ads.txt HTTP 301 error, got: ${JSON.stringify(result.errors)}`
+      );
+      assert.ok(
+        result.errors.every(e => !e.includes('authoritative adagents.json')),
+        `ads.txt error should not use adagents redirect wording: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await publisher.close();
+    }
+  });
+
   test('duplicate MANAGERDOMAIN lines → last entry wins', async () => {
     const skip = await startRoutedServer({});
     const keep = await startRoutedServer({
@@ -559,6 +589,32 @@ describe('validateAdAgents — adagents.json HTTP redirect policy', () => {
       );
     } finally {
       await Promise.all([publisher.close(), authoritative.close()]);
+    }
+  });
+
+  test('redirect errors reject userinfo and do not echo credentials or query strings', async () => {
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': {
+        status: 301,
+        headers: { Location: `http://user:pass@placeholder.invalid/v2/adagents.json?sig=secret123#frag` },
+      },
+    });
+    try {
+      const target = `http://user:pass@${publisher.host}/v2/adagents.json?sig=secret123#frag`;
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.ok(
+        result.errors.some(e => e.includes('adagents.json redirect must not include userinfo')),
+        `expected userinfo refusal, got: ${JSON.stringify(result.errors)}`
+      );
+      assert.ok(
+        result.errors.every(e => !e.includes('user:pass') && !e.includes('sig=secret123')),
+        `redirect error leaked sensitive URL parts from ${target}: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await publisher.close();
     }
   });
 });

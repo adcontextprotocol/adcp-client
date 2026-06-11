@@ -385,6 +385,45 @@ describe('NetworkConsistencyChecker', () => {
       }
     });
 
+    test('explicit authoritativeUrl follows same-site redirect and records final URL', async () => {
+      const authFile = makeAuthoritativeFile(
+        [
+          {
+            property_type: 'mobile_app',
+            name: 'redirected-app',
+            identifiers: [{ type: 'bundle_id', value: 'com.redirected.app' }],
+          },
+        ],
+        [{ url: 'https://seller.example.com/mcp', authorized_for: 'Sales' }]
+      );
+      const server = await startServer((req, res) => {
+        if (req.url === '/adagents.json') {
+          res.writeHead(301, { Location: '/canonical/adagents.json' });
+          res.end();
+          return;
+        }
+        if (req.url === '/canonical/adagents.json') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(authFile));
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      try {
+        const checker = new NetworkConsistencyChecker({
+          authoritativeUrl: `${server.url}/adagents.json`,
+          logLevel: 'silent',
+          timeoutMs: 1000,
+        });
+        const report = await checker.check();
+        assert.strictEqual(report.authoritativeUrl, `${server.url}/canonical/adagents.json`);
+        assert.strictEqual(report.schemaErrors.length, 0);
+      } finally {
+        await server.close();
+      }
+    });
+
     test('authoritative URL fetch failure returns early with schema error', async () => {
       // ECONNREFUSED on the authoritative URL. Bind + close to free the
       // port, then point `check()` at the dead URL.
@@ -404,6 +443,32 @@ describe('NetworkConsistencyChecker', () => {
       assert.ok(report.schemaErrors.length >= 1);
       assert.ok(report.schemaErrors.some(e => e.field === '$root'));
       assert.strictEqual(report.domains.length, 0);
+    });
+
+    test('redirect policy refusals surface diagnostic messages in reports', async () => {
+      const server = await startServer((req, res) => {
+        if (req.url === '/adagents.json') {
+          res.writeHead(301, { Location: 'http://cross.example.com/adagents.json' });
+          res.end();
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      });
+      try {
+        const checker = new NetworkConsistencyChecker({
+          authoritativeUrl: `${server.url}/adagents.json`,
+          logLevel: 'silent',
+          timeoutMs: 1000,
+        });
+        const report = await checker.check();
+        assert.ok(
+          report.schemaErrors.some(e => e.message.includes('adagents.json redirect crosses registrable domain')),
+          `expected redirect diagnostic, got: ${JSON.stringify(report.schemaErrors)}`
+        );
+      } finally {
+        await server.close();
+      }
     });
 
     test('self-referential authoritative_location is reported as schema error', async () => {

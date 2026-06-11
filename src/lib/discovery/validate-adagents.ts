@@ -460,20 +460,19 @@ async function fetchTextOrStatus(url: string, opts: InternalFetchOptions): Promi
 
 async function rawFetch(url: string, opts: InternalFetchOptions): Promise<RawFetchOutcome> {
   try {
-    const result = await ssrfSafeFetchAdAgents(
-      url,
-      {
-        timeoutMs: opts.timeoutMs,
-        allowPrivateIp: isInternalProbesAllowed(),
-        maxBodyBytes: opts.maxBodyBytes,
-        headers: {
-          ...FETCH_HEADERS,
-          'User-Agent': opts.userAgentHeader,
-          From: opts.fromHeader,
-        },
+    const fetchOptions = {
+      timeoutMs: opts.timeoutMs,
+      allowPrivateIp: isInternalProbesAllowed(),
+      maxBodyBytes: opts.maxBodyBytes,
+      headers: {
+        ...FETCH_HEADERS,
+        'User-Agent': opts.userAgentHeader,
+        From: opts.fromHeader,
       },
-      opts.redirectPolicy ?? { mode: 'none' }
-    );
+    };
+    const result = opts.redirectPolicy
+      ? await ssrfSafeFetchAdAgents(url, fetchOptions, opts.redirectPolicy)
+      : await ssrfSafeFetch(url, fetchOptions);
     if (result.status === 404) return { kind: 'not_found' };
     if (result.status < 200 || result.status >= 300) {
       return { kind: 'http_error', status: result.status };

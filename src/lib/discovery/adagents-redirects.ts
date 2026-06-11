@@ -11,6 +11,7 @@ export type AdAgentsRedirectRefusalCode =
   | 'redirect_missing_location'
   | 'redirect_scheme_changed'
   | 'redirect_cross_registrable_domain'
+  | 'redirect_userinfo_not_allowed'
   | 'redirect_too_many';
 
 export class AdAgentsRedirectRefusedError extends Error {
@@ -55,13 +56,28 @@ export async function ssrfSafeFetchAdAgents(
       );
     }
 
-    const nextUrl = new URL(location, currentUrl).toString();
+    let next: URL;
+    try {
+      next = new URL(location, currentUrl);
+    } catch {
+      throw new AdAgentsRedirectRefusedError('redirect_refused', 'Invalid adagents.json redirect URL', {
+        url: currentUrl,
+      });
+    }
+    const nextUrl = next.toString();
+    if (next.username || next.password) {
+      throw new AdAgentsRedirectRefusedError(
+        'redirect_userinfo_not_allowed',
+        'adagents.json redirect must not include userinfo',
+        { url: currentUrl, location: scrubUrl(next) }
+      );
+    }
 
     if (policy.mode === 'none') {
       throw new AdAgentsRedirectRefusedError(
         'redirect_refused',
-        `Redirect refused while fetching authoritative adagents.json: ${nextUrl}`,
-        { url: currentUrl, location: nextUrl }
+        'Redirect refused while fetching authoritative adagents.json',
+        { url: currentUrl, location: scrubUrl(next) }
       );
     }
 
@@ -69,7 +85,7 @@ export async function ssrfSafeFetchAdAgents(
       throw new AdAgentsRedirectRefusedError(
         'redirect_too_many',
         `Too many adagents.json redirects; maximum is ${maxRedirects}`,
-        { url: currentUrl, location: nextUrl }
+        { url: currentUrl, location: scrubUrl(next) }
       );
     }
 
@@ -88,25 +104,23 @@ export function validateSameRegistrableDomainRedirect(originUrl: string, current
     current = new URL(currentUrl);
     next = new URL(nextUrl);
   } catch {
-    throw new AdAgentsRedirectRefusedError('redirect_refused', `Invalid adagents.json redirect URL: ${nextUrl}`, {
+    throw new AdAgentsRedirectRefusedError('redirect_refused', 'Invalid adagents.json redirect URL', {
       url: currentUrl,
-      location: nextUrl,
     });
   }
 
   if (next.protocol !== origin.protocol) {
-    throw new AdAgentsRedirectRefusedError(
-      'redirect_scheme_changed',
-      `adagents.json redirect changed scheme: ${current.protocol} -> ${next.protocol}`,
-      { url: currentUrl, location: nextUrl }
-    );
+    throw new AdAgentsRedirectRefusedError('redirect_scheme_changed', 'adagents.json redirect changed scheme', {
+      url: currentUrl,
+      location: scrubUrl(next),
+    });
   }
 
   if (!sameRegistrableDomain(origin, next)) {
     throw new AdAgentsRedirectRefusedError(
       'redirect_cross_registrable_domain',
-      `adagents.json redirect crosses registrable domain: ${origin.hostname} -> ${next.hostname}`,
-      { url: currentUrl, location: nextUrl }
+      'adagents.json redirect crosses registrable domain',
+      { url: currentUrl, location: scrubUrl(next) }
     );
   }
 }
@@ -126,4 +140,13 @@ function registrableDomain(hostname: string): string | null {
   const parsed = parseTld(hostname, { allowPrivateDomains: true });
   if (parsed.isIp || !parsed.domain) return null;
   return parsed.domain.toLowerCase();
+}
+
+function scrubUrl(url: URL): string {
+  const scrubbed = new URL(url.toString());
+  scrubbed.username = '';
+  scrubbed.password = '';
+  scrubbed.search = '';
+  scrubbed.hash = '';
+  return scrubbed.toString();
 }
