@@ -313,6 +313,47 @@ describe('createAdcpServer', () => {
       assert.strictEqual(tool.annotations?.readOnlyHint, true);
     });
 
+    it('registers framework tools with passthrough input schemas by default', () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const tool = registeredTool(server, 'get_products');
+      assert.ok(tool, 'get_products should be registered');
+      assert.strictEqual(typeof tool.inputSchema?.passthrough, 'function');
+      assert.deepStrictEqual(Object.keys(tool.inputSchema.shape), []);
+    });
+
+    it('exposes shallow top-level schema hints for framework tools when opted in', async () => {
+      const { TOOL_INPUT_SHAPES } = require('../dist/lib/schemas');
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        exposeToolSchemas: true,
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+      const tool = registeredTool(server, 'get_products');
+      assert.ok(tool, 'get_products should be registered');
+      assert.ok(tool.inputSchema.shape.buying_mode, 'buying_mode hint should be exposed');
+      assert.ok(tool.inputSchema.shape.brief, 'brief hint should be exposed');
+      assert.notStrictEqual(tool.inputSchema.shape.buying_mode, TOOL_INPUT_SHAPES.get_products.buying_mode);
+
+      const toolsList = await server.dispatchTestRequest({ method: 'tools/list' });
+      const listedTool = toolsList.tools.find(({ name }) => name === 'get_products');
+      assert.ok(listedTool, 'get_products should be listed');
+      assert.ok(listedTool.inputSchema.properties.buying_mode, 'buying_mode should be exposed in tools/list');
+      assert.ok(listedTool.inputSchema.properties.brief, 'brief should be exposed in tools/list');
+      assert.strictEqual(listedTool.inputSchema.required, undefined);
+
+      const parsed = await getSdkServer(server).validateToolInput(
+        tool,
+        { buying_mode: 'brief', brief: 123, unknown_probe: { keep: true } },
+        'get_products'
+      );
+      assert.deepStrictEqual(parsed, { buying_mode: 'brief', brief: 123, unknown_probe: { keep: true } });
+    });
+
     // Custom tools declaring an `outputSchema` keep the SDK validation path
     // on — proves the `registerTool({ ..., outputSchema }, ...)` plumbing
     // survives the migration. `dispatchTestRequest` bypasses SDK validation
