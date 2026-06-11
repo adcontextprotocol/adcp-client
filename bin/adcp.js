@@ -1751,7 +1751,9 @@ RUN OPTIONS (full assessment):
                       Hosted badge mode: allow a stable line (e.g. 3.1)
                       to resolve against a prerelease compliance cache.
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
-  --timeout SECONDS   Timeout in seconds (default: 120)
+  --timeout SECONDS   Soft budget in seconds: stop starting new storyboards
+                      after this budget, without aborting an active storyboard
+                      (default: 120)
   --brief TEXT        Custom brief for product discovery
   --no-sandbox        Force production-path responses (#841). Sets
                       account.sandbox=false on every request AND stamps

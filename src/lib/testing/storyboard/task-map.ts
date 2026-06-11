@@ -129,7 +129,7 @@ export async function executeStoryboardTask(
   client: any,
   taskName: string,
   params: Record<string, unknown>,
-  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean } = {}
+  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean; signal?: AbortSignal } = {}
 ): Promise<TaskResult> {
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
@@ -158,7 +158,7 @@ export async function executeStoryboardTask(
   const BASE_DELAY_MS = 2000;
   for (let attempt = 0; ; attempt++) {
     try {
-      result = await invoke();
+      result = await raceWithSignal(invoke(), opts.signal);
       break;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -167,7 +167,7 @@ export async function executeStoryboardTask(
       if (isRateLimit && attempt < MAX_RETRIES) {
         const jitter = Math.random() * 1000;
         const delay = BASE_DELAY_MS * 2 ** attempt + jitter;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await raceWithSignal(new Promise(resolve => setTimeout(resolve, delay)), opts.signal);
         continue;
       }
       throw err;
@@ -184,8 +184,12 @@ export async function executeStoryboardTask(
       const timeout = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('Task polling timeout')), 30_000)
       );
-      result = await Promise.race([result.submitted.waitForCompletion(2000), timeout]);
-    } catch {
+      result = await raceWithSignal(
+        Promise.race([result.submitted.waitForCompletion(2000, opts.signal), timeout]),
+        opts.signal
+      );
+    } catch (err) {
+      if (opts.signal?.aborted) throw err;
       // Polling failed or timed out — return the intermediate result as-is
     }
   }
@@ -207,4 +211,24 @@ export async function executeStoryboardTask(
     ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
+}
+
+function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      value => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      err => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
 }
