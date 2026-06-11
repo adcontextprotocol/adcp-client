@@ -18,11 +18,15 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const { validateAdAgents, parseManagerDomain } = require('../../dist/lib/discovery/validate-adagents.js');
+const {
+  validateSameRegistrableDomainRedirect,
+  AdAgentsRedirectRefusedError,
+} = require('../../dist/lib/discovery/adagents-redirects.js');
 
 /**
  * Start a loopback HTTP server with a per-path response map.
  *
- * @param {Record<string, { status?: number, body?: string, contentType?: string }>} routes
+ * @param {Record<string, { status?: number, body?: string, contentType?: string, headers?: Record<string, string> }>} routes
  *   Map from request path to response config. Unmapped paths → 404.
  */
 function startRoutedServer(routes) {
@@ -36,6 +40,7 @@ function startRoutedServer(routes) {
       }
       res.writeHead(route.status ?? 200, {
         'Content-Type': route.contentType ?? 'application/json',
+        ...(route.headers ?? {}),
       });
       res.end(route.body ?? '');
     });
@@ -48,6 +53,17 @@ function startRoutedServer(routes) {
       });
     });
   });
+}
+
+function assertRedirectAllowed(originUrl, currentUrl, nextUrl) {
+  assert.doesNotThrow(() => validateSameRegistrableDomainRedirect(originUrl, currentUrl, nextUrl));
+}
+
+function assertRedirectRefused(originUrl, currentUrl, nextUrl, code) {
+  assert.throws(
+    () => validateSameRegistrableDomainRedirect(originUrl, currentUrl, nextUrl),
+    err => err instanceof AdAgentsRedirectRefusedError && err.code === code
+  );
 }
 
 function adAgentsJson(agentUrl = 'https://agent.example.com/mcp') {
@@ -409,6 +425,140 @@ describe('validateAdAgents — discovery_method', () => {
       assert.strictEqual(result.publisher_domain, publisher.host);
     } finally {
       await publisher.close();
+    }
+  });
+});
+
+describe('validateAdAgents — adagents.json HTTP redirect policy', () => {
+  test('well-known redirect policy matches cross-SDK registrable-domain vectors', () => {
+    assertRedirectAllowed(
+      'https://ladepeche.fr/.well-known/adagents.json',
+      'https://ladepeche.fr/.well-known/adagents.json',
+      'https://www.ladepeche.fr/.well-known/adagents.json'
+    );
+    assertRedirectAllowed(
+      'https://www.example.com/.well-known/adagents.json',
+      'https://www.example.com/.well-known/adagents.json',
+      'https://example.com/.well-known/adagents.json'
+    );
+    assertRedirectAllowed(
+      'https://pub.example/.well-known/adagents.json',
+      'https://pub.example/.well-known/adagents.json',
+      'https://cdn.pub.example/.well-known/adagents.json'
+    );
+    assertRedirectAllowed(
+      'https://example.co.uk/.well-known/adagents.json',
+      'https://example.co.uk/.well-known/adagents.json',
+      'https://www.example.co.uk/.well-known/adagents.json'
+    );
+    assertRedirectAllowed(
+      'https://victim.github.io/.well-known/adagents.json',
+      'https://victim.github.io/.well-known/adagents.json',
+      'https://www.victim.github.io/.well-known/adagents.json'
+    );
+
+    assertRedirectRefused(
+      'https://ladepeche.fr/.well-known/adagents.json',
+      'https://ladepeche.fr/.well-known/adagents.json',
+      'https://claire.pub/.well-known/adagents.json',
+      'redirect_cross_registrable_domain'
+    );
+    assertRedirectRefused(
+      'https://example.co.uk/.well-known/adagents.json',
+      'https://example.co.uk/.well-known/adagents.json',
+      'https://example.com/.well-known/adagents.json',
+      'redirect_cross_registrable_domain'
+    );
+    assertRedirectRefused(
+      'https://victim.github.io/.well-known/adagents.json',
+      'https://victim.github.io/.well-known/adagents.json',
+      'https://attacker.github.io/.well-known/adagents.json',
+      'redirect_cross_registrable_domain'
+    );
+    assertRedirectRefused(
+      'https://pub.example/.well-known/adagents.json',
+      'https://www.pub.example/.well-known/adagents.json',
+      'https://attacker.example/.well-known/adagents.json',
+      'redirect_cross_registrable_domain'
+    );
+    assertRedirectRefused(
+      'https://pub.example/.well-known/adagents.json',
+      'https://pub.example/.well-known/adagents.json',
+      'http://pub.example/.well-known/adagents.json',
+      'redirect_scheme_changed'
+    );
+  });
+
+  test('initial .well-known fetch follows same-site HTTP redirects', async () => {
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': {
+        status: 301,
+        headers: { Location: '/v2/adagents.json' },
+      },
+      '/v2/adagents.json': { body: adAgentsJson('https://redirected.example/mcp') },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, true, `expected valid, got errors=${JSON.stringify(result.errors)}`);
+      assert.strictEqual(result.discovery_method, 'direct');
+      assert.ok(result.resolved_url.endsWith('/v2/adagents.json'), `unexpected resolved_url=${result.resolved_url}`);
+      assert.strictEqual(result.adagents?.authorized_agents?.[0]?.url, 'https://redirected.example/mcp');
+    } finally {
+      await publisher.close();
+    }
+  });
+
+  test('initial .well-known fetch enforces three redirect hop cap', async () => {
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': { status: 301, headers: { Location: '/r1' } },
+      '/r1': { status: 301, headers: { Location: '/r2' } },
+      '/r2': { status: 301, headers: { Location: '/r3' } },
+      '/r3': { status: 301, headers: { Location: '/r4' } },
+      '/r4': { body: adAgentsJson('https://too-late.example/mcp') },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.ok(
+        result.errors.some(e => e.includes('Too many adagents.json redirects')),
+        `expected hop-cap error, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await publisher.close();
+    }
+  });
+
+  test('authoritative_location dereference refuses any HTTP redirect', async () => {
+    const authoritative = await startRoutedServer({
+      '/authoritative/adagents.json': {
+        status: 301,
+        headers: { Location: '/canonical/adagents.json' },
+      },
+      '/canonical/adagents.json': { body: adAgentsJson('https://must-not-fetch.example/mcp') },
+    });
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': {
+        body: JSON.stringify({
+          authoritative_location: `${authoritative.url}/authoritative/adagents.json`,
+        }),
+      },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'authoritative_location');
+      assert.ok(
+        result.errors.some(e => e.includes('Redirect refused while fetching authoritative adagents.json')),
+        `expected authoritative redirect refusal, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await Promise.all([publisher.close(), authoritative.close()]);
     }
   });
 });

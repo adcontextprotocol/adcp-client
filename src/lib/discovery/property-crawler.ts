@@ -13,10 +13,11 @@ import { getPropertyIndex } from './property-index';
 import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
 import { validateUserAgent } from '../utils/validate-user-agent';
-import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
+import { SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
 import { resolveAgentProperties } from './resolve-agent-properties';
+import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents } from './adagents-redirects';
 
 /**
  * Cap on a single adagents.json response body. The published advertising
@@ -314,23 +315,27 @@ export class PropertyCrawler {
       // ssrfSafeFetch's address guards; the recursive `authoritative_location`
       // follow path below re-validates each redirect target by re-entering
       // this same function (so DNS-pin defense applies at each hop).
-      const result = await ssrfSafeFetch(url, {
-        maxBodyBytes: MAX_ADAGENTS_BODY_BYTES,
-        allowPrivateIp: isInternalProbesAllowed(),
-        headers: {
-          // Use standard browser headers to pass CDN bot detection (e.g., Akamai)
-          // Some CDNs reject modified User-Agents, so we use a standard Chrome string
-          // Note: PropertyCrawler identifies itself via From header (RFC 9110)
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          From: this.userAgent
-            ? `adcp-property-crawler@adcontextprotocol.org (${this.userAgent}; v${LIBRARY_VERSION})`
-            : `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
+      const result = await ssrfSafeFetchAdAgents(
+        url,
+        {
+          maxBodyBytes: MAX_ADAGENTS_BODY_BYTES,
+          allowPrivateIp: isInternalProbesAllowed(),
+          headers: {
+            // Use standard browser headers to pass CDN bot detection (e.g., Akamai)
+            // Some CDNs reject modified User-Agents, so we use a standard Chrome string
+            // Note: PropertyCrawler identifies itself via From header (RFC 9110)
+            'User-Agent':
+              'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            Accept: 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            From: this.userAgent
+              ? `adcp-property-crawler@adcontextprotocol.org (${this.userAgent}; v${LIBRARY_VERSION})`
+              : `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
+          },
         },
-      });
+        depth === 0 ? { mode: 'same-registrable-domain', originUrl: url } : { mode: 'none' }
+      );
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`HTTP ${result.status}`);
       }
@@ -431,6 +436,9 @@ export class PropertyCrawler {
       // continues to suppress them at debug level.
       if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) {
         throw new Error(`Failed to fetch adagents.json: [SSRF refused] ${error.message}`);
+      }
+      if (error instanceof AdAgentsRedirectRefusedError) {
+        throw new Error(`Failed to fetch adagents.json: ${error.message}`);
       }
       throw new Error(`Failed to fetch adagents.json: ${error instanceof Error ? error.message : String(error)}`);
     }

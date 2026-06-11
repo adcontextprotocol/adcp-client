@@ -557,19 +557,10 @@ describe('NetworkConsistencyChecker', () => {
 
   describe('HTTP redirect following', () => {
     test('follows one redirect on pointer fetch (CDN www redirect)', async () => {
-      // `fetchJson` follows a single 301/302 with a Location header.
+      // `fetchJson` follows same-site 3xx responses with a Location header.
       // Serve a 301 → /v2/adagents.json, then 200 with the pointer body.
       const server = await startServer((req, res) => {
         if (req.url === '/.well-known/adagents.json') {
-          // ssrfSafeFetch sets redirect: 'manual', so fetchJson sees the
-          // 3xx + Location header and re-validates the target URL. The
-          // target must pass `validateAgentUrl` (allows http) and
-          // start with `https://` per the production guard. The
-          // production guard is strict: `redirectUrl.startsWith('https://')`.
-          // A loopback redirect target can't pass that guard, so the
-          // redirect-follow path is exercised but rejects. Use a same-
-          // origin target and assert the redirect is REJECTED with the
-          // non-HTTPS error.
           res.writeHead(301, { Location: '/v2/adagents.json' });
           res.end();
         } else if (req.url === '/v2/adagents.json') {
@@ -585,14 +576,8 @@ describe('NetworkConsistencyChecker', () => {
           authoritativeUrl: 'https://network.example.com/adagents.json',
           logLevel: 'silent',
         });
-        // Production rejects loopback redirect targets because they
-        // resolve to http://. The observable behavior: the redirect
-        // surfaces as a "Redirect to non-HTTPS URL not allowed" error.
-        await assert.rejects(
-          () => checker['fetchJson'](`${server.url}/.well-known/adagents.json`),
-          /not allowed|HTTP 301/,
-          'redirect-follow logic engages and re-validates the target'
-        );
+        const data = await checker['fetchJson'](`${server.url}/.well-known/adagents.json`);
+        assert.strictEqual(data.authoritative_location, 'https://network.example.com/adagents.json');
       } finally {
         await server.close();
       }
@@ -637,7 +622,7 @@ describe('NetworkConsistencyChecker', () => {
     });
 
     test('rejects redirect to non-HTTPS URL on pointer fetch', async () => {
-      // 301 → http://insecure-target/. The production guard rejects.
+      // 301 → a different registrable domain. The same-site policy rejects.
       const server = await startServer((req, res) => {
         if (req.url === '/.well-known/adagents.json') {
           res.writeHead(301, { Location: 'http://insecure.example.com/.well-known/adagents.json' });
@@ -654,8 +639,8 @@ describe('NetworkConsistencyChecker', () => {
         });
         await assert.rejects(
           () => checker['fetchJson'](`${server.url}/.well-known/adagents.json`),
-          /not allowed|HTTP 301/,
-          'non-HTTPS redirect target must be rejected'
+          /crosses registrable domain|HTTP 301/,
+          'cross-domain redirect target must be rejected'
         );
       } finally {
         await server.close();

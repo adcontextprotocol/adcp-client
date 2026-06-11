@@ -15,6 +15,7 @@ import { validateAgentUrl } from '../validation';
 import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { AdAgentsJson, AuthorizedAgent, Property } from './types';
+import { AdAgentsRedirectRefusedError, ssrfSafeFetchAdAgents, type AdAgentsRedirectPolicy } from './adagents-redirects';
 
 // ====== Configuration ======
 
@@ -238,7 +239,11 @@ export class NetworkConsistencyChecker {
     if (!url) {
       const firstDomain = this.domains[0];
       try {
-        const pointerData = await this.fetchJson<AdAgentsJson>(`https://${firstDomain}/.well-known/adagents.json`);
+        const pointerUrl = `https://${firstDomain}/.well-known/adagents.json`;
+        const pointerData = await this.fetchJson<AdAgentsJson>(pointerUrl, {
+          mode: 'same-registrable-domain',
+          originUrl: pointerUrl,
+        });
         if (pointerData.authoritative_location) {
           url = pointerData.authoritative_location;
         } else {
@@ -254,7 +259,7 @@ export class NetworkConsistencyChecker {
     }
 
     try {
-      const data = await this.fetchJson<AdAgentsJson>(url);
+      const data = await this.fetchJson<AdAgentsJson>(url, { mode: 'none' });
 
       // Follow at most one authoritative_location redirect
       if (data.authoritative_location && !data.authorized_agents) {
@@ -273,7 +278,7 @@ export class NetworkConsistencyChecker {
           });
           return { url, data: null };
         }
-        const redirectData = await this.fetchJson<AdAgentsJson>(redirectUrl);
+        const redirectData = await this.fetchJson<AdAgentsJson>(redirectUrl, { mode: 'none' });
         // Do not follow further redirects from the redirect target
         return { url: redirectUrl, data: redirectData };
       }
@@ -470,7 +475,10 @@ export class NetworkConsistencyChecker {
     const url = `https://${domain}/.well-known/adagents.json`;
 
     try {
-      const data = await this.fetchJson<AdAgentsJson>(url);
+      const data = await this.fetchJson<AdAgentsJson>(url, {
+        mode: 'same-registrable-domain',
+        originUrl: url,
+      });
 
       if (data.authoritative_location) {
         if (data.authoritative_location === authoritativeUrl) {
@@ -544,7 +552,11 @@ export class NetworkConsistencyChecker {
         pointerUrl: string;
       } | null> => {
         try {
-          const data = await this.fetchJson<AdAgentsJson>(`https://${domain}/.well-known/adagents.json`);
+          const pointerUrl = `https://${domain}/.well-known/adagents.json`;
+          const data = await this.fetchJson<AdAgentsJson>(pointerUrl, {
+            mode: 'same-registrable-domain',
+            originUrl: pointerUrl,
+          });
           const result =
             data.authoritative_location === authoritativeUrl
               ? { domain, orphaned: true, pointerUrl: data.authoritative_location }
@@ -575,7 +587,10 @@ export class NetworkConsistencyChecker {
     }
   }
 
-  private async fetchJson<T>(url: string): Promise<T> {
+  private async fetchJson<T>(
+    url: string,
+    redirectPolicy: AdAgentsRedirectPolicy = { mode: 'same-registrable-domain', originUrl: url }
+  ): Promise<T> {
     validateAgentUrl(url);
     // Shared AbortController: total wall-clock bounded by `this.timeoutMs`
     // across the initial fetch + any 1-redirect follow. See `probeAgent`
@@ -586,30 +601,9 @@ export class NetworkConsistencyChecker {
       // / scheme guard / redirect: 'manual' in one wrapper. Each ssrfSafeFetch
       // call DNS-pins independently — the redirect-follow path below
       // re-validates against the address guards via the second invocation.
-      let result = await ssrfSafeFetch(url, {
-        timeoutMs: this.timeoutMs,
-        allowPrivateIp: isInternalProbesAllowed(),
-        signal: sharedSignal,
-        maxBodyBytes: MAX_RESPONSE_BYTES,
-        headers: {
-          ...FETCH_HEADERS,
-          'User-Agent': this.userAgentHeader,
-          From: this.fromHeader,
-        },
-      });
-
-      // Follow one HTTP redirect with SSRF validation.
-      if (result.status >= 300 && result.status < 400) {
-        const location = result.headers['location'];
-        if (!location) {
-          throw new Error(`HTTP ${result.status} redirect with no Location header`);
-        }
-        const redirectUrl = new URL(location, url).toString();
-        if (!redirectUrl.startsWith('https://')) {
-          throw new Error('Redirect to non-HTTPS URL not allowed');
-        }
-        validateAgentUrl(redirectUrl);
-        result = await ssrfSafeFetch(redirectUrl, {
+      const result = await ssrfSafeFetchAdAgents(
+        url,
+        {
           timeoutMs: this.timeoutMs,
           allowPrivateIp: isInternalProbesAllowed(),
           signal: sharedSignal,
@@ -619,8 +613,9 @@ export class NetworkConsistencyChecker {
             'User-Agent': this.userAgentHeader,
             From: this.fromHeader,
           },
-        });
-      }
+        },
+        redirectPolicy
+      );
 
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`HTTP ${result.status}`);
@@ -640,6 +635,9 @@ export class NetworkConsistencyChecker {
     } catch (error) {
       if (error instanceof SsrfRefusedError && error.code === 'body_exceeds_limit') {
         throw new Error('Response too large');
+      }
+      if (error instanceof AdAgentsRedirectRefusedError) {
+        throw new Error(error.message);
       }
       throw error;
     }
