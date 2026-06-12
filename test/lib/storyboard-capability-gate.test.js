@@ -624,16 +624,20 @@ describe('phase-level requires_capability gate (#2224)', () => {
   });
 
   test('optional-only gated phases do not create a vacuous overall pass', async () => {
-    const result = await runStoryboard('http://fake-local-99990', {
-      ...deterministicSessionPhaseGatedStoryboard,
-      phases: [{ ...deterministicSessionPhaseGatedStoryboard.phases[0], optional: true }],
-    }, {
-      _profile: {
-        name: 'Test Agent (media-buy only)',
-        tools: ['get_adcp_capabilities'],
-        raw_capabilities: { supported_protocols: ['media_buy'] },
+    const result = await runStoryboard(
+      'http://fake-local-99990',
+      {
+        ...deterministicSessionPhaseGatedStoryboard,
+        phases: [{ ...deterministicSessionPhaseGatedStoryboard.phases[0], optional: true }],
       },
-    });
+      {
+        _profile: {
+          name: 'Test Agent (media-buy only)',
+          tools: ['get_adcp_capabilities'],
+          raw_capabilities: { supported_protocols: ['media_buy'] },
+        },
+      }
+    );
 
     assert.equal(result.failed_count, 0);
     assert.equal(result.passed_count, 0);

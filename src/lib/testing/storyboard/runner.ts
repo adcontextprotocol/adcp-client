@@ -302,10 +302,7 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
  */
-export function evaluateCapabilityPredicate(
-  predicate: RequiresCapabilityPredicate,
-  actual: unknown
-): string | null {
+export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredicate, actual: unknown): string | null {
   if ('present' in predicate) {
     const isPresent = actual !== undefined && actual !== null;
     if (predicate.present && !isPresent) {
@@ -2283,10 +2280,9 @@ async function executeStoryboardPass(
   let seedingMissingController = false;
   let seedingUnsupported = false;
   {
-    const seeding =
-      skipControllerSeedingForPhaseGates
-        ? null
-        : preSeeded !== undefined
+    const seeding = skipControllerSeedingForPhaseGates
+      ? null
+      : preSeeded !== undefined
         ? preSeeded.result
         : await runControllerSeeding(clients[0]!, storyboard, options, context);
     if (seeding) {
