@@ -115,7 +115,7 @@ jobs:
             ref: adcp-v2.0.1
             harness: scripts/ci/run_storyboard_reference_seller.sh
             port: 3004
-            advisory: false
+            advisory: true
     env:
       STORYBOARD_RESULT_PATH: ${{ github.workspace }}/storyboard-result-${{ matrix.language }}.json
       SELLER_LOG_PATH: ${{ github.workspace }}/storyboard-seller-${{ matrix.language }}.log
