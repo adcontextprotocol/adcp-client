@@ -124,6 +124,7 @@ export type GetProductsRequest = {
     | 'publisher_properties'
     | 'channels'
     | 'video_placement_types'
+    | 'audio_distribution_types'
     | 'sponsored_placement_types'
     | 'social_placement_surfaces'
     | 'format_ids'
@@ -369,6 +370,17 @@ export type MediaChannel =
  * Declared video placement classification for OLV and other video inventory, using the IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native value names. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
  */
 export type VideoPlacementType = 'instream' | 'accompanying_content' | 'interstitial' | 'standalone';
+/**
+ * Declared audio distribution classification for radio, streaming-audio, podcast, and other audio inventory, using IAB Tech Lab/OpenRTB 2.6 audio.feed definitions with AdCP-native value names. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+ */
+export type AudioDistributionType =
+  | 'music_streaming_service'
+  | 'fm_am_broadcast'
+  | 'podcast'
+  | 'catch_up_radio'
+  | 'web_radio'
+  | 'video_game'
+  | 'text_to_speech';
 /**
  * Declared sponsored-placement classification for catalog-driven retail-media inventory, distinguishing where the sponsored placement renders on the retailer surface. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
  */
@@ -982,6 +994,10 @@ export interface ProductFilters {
    */
   video_placement_types?: VideoPlacementType[];
   /**
+   * Filter audio products by acceptable declared audio distribution types, using IAB Tech Lab/OpenRTB 2.6 audio.feed definitions with AdCP-native names. Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested audio distribution types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
+   */
+  audio_distribution_types?: AudioDistributionType[];
+  /**
    * Filter retail-media products by acceptable declared sponsored-placement types (sponsored search, sponsored display, or sponsored native). Sellers SHOULD return only products they can satisfy with at least one requested type. Products whose only available delivery is a mixed, non-targetable bundle that includes unrequested sponsored-placement types SHOULD NOT match unless the seller can constrain delivery to the requested type during planning or purchase. This filter has set semantics for wholesale feed canonicalization.
    */
   sponsored_placement_types?: SponsoredPlacementType[];
@@ -1417,6 +1433,10 @@ export type Product = {
      * Declared video placement types that may be included in this product, using IAB Tech Lab/OpenRTB 2.6 video.plcmt definitions with AdCP-native names. Use on OLV, CTV, and other video products when buyers need to distinguish instream, accompanying-content, interstitial, and standalone/no-content inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `video_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
      */
     video_placement_types?: VideoPlacementType[];
+    /**
+     * Declared audio distribution types that may be included in this product, using IAB Tech Lab/OpenRTB 2.6 audio.feed definitions with AdCP-native names. Use on radio, streaming-audio, podcast, gaming, and other audio products when buyers need to distinguish music streaming services, FM/AM broadcast, podcasts, catch-up radio, web radio, video-game audio, and text-to-speech inventory without changing the buyer-facing channel or adagents.json property type. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `audio_distribution_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+     */
+    audio_distribution_types?: AudioDistributionType[];
     /**
      * Declared sponsored-placement types that may be included in this product, distinguishing where catalog-driven retail-media placements render on the retailer surface (sponsored search, sponsored display, or sponsored native). Use on retail-media products when buyers need to distinguish search-keyed, display, and native in-grid sponsored inventory. Aggregate products and ad-network products MAY declare multiple values. When `placements[]` also carry `sponsored_placement_types`, this product-level array SHOULD be the union of the placement-level declarations the seller may deliver under the product. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
      */
@@ -2401,6 +2421,10 @@ export type Placement = {
    */
   video_placement_types?: VideoPlacementType[];
   /**
+   * Declared audio distribution types for this product placement, using IAB Tech Lab/OpenRTB 2.6 audio.feed definitions with AdCP-native names. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
+   */
+  audio_distribution_types?: AudioDistributionType[];
+  /**
    * Declared sponsored-placement types for this product placement, distinguishing where the catalog-driven retail-media placement renders on the retailer surface. Most concrete placements SHOULD declare a single value; aggregate placements MAY declare multiple values. This is seller-declared discovery metadata, not independent verification of inventory quality or delivery context.
    */
   sponsored_placement_types?: SponsoredPlacementType[];
@@ -2881,6 +2905,7 @@ export type UIDType =
   | 'maid'
   | 'hashed_email'
   | 'publisher_first_party'
+  | 'world_id_nullifier'
   | 'other';
 /**
  * Days of the week for daypart targeting
@@ -7174,7 +7199,7 @@ export type FormatOptionReference = PublisherCatalogFormatOptionReference | Prod
  */
 export type Pacing = 'even' | 'asap' | 'front_loaded';
 /**
- * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. Duplicate priority values result in undefined seller behavior.
+ * A single optimization target for a package. Packages accept an array of optimization_goals. When multiple goals are present, priority determines which the seller focuses on — 1 is highest priority (primary goal); higher numbers are secondary. When priorities are present but no goal is priority 1, the goal with the lowest priority value is primary (e.g., priorities of 2 and 3 mean 2 is primary). Duplicate priority values result in undefined seller behavior.
  */
 export type OptimizationGoal =
   | {
@@ -10570,7 +10595,7 @@ export interface UpdateMediaBuySuccess {
   implementation_date?: string | null;
   invoice_recipient?: BusinessEntity;
   /**
-   * Array of packages that were modified with complete state information
+   * For package-level updates, array of full Package objects showing complete post-update state for each directly modified package. This is a state snapshot, not a sparse delta: sellers MUST NOT return package_id-only stubs. Campaign-level updates that do not modify packages may return an empty array.
    */
   affected_packages?: Package[];
   /**
@@ -22736,7 +22761,7 @@ export interface GetAdCPCapabilitiesResponse {
       supported_window_units?: string[];
     };
     /**
-     * Content standards implementation details. Presence of this object indicates the seller supports content_standards configuration including sampling rates and category filtering. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities.
+     * Content standards implementation details. Presence of this object indicates the seller supports content_standards configuration including sampling rates and category filtering. Gives buyers pre-buy visibility into local evaluation and artifact delivery capabilities. This is a seller-side media-buy capability; governance agents providing content standards services declare `specialisms: ["content-standards"]` instead.
      */
     content_standards?: {
       /**
