@@ -95,11 +95,13 @@ import type {
 // `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
 // derive the shape from the response array.
 type Product = NonNullable<GetProductsResponse['products']>[number];
+type AdcpPackage = NonNullable<UpdateMediaBuySuccess['affected_packages']>[number];
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3004);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
+const DEFAULT_PRICING_OPTION_ID = 'cpm_guaranteed_fixed';
 // Test-kit principal for the `comply_controller_mode_gate` storyboard
 // (adcp#4028). The runner authenticates with this bearer to probe the
 // seller's live-mode denial path. The resolver below stamps
@@ -191,6 +193,15 @@ interface UpstreamForecast {
   generated_at?: string;
 }
 
+interface UpstreamLineItem {
+  line_item_id: string;
+  order_id: string;
+  product_id: string;
+  status: 'pending_creatives' | 'ready' | 'paused' | 'delivering' | 'completed';
+  budget: number;
+  creative_ids: string[];
+}
+
 interface UpstreamOrder {
   order_id: string;
   network_code: string;
@@ -204,14 +215,7 @@ interface UpstreamOrder {
   /** Mock's GET /v1/orders/{id} omits line_items; fetch via
    * GET /v1/orders/{id}/lineitems separately. Real GAM splits the same
    * way (Order vs LineItem services). */
-  line_items?: Array<{
-    line_item_id: string;
-    order_id: string;
-    product_id: string;
-    status: 'pending_creatives' | 'ready' | 'paused' | 'delivering' | 'completed';
-    budget: number;
-    creative_ids: string[];
-  }>;
+  line_items?: UpstreamLineItem[];
   created_at: string;
   updated_at: string;
 }
@@ -383,6 +387,23 @@ const upstream = {
     return r.body;
   },
 
+  async attachCreative(
+    networkCode: string,
+    orderId: string,
+    lineItemId: string,
+    creativeId: string
+  ): Promise<UpstreamLineItem> {
+    const r = await http.post<UpstreamLineItem>(
+      `/v1/orders/${encodeURIComponent(orderId)}/lineitems/${encodeURIComponent(lineItemId)}/creative-attach`,
+      { creative_id: creativeId },
+      networkHeader(networkCode)
+    );
+    if (r.body === null) {
+      throw new AdcpError('INVALID_REQUEST', { message: 'creative attachment rejected by upstream' });
+    }
+    return r.body;
+  },
+
   // SWAP: poll the IO review task. Mock auto-promotes submitted → working →
   // completed after 2 polls. Real platforms expose a similar poll endpoint
   // OR push the result via webhook; mirror whichever your backend uses.
@@ -529,6 +550,28 @@ function packageContextKey(account: Account<NetworkMeta>, mediaBuyId: string, pa
   const mode = (account as Account<NetworkMeta> & { mode?: string }).mode ?? 'live';
   const operator = account.operator ?? '';
   return `${mode}::${account.id}::${operator}::${account.ctx_metadata.network_code}::${mediaBuyId}::${packageId}`;
+}
+
+function projectLineItemPackage(
+  account: Account<NetworkMeta>,
+  mediaBuyId: string,
+  li: UpstreamLineItem,
+  overrides: Partial<AdcpPackage> = {}
+): AdcpPackage {
+  const storedContext = localPackageContexts.get(packageContextKey(account, mediaBuyId, li.line_item_id));
+  const packageContext =
+    storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
+  const creativeAssignments =
+    li.creative_ids.length > 0 ? li.creative_ids.map(creative_id => ({ creative_id })) : undefined;
+  return {
+    package_id: li.line_item_id,
+    product_id: li.product_id,
+    budget: li.budget,
+    pricing_option_id: DEFAULT_PRICING_OPTION_ID,
+    ...(creativeAssignments !== undefined && { creative_assignments: creativeAssignments }),
+    ...(packageContext !== undefined && { context: packageContext }),
+    ...overrides,
+  };
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -937,6 +980,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
             package_id: li.line_item_id,
             product_id: pkg.product_id,
             budget: pkg.budget ?? 0,
+            pricing_option_id: DEFAULT_PRICING_OPTION_ID,
             ...(packageContext !== undefined && { context: packageContext }),
           });
         }
@@ -1006,10 +1050,12 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           recovery: 'terminal',
         });
       }
-      if (patch.packages) {
-        const lineItems = await upstream.listLineItems(networkCode, buyId);
+      const patchPackages = patch.packages ?? [];
+      let lineItems: UpstreamLineItem[] = [];
+      if (patchPackages.length > 0) {
+        lineItems = await upstream.listLineItems(networkCode, buyId);
         const knownPackageIds = new Set(lineItems.map(li => li.line_item_id));
-        for (const p of patch.packages) {
+        for (const p of patchPackages) {
           const pid = (p as { package_id?: string }).package_id;
           if (pid && !knownPackageIds.has(pid)) {
             throw new AdcpError('PACKAGE_NOT_FOUND', {
@@ -1044,6 +1090,35 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         localBuyStatus.set(buyId, nextStatus);
       }
 
+      const affectedPackages: AdcpPackage[] = [];
+      if (patchPackages.length > 0) {
+        const lineItemsById = new Map(lineItems.map(li => [li.line_item_id, li]));
+        for (const p of patchPackages) {
+          const pid = (p as { package_id?: string }).package_id;
+          if (!pid) continue;
+          let lineItem = lineItemsById.get(pid);
+          if (!lineItem) continue;
+
+          const creativeAssignments = (p as { creative_assignments?: Array<{ creative_id?: string }> })
+            .creative_assignments;
+          if (Array.isArray(creativeAssignments)) {
+            for (const assignment of creativeAssignments) {
+              if (typeof assignment.creative_id !== 'string' || assignment.creative_id.length === 0) continue;
+              lineItem = await upstream.attachCreative(networkCode, buyId, pid, assignment.creative_id);
+              lineItemsById.set(pid, lineItem);
+            }
+          }
+
+          const overrides: Partial<AdcpPackage> = {};
+          if ('targeting_overlay' in p && p.targeting_overlay !== null && p.targeting_overlay !== undefined) {
+            overrides.targeting_overlay = structuredClone(p.targeting_overlay) as NonNullable<
+              AdcpPackage['targeting_overlay']
+            >;
+          }
+          affectedPackages.push(projectLineItemPackage(ctx.account, buyId, lineItem, overrides));
+        }
+      }
+
       // Mock doesn't model partial updates; production wires each patch
       // field onto the upstream's OrderService update endpoint. The
       // worked example just echoes success with the post-transition status.
@@ -1053,6 +1128,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         media_buy_id: buyId,
         media_buy_status: nextStatus,
         revision: nextRevision,
+        ...(affectedPackages.length > 0 && { affected_packages: affectedPackages }),
       };
     },
 
@@ -1078,20 +1154,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
             revision: localBuyRevisions.get(o.order_id) ?? 1,
             created_at: o.created_at,
             updated_at: o.updated_at,
-            packages: lineItems.map(li => {
-              const storedContext = localPackageContexts.get(
-                packageContextKey(ctx.account, o.order_id, li.line_item_id)
-              );
-              const packageContext =
-                storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
-              return {
-                package_id: li.line_item_id,
-                product_id: li.product_id,
-                budget: li.budget,
-                currency: o.currency,
-                ...(packageContext !== undefined && { context: packageContext }),
-              };
-            }),
+            packages: lineItems.map(li => projectLineItemPackage(ctx.account, o.order_id, li)),
           };
         })
       );
