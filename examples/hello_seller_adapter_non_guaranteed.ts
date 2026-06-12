@@ -92,6 +92,7 @@ import type {
 
 // `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
 type Product = NonNullable<GetProductsResponse['products']>[number];
+type AdcpPackage = NonNullable<UpdateMediaBuySuccess['affected_packages']>[number];
 type ViewabilityMetrics = NonNullable<
   GetMediaBuyDeliveryResponse['media_buy_deliveries'][number]['totals']['viewability']
 >;
@@ -101,6 +102,7 @@ const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_non_guar
 const PORT = Number(process.env['PORT'] ?? 3007);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
+const DEFAULT_PRICING_OPTION_ID = 'cpm_standard';
 
 const KNOWN_PUBLISHERS = ['remnant-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
 assertNoExampleTlds(
@@ -370,6 +372,10 @@ interface NetworkMeta {
 
 const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+const toAdcpDateTime = (value: string, fallback: string): string => {
+  if (value === 'asap') return fallback;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value;
+};
 
 /** Project upstream product onto AdCP `Product`. Auction-cleared inventory
  *  surfaces `min_cpm` as `floor_price` when buyers request auction pricing,
@@ -486,6 +492,28 @@ function packageContextKey(account: Account<NetworkMeta>, mediaBuyId: string, pa
   const mode = (account as Account<NetworkMeta> & { mode?: string }).mode ?? 'live';
   const operator = account.operator ?? '';
   return `${mode}::${account.id}::${operator}::${account.ctx_metadata.network_code}::${mediaBuyId}::${packageId}`;
+}
+
+function projectLineItemPackage(
+  account: Account<NetworkMeta>,
+  mediaBuyId: string,
+  li: UpstreamLineItem,
+  overrides: Partial<AdcpPackage> = {}
+): AdcpPackage {
+  const storedContext = localPackageContexts.get(packageContextKey(account, mediaBuyId, li.line_item_id));
+  const packageContext =
+    storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
+  const creativeAssignments =
+    li.creative_ids.length > 0 ? li.creative_ids.map(creative_id => ({ creative_id })) : undefined;
+  return {
+    package_id: li.line_item_id,
+    product_id: li.product_id,
+    budget: li.budget,
+    pricing_option_id: DEFAULT_PRICING_OPTION_ID,
+    ...(creativeAssignments !== undefined && { creative_assignments: creativeAssignments }),
+    ...(packageContext !== undefined && { context: packageContext }),
+    ...overrides,
+  };
 }
 
 class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, never>, NetworkMeta> {
@@ -724,7 +752,9 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // already (since we created them inline); each maps to a wire
       // `package`.
       const packagesOut: CreateMediaBuySuccess['packages'] = (order.line_items ?? []).map((li, i) => {
-        const requestedPackage = packagesRequest[i] as { buyer_ref?: string; context?: unknown } | undefined;
+        const requestedPackage = packagesRequest[i] as
+          | { buyer_ref?: string; context?: unknown; pricing_option_id?: string }
+          | undefined;
         const packageContext = asPackageContext(requestedPackage?.context);
         if (packageContext) {
           localPackageContexts.set(
@@ -736,6 +766,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           package_id: li.line_item_id,
           product_id: li.product_id,
           budget: li.budget,
+          pricing_option_id: requestedPackage?.pricing_option_id ?? DEFAULT_PRICING_OPTION_ID,
           // Re-thread buyer-side correlation fields. Production sellers
           // persist this mapping with the line item.
           ...(requestedPackage?.buyer_ref !== undefined && { buyer_ref: requestedPackage.buyer_ref }),
@@ -770,14 +801,21 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       }
       // Validate any patch.packages reference real line items. Storyboard
       // exercises bogus package_id and asserts PACKAGE_NOT_FOUND on the wire.
-      const patchPackages = (
-        patch as {
-          packages?: Array<{ package_id?: string; creative_assignments?: unknown[] }>;
-        }
-      ).packages;
+      const patchPackages =
+        (
+          patch as {
+            packages?: Array<{
+              package_id?: string;
+              creative_assignments?: Array<{ creative_id?: string }>;
+              pricing_option_id?: string;
+              targeting_overlay?: unknown;
+            }>;
+          }
+        ).packages ?? [];
+      let lineItems: UpstreamLineItem[] = [];
       let hasCreativeAssignment = false;
-      if (patchPackages?.length) {
-        const lineItems = await upstream.listLineItems(networkCode, id);
+      if (patchPackages.length > 0) {
+        lineItems = await upstream.listLineItems(networkCode, id);
         const knownPackageIds = new Set(lineItems.map(li => li.line_item_id));
         for (const p of patchPackages) {
           if (p.package_id && !knownPackageIds.has(p.package_id)) {
@@ -826,10 +864,39 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       const revisionKey = overrideKey(networkCode, id);
       const nextRevision = (localBuyRevisions.get(revisionKey) ?? 1) + 1;
       localBuyRevisions.set(revisionKey, nextRevision);
+      const affectedPackages: AdcpPackage[] = [];
+      if (patchPackages.length > 0) {
+        const lineItemsById = new Map(lineItems.map(li => [li.line_item_id, li]));
+        for (const p of patchPackages) {
+          const pid = p.package_id;
+          if (!pid) continue;
+          const lineItem = lineItemsById.get(pid);
+          if (!lineItem) continue;
+
+          const creativeAssignments = Array.isArray(p.creative_assignments)
+            ? p.creative_assignments.filter(
+                (assignment): assignment is { creative_id: string } =>
+                  typeof assignment.creative_id === 'string' && assignment.creative_id.length > 0
+              )
+            : [];
+          const overrides: Partial<AdcpPackage> = {};
+          if (creativeAssignments.length > 0) overrides.creative_assignments = creativeAssignments;
+          if (typeof p.pricing_option_id === 'string' && p.pricing_option_id.length > 0) {
+            overrides.pricing_option_id = p.pricing_option_id;
+          }
+          if (p.targeting_overlay !== null && p.targeting_overlay !== undefined) {
+            overrides.targeting_overlay = structuredClone(p.targeting_overlay) as NonNullable<
+              AdcpPackage['targeting_overlay']
+            >;
+          }
+          affectedPackages.push(projectLineItemPackage(ctx.account, id, lineItem, overrides));
+        }
+      }
       return {
         media_buy_id: existing.order_id,
         media_buy_status: nextStatus,
         revision: nextRevision,
+        ...(affectedPackages.length > 0 && { affected_packages: affectedPackages }),
       };
     },
 
@@ -939,22 +1006,11 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
             revision: localBuyRevisions.get(overrideKey(networkCode, o.order_id)) ?? 1,
             ...(o.created_at !== undefined && { created_at: o.created_at }),
             ...(o.updated_at !== undefined && { updated_at: o.updated_at }),
-            ...(o.flight_start && { start_time: o.flight_start }),
-            ...(o.flight_end && { end_time: o.flight_end }),
-            packages: lineItems.map(li => {
-              const storedContext = localPackageContexts.get(
-                packageContextKey(ctx.account, o.order_id, li.line_item_id)
-              );
-              const packageContext =
-                storedContext !== undefined ? (structuredClone(storedContext) as Record<string, unknown>) : undefined;
-              return {
-                package_id: li.line_item_id,
-                product_id: li.product_id,
-                budget: li.budget,
-                currency: o.currency,
-                ...(packageContext !== undefined && { context: packageContext }),
-              };
+            ...(o.flight_start && {
+              start_time: toAdcpDateTime(o.flight_start, o.created_at ?? new Date().toISOString()),
             }),
+            ...(o.flight_end && { end_time: toAdcpDateTime(o.flight_end, o.updated_at ?? new Date().toISOString()) }),
+            packages: lineItems.map(li => projectLineItemPackage(ctx.account, o.order_id, li)),
           };
         })
       );
