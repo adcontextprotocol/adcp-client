@@ -482,3 +482,191 @@ describe('requires_capability `contains:` matcher (#1817)', () => {
     assert.ok(evaluateCapabilityPredicate(containsString, [42])?.includes('must contain'));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase-level `requires_capability` gates (adcp-client#2224) — same matcher
+// dialect as storyboard-level gates, but scoped to one phase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const deterministicSessionPhaseGatedStoryboard = {
+  id: 'phase_capability_gate_deterministic_session_test',
+  version: '1.0.0',
+  title: 'Deterministic testing with SI-gated phase',
+  category: 'test',
+  summary: 'Skips deterministic_session for non-SI sellers.',
+  narrative: '',
+  agent: { interaction_model: 'sync', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  phases: [
+    {
+      id: 'deterministic_session',
+      title: 'Deterministic SI session',
+      requires_capability: {
+        path: 'supported_protocols',
+        contains: 'sponsored_intelligence',
+      },
+      steps: [
+        {
+          id: 'si_initiate_session',
+          title: 'Start deterministic SI session',
+          task: 'si_initiate_session',
+          sample_request: {},
+        },
+      ],
+    },
+  ],
+};
+
+function makeCapabilityGateClient(responder = () => ({ success: true, data: {} })) {
+  const calls = [];
+  const client = {
+    async executeTask(name, params) {
+      calls.push({ name, params });
+      return responder({ name, params });
+    },
+  };
+  return { client, calls };
+}
+
+describe('phase-level requires_capability gate (#2224)', () => {
+  test('skips deterministic_session as not_applicable when sponsored_intelligence is not advertised', async () => {
+    const result = await runStoryboard('http://fake-local-99992', deterministicSessionPhaseGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (media-buy only)',
+        tools: ['get_adcp_capabilities', 'comply_test_controller'],
+        raw_capabilities: { supported_protocols: ['media_buy'] },
+      },
+    });
+
+    assert.equal(result.overall_passed, true, 'phase gate is not a failure');
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.phases.length, 1);
+
+    const phase = result.phases[0];
+    assert.equal(phase.phase_id, 'deterministic_session');
+    assert.equal(phase.passed, true);
+    assert.equal(phase.steps.length, 1);
+
+    const step = phase.steps[0];
+    assert.equal(step.step_id, 'si_initiate_session');
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'not_applicable');
+    assert.equal(step.skip.reason, 'not_applicable');
+    assert.ok(step.skip.detail.includes('supported_protocols'));
+    assert.ok(step.skip.detail.includes('sponsored_intelligence'));
+    assert.ok(step.skip.detail.includes('media_buy'));
+  });
+
+  test('runs the phase gate when sponsored_intelligence is advertised, preserving missing_tool', async () => {
+    const result = await runStoryboard('http://fake-local-99991', deterministicSessionPhaseGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (SI declared, tool omitted)',
+        tools: ['get_adcp_capabilities', 'comply_test_controller'],
+        raw_capabilities: { supported_protocols: ['media_buy', 'sponsored_intelligence'] },
+      },
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'missing_tool');
+    assert.equal(step.skip.reason, 'missing_tool');
+    assert.ok(step.skip.detail.includes('si_initiate_session'));
+  });
+
+  test('skips only the gated phase and continues later phases', async () => {
+    const { client, calls } = makeCapabilityGateClient();
+    const storyboard = {
+      ...deterministicSessionPhaseGatedStoryboard,
+      phases: [
+        deterministicSessionPhaseGatedStoryboard.phases[0],
+        {
+          id: 'media_buy_discovery',
+          title: 'Media buy discovery',
+          steps: [
+            {
+              id: 'get_products',
+              title: 'Discover products',
+              task: 'get_products',
+              sample_request: { brief: 'coffee' },
+              validations: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard('https://example.invalid/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: false,
+      agentTools: ['get_adcp_capabilities', 'get_products'],
+      _profile: {
+        name: 'Test Agent (media-buy only)',
+        tools: ['get_adcp_capabilities', 'get_products'],
+        raw_capabilities: { supported_protocols: ['media_buy'] },
+      },
+      _client: client,
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.phases.length, 2);
+    assert.equal(result.phases[0].phase_id, 'deterministic_session');
+    assert.equal(result.phases[0].steps[0].skip_reason, 'not_applicable');
+    assert.equal(result.phases[1].phase_id, 'media_buy_discovery');
+    assert.equal(result.phases[1].steps[0].skipped, undefined);
+    assert.equal(result.phases[1].steps[0].passed, true);
+    assert.deepEqual(
+      calls.map(c => c.name),
+      ['get_products'],
+      'only the ungated later phase should dispatch'
+    );
+  });
+
+  test('optional-only gated phases do not create a vacuous overall pass', async () => {
+    const result = await runStoryboard('http://fake-local-99990', {
+      ...deterministicSessionPhaseGatedStoryboard,
+      phases: [{ ...deterministicSessionPhaseGatedStoryboard.phases[0], optional: true }],
+    }, {
+      _profile: {
+        name: 'Test Agent (media-buy only)',
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: { supported_protocols: ['media_buy'] },
+      },
+    });
+
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.overall_passed, false, 'optional-only skip remains no executed required coverage');
+  });
+
+  test('does not run controller seeding when every executable phase is gated not_applicable', async () => {
+    const { client, calls } = makeCapabilityGateClient(({ name }) => {
+      throw new Error(`unexpected call: ${name}`);
+    });
+    const storyboard = {
+      ...deterministicSessionPhaseGatedStoryboard,
+      prerequisites: { description: 'needs seeds', controller_seeding: true },
+      fixtures: { products: [{ product_id: 'p-1' }] },
+    };
+
+    const result = await runStoryboard('https://example.invalid/mcp', storyboard, {
+      protocol: 'mcp',
+      allow_http: false,
+      agentTools: ['get_adcp_capabilities', 'comply_test_controller'],
+      _profile: {
+        name: 'Test Agent (media-buy only)',
+        tools: ['get_adcp_capabilities', 'comply_test_controller'],
+        raw_capabilities: { supported_protocols: ['media_buy'] },
+      },
+      _client: client,
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.phases.length, 1);
+    assert.equal(result.phases[0].phase_id, 'deterministic_session');
+    assert.equal(result.phases[0].steps[0].skip_reason, 'not_applicable');
+    assert.deepEqual(calls, [], 'phase gate should skip before controller seeding or step dispatch');
+  });
+});
