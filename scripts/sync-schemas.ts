@@ -535,11 +535,7 @@ async function sync(version?: string): Promise<void> {
 
   async function syncWithBase(baseUrl: string, options: { preferGithubTarballFallback?: boolean } = {}): Promise<void> {
     const viaTarball = await syncFromTarball(adcpVersion, baseUrl);
-    if (
-      !viaTarball &&
-      options.preferGithubTarballFallback === true &&
-      process.env.ADCP_GITHUB_FALLBACK !== '0'
-    ) {
+    if (!viaTarball && options.preferGithubTarballFallback === true && process.env.ADCP_GITHUB_FALLBACK !== '0') {
       console.warn(
         `⚠️  AdCP ${adcpVersion} tarball was not reachable from ${baseUrl}; ` +
           `retrying against GitHub dist before schema-only fallback.`
