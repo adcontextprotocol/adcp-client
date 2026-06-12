@@ -2,6 +2,7 @@
  * Test client utilities for AdCP Agent E2E Testing
  */
 
+import { createHash } from 'crypto';
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
 import { getBestUnionErrors, type SchemaViolation } from '../utils/union-errors';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
@@ -30,6 +31,7 @@ interface TestClientVersionOptions {
   adcpVersion: string;
   wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
+  authSignature?: string;
 }
 
 /**
@@ -109,6 +111,8 @@ export function getLogger(): Logger {
  * Create a test client for an agent
  */
 export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
+  options = withTestKitAuthDefaults(options);
+
   // adcp-client#1618: SSRF policy gate at client construction. Once the
   // TestClient exists, every transport call inherits its agent URI; guarding
   // once here covers the entire client lifecycle, including downstream
@@ -194,11 +198,13 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   });
 
   const client = multiClient.agent('test');
+  const authSignature = authReuseSignature(options);
   Object.defineProperty(client, TEST_CLIENT_VERSION_OPTIONS, {
     value: {
       adcpVersion: multiClient.getAdcpVersion(),
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
+      ...(authSignature !== undefined && { authSignature }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
@@ -222,25 +228,93 @@ export function getOrCreateClient(agentUrl: string, options: TestOptions): TestC
 
 export function getOrCreateClientResolution(agentUrl: string, options: TestOptions): TestClientResolution {
   const shared = options._client as TestClient | undefined;
-  if (shared && testClientMatchesVersionOptions(shared, options)) {
+  if (shared && isExecutableTestClient(shared) && testClientMatchesVersionOptions(shared, options)) {
     return { client: shared, reusedShared: true };
   }
   return { client: createTestClient(agentUrl, options.protocol || 'mcp', options), reusedShared: false };
 }
 
+function isExecutableTestClient(client: unknown): client is TestClient {
+  return typeof (client as { executeTask?: unknown } | undefined)?.executeTask === 'function';
+}
+
 function testClientMatchesVersionOptions(client: TestClient, options: TestOptions): boolean {
+  const effectiveOptions = withTestKitAuthDefaults(options);
   const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
     TEST_CLIENT_VERSION_OPTIONS
   ];
-  if (!meta) return options.adcpVersion === undefined && options.versionEnvelope === undefined;
-  const expectedAdcpVersion = options.adcpVersion ?? ADCP_VERSION;
-  const expectedWireAdcpVersion = options.wireAdcpVersion;
-  const expectedVersionEnvelope = options.versionEnvelope ?? 'auto';
+  const expectedAuthSignature = authReuseSignature(effectiveOptions);
+  if (!meta) {
+    return (
+      effectiveOptions.adcpVersion === undefined &&
+      effectiveOptions.versionEnvelope === undefined &&
+      expectedAuthSignature === undefined
+    );
+  }
+  const expectedAdcpVersion = effectiveOptions.adcpVersion ?? ADCP_VERSION;
+  const expectedWireAdcpVersion = effectiveOptions.wireAdcpVersion;
+  const expectedVersionEnvelope = effectiveOptions.versionEnvelope ?? 'auto';
   return (
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
-    meta.versionEnvelope === expectedVersionEnvelope
+    meta.versionEnvelope === expectedVersionEnvelope &&
+    meta.authSignature === expectedAuthSignature
   );
+}
+
+function withTestKitAuthDefaults(options: TestOptions): TestOptions {
+  if (options.auth) return options;
+  const apiKey = options.test_kit?.auth?.api_key;
+  if (typeof apiKey === 'string' && apiKey.length > 0) {
+    return { ...options, auth: { type: 'bearer', token: apiKey } };
+  }
+
+  const basic = options.test_kit?.auth?.basic;
+  if (!basic) return options;
+  if (
+    typeof basic.username === 'string' &&
+    basic.username.length > 0 &&
+    typeof basic.password === 'string' &&
+    basic.password.length > 0
+  ) {
+    return { ...options, auth: { type: 'basic', username: basic.username, password: basic.password } };
+  }
+  if (typeof basic.credentials === 'string') {
+    const splitAt = basic.credentials.indexOf(':');
+    if (splitAt > 0) {
+      return {
+        ...options,
+        auth: {
+          type: 'basic',
+          username: basic.credentials.slice(0, splitAt),
+          password: basic.credentials.slice(splitAt + 1),
+        },
+      };
+    }
+  }
+  return options;
+}
+
+function authReuseSignature(options: TestOptions): string | undefined {
+  const auth = options.auth;
+  if (!auth) return undefined;
+  let material: unknown;
+  if (auth.type === 'bearer') {
+    material = ['bearer', auth.token];
+  } else if (auth.type === 'basic') {
+    material = ['basic', auth.username, auth.password];
+  } else if (auth.type === 'oauth') {
+    material = ['oauth', auth.tokens.access_token, auth.tokens.refresh_token];
+  } else {
+    material = [
+      'oauth_client_credentials',
+      auth.credentials.client_id,
+      auth.credentials.client_secret,
+      auth.tokens?.access_token,
+      auth.tokens?.refresh_token,
+    ];
+  }
+  return createHash('sha256').update(JSON.stringify(material)).digest('hex');
 }
 
 /**

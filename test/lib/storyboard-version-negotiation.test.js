@@ -233,6 +233,32 @@ describe('storyboard runner AdCP version negotiation', () => {
     );
   });
 
+  test('discovery-only _client is not reused for executable storyboard calls', () => {
+    const { getOrCreateClient } = require('../../dist/lib/testing/client.js');
+
+    const discoveryOnly = {
+      getAgentInfo: async () => ({ name: 'T', tools: [] }),
+    };
+
+    const client = getOrCreateClient('https://example.com/mcp', { _client: discoveryOnly });
+
+    assert.notStrictEqual(client, discoveryOnly);
+    assert.strictEqual(typeof client.executeTask, 'function');
+  });
+
+  test('unauthenticated shared client is not reused when test kit supplies auth', () => {
+    const { createTestClient, getOrCreateClient } = require('../../dist/lib/testing/client.js');
+
+    const shared = createTestClient('https://example.com/mcp', 'mcp');
+    const client = getOrCreateClient('https://example.com/mcp', {
+      _client: shared,
+      test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
+    });
+
+    assert.notStrictEqual(client, shared);
+    assert.strictEqual(typeof client.executeTask, 'function');
+  });
+
   test('major-only version envelope suppresses exact adcp_version while preserving legacy marker', async () => {
     const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js');

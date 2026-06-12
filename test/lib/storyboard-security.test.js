@@ -1382,6 +1382,23 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
             res.end();
             return;
           }
+          if (body.method === 'tools/list') {
+            return reply(200, {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                tools: [
+                  {
+                    name: 'list_creatives',
+                    inputSchema: {
+                      type: 'object',
+                      additionalProperties: true,
+                    },
+                  },
+                ],
+              },
+            });
+          }
           return reply(200, {
             jsonrpc: '2.0',
             id: body.id,
