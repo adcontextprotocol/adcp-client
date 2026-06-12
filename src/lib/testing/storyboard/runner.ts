@@ -1834,6 +1834,56 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
   return notices;
 }
 
+function collectInputSchemaFieldStripNotices(debugLogs: unknown, storyboardId: string): RunnerNotice[] {
+  if (!Array.isArray(debugLogs)) return [];
+  const notices: RunnerNotice[] = [];
+  const seen = new Set<string>();
+  for (const entry of debugLogs) {
+    if (!entry || typeof entry !== 'object') continue;
+    const details = (entry as { details?: unknown }).details;
+    if (!details || typeof details !== 'object') continue;
+    const record = details as Record<string, unknown>;
+    if (record.code !== 'input_schema_field_stripped') continue;
+    const task = typeof record.task === 'string' ? record.task : 'unknown_task';
+    const fields = Array.isArray(record.fields)
+      ? record.fields.filter((field): field is string => typeof field === 'string')
+      : [];
+    if (fields.length === 0) continue;
+    const key = `${task}\u0000${fields.join('\u0000')}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    notices.push({
+      severity: 'info',
+      code: 'input_schema_field_stripped',
+      message:
+        `Runner stripped fields not declared in the agent's tool input schema for ${task}: ` +
+        `${fields.join(', ')}. Fix the tool schema declaration or avoid sending unsupported fields.`,
+      docs_url: 'https://github.com/adcontextprotocol/adcp/issues/5495',
+      storyboard_ids: [storyboardId],
+    });
+  }
+  return notices;
+}
+
+function mergeRunnerNotices(notices: RunnerNotice[]): RunnerNotice[] {
+  const byCode = new Map<string, RunnerNotice>();
+  for (const notice of notices) {
+    const existing = byCode.get(notice.code);
+    if (existing) {
+      for (const sid of notice.storyboard_ids) {
+        if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
+      }
+    } else {
+      byCode.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
+    }
+  }
+  return [...byCode.values()];
+}
+
+function collectStepNotices(phases: StoryboardPhaseResult[]): RunnerNotice[] {
+  return phases.flatMap(phase => phase.steps.flatMap(step => step.notices ?? []));
+}
+
 /**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
@@ -2608,19 +2658,28 @@ async function executeStoryboardPass(
         phasePassed = false;
         continue;
       }
-      const rawResult = await executeStep(assignment.client, step, phase.id, context, allSteps, options, {
-        contributions,
-        priorStepResults,
-        priorProbes,
-        agentUrl: assignment.agentUrl,
-        webhookReceiver,
-        runnerVars,
-        contextProvenance,
-        priorA2aEnvelopes,
-        stepRequestStarts,
-        responseDerivedNotApplicableContextKeys,
-        agentLibraryVersion: profile?.library_version,
-      });
+      const rawResult = await executeStep(
+        assignment.client,
+        step,
+        storyboard.id,
+        phase.id,
+        context,
+        allSteps,
+        options,
+        {
+          contributions,
+          priorStepResults,
+          priorProbes,
+          agentUrl: assignment.agentUrl,
+          webhookReceiver,
+          runnerVars,
+          contextProvenance,
+          priorA2aEnvelopes,
+          stepRequestStarts,
+          responseDerivedNotApplicableContextKeys,
+          agentLibraryVersion: profile?.library_version,
+        }
+      );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance || useRouting) {
         // Echo per-step routing on the result so JUnit/CI consumers and
@@ -3060,7 +3119,10 @@ async function executeStoryboardPass(
   // Use the fully-fetched profile for notice detection; fall back to pre-flight
   // notices (which used options._profile) when profile was not re-fetched in
   // this pass (standalone runner with options._profile pre-set skips the fetch).
-  const notices = collectCapabilityNotices(storyboard, profile?.raw_capabilities ?? options._profile?.raw_capabilities);
+  const notices = mergeRunnerNotices([
+    ...collectCapabilityNotices(storyboard, profile?.raw_capabilities ?? options._profile?.raw_capabilities),
+    ...collectStepNotices(phaseResults),
+  ]);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -3462,7 +3524,7 @@ async function runStoryboardStepBody(
     Object.entries(options.response_derived_not_applicable_context_keys ?? {})
   );
   const contributions = new Set(options.contributions ?? []);
-  const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
+  const result = await executeStep(client, found.step, storyboard.id, found.phaseId, context, allSteps, options, {
     contributions,
     priorStepResults: new Map(),
     priorProbes: new Map(),
@@ -3553,6 +3615,7 @@ async function executeStep(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- client type varies (TestClient)
   client: any,
   step: StoryboardStep,
+  storyboardId: string,
   phaseId: string,
   context: StoryboardContext,
   allSteps: FlatStep[],
@@ -4116,6 +4179,10 @@ async function executeStep(
     payload: redactSecrets(request),
     ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
   };
+  const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
+    (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
+    storyboardId
+  );
 
   // AdCP 3.0.12 runner-output-contract `force_scenario_unsupported`: when a
   // comply_test_controller step calls a force_* scenario that the agent
@@ -4162,6 +4229,7 @@ async function executeStep(
         context,
         next,
         extraction: extractionFromTaskResult(taskResult),
+        ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
       };
     }
   }
@@ -4190,6 +4258,7 @@ async function executeStep(
       error: stepResult.error,
       next,
       extraction: { path: 'none' },
+      ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     };
   }
 
@@ -4229,6 +4298,7 @@ async function executeStep(
       request: requestRecord,
       ...(responseRecord && { response_record: responseRecord }),
       extraction: extractionFromTaskResult(taskResult),
+      ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     };
   }
 
@@ -4624,6 +4694,7 @@ async function executeStep(
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
     extraction: extractionFromTaskResult(taskResult),
+    ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     ...(hints.length > 0 && { hints }),
   };
 }
