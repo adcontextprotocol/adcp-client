@@ -210,6 +210,7 @@ export async function executeStoryboardTask(
     error,
     ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
+    ...(Array.isArray(result.debug_logs) && { debug_logs: result.debug_logs }),
   };
 }
 

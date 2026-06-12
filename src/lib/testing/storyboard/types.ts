@@ -1890,7 +1890,9 @@ export type NoticeCode =
   | 'request_signing.required'
   /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`. Removed in
    *  AdCP 4.0 per `effective_version`. */
-  | 'webhook_signing.legacy_hmac_fallback.removed';
+  | 'webhook_signing.legacy_hmac_fallback.removed'
+  /** Runner stripped request fields missing from the agent's advertised tool input schema. */
+  | 'input_schema_field_stripped';
 
 /**
  * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
@@ -2138,6 +2140,11 @@ export interface StoryboardStepResult {
   response_record?: RunnerResponseRecord;
   /** Which extraction path produced the parsed response (required per contract). */
   extraction: RunnerExtractionRecord;
+  /**
+   * Informational notices scoped to this step. These do not affect pass/fail.
+   * Storyboard-level `notices` aggregates step notices by code.
+   */
+  notices?: RunnerNotice[];
   /**
    * Non-fatal diagnostic hints the runner emitted alongside this step —
    * currently surfaces `context_value_rejected` when a request value came

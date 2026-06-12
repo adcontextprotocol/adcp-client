@@ -1637,7 +1637,8 @@ export class SingleAgentClient {
 
     // Adapt request for v2 servers if needed
     const serverVersion = await this.detectServerVersion();
-    const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
+    const inputSchemaStripLogs: any[] = [];
+    const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams, inputSchemaStripLogs);
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -1664,8 +1665,9 @@ export class SingleAgentClient {
     // the executor's own logs. On error paths the executor may not surface
     // result.debug_logs at all — drift collected before the failure is
     // dropped, matching the executor's own debug-log behavior.
-    if (v25DriftLogs.length > 0) {
-      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+    const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+    if (postAdapterLogs.length > 0) {
+      result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
     }
 
     // Normalize response to v3 format
@@ -2051,7 +2053,7 @@ export class SingleAgentClient {
    *
    * Converts v3-style requests to v2 format when talking to v2 servers.
    */
-  private async adaptRequestForServerVersion(taskType: string, params: any): Promise<any> {
+  private async adaptRequestForServerVersion(taskType: string, params: any, debugLogs?: any[]): Promise<any> {
     // Get server version (cached after first call)
     const version = await this.detectServerVersion();
 
@@ -2138,6 +2140,17 @@ export class SingleAgentClient {
       console.warn(
         `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
       );
+      debugLogs?.push({
+        type: 'warning',
+        message: `Stripped fields not declared in agent tool input schema for ${taskType}: ${stripped.join(', ')}`,
+        timestamp: new Date().toISOString(),
+        details: {
+          code: 'input_schema_field_stripped',
+          task: taskType,
+          fields: stripped,
+          agent_id: this.agent.id,
+        },
+      });
     }
 
     return filtered;
@@ -2991,7 +3004,8 @@ export class SingleAgentClient {
       // Adapt request for the server's protocol version (e.g. strip v3-only
       // fields like buying_mode when talking to v2 agents).
       const serverVersion = await this.detectServerVersion();
-      const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+      const inputSchemaStripLogs: any[] = [];
+      const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams, inputSchemaStripLogs);
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter
@@ -3010,8 +3024,9 @@ export class SingleAgentClient {
         serverVersion
       );
 
-      if (v25DriftLogs.length > 0) {
-        result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+      const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+      if (postAdapterLogs.length > 0) {
+        result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
       }
 
       // Normalize response to v3 format for consistent API surface
