@@ -62,13 +62,30 @@ function handleMcpHandshake(rpc, res, tools) {
  * one shared Map across two agents to simulate a correctly shared backing
  * store, or separate Maps to simulate the per-process bug.
  */
-async function startFakeAgent({ state, label }) {
+async function startFakeAgent({
+  state,
+  label,
+  tools = ['__test_write', '__test_read', '__test_probe', 'get_adcp_capabilities'],
+  capabilities = { version: '1.0', protocols: [], specialisms: [] },
+  failToolsList = false,
+}) {
   const requests = [];
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
-    const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if (handleMcpHandshake(rpc, res, ['__test_write', '__test_read', '__test_probe', 'get_adcp_capabilities'])) {
+    const body = Buffer.concat(chunks).toString('utf8');
+    if (!body) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const rpc = JSON.parse(body);
+    if (failToolsList && rpc.method === 'tools/list') {
+      res.writeHead(500, { 'content-type': 'text/plain' });
+      res.end('tools list unavailable');
+      return;
+    }
+    if (handleMcpHandshake(rpc, res, tools)) {
       return;
     }
     const toolName = rpc.params?.name;
@@ -106,7 +123,7 @@ async function startFakeAgent({ state, label }) {
       return ok({ instance: label });
     }
     if (toolName === 'get_adcp_capabilities') {
-      return ok({ version: '1.0', protocols: [], specialisms: [] });
+      return ok(capabilities);
     }
     return notFound(`unknown tool ${toolName} on instance ${label}`);
   });
@@ -364,6 +381,90 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     // Top-level `phases` exposes the first pass's phases for single-pass consumers.
     assert.strictEqual(result.phases[0].steps[0].agent_index, 1);
     assert.strictEqual(result.phases[0].steps[1].agent_index, 2);
+  });
+
+  test('does not pre-seed when discovery shows every executable phase is capability-gated out', async () => {
+    const shared = new Map();
+    const tools = ['get_adcp_capabilities', 'comply_test_controller'];
+    const capabilities = { adcp: { major_versions: [3] }, supported_protocols: ['media_buy'] };
+    agentA = await startFakeAgent({ state: shared, label: 'A', tools, capabilities });
+    agentB = await startFakeAgent({ state: shared, label: 'B', tools, capabilities });
+
+    const storyboard = {
+      id: 'multi_pass_phase_gate_seed_suppression',
+      version: '1.0.0',
+      title: 'Multi-pass phase gate seed suppression',
+      category: 'testing',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      prerequisites: { description: 'needs seeds', controller_seeding: true },
+      fixtures: { products: [{ product_id: 'p-1' }] },
+      phases: [
+        {
+          id: 'deterministic_session',
+          title: 'Deterministic SI session',
+          requires_capability: { path: 'supported_protocols', contains: 'sponsored_intelligence' },
+          steps: [
+            {
+              id: 'si_initiate_session',
+              title: 'Start deterministic SI session',
+              task: 'si_initiate_session',
+              sample_request: {},
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.strictEqual(result.overall_passed, true);
+    assert.strictEqual(result.passes.length, 2);
+    assert.strictEqual(result.passes[0].phases[0].steps[0].skip_reason, 'not_applicable');
+    assert.strictEqual(result.passes[1].phases[0].steps[0].skip_reason, 'not_applicable');
+
+    const allRequests = [...agentA.requests, ...agentB.requests];
+    assert.ok(
+      allRequests.some(r => r.tool === 'get_adcp_capabilities'),
+      'first replica should be discovered before the pre-seed decision'
+    );
+    assert.deepStrictEqual(
+      allRequests.filter(r => r.tool === 'comply_test_controller'),
+      [],
+      'all executable phases are gated out, so controller seeding must not run'
+    );
+  });
+
+  test('surfaces discovery_failed when pre-seed discovery fails before multi-pass execution', async () => {
+    const shared = new Map();
+    agentA = await startFakeAgent({ state: shared, label: 'A', failToolsList: true });
+    agentB = await startFakeAgent({ state: shared, label: 'B' });
+
+    const result = await runStoryboard(
+      [agentA.url, agentB.url],
+      storyboardWith([{ id: 's1', title: 's1', task: '__test_probe', auth: 'none', sample_request: {} }]),
+      {
+        protocol: 'mcp',
+        allow_http: true,
+        multi_instance_strategy: 'multi-pass',
+      }
+    );
+
+    assert.strictEqual(result.overall_passed, false);
+    assert.strictEqual(result.phases[0].phase_id, 'discovery_failed');
+    assert.strictEqual(result.phases[0].steps[0].step_id, 'discovery_failed');
+    assert.strictEqual(result.passes, undefined, 'pre-execution discovery failure should not fabricate pass results');
+    assert.deepStrictEqual(
+      [...agentA.requests, ...agentB.requests],
+      [],
+      'no storyboard tool calls should dispatch after failed discovery'
+    );
   });
 
   test('aggregates failures from a per-replica bug across both passes', async () => {

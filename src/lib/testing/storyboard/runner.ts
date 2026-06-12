@@ -97,6 +97,7 @@ import type {
   RequirementName,
   RunnerSkipReason,
   RunnerNotice,
+  RequiresCapabilityPredicate,
   ResponseNotApplicableGate,
   StepAuthDirective,
   Storyboard,
@@ -301,13 +302,7 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
  */
-export function evaluateCapabilityPredicate(
-  predicate:
-    | { path: string; equals: boolean | string | number | null }
-    | { path: string; present: boolean }
-    | { path: string; contains: boolean | string | number },
-  actual: unknown
-): string | null {
+export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredicate, actual: unknown): string | null {
   if ('present' in predicate) {
     const isPresent = actual !== undefined && actual !== null;
     if (predicate.present && !isPresent) {
@@ -360,16 +355,55 @@ export function evaluateCapabilityPredicate(
 }
 
 function isInlineCreativeManagementGate(
-  predicate:
-    | { path: string; equals: boolean | string | number | null }
-    | { path: string; present: boolean }
-    | { path: string; contains: boolean | string | number }
+  predicate: RequiresCapabilityPredicate
 ): predicate is { path: 'media_buy.features.inline_creative_management'; equals: true } {
   return (
     'equals' in predicate &&
     predicate.path === 'media_buy.features.inline_creative_management' &&
     predicate.equals === true
   );
+}
+
+function evaluateRequiresCapabilityGate(
+  predicate: RequiresCapabilityPredicate,
+  profile: AgentProfile | undefined
+): string | null {
+  const rawCaps = profile?.raw_capabilities;
+  if (rawCaps !== undefined) {
+    const actual = resolveCapabilityPath(rawCaps, predicate.path);
+    return evaluateCapabilityPredicate(predicate, actual);
+  }
+  if (
+    isInlineCreativeManagementGate(predicate) &&
+    profile !== undefined &&
+    !profile.tools.includes('get_adcp_capabilities')
+  ) {
+    return evaluateCapabilityPredicate(predicate, undefined);
+  }
+  return null;
+}
+
+function collectPhaseCapabilitySkipDetails(
+  storyboard: Storyboard,
+  profile: AgentProfile | undefined
+): Map<string, string> {
+  const skipDetails = new Map<string, string>();
+  for (const phase of storyboard.phases) {
+    if (!phase.requires_capability) continue;
+    const unmetDetail = evaluateRequiresCapabilityGate(phase.requires_capability, profile);
+    if (unmetDetail !== null) {
+      skipDetails.set(phase.id, unmetDetail);
+    }
+  }
+  return skipDetails;
+}
+
+function allExecutablePhasesCapabilitySkipped(
+  storyboard: Storyboard,
+  phaseCapabilitySkipDetails: ReadonlyMap<string, string>
+): boolean {
+  const executablePhases = storyboard.phases.filter(phase => phase.steps.length > 0);
+  return executablePhases.length > 0 && executablePhases.every(phase => phaseCapabilitySkipDetails.has(phase.id));
 }
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
@@ -1220,6 +1254,30 @@ function buildCapabilityUnsupportedResult(
   };
 }
 
+function buildPhaseCapabilitySkippedSteps(
+  storyboard: Storyboard,
+  phase: StoryboardPhase,
+  detail: string,
+  context: StoryboardContext
+): StoryboardStepResult[] {
+  return phase.steps.map(step => ({
+    storyboard_id: storyboard.id,
+    step_id: step.id,
+    phase_id: phase.id,
+    title: step.title,
+    task: step.task,
+    passed: true,
+    skipped: true,
+    skip_reason: 'not_applicable',
+    skip: { reason: 'not_applicable', detail },
+    duration_ms: 0,
+    validations: [],
+    context,
+    error: detail,
+    extraction: { path: 'none' },
+  }));
+}
+
 /**
  * Map a `requires:` requirement onto the canonical `RunnerSkipReason` to
  * emit when that requirement is unmet. `controller` reuses the existing
@@ -1973,31 +2031,13 @@ async function executeStoryboardPass(
   // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
   // rather than producing a cascade of misleading per-phase failures.
   if (storyboard.requires_capability) {
-    const rawCaps = profile?.raw_capabilities;
-    if (rawCaps !== undefined) {
-      const cap = storyboard.requires_capability;
-      const actual = resolveCapabilityPath(rawCaps, cap.path);
-      const unmetDetail = evaluateCapabilityPredicate(cap, actual);
-      if (unmetDetail !== null) {
-        if (!callerOwnsClients) await closeConnections(options.protocol);
-        return {
-          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
-          notices: preflightNotices,
-        };
-      }
-    } else if (
-      isInlineCreativeManagementGate(storyboard.requires_capability) &&
-      profile !== undefined &&
-      !profile.tools.includes('get_adcp_capabilities')
-    ) {
-      const unmetDetail = evaluateCapabilityPredicate(storyboard.requires_capability, undefined);
-      if (unmetDetail !== null) {
-        if (!callerOwnsClients) await closeConnections(options.protocol);
-        return {
-          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
-          notices: preflightNotices,
-        };
-      }
+    const unmetDetail = evaluateRequiresCapabilityGate(storyboard.requires_capability, profile);
+    if (unmetDetail !== null) {
+      if (!callerOwnsClients) await closeConnections(options.protocol);
+      return {
+        ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+        notices: preflightNotices,
+      };
     }
   }
 
@@ -2046,6 +2086,7 @@ async function executeStoryboardPass(
   let passedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  const phaseCapabilitySkippedIds = new Set<string>();
   // Per-phase stateful-cascade tracking (#1161).
   //
   // Map entry exists iff the phase tripped its stateful cascade — i.e.,
@@ -2170,6 +2211,11 @@ async function executeStoryboardPass(
   // an implementor reading the report can't tell "nothing tested" from
   // "everything passed".
   const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, profile);
+  const skipControllerSeedingForPhaseGates = allExecutablePhasesCapabilitySkipped(
+    storyboard,
+    phaseCapabilitySkipDetails
+  );
   if (!hasExecutableSteps) {
     const isScenarioComposed = (storyboard.requires_scenarios?.length ?? 0) > 0;
     const detail = isScenarioComposed
@@ -2234,8 +2280,9 @@ async function executeStoryboardPass(
   let seedingMissingController = false;
   let seedingUnsupported = false;
   {
-    const seeding =
-      preSeeded !== undefined
+    const seeding = skipControllerSeedingForPhaseGates
+      ? null
+      : preSeeded !== undefined
         ? preSeeded.result
         : await runControllerSeeding(clients[0]!, storyboard, options, context);
     if (seeding) {
@@ -2262,6 +2309,21 @@ async function executeStoryboardPass(
     // to completion regardless of the outer budget.
     options.signal?.throwIfAborted();
     const phaseStart = Date.now();
+    const phaseCapabilitySkipDetail = phaseCapabilitySkipDetails.get(phase.id);
+    if (phaseCapabilitySkipDetail !== undefined) {
+      const skippedSteps = buildPhaseCapabilitySkippedSteps(storyboard, phase, phaseCapabilitySkipDetail, context);
+      phaseResults.push({
+        phase_id: phase.id,
+        phase_title: phase.title,
+        passed: true,
+        steps: skippedSteps,
+        duration_ms: Date.now() - phaseStart,
+      });
+      skippedCount += skippedSteps.length;
+      phaseCapabilitySkippedIds.add(phase.id);
+      priorPhaseIds.push(phase.id);
+      continue;
+    }
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
     // `statefulFailed` and `statefulSkipTrigger` live at storyboard
@@ -2972,13 +3034,24 @@ async function executeStoryboardPass(
   // false, flipping overall_passed to false. Short-circuit to true so the
   // no-phases sentinel produces overall_passed: true (consistent with how
   // buildNotApplicableStoryboardResult shapes its result in comply.ts).
+  const requiredPhaseHasExecutedPass = phaseResults.some((p, idx) => {
+    const phaseDef = storyboard.phases[idx];
+    if (!phaseDef || phaseDef.optional || !p.passed) return false;
+    return p.steps.some(s => !s.skipped && s.passed);
+  });
+  const requiredPhaseDefs = storyboard.phases.filter(phaseDef => !phaseDef.optional);
+  const requiredPhasesCoveredByCapabilityGates =
+    phaseCapabilitySkippedIds.size > 0 &&
+    requiredPhaseDefs.length > 0 &&
+    requiredPhaseDefs.every(phaseDef => {
+      if (phaseCapabilitySkippedIds.has(phaseDef.id)) return true;
+      const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
+      return !!phaseResult && phaseResult.passed && phaseResult.steps.some(s => !s.skipped && s.passed);
+    });
   const requiredPhasesPassed =
     !hasExecutableSteps ||
-    phaseResults.some((p, idx) => {
-      const phaseDef = storyboard.phases[idx];
-      if (!phaseDef || phaseDef.optional || !p.passed) return false;
-      return p.steps.some(s => !s.skipped && s.passed);
-    });
+    requiredPhaseHasExecutedPass ||
+    (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
   const storyboardWideFixtureSeedUnsupported =
     seedingUnsupported &&
     failedCount === 0 &&
@@ -3086,7 +3159,26 @@ async function runMultiPass(
   const preSeedContext: StoryboardContext = { ...storyboard.context, ...options.context };
   if (storyboard.context) forwardAliasCache(storyboard.context, preSeedContext);
   if (options.context) forwardAliasCache(options.context, preSeedContext);
-  const preSeededResult = await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
+  let preSeedProfile = options._profile;
+  if (!preSeedProfile) {
+    const discovered = await getOrDiscoverProfile(preSeedClients[0]!, options);
+    if (discovered.step.passed === false) {
+      await closeConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+    }
+    preSeedProfile = discovered.profile;
+  }
+  if (preSeedProfile && (!options._profile || !options.agentTools)) {
+    options = {
+      ...options,
+      _profile: preSeedProfile,
+      ...(options.agentTools ? {} : { agentTools: normalizeAgentToolNames(preSeedProfile.tools) }),
+    };
+  }
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, preSeedProfile);
+  const preSeededResult = allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
+    ? null
+    : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
 
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];

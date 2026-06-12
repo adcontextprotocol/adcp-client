@@ -14,6 +14,11 @@ import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 // Parsed storyboard structure (mirrors YAML schema)
 // ────────────────────────────────────────────────────────────
 
+export type RequiresCapabilityPredicate =
+  | { path: string; equals: boolean | string | number | null }
+  | { path: string; present: boolean }
+  | { path: string; contains: boolean | string | number };
+
 export interface Storyboard {
   id: string;
   version: string;
@@ -147,10 +152,7 @@ export interface Storyboard {
    * does not expose `get_adcp_capabilities`, because inline package creative
    * upload is an optional rc.9 feature that sellers must advertise.
    */
-  requires_capability?:
-    | { path: string; equals: boolean | string | number | null }
-    | { path: string; present: boolean }
-    | { path: string; contains: boolean | string | number };
+  requires_capability?: RequiresCapabilityPredicate;
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -327,6 +329,14 @@ export interface StoryboardPhase {
   steps: StoryboardStep[];
   /** When true, the phase is allowed to be skipped without failing the storyboard. */
   optional?: boolean;
+  /**
+   * Predicate evaluated against the agent's declared capabilities before this
+   * phase is set up or any of its steps are dispatched. Uses the same matcher
+   * dialect as `Storyboard.requires_capability` (`equals`, `present`,
+   * `contains`). When false, every step in the phase is emitted as a
+   * `not_applicable` skip and the runner continues with later phases.
+   */
+  requires_capability?: RequiresCapabilityPredicate;
   /**
    * Phases this phase depends on for stateful cascade purposes (#1161).
    *
