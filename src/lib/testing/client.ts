@@ -2,7 +2,6 @@
  * Test client utilities for AdCP Agent E2E Testing
  */
 
-import { createHash } from 'crypto';
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
 import { getBestUnionErrors, type SchemaViolation } from '../utils/union-errors';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
@@ -31,7 +30,7 @@ interface TestClientVersionOptions {
   adcpVersion: string;
   wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
-  authSignature?: string;
+  authMode?: string;
 }
 
 /**
@@ -198,13 +197,13 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   });
 
   const client = multiClient.agent('test');
-  const authSignature = authReuseSignature(options);
+  const authMode = authReuseMode(options);
   Object.defineProperty(client, TEST_CLIENT_VERSION_OPTIONS, {
     value: {
       adcpVersion: multiClient.getAdcpVersion(),
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
-      ...(authSignature !== undefined && { authSignature }),
+      ...(authMode !== undefined && { authMode }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
@@ -235,7 +234,10 @@ export function getOrCreateClientResolution(agentUrl: string, options: TestOptio
 }
 
 function isExecutableTestClient(client: unknown): client is TestClient {
-  return typeof (client as { executeTask?: unknown } | undefined)?.executeTask === 'function';
+  if (client == null || typeof client !== 'object') return false;
+  const candidate = client as Record<string, unknown>;
+  if (typeof candidate['executeTask'] === 'function' || typeof candidate['resetContext'] === 'function') return true;
+  return Object.entries(candidate).some(([key, value]) => key !== 'getAgentInfo' && typeof value === 'function');
 }
 
 function testClientMatchesVersionOptions(client: TestClient, options: TestOptions): boolean {
@@ -243,13 +245,9 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
   const meta = (client as unknown as { [TEST_CLIENT_VERSION_OPTIONS]?: TestClientVersionOptions })[
     TEST_CLIENT_VERSION_OPTIONS
   ];
-  const expectedAuthSignature = authReuseSignature(effectiveOptions);
+  const expectedAuthMode = authReuseMode(effectiveOptions);
   if (!meta) {
-    return (
-      effectiveOptions.adcpVersion === undefined &&
-      effectiveOptions.versionEnvelope === undefined &&
-      expectedAuthSignature === undefined
-    );
+    return effectiveOptions.adcpVersion === undefined && effectiveOptions.versionEnvelope === undefined;
   }
   const expectedAdcpVersion = effectiveOptions.adcpVersion ?? ADCP_VERSION;
   const expectedWireAdcpVersion = effectiveOptions.wireAdcpVersion;
@@ -258,7 +256,7 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
     meta.versionEnvelope === expectedVersionEnvelope &&
-    meta.authSignature === expectedAuthSignature
+    meta.authMode === expectedAuthMode
   );
 }
 
@@ -295,26 +293,8 @@ function withTestKitAuthDefaults(options: TestOptions): TestOptions {
   return options;
 }
 
-function authReuseSignature(options: TestOptions): string | undefined {
-  const auth = options.auth;
-  if (!auth) return undefined;
-  let material: unknown;
-  if (auth.type === 'bearer') {
-    material = ['bearer', auth.token];
-  } else if (auth.type === 'basic') {
-    material = ['basic', auth.username, auth.password];
-  } else if (auth.type === 'oauth') {
-    material = ['oauth', auth.tokens.access_token, auth.tokens.refresh_token];
-  } else {
-    material = [
-      'oauth_client_credentials',
-      auth.credentials.client_id,
-      auth.credentials.client_secret,
-      auth.tokens?.access_token,
-      auth.tokens?.refresh_token,
-    ];
-  }
-  return createHash('sha256').update(JSON.stringify(material)).digest('hex');
+function authReuseMode(options: TestOptions): string | undefined {
+  return options.auth?.type;
 }
 
 /**

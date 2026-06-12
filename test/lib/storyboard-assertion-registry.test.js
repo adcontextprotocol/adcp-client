@@ -221,8 +221,47 @@ function startStubAgent() {
   const server = http.createServer(async (req, res) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
-    const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const raw = Buffer.concat(chunks).toString('utf8');
+    if (!raw.trim()) {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    const rpc = JSON.parse(raw);
     const rpcId = rpc.id ?? 1;
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            serverInfo: { name: 'assertion-stub', version: '1.0.0' },
+          },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpcId,
+          result: {
+            tools: [
+              {
+                name: 'list_creatives',
+                inputSchema: { type: 'object', additionalProperties: true },
+              },
+            ],
+          },
+        })
+      );
+      return;
+    }
     const body = {
       jsonrpc: '2.0',
       id: rpcId,
