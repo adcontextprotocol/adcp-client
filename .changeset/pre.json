@@ -120,6 +120,7 @@
     "remove-schema-root-exports",
     "request-signing-conformance-cache",
     "resolve-3-1-blocked-issues",
+    "resolve-task-state-helper",
     "response-enhancer-config",
     "restore-response-signing",
     "schema-loader-strip-nested-ids",
