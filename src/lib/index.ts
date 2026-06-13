@@ -1187,7 +1187,9 @@ export {
   hasAdvisorySuccessPayload,
   getAuthoritativeMediaBuyStatus,
   isMediaBuyStatus,
+  resolveTaskState,
 } from './utils';
+export type { EffectiveTaskState, ResolvedTaskState, ResolveTaskStateOptions } from './utils';
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
 export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
