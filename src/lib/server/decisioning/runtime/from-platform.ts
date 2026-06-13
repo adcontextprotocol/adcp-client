@@ -166,6 +166,34 @@ import type { Product } from '../../../types/tools.generated';
 import { normalizeErrors } from '../../normalize-errors';
 import { redactCredentialPatterns } from '../../redact';
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object') return false;
+  if (Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergePlainObjects(target: unknown, source: unknown): unknown {
+  if (source === undefined) return target;
+  if (source === null) return null;
+  if (!isPlainObject(source)) return source;
+  if (!isPlainObject(target)) return { ...source };
+  const out: Record<string, unknown> = { ...target };
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (value === null) {
+      delete out[key];
+      continue;
+    }
+    out[key] = deepMergePlainObjects(out[key], value);
+  }
+  return out;
+}
+
+function mergeCapabilityOverride<T extends object>(adopter: T | null | undefined, framework: Partial<T>): T {
+  return deepMergePlainObjects(adopter ?? {}, framework) as T;
+}
+
 /**
  * Apply `normalizeErrors` to a sync_creatives row's optional `errors`
  * field. Adopters often return errors as bare strings, native Error
@@ -1163,18 +1191,64 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const hasOverridesProjection =
     hasMediaBuyProjection || hasBrandProjection || hasAccountProjection || hasComplianceTestingProjection;
 
+  // Adopter-declared passthrough fields (issue #2199). DecisioningCapabilities
+  // exposes a subset of AdcpCapabilitiesConfig that wasn't previously reachable
+  // through definePlatform; forward them so adopters can declare not-supported
+  // feature blocks, creative-capability flags, account-shape additions,
+  // deep-merge overrides, and release-precision supported_versions without
+  // dropping to the lower-level createAdcpServer API.
+  //
+  // Precedence per the brief on #2199:
+  //  - features:  adopter base; auto-derived audience_targeting /
+  //               conversion_tracking / content_standards booleans take
+  //               precedence (handled downstream by applyCapabilityOverrides
+  //               on the inner createAdcpServer call — the framework's
+  //               media_buy override is applied AFTER capConfig.features
+  //               lays down the base).
+  //  - account:   adopter base; existing requireOperatorAuth /
+  //               supportedBilling projections overlay through the
+  //               per-domain account override below.
+  //  - overrides: adopter-declared overrides merged before framework's
+  //               per-domain blocks so framework-derived blocks remain
+  //               authoritative on the keys the projection engine handles.
+  const adopterFeatures = platform.capabilities.features;
+  const adopterCreative = platform.capabilities.creative;
+  const adopterAccount = platform.capabilities.account;
+  const adopterOverrides = platform.capabilities.overrides;
+  const adopterSupportedVersions = platform.capabilities.supported_versions;
+  const hasAdopterPassthroughs =
+    adopterFeatures !== undefined ||
+    adopterCreative !== undefined ||
+    adopterAccount !== undefined ||
+    adopterOverrides !== undefined ||
+    adopterSupportedVersions !== undefined;
+  const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
+
   const projectedCapabilitiesConfig =
-    hasOverridesProjection || hasSpecialisms
+    hasOverridesObject || hasSpecialisms || hasAdopterPassthroughs
       ? {
           ...(hasSpecialisms && {
             specialisms: [...platformSpecialisms] as NonNullable<GetAdCPCapabilitiesResponse['specialisms']>,
           }),
           ...(claimsSignedSpecialism && { request_signing: { supported: true as const } }),
-          ...(hasOverridesProjection && {
+          ...(adopterFeatures !== undefined && { features: adopterFeatures }),
+          ...(adopterCreative !== undefined && { creative: adopterCreative }),
+          ...(adopterAccount !== undefined && { account: adopterAccount }),
+          ...(adopterSupportedVersions !== undefined && {
+            supported_versions: [...adopterSupportedVersions],
+          }),
+          ...(hasOverridesObject && {
             overrides: {
-              ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
-              ...(hasBrandProjection && { brand: brandOverrides }),
-              ...(hasAccountProjection && { account: accountOverrides }),
+              ...(adopterOverrides ?? {}),
+              ...(hasMediaBuyProjection && {
+                media_buy: mergeCapabilityOverride(adopterOverrides?.media_buy, mediaBuyOverrides),
+              }),
+              ...(hasBrandProjection && {
+                brand: mergeCapabilityOverride(adopterOverrides?.brand, brandOverrides),
+              }),
+              ...(hasAccountProjection && {
+                account: mergeCapabilityOverride(adopterOverrides?.account, accountOverrides),
+              }),
               ...(hasComplianceTestingProjection &&
                 complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
             },

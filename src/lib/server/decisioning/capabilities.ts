@@ -22,6 +22,8 @@ import type {
   PostalAreaSupport,
 } from '../../types/tools.generated';
 import type { ProductMetricOptimizationLike } from '../../utils/capability-rollups';
+import type { MediaBuyFeatures, AccountCapabilities, CreativeCapabilities } from '../../utils/capabilities';
+import type { AdcpCapabilitiesOverrides } from '../create-adcp-server';
 
 /**
  * Pre-resolved alias for the wire `media_buy` block. Used as the projection
@@ -253,6 +255,74 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * `AUTH_REQUIRED` envelope before dispatching to the platform.
    */
   requireOperatorAuth?: boolean;
+
+  /**
+   * Media-buy feature flags forwarded into `get_adcp_capabilities.media_buy.features`.
+   * Adopter values serve as the base; auto-derived `audience_targeting`,
+   * `conversion_tracking`, and `content_standards` booleans take precedence
+   * for those three keys (overlaid by the framework via the per-domain
+   * `media_buy` override on the inner createAdcpServer call). Use this to
+   * declare `inlineCreativeManagement` and `propertyListFiltering` directly
+   * from `definePlatform`; declare not-supported feature blocks (e.g.
+   * `inlineCreativeManagement: false`) so the conformance runner grades
+   * them `not_applicable` instead of `fail`.
+   *
+   * Resolves the `definePlatform` passthrough gap noted in adcp-client#2199.
+   */
+  features?: Partial<MediaBuyFeatures>;
+
+  /**
+   * Creative-protocol capabilities forwarded into `get_adcp_capabilities.creative`.
+   * Use to declare `supportsCompliance`, `hasCreativeLibrary`,
+   * `supportsGeneration`, and `supportsTransformation` from `definePlatform`.
+   * Adopters that don't run a provenance-verification pipeline should
+   * declare the relevant fields as `false` so creative storyboards gate
+   * cleanly.
+   *
+   * Resolves the `definePlatform` passthrough gap noted in adcp-client#2199.
+   */
+  creative?: Partial<CreativeCapabilities>;
+
+  /**
+   * Account capabilities forwarded into `get_adcp_capabilities.account` as a
+   * base layer. The framework's existing `requireOperatorAuth` and
+   * `supportedBillings` projections overlay on top via the per-domain
+   * `account` override, so explicit projections win on those keys.
+   * `authorizationEndpoint`, `defaultBilling`, `requiredForProducts`, and
+   * `sandbox` are pure adopter-driven additions exposed through this slot.
+   *
+   * Resolves the `definePlatform` passthrough gap noted in adcp-client#2199.
+   */
+  account?: Partial<AccountCapabilities>;
+
+  /**
+   * Deep-merge overrides applied to the wire `get_adcp_capabilities`
+   * response. Use this for fields that the top-level `DecisioningCapabilities`
+   * shape doesn't model — `media_buy.propagation_surfaces`,
+   * `media_buy.measurement_terms`, `signals.discovery_modes`, etc. The
+   * framework's per-domain projections (auto-derived `media_buy`, `brand`,
+   * `account`, `compliance_testing` blocks) are merged AFTER adopter
+   * overrides, so framework-derived values remain authoritative on the keys
+   * the projection engine handles.
+   *
+   * Mirrors `AdcpCapabilitiesConfig.overrides` on the lower-level
+   * `createAdcpServer` API. Resolves the `definePlatform` passthrough gap
+   * noted in adcp-client#2199.
+   */
+  overrides?: AdcpCapabilitiesOverrides;
+
+  /**
+   * Release-precision AdCP versions this platform supports (e.g. `["3.0", "3.1"]`).
+   * Forwarded into `get_adcp_capabilities.adcp.supported_versions`. 3.1+
+   * sellers should declare here the same release-precision strings they
+   * emit in `adcp_version` on responses; 3.0-pinned sellers can omit.
+   *
+   * Resolves the same gap previously noted for `supported_versions` —
+   * was unreachable through `definePlatform` because
+   * `CreateAdcpServerFromPlatformOptions` omits `'capabilities'` from
+   * `AdcpServerConfig`. See adcp-client#2199.
+   */
+  supported_versions?: string[];
 
   /**
    * Platform-specific config. Strongly typed when the adopter uses the generic.
