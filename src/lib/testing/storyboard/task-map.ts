@@ -179,6 +179,8 @@ export async function executeStoryboardTask(
   // submitted), use that data. Only poll when there's no data at all.
   const hasData = result.data !== undefined && result.data !== null;
   const isAsync = result.status === 'submitted' || result.status === 'working';
+  const prePollingDebugLogs = Array.isArray(result.debug_logs) ? [...result.debug_logs] : [];
+  let replacedByPolling = false;
   if (!hasData && isAsync && result.submitted?.waitForCompletion) {
     try {
       const timeout = new Promise<never>((_, reject) =>
@@ -188,6 +190,7 @@ export async function executeStoryboardTask(
         Promise.race([result.submitted.waitForCompletion(2000, opts.signal), timeout]),
         opts.signal
       );
+      replacedByPolling = true;
     } catch (err) {
       if (opts.signal?.aborted) throw err;
       // Polling failed or timed out — return the intermediate result as-is
@@ -204,12 +207,15 @@ export async function executeStoryboardTask(
   const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError);
   const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
   const extractionPath = readExtractionPath(data);
+  const debugLogs = Array.isArray(result.debug_logs) ? result.debug_logs : [];
+  const mergedDebugLogs = replacedByPolling ? [...prePollingDebugLogs, ...debugLogs] : debugLogs;
   return {
     success,
     data,
     error,
     ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
+    ...(mergedDebugLogs.length > 0 && { debug_logs: mergedDebugLogs }),
   };
 }
 
