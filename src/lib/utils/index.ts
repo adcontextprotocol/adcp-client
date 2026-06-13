@@ -154,6 +154,12 @@ export {
   type GetProductsCacheScopeValidation,
 } from './get-products-cache-scope';
 export { getAuthoritativeMediaBuyStatus, isMediaBuyStatus } from './media-buy-status';
+export {
+  resolveTaskState,
+  type EffectiveTaskState,
+  type ResolvedTaskState,
+  type ResolveTaskStateOptions,
+} from './task-state';
 
 // Lightweight MCP CallToolResult extractor (prefers structuredContent, falls back to JSON text).
 export { extractResult, type ToolCallResultLike } from './extract-result';

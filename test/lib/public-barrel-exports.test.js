@@ -18,10 +18,13 @@ import {
   CanonicalFormat,
   createLazyBackend,
   ensureGetProductsCacheScope,
+  resolveTaskState,
   type CanonicalFormatParams,
+  type EffectiveTaskState,
   type GetProductsResponse,
   type Placement,
   type ProductFormatDeclaration,
+  type ResolvedTaskState,
   type SyncCreativesPayload,
 } from '@adcp/sdk';
 import type {
@@ -94,6 +97,22 @@ void acceptsCanonicalResult;
 
 const scoped = ensureGetProductsCacheScope({ products: [], cache_scope: 'legacy' as string });
 const scope: 'public' | 'account' = scoped.cache_scope;
+const taskState = resolveTaskState({
+  success: true,
+  status: 'completed',
+  data: { status: 'submitted', task_id: 'task_1' },
+  metadata: {
+    taskId: 'client-task-1',
+    taskName: 'create_media_buy',
+    agent: { id: 'agent-1', name: 'Agent', protocol: 'mcp' },
+    responseTimeMs: 1,
+    timestamp: '2026-06-13T00:00:00Z',
+    clarificationRounds: 0,
+    status: 'completed',
+  },
+}, { toolName: 'create_media_buy' });
+const effectiveState: EffectiveTaskState = taskState.effectiveState;
+const resolvedTaskState: ResolvedTaskState<{ status: string; task_id: string }> = taskState;
 
 const required: RequireCacheScopeWhenProducts<{ products: unknown[]; cache_scope?: 'public' | 'account' }> = scoped;
 
@@ -122,6 +141,8 @@ void lazyBackend;
 void lazyBackendOptions;
 void serverLazyBackend;
 void scope;
+void effectiveState;
+void resolvedTaskState;
 void required;
 void generatedScope;
 void generatedInjectedScope;
