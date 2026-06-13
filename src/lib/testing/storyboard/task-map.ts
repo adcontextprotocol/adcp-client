@@ -163,7 +163,7 @@ export async function executeStoryboardTask(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const isRateLimit =
-        /rate limit/i.test(msg) || (/"code":\s*-32000/.test(msg) && /rate.?limit|too many|throttl/i.test(msg));
+        /rate limit/i.test(msg) || (/{"code":\s*-32000/.test(msg) && /rate.?limit|too many|throttl/i.test(msg));
       if (isRateLimit && attempt < MAX_RETRIES) {
         const jitter = Math.random() * 1000;
         const delay = BASE_DELAY_MS * 2 ** attempt + jitter;
@@ -173,6 +173,12 @@ export async function executeStoryboardTask(
       throw err;
     }
   }
+
+  // Preserve debug_logs from the initial SDK response before polling can replace result.
+  // Pre-submit diagnostic logs (e.g. input_schema_field_stripped) are attached to the
+  // initial SDK result; waitForCompletion() builds a fresh TaskResult from the polling
+  // response that does not carry them forward.
+  const prePollingDebugLogs = Array.isArray(result.debug_logs) ? [...result.debug_logs] : [];
 
   // If the agent returned an async status but included data in the initial
   // response (common for agents that process synchronously but report as
@@ -204,12 +210,17 @@ export async function executeStoryboardTask(
   const success = normalizeStoryboardTaskSuccess(result, taskName, terminalDataError, adcpError);
   const error = result.error ?? (!success ? errorMessageFrom(adcpError, undefined) : undefined);
   const extractionPath = readExtractionPath(data);
+  const mergedDebugLogs = [
+    ...prePollingDebugLogs,
+    ...(Array.isArray(result.debug_logs) ? result.debug_logs : []),
+  ];
   return {
     success,
     data,
     error,
     ...(adcpError && { adcp_error: adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
+    ...(mergedDebugLogs.length > 0 && { debug_logs: mergedDebugLogs }),
   };
 }
 

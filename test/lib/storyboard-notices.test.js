@@ -348,6 +348,132 @@ describe('RunnerNotice: webhook_signing.legacy_hmac_fallback.removed (#1704)', (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tests: input_schema_field_stripped
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('RunnerNotice: input_schema_field_stripped (#5495)', () => {
+  test('promotes structured field-strip debug logs to step and storyboard notices', async () => {
+    const sb = buildMinimalStoryboard({ id: 'input_schema_strip_notice' });
+    const client = {
+      executeTask: async taskName => ({
+        success: true,
+        status: 'completed',
+        data: { products: [] },
+        metadata: {
+          taskId: 'task-strip',
+          taskName,
+          agent: { id: 'partial-agent', name: 'Partial Agent', protocol: 'mcp' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'completed',
+        },
+        debug_logs: [
+          {
+            type: 'warning',
+            message: 'Stripped fields not declared in agent tool input schema for get_products: max_width, max_height',
+            timestamp: new Date().toISOString(),
+            details: {
+              code: 'input_schema_field_stripped',
+              task: 'get_products',
+              fields: ['max_width', 'max_height'],
+              agent_id: 'partial-agent',
+            },
+          },
+        ],
+      }),
+      resetContext: () => {},
+    };
+
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _client: client,
+      _profile: profileClean,
+      agentTools: ['get_products'],
+    });
+
+    const step = result.phases[0].steps[0];
+    const stepNotice = step.notices?.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(stepNotice, 'step_result.notices should include the stripped-field notice');
+    assert.equal(stepNotice.severity, 'info');
+    assert.match(stepNotice.message, /get_products/);
+    assert.match(stepNotice.message, /max_width/);
+    assert.match(stepNotice.message, /max_height/);
+
+    const storyboardNotice = result.notices.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(storyboardNotice, 'StoryboardResult.notices should aggregate the step notice');
+    assert.deepEqual(storyboardNotice.storyboard_ids, ['input_schema_strip_notice']);
+    assert.equal(result.overall_passed, true, 'notice should not affect pass/fail');
+  });
+
+  test('preserves field-strip debug logs through the async waitForCompletion polling path', async () => {
+    const sb = buildMinimalStoryboard({ id: 'input_schema_strip_async_notice' });
+    const stripLog = {
+      type: 'warning',
+      message: 'Stripped fields not declared in agent tool input schema for get_products: max_width',
+      timestamp: new Date().toISOString(),
+      details: {
+        code: 'input_schema_field_stripped',
+        task: 'get_products',
+        fields: ['max_width'],
+        agent_id: 'async-partial-agent',
+      },
+    };
+    // Simulate an agent that initially returns submitted with debug_logs but no data,
+    // then resolves via polling with data but no debug_logs.
+    const client = {
+      executeTask: async taskName => ({
+        success: false,
+        status: 'submitted',
+        data: null,
+        debug_logs: [stripLog],
+        submitted: {
+          waitForCompletion: async () => ({
+            success: true,
+            status: 'completed',
+            data: { products: [] },
+            metadata: {
+              taskId: 'task-async',
+              taskName,
+              agent: { id: 'async-partial-agent', name: 'Async Partial Agent', protocol: 'mcp' },
+              responseTimeMs: 5,
+              timestamp: new Date().toISOString(),
+              clarificationRounds: 0,
+              status: 'completed',
+            },
+          }),
+        },
+        metadata: {
+          taskId: 'task-async',
+          taskName,
+          agent: { id: 'async-partial-agent', name: 'Async Partial Agent', protocol: 'mcp' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'submitted',
+        },
+      }),
+      resetContext: () => {},
+    };
+
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _client: client,
+      _profile: profileClean,
+      agentTools: ['get_products'],
+    });
+
+    const step = result.phases[0].steps[0];
+    const stepNotice = step.notices?.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(stepNotice, 'step_result.notices should include the stripped-field notice from async polling path');
+    assert.match(stepNotice.message, /get_products/);
+    assert.match(stepNotice.message, /max_width/);
+
+    const storyboardNotice = result.notices.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(storyboardNotice, 'StoryboardResult.notices should aggregate the step notice from async polling path');
+    assert.equal(result.overall_passed, true, 'notice should not affect pass/fail');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests: multiple notices in one run
 // ─────────────────────────────────────────────────────────────────────────────
 
