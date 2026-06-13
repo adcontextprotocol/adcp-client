@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-06-12
+> Generated at: 2026-06-13
 > @adcp/sdk v9.0.0-beta.28
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -1595,6 +1595,7 @@ _Response (success branch):_
   checked_at: string
   offering: object
   matching_products: object[]
+  sponsored_context: Si Sponsored Context
   total_matching: integer
   unavailable_reason: string
   alternative_offering_ids: string[]
@@ -1617,6 +1618,7 @@ _Request:_
   offering_id: string
   supported_capabilities: Si Capabilities
   offering_token: string
+  sponsored_context_receipt: Si Sponsored Context Receipt
 }
 ```
 
@@ -1627,6 +1629,7 @@ _Response (success branch):_
   session_status: Si Session Status  // required
   response: object
   negotiated_capabilities: Si Capabilities
+  sponsored_context: Si Sponsored Context
   session_ttl_seconds: integer
   errors: object[]
   context: Context
@@ -1642,6 +1645,7 @@ _Request:_
   session_id: string  // required
   message: string
   action_response: object
+  sponsored_context_receipt: Si Sponsored Context Receipt
   context: Context
 }
 ```
@@ -1653,6 +1657,7 @@ _Response (success branch):_
   session_status: Si Session Status  // required
   response: object
   mcp_resource_uri: string
+  sponsored_context: Si Sponsored Context
   handoff: object
   errors: object[]
   context: Context

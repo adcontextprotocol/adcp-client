@@ -103,6 +103,7 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-rc.9',
   '3.1.0-rc.10',
   '3.1.0-rc.13',
+  '3.1.0-rc.14',
 ] as const;
 
 /**

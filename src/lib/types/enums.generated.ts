@@ -151,6 +151,7 @@ export const RightsBillingPeriodValues = ["daily", "weekly", "monthly", "quarter
 export const RightTypeValues = ["talent", "character", "brand_ip", "music", "stock_media"] as const;
 export const RightUseValues = ["likeness", "voice", "name", "endorsement", "motion_capture", "signature", "catchphrase", "sync", "background_music", "editorial", "commercial", "ai_generated_image"] as const;
 export const ScanTypeValues = ["progressive", "interlaced"] as const;
+export const SIContextUseValues = ["presentation_only", "comparison_set", "reasoning_context"] as const;
 export const SignalAvailabilityTypeValues = ["marketplace", "custom", "owned"] as const;
 /** @deprecated AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType. */
 export const SignalCatalogTypeValues = SignalAvailabilityTypeValues;
