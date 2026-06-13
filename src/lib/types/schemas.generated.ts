@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-06-12T10:58:49.849Z
+// Generated at: 2026-06-13T08:57:02.101Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4509,6 +4509,37 @@ export const SIGetOfferingRequestSchema = z.object({
 
 export const OfferingAvailabilityStatusSchema = z.union([z.literal("available"), z.literal("limited"), z.literal("sold_out"), z.literal("expired"), z.literal("region_restricted"), z.literal("inactive")]);
 
+export const SIContextUseSchema = z.union([z.literal("presentation_only"), z.literal("comparison_set"), z.literal("reasoning_context")]);
+
+export const SISponsoredContextSchema = z.object({
+    paying_principal: z.object({
+        brand: BrandReferenceSchema,
+        account: z.object({
+            account_id: z.string()
+        }).passthrough().optional(),
+        operator: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional(),
+        display_name: z.string().optional()
+    }).passthrough(),
+    context_use: SIContextUseSchema,
+    disclosure_obligation: z.object({
+        required: z.boolean(),
+        label_text: z.string().optional(),
+        timing: z.union([z.literal("before_use"), z.literal("at_first_influenced_output"), z.literal("near_each_influenced_output")]).optional(),
+        proximity: z.union([z.literal("session_level"), z.literal("near_rendered_unit"), z.literal("near_influenced_output")]).optional(),
+        jurisdictions: z.array(z.object({
+            country: z.string(),
+            region: z.string().optional(),
+            regulation: z.string()
+        }).passthrough()).optional()
+    }).passthrough(),
+    declared_at: z.iso.datetime().optional(),
+    declared_by: z.object({
+        agent_url: z.string().regex(/^https:\/\//).optional(),
+        role: z.union([z.literal("brand_agent"), z.literal("seller"), z.literal("network"), z.literal("platform")])
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const SIIdentitySchema = z.object({
     consent_granted: z.boolean(),
     consent_timestamp: z.iso.datetime().optional(),
@@ -4533,6 +4564,23 @@ export const SIIdentitySchema = z.object({
     anonymous_session_id: z.string().optional()
 }).passthrough();
 
+export const SISponsoredContextReceiptSchema = z.object({
+    sponsored_context: SISponsoredContextSchema,
+    host_receipt: z.object({
+        status: z.union([z.literal("accepted"), z.literal("rejected")]),
+        accepted_context_use: SIContextUseSchema.optional(),
+        received_at: z.iso.datetime(),
+        host_surface: z.string().optional(),
+        disclosure_commitment: z.object({
+            status: z.union([z.literal("accepted"), z.literal("not_required")]),
+            label_text: z.string().optional(),
+            notes: z.string().optional()
+        }).passthrough().optional(),
+        rejection_reason: z.string().optional()
+    }).passthrough(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const SIUIElementSchema = z.object({
     type: z.union([z.literal("text"), z.literal("link"), z.literal("image"), z.literal("product_card"), z.literal("carousel"), z.literal("action_button"), z.literal("app_handoff"), z.literal("integration_actions")]),
     data: z.object({}).passthrough().optional()
@@ -4550,6 +4598,7 @@ export const SISendMessageRequestSchema = z.object({
         action: z.string().optional(),
         payload: z.object({}).passthrough().optional()
     }).passthrough().optional(),
+    sponsored_context_receipt: SISponsoredContextReceiptSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -4575,6 +4624,7 @@ export const SISendMessageResponseSchema = z.object({
         ui_elements: z.array(SIUIElementSchema).optional()
     }).passthrough().optional(),
     mcp_resource_uri: z.string().optional(),
+    sponsored_context: SISponsoredContextSchema.optional(),
     session_status: SISessionStatusSchema,
     handoff: z.object({
         type: z.union([z.literal("transaction"), z.literal("complete")]).optional(),
@@ -8356,6 +8406,7 @@ export const SIGetOfferingResponseSchema = z.object({
         availability_status: OfferingAvailabilityStatusSchema.optional(),
         url: z.string().optional()
     }).passthrough()).optional(),
+    sponsored_context: SISponsoredContextSchema.optional(),
     total_matching: z.number().min(0).optional(),
     unavailable_reason: z.string().optional(),
     alternative_offering_ids: z.array(z.string()).optional(),
@@ -8374,6 +8425,7 @@ export const SIInitiateSessionRequestSchema = z.object({
     offering_id: z.string().optional(),
     supported_capabilities: SICapabilitiesSchema.optional(),
     offering_token: z.string().optional(),
+    sponsored_context_receipt: SISponsoredContextReceiptSchema.optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -8398,6 +8450,7 @@ export const SIInitiateSessionResponseSchema = z.object({
         ui_elements: z.array(SIUIElementSchema).optional()
     }).passthrough().optional(),
     negotiated_capabilities: SICapabilitiesSchema.optional(),
+    sponsored_context: SISponsoredContextSchema.optional(),
     session_status: SISessionStatusSchema,
     session_ttl_seconds: z.number().min(1).optional(),
     errors: z.array(ErrorSchema).optional(),

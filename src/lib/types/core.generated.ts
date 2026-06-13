@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.13
-// Generated at: 2026-06-12T10:58:29.484Z
+// Generated AdCP core types from official schemas v3.1.0-rc.14
+// Generated at: 2026-06-13T08:56:44.099Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2429,7 +2429,7 @@ export type VASTAsset = {
        */
       delivery_type: 'url';
       /**
-       * URL endpoint that returns VAST XML
+       * URL endpoint that returns VAST XML. May carry unsubstituted ad-server macros — VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
        */
       url: string;
     }
@@ -2621,7 +2621,7 @@ export type DAASTAsset = {
        */
       delivery_type: 'url';
       /**
-       * URL endpoint that returns DAAST XML
+       * URL endpoint that returns DAAST XML. May carry unsubstituted ad-server macros — DAAST/VAST-style `[MACRO]` and `${MACRO}` placeholders are accepted as-is (RFC 6570 syntax); buyers MUST NOT pre-encode macro delimiters, since players match the literal token at substitution time.
        */
       url: string;
     }
@@ -24309,6 +24309,7 @@ export type SIGetOfferingResponse = ProtocolEnvelope & {
      */
     url?: string;
   }[];
+  sponsored_context?: SISponsoredContext;
   /**
    * Total number of products matching the context (may be more than returned in matching_products)
    * @minimum 0
@@ -24339,7 +24340,99 @@ export type OfferingAvailabilityStatus =
   | 'expired'
   | 'region_restricted'
   | 'inactive';
+/**
+ * Declared host-side use mode for this sponsored context.
+ */
+export type SIContextUse = 'presentation_only' | 'comparison_set' | 'reasoning_context';
 
+/**
+ * Declaration for the sponsored context carried by this offering response. When present, it applies to the returned offering and matching_products package as a whole unless a future extension narrows the declaration to individual items. Hosts MUST either honor the declared context_use and disclosure_obligation or reject the context before using it.
+ */
+export interface SISponsoredContext {
+  /**
+   * Economic accountability fact: the brand that funded or sponsored this context, with optional account/operator context. This identifies who paid for the sponsored context; it is distinct from the host's later receipt and use commitment.
+   */
+  paying_principal: {
+    brand: BrandReference;
+    /**
+     * Optional seller-assigned account context for the paying principal. This intentionally carries only an account_id so the canonical economic principal remains paying_principal.brand.
+     */
+    account?: {
+      /**
+       * Seller-assigned account identifier for the paying principal.
+       */
+      account_id: string;
+    };
+    /**
+     * Domain of the operator acting for the paying principal, when different from the brand domain.
+     * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+     */
+    operator?: string;
+    /**
+     * Human-readable label for disclosure rendering. The canonical identity remains the brand/account reference.
+     */
+    display_name?: string;
+  };
+  context_use: SIContextUse;
+  /**
+   * Disclosure obligation the receiving host must either accept and satisfy or reject before using this sponsored context. This is a declared obligation and audit input, not a protocol-level legal determination.
+   */
+  disclosure_obligation: {
+    /**
+     * Whether the declaring party requires disclosure for this sponsored context.
+     */
+    required: boolean;
+    /**
+     * Disclosure label text the host should render when disclosure is required.
+     */
+    label_text?: string;
+    /**
+     * When the disclosure must be presented relative to the sponsored context's influence.
+     */
+    timing?: 'before_use' | 'at_first_influenced_output' | 'near_each_influenced_output';
+    /**
+     * Where the disclosure should appear relative to the affected output.
+     */
+    proximity?: 'session_level' | 'near_rendered_unit' | 'near_influenced_output';
+    /**
+     * Jurisdictions where this declared disclosure obligation applies.
+     */
+    jurisdictions?: {
+      /**
+       * ISO 3166-1 alpha-2 country code.
+       */
+      country: string;
+      /**
+       * Optional sub-national region code.
+       */
+      region?: string;
+      /**
+       * Regulation or policy identifier.
+       */
+      regulation: string;
+    }[];
+  };
+  /**
+   * When this sponsored-context declaration was made.
+   * @format date-time
+   */
+  declared_at?: string;
+  /**
+   * Agent or service that attached the declaration.
+   */
+  declared_by?: {
+    /**
+     * HTTPS URL of the declaring agent or service.
+     * @pattern ^https:\/\/
+     */
+    agent_url?: string;
+    /**
+     * Role of the declaring party.
+     */
+    role: 'brand_agent' | 'seller' | 'network' | 'platform';
+  };
+  ext?: ExtensionObject;
+}
 
 // bundled/sponsored-intelligence/si-initiate-session-request.json
 /**
@@ -24380,6 +24473,7 @@ export interface SIInitiateSessionRequest {
    * Token from si_get_offering response for session continuity. Brand uses this to recall what products were shown to the user, enabling natural references like 'the second one' or 'that blue shoe'.
    */
   offering_token?: string;
+  sponsored_context_receipt?: SISponsoredContextReceipt;
   /**
    * Client-generated unique key for this request. Prevents duplicate session creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
    * @minLength 16
@@ -24456,6 +24550,53 @@ export interface SIIdentity {
    */
   anonymous_session_id?: string;
 }
+/**
+ * Host receipt for sponsored context accepted from a prior si_get_offering response or other pre-session context package. This records the accepted context_use, disclosure commitment, paying_principal, and host receipt for audit.
+ */
+export interface SISponsoredContextReceipt {
+  sponsored_context: SISponsoredContext;
+  /**
+   * Receiving-surface accountability fact: the use mode the host accepted and committed to honor for this sponsored context.
+   */
+  host_receipt: {
+    /**
+     * Whether the host accepted the declared sponsored context for use.
+     */
+    status: 'accepted' | 'rejected';
+    accepted_context_use?: SIContextUse;
+    /**
+     * When the host received the sponsored context.
+     * @format date-time
+     */
+    received_at: string;
+    /**
+     * Host-defined surface or placement where the context was accepted, such as an assistant session, search result page, or comparison module.
+     */
+    host_surface?: string;
+    /**
+     * How the host committed to handle the declared disclosure obligation. Required when host_receipt.status is accepted.
+     */
+    disclosure_commitment?: {
+      /**
+       * Host commitment status for the disclosure obligation. Use accepted when the declaration requires disclosure and the host will satisfy it; use not_required only when the declaration's disclosure_obligation.required is false. A host that will not satisfy a required disclosure rejects the sponsored context.
+       */
+      status: 'accepted' | 'not_required';
+      /**
+       * Disclosure label text the host committed to render, if different from or copied from the declaration.
+       */
+      label_text?: string;
+      /**
+       * Optional host explanation for the disclosure commitment.
+       */
+      notes?: string;
+    };
+    /**
+     * Optional explanation when status is rejected, for example unsupported context_use or inability to satisfy the disclosure obligation.
+     */
+    rejection_reason?: string;
+  };
+  ext?: ExtensionObject;
+}
 
 // bundled/sponsored-intelligence/si-initiate-session-response.json
 /**
@@ -24491,6 +24632,7 @@ export type SIInitiateSessionResponse = ProtocolEnvelope & {
     ui_elements?: SIUIElement[];
   };
   negotiated_capabilities?: SICapabilities;
+  sponsored_context?: SISponsoredContext;
   session_status: SISessionStatus;
   /**
    * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
@@ -24575,6 +24717,7 @@ export interface SISendMessageRequest {
      */
     payload?: {};
   };
+  sponsored_context_receipt?: SISponsoredContextReceipt;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -24618,6 +24761,7 @@ export type SISendMessageResponse = ProtocolEnvelope & {
    * MCP resource URI for hosts with MCP Apps support (e.g., ui://si/session-abc123)
    */
   mcp_resource_uri?: string;
+  sponsored_context?: SISponsoredContext;
   session_status: SISessionStatus;
   /**
    * Handoff request when session_status is pending_handoff
