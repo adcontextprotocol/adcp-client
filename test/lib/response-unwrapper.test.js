@@ -1216,6 +1216,17 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(isAdcpError({ adcp_error: { code: 'RATE_LIMITED', message: 'slow' } }), true);
     });
 
+    test('flat error_code responses are terminal for permissive expected-error handling', () => {
+      const response = {
+        error_code: 'INVALID_REQUEST',
+        message: 'Invalid request',
+      };
+
+      assert.strictEqual(isAdcpError(response), false);
+      assert.strictEqual(isTerminalAdcpError(response, 'get_products'), true);
+      assert.strictEqual(isAdcpSuccess(response, 'get_products'), false);
+    });
+
     test('should return false for adcp_error with non-string code', () => {
       assert.strictEqual(isAdcpError({ adcp_error: { code: 42 } }), false);
     });

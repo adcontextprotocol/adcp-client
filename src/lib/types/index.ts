@@ -118,6 +118,7 @@ export type {
   AudienceStatus,
   MediaBuyStatus,
   CreativeStatus,
+  Placement,
   PublisherPropertySelector,
   ReportingCapabilities,
 } from './tools.generated';

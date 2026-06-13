@@ -737,6 +737,7 @@ export type {
   SyncCatalogsError,
   // Format Assets
   Overlay,
+  Placement,
   // Creative Agent Domain
   CreativeManifest,
   CreativeVariable,

@@ -20,6 +20,7 @@ import {
   ensureGetProductsCacheScope,
   type CanonicalFormatParams,
   type GetProductsResponse,
+  type Placement,
   type ProductFormatDeclaration,
   type SyncCreativesPayload,
 } from '@adcp/sdk';
@@ -43,6 +44,7 @@ import {
 } from '@adcp/sdk/server';
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
+  Placement as TypesPlacement,
   RequireCacheScopeWhenProducts,
 } from '@adcp/sdk/types';
 
@@ -108,6 +110,9 @@ const generatedMissingScope = ensureGetProductsCacheScope({
 } satisfies Omit<GetProductsResponse, 'cache_scope'>);
 const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache_scope;
 
+const acceptsRootPlacement = (_placement: Placement) => {};
+const acceptsTypesPlacement = (_placement: TypesPlacement) => {};
+
 void typedNative;
 void builtKind;
 void mediaBuyShape;
@@ -120,6 +125,8 @@ void scope;
 void required;
 void generatedScope;
 void generatedInjectedScope;
+void acceptsRootPlacement;
+void acceptsTypesPlacement;
 `,
     'utf8'
   );
