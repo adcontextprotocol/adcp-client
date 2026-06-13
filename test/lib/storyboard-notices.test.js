@@ -404,6 +404,76 @@ describe('RunnerNotice: input_schema_field_stripped (#5495)', () => {
     assert.deepEqual(storyboardNotice.storyboard_ids, ['input_schema_strip_notice']);
     assert.equal(result.overall_passed, true, 'notice should not affect pass/fail');
   });
+
+  test('preserves field-strip notices through async waitForCompletion polling path', async () => {
+    const sb = buildMinimalStoryboard({ id: 'input_schema_strip_async' });
+    let polled = false;
+    const client = {
+      executeTask: async taskName => ({
+        success: true,
+        status: 'submitted',
+        data: undefined,
+        metadata: {
+          taskId: 'task-async-strip',
+          taskName,
+          agent: { id: 'partial-agent', name: 'Partial Agent', protocol: 'mcp' },
+          responseTimeMs: 1,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'submitted',
+        },
+        debug_logs: [
+          {
+            type: 'warning',
+            message: 'Stripped fields not declared in agent tool input schema for get_products: max_width',
+            timestamp: new Date().toISOString(),
+            details: {
+              code: 'input_schema_field_stripped',
+              task: 'get_products',
+              fields: ['max_width'],
+              agent_id: 'partial-agent',
+            },
+          },
+        ],
+        submitted: {
+          waitForCompletion: async () => {
+            polled = true;
+            return {
+              success: true,
+              status: 'completed',
+              data: { products: [] },
+              metadata: {
+                taskId: 'task-async-strip',
+                taskName,
+                agent: { id: 'partial-agent', name: 'Partial Agent', protocol: 'mcp' },
+                responseTimeMs: 2,
+                timestamp: new Date().toISOString(),
+                clarificationRounds: 0,
+                status: 'completed',
+              },
+            };
+          },
+        },
+      }),
+      resetContext: () => {},
+    };
+
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _client: client,
+      _profile: profileClean,
+      agentTools: ['get_products'],
+    });
+
+    assert.ok(polled, 'waitForCompletion should have been called');
+    const step = result.phases[0].steps[0];
+    const stepNotice = step.notices?.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(stepNotice, 'step_result.notices must survive the async polling replacement');
+
+    const storyboardNotice = result.notices.find(n => n.code === 'input_schema_field_stripped');
+    assert.ok(storyboardNotice, 'StoryboardResult.notices must aggregate pre-polling strip notices');
+    assert.deepEqual(storyboardNotice.storyboard_ids, ['input_schema_strip_async']);
+    assert.equal(result.overall_passed, true, 'notice must not affect pass/fail');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
