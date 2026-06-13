@@ -1576,10 +1576,12 @@ function valueContainsWebhookToken(value: unknown): boolean {
  * structure (not its declared `requires:` list). Today:
  *   - `'webhook_receiver'`, autodetected from `{{runner.webhook_url:…}}`
  *     / `{{runner.webhook_base}}` token presence inside any step's
- *     `sample_request`. Token presence is the authoring contract — a
- *     storyboard that names the runner's webhook receiver cannot run
- *     without one — so authors don't need to remember to add
- *     `requires: [webhook_receiver]` separately. Spec: adcp-client#1678.
+ *     `sample_request` or in-scope `rate_limit_trip.trip_target_sample_request`.
+ *     Token presence is the authoring contract — a storyboard that names
+ *     the runner's webhook receiver cannot run without one — so authors
+ *     don't need to remember to add `requires: [webhook_receiver]`
+ *     separately. Contract-gated synthetic steps only count when their
+ *     `requires_contract` is configured for this run. Spec: adcp-client#1678.
  *   - `'request_signer'`, autodetected from `storyboard.id ===
  *     'signed_requests'` or any step using the synthesized
  *     `request_signing_probe` task. The signed-requests universal
@@ -1589,13 +1591,24 @@ function valueContainsWebhookToken(value: unknown): boolean {
  *     failures on bearer-only agents that never claimed signing.
  *     Spec: adcp-client#1702.
  */
-function detectImplicitRequires(storyboard: Storyboard): RequirementName[] {
+function detectImplicitRequires(
+  storyboard: Storyboard,
+  options: Pick<StoryboardRunOptions, 'contracts'> = {}
+): RequirementName[] {
   const requires: RequirementName[] = [];
   let needsWebhook = false;
   let needsSigner = storyboard.id === 'signed_requests';
+  const contractsInScope = new Set(options.contracts ?? []);
   for (const phase of storyboard.phases) {
     for (const step of phase.steps) {
-      if (!needsWebhook && step.sample_request && valueContainsWebhookToken(step.sample_request)) {
+      const rateLimitTripInScope = !step.requires_contract || contractsInScope.has(step.requires_contract);
+      if (
+        !needsWebhook &&
+        ((step.sample_request && valueContainsWebhookToken(step.sample_request)) ||
+          (step.rate_limit_trip?.trip_target_sample_request &&
+            rateLimitTripInScope &&
+            valueContainsWebhookToken(step.rate_limit_trip.trip_target_sample_request)))
+      ) {
         needsWebhook = true;
       }
       if (!needsSigner && step.task === 'request_signing_probe') {
@@ -1998,7 +2011,7 @@ async function executeStoryboardPass(
   const preflightNotices = collectCapabilityNotices(storyboard, options._profile?.raw_capabilities);
 
   const declared = storyboard.requires ?? [];
-  const implicit = detectImplicitRequires(storyboard);
+  const implicit = detectImplicitRequires(storyboard, options);
   const allRequires = [...declared, ...implicit.filter(r => !declared.includes(r))];
   if (allRequires.length) {
     const unmet = checkRequires(allRequires, options, profile);

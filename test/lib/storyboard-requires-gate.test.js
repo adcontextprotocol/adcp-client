@@ -527,6 +527,110 @@ describe('Storyboard.requires gate (#1678): implicit webhook_receiver', () => {
     assert.equal(step.skip.requirement, 'webhook_receiver', 'recursive scan finds nested tokens');
   });
 
+  test('webhook tokens in rate_limit_trip target requests also trigger the gate', async () => {
+    const sb = buildStoryboard({
+      phases: [
+        {
+          id: 'p1',
+          title: 'Rate-limit target with webhook callback',
+          steps: [
+            {
+              id: 'trip',
+              title: 'Rate-limit trip target request needs a receiver',
+              task: 'expect_rate_limit_not_replayed',
+              rate_limit_trip: {
+                trip_target_task: 'create_media_buy',
+                trip_target_sample_request: {
+                  buyer_ref: 'buyer-rate-limit-test',
+                  packages: [{ product_id: 'prod_1', budget: 1000 }],
+                  push_notification_config: {
+                    url: '{{runner.webhook_url:trip}}',
+                  },
+                },
+                max_attempts: 50,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+      contracts: ['rate_limit_trip_runner'],
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'webhook_receiver');
+  });
+
+  test('out-of-scope rate_limit_trip webhook tokens do not skip unrelated phases', async () => {
+    const sb = buildStoryboard({
+      phases: [
+        {
+          id: 'normal',
+          title: 'Normal phase',
+          steps: [
+            {
+              id: 'normal_read',
+              title: 'Normal read still runs',
+              task: 'get_products',
+              sample_request: { buying_mode: 'brief', brief: 'show products' },
+            },
+          ],
+        },
+        {
+          id: 'rate_limit',
+          title: 'Out-of-scope rate-limit phase',
+          steps: [
+            {
+              id: 'trip',
+              title: 'Rate-limit trip target request needs a receiver only when the contract is in scope',
+              task: 'expect_rate_limit_not_replayed',
+              requires_contract: 'rate_limit_trip_runner',
+              rate_limit_trip: {
+                trip_target_task: 'create_media_buy',
+                trip_target_sample_request: {
+                  buyer_ref: 'buyer-rate-limit-test',
+                  packages: [{ product_id: 'prod_1', budget: 1000 }],
+                  push_notification_config: {
+                    url: '{{runner.webhook_url:trip}}',
+                  },
+                },
+                max_attempts: 50,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: {
+        ...profileWithoutController,
+        tools: [...profileWithoutController.tools, 'create_media_buy'],
+      },
+      agentTools: [...profileWithoutController.tools, 'create_media_buy'],
+    });
+
+    assert.ok(
+      !result.phases.some(phase => phase.phase_id === 'requirement_unmet'),
+      'out-of-scope contract-gated webhook token must not trigger storyboard-level requirement_unmet'
+    );
+    assert.ok(
+      result.phases.some(phase => phase.phase_id === 'normal'),
+      'unrelated phase still runs'
+    );
+    const trip = result.phases
+      .find(phase => phase.phase_id === 'rate_limit')
+      ?.steps.find(step => step.step_id === 'trip');
+    assert.equal(trip?.skipped, true);
+    assert.equal(trip?.skip_reason, 'missing_test_kit_contract');
+  });
+
   test('declared requires: [webhook_receiver] resolves the same way (loader allows the name)', () => {
     const yaml = `
 id: ok_webhook_declared
