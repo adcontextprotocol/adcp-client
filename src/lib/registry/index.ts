@@ -342,10 +342,7 @@ export class RegistryClient {
   }
 
   /** List AAO brand logo assets for a domain, optionally filtered by tags. */
-  async listBrandLogos(
-    domain: string,
-    options?: ListBrandLogosOptions | string[]
-  ): Promise<ListBrandLogosResponse> {
+  async listBrandLogos(domain: string, options?: ListBrandLogosOptions | string[]): Promise<ListBrandLogosResponse> {
     if (!domain?.trim()) throw new Error('domain is required');
     const params = new URLSearchParams();
     const tags = Array.isArray(options) ? options : options?.tags;

@@ -51,10 +51,9 @@ describe('RegistryClient live AAO brand logo endpoints', () => {
   test(
     'uploads a live brand logo asset when explicitly enabled',
     {
-      skip:
-        UPLOAD_ENABLED
-          ? false
-          : 'Set ADCP_REGISTRY_API_KEY and ADCP_E2E_UPLOAD_BRAND_LOGO_DOMAIN to run the mutating live upload test',
+      skip: UPLOAD_ENABLED
+        ? false
+        : 'Set ADCP_REGISTRY_API_KEY and ADCP_E2E_UPLOAD_BRAND_LOGO_DOMAIN to run the mutating live upload test',
     },
     async () => {
       const client = new RegistryClient({ baseUrl: BASE_URL, apiKey: process.env.ADCP_REGISTRY_API_KEY });
