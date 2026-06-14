@@ -10,7 +10,7 @@
 const http = require('http');
 const assert = require('assert');
 
-const SERVER_BASE = 'http://127.0.0.1:3000';
+const SERVER_BASE = process.env.ADCP_E2E_SERVER_BASE || 'http://127.0.0.1:3000';
 
 class AdCPE2ETest {
   constructor() {
@@ -73,10 +73,12 @@ class AdCPE2ETest {
 
   async setup() {
     this.log('Setting up E2E tests...');
+    this.log(`Using server base: ${SERVER_BASE}`);
 
     // Fetch available agents
     const result = await this.makeRequest('/api/sales/agents');
     assert.strictEqual(result.status, 200, 'Failed to fetch agents');
+    assert.strictEqual(result.raw, undefined, 'Agents API did not return JSON');
     assert.strictEqual(result.data.success, true, 'Agents API returned failure');
 
     this.agents = result.data.data.agents;
@@ -260,6 +262,7 @@ class AdCPE2ETest {
       await this.testErrorHandling();
     } catch (error) {
       this.log(`Setup failed: ${error.message}`, 'error');
+      process.exitCode = 1;
       return;
     }
 

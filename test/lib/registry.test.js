@@ -325,6 +325,180 @@ describe('RegistryClient', () => {
     });
   });
 
+  // ============ brand logo assets ============
+
+  describe('brand logo assets', () => {
+    const LOGO_ASSET = {
+      id: 'logo_123',
+      content_type: 'image/svg+xml',
+      source: 'community',
+      review_status: 'approved',
+      tags: ['primary', 'light'],
+      url: 'https://agenticadvertising.org/assets/brands/acme.com/logo_123.svg',
+      legacy_url: '/logos/brands/acme.com/logo_123',
+      width: 512,
+      height: 128,
+    };
+
+    test('lists logo assets and serializes tags as a comma-separated query param', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ domain: 'acme.com', logos: [LOGO_ASSET] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.listBrandLogos('acme.com', ['primary', 'light-bg']);
+
+      const parsed = new URL(capturedUrl);
+      assert.strictEqual(parsed.pathname, '/api/brands/acme.com/logos');
+      assert.strictEqual(parsed.searchParams.get('tags'), 'primary,light-bg');
+      assert.strictEqual(result.domain, 'acme.com');
+      assert.strictEqual(result.logos[0].id, 'logo_123');
+    });
+
+    test('accepts options object for logo tag filters', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify({ domain: 'acme.com', logos: [] }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.listBrandLogos('acme.com', { tags: ['dark-bg'] });
+
+      const parsed = new URL(capturedUrl);
+      assert.strictEqual(parsed.searchParams.get('tags'), 'dark-bg');
+      assert.deepStrictEqual(result.logos, []);
+    });
+
+    test('uploads logo assets as multipart form data', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/brands/acme.com/logos'));
+        assert.strictEqual(opts.method, 'POST');
+        assert.strictEqual(opts.headers.Authorization, 'Bearer sk_test');
+        assert.strictEqual(opts.headers['Content-Type'], undefined);
+        assert.ok(opts.body instanceof FormData);
+
+        const file = opts.body.get('file');
+        assert.strictEqual(file.name, 'logo.png');
+        assert.strictEqual(file.type, 'image/png');
+        assert.strictEqual(await file.text(), 'logo-bytes');
+        assert.strictEqual(opts.body.get('tags'), 'primary,dark-bg');
+        assert.strictEqual(opts.body.get('note'), 'Use for dark backgrounds');
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            domain: 'acme.com',
+            logo_id: 'logo_pending',
+            review_status: 'pending',
+            message: 'Logo submitted for review',
+            review_sla_hours: 24,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.uploadBrandLogo({
+        domain: 'acme.com',
+        data: Buffer.from('logo-bytes'),
+        filename: 'logo.png',
+        mimeType: 'image/png',
+        tags: ['primary', 'dark-bg'],
+        note: 'Use for dark backgrounds',
+      });
+
+      assert.strictEqual(result.logo_id, 'logo_pending');
+      assert.strictEqual(result.review_status, 'pending');
+      assert.strictEqual(result.review_sla_hours, 24);
+    });
+
+    test('accepts Blob and ArrayBuffer logo data', async () => {
+      const seen = [];
+      restore = mockFetch(async (_url, opts) => {
+        const file = opts.body.get('file');
+        seen.push({ name: file.name, type: file.type, text: await file.text() });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            domain: 'acme.com',
+            logo_id: `logo_${seen.length}`,
+            review_status: 'pending',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.uploadBrandLogo({
+        domain: 'acme.com',
+        data: new Blob(['blob-logo'], { type: 'text/plain' }),
+        filename: 'blob.txt',
+        mimeType: 'image/svg+xml',
+        tags: ['primary'],
+      });
+      await client.uploadBrandLogo({
+        domain: 'acme.com',
+        data: new TextEncoder().encode('array-buffer-logo').buffer,
+        filename: 'array-buffer.svg',
+        mimeType: 'image/svg+xml',
+        tags: ['primary'],
+      });
+
+      assert.deepStrictEqual(seen, [
+        { name: 'blob.txt', type: 'image/svg+xml', text: 'blob-logo' },
+        { name: 'array-buffer.svg', type: 'image/svg+xml', text: 'array-buffer-logo' },
+      ]);
+    });
+
+    test('throws without apiKey when uploading a logo', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(
+        () =>
+          client.uploadBrandLogo({
+            domain: 'acme.com',
+            data: Buffer.from('logo'),
+            filename: 'logo.png',
+            mimeType: 'image/png',
+            tags: ['primary'],
+          }),
+        err => {
+          assert.ok(err.message.includes('apiKey is required'));
+          return true;
+        }
+      );
+    });
+
+    test('rejects empty brand logo inputs', async () => {
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await assert.rejects(() => client.listBrandLogos(''), { message: /domain is required/ });
+      await assert.rejects(
+        () =>
+          client.uploadBrandLogo({
+            domain: 'acme.com',
+            data: Buffer.from('logo'),
+            filename: '',
+            mimeType: 'image/png',
+            tags: ['primary'],
+          }),
+        { message: /filename is required/ }
+      );
+      await assert.rejects(
+        () =>
+          client.uploadBrandLogo({
+            domain: 'acme.com',
+            data: Buffer.from('logo'),
+            filename: 'logo.png',
+            mimeType: 'image/png',
+            tags: [],
+          }),
+        { message: /tags are required/ }
+      );
+    });
+  });
+
   // ============ lookupProperty ============
 
   describe('lookupProperty', () => {

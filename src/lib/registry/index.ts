@@ -5,6 +5,10 @@ import type {
   RegistryClientConfig,
   SaveBrandRequest,
   SaveBrandResponse,
+  ListBrandLogosOptions,
+  ListBrandLogosResponse,
+  UploadBrandLogoInput,
+  UploadBrandLogoResponse,
   SavePropertyRequest,
   SavePropertyResponse,
   BrandRegistryItem,
@@ -74,6 +78,15 @@ export type {
   RegistryClientConfig,
   SaveBrandRequest,
   SaveBrandResponse,
+  BrandLogoReviewStatus,
+  ApprovedBrandLogoAsset,
+  PendingBrandLogoAsset,
+  ReviewedBrandLogoAsset,
+  BrandLogoAsset,
+  ListBrandLogosOptions,
+  ListBrandLogosResponse,
+  UploadBrandLogoInput,
+  UploadBrandLogoResponse,
   SavePropertyRequest,
   SavePropertyResponse,
   BrandRegistryItem,
@@ -326,6 +339,36 @@ export class RegistryClient {
   async enrichBrand(domain: string): Promise<Record<string, unknown>> {
     if (!domain?.trim()) throw new Error('domain is required');
     return this.get(`${this.baseUrl}/api/brands/enrich?domain=${encodeURIComponent(domain)}`);
+  }
+
+  /** List AAO brand logo assets for a domain, optionally filtered by tags. */
+  async listBrandLogos(
+    domain: string,
+    options?: ListBrandLogosOptions | string[]
+  ): Promise<ListBrandLogosResponse> {
+    if (!domain?.trim()) throw new Error('domain is required');
+    const params = new URLSearchParams();
+    const tags = Array.isArray(options) ? options : options?.tags;
+    if (tags?.length) params.set('tags', tags.join(','));
+    const qs = params.toString();
+    return this.get(`${this.baseUrl}/api/brands/${encodeURIComponent(domain)}/logos${qs ? `?${qs}` : ''}`);
+  }
+
+  /** Upload an AAO brand logo asset for review. Requires authentication. */
+  async uploadBrandLogo(input: UploadBrandLogoInput): Promise<UploadBrandLogoResponse> {
+    if (!input?.domain?.trim()) throw new Error('domain is required');
+    if (!input?.filename?.trim()) throw new Error('filename is required');
+    if (!input?.mimeType?.trim()) throw new Error('mimeType is required');
+    if (input.data == null) throw new Error('data is required');
+    if (!input.tags?.length) throw new Error('tags are required');
+    if (!this.apiKey) throw new Error('apiKey is required for save operations');
+
+    const form = new FormData();
+    form.append('file', this.toBrandLogoBlob(input.data, input.mimeType), input.filename);
+    if (input.note) form.append('note', input.note);
+    form.append('tags', input.tags.join(','));
+
+    return this.postFormData(`${this.baseUrl}/api/brands/${encodeURIComponent(input.domain)}/logos`, form);
   }
 
   /** Save or update a community brand. Requires authentication. */
@@ -1081,6 +1124,18 @@ export class RegistryClient {
     return this.parseJson(text);
   }
 
+  private async postFormData<T = any>(url: string, body: FormData): Promise<T> {
+    const { res, text } = await this.requestText(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body,
+    });
+    if (!res.ok) {
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+    }
+    return this.parseJson(text);
+  }
+
   private async put<T = any>(url: string, body: unknown): Promise<T> {
     const { res, text } = await this.requestText(url, {
       method: 'PUT',
@@ -1102,6 +1157,17 @@ export class RegistryClient {
       throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
     }
     return this.parseJson(text);
+  }
+
+  private toBrandLogoBlob(data: UploadBrandLogoInput['data'], mimeType: string): Blob {
+    if (data instanceof Blob) return new Blob([data], { type: mimeType });
+    if (data instanceof ArrayBuffer) return new Blob([data], { type: mimeType });
+    if (ArrayBuffer.isView(data)) {
+      const bytes = new Uint8Array(data.byteLength);
+      bytes.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+      return new Blob([bytes], { type: mimeType });
+    }
+    throw new Error('data must be a Blob, Buffer, ArrayBuffer, or ArrayBufferView');
   }
 
   private normalizeCommunityMirrorPlatform(platform: string): string {

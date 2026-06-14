@@ -352,6 +352,100 @@ export interface ComplianceChangedPayload {
   compliance_summary?: import('./types.generated').AgentCompliance;
 }
 
+// ====== Brand logo asset types ======
+
+/** Review status for a brand logo asset in the AAO registry. */
+export type BrandLogoReviewStatus = 'approved' | 'pending' | 'rejected' | 'deleted';
+
+type BrandLogoAssetBase = {
+  /** Registry-assigned stable asset ID. */
+  id: string;
+  /** Asset MIME type, for example `image/svg+xml` or `image/png`. */
+  content_type: string;
+  /** Registry source, for example `brandfetch` or `community`. */
+  source: string;
+  /** Caller- or registry-assigned asset tags. */
+  tags: string[];
+  /** Legacy relative asset URL, when returned by AAO. */
+  legacy_url?: string;
+  /** Pixel width for raster assets, when known. */
+  width?: number;
+  /** Pixel height for raster assets, when known. */
+  height?: number;
+};
+
+/** Approved brand logo assets are ready to reference from brand.json. */
+export type ApprovedBrandLogoAsset = BrandLogoAssetBase & {
+  review_status: 'approved';
+  url: string;
+};
+
+/**
+ * Pending community logo assets are still under review and must not be treated
+ * as brand.json-ready until a later list call returns them as approved.
+ */
+export type PendingBrandLogoAsset = BrandLogoAssetBase & {
+  review_status: 'pending';
+  url?: string;
+  message?: string;
+  review_sla_hours?: number;
+};
+
+/** Review-only logo assets that are no longer eligible for public brand.json use. */
+export type ReviewedBrandLogoAsset = BrandLogoAssetBase & {
+  review_status: 'rejected' | 'deleted';
+  url?: string;
+};
+
+/**
+ * A logo asset returned by AAO brand-logo endpoints.
+ *
+ * @remarks
+ * These endpoints are not yet present in the generated registry OpenAPI
+ * types, so this hand-rolled shape mirrors the current AAO response contract.
+ */
+export type BrandLogoAsset = ApprovedBrandLogoAsset | PendingBrandLogoAsset | ReviewedBrandLogoAsset;
+
+/** Response from GET /api/brands/:domain/logos. */
+export interface ListBrandLogosResponse {
+  domain: string;
+  logos: BrandLogoAsset[];
+}
+
+/** Options for listing brand logo assets. */
+export interface ListBrandLogosOptions {
+  /** Optional tag filters, serialized as a comma-separated `tags` query parameter. */
+  tags?: string[];
+}
+
+/** Input for POST /api/brands/:domain/logos. */
+export interface UploadBrandLogoInput {
+  domain: string;
+  data: Blob | Buffer | ArrayBuffer | ArrayBufferView;
+  filename: string;
+  mimeType: string;
+  tags: string[];
+  note?: string;
+}
+
+/**
+ * Response from POST /api/brands/:domain/logos.
+ *
+ * @remarks
+ * These endpoints are not yet present in the generated registry OpenAPI
+ * types, so this hand-rolled shape mirrors the current AAO response contract.
+ */
+export type UploadBrandLogoResponse = {
+  success?: boolean;
+  domain: string;
+  logo_id: string;
+  review_status: BrandLogoReviewStatus;
+  url?: string;
+  legacy_url?: string;
+  message?: string;
+  review_sla_hours?: number;
+};
+
 // ====== Backward compatibility ======
 
 /** @deprecated Use ResolvedProperty instead */
