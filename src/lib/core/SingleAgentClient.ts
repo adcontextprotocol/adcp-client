@@ -1656,7 +1656,10 @@ export class SingleAgentClient {
     // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
     // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
     // has populated cachedCapabilities, so the decision sees the seller's caps.
-    const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(taskType, adaptedParams);
+    const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(
+      taskType,
+      adaptedParams
+    );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -3079,7 +3082,10 @@ export class SingleAgentClient {
       // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
       // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
       // has populated cachedCapabilities, so the decision sees the seller's caps.
-      const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(taskName, adaptedParams);
+      const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(
+        taskName,
+        adaptedParams
+      );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter

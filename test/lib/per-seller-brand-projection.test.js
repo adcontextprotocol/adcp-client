@@ -28,7 +28,10 @@ const brand = {
 test('create_media_buy brand: brand_kit_override stripped for legacy 3.0 seller, 3.0 fields preserved', () => {
   const c = new SingleAgentClient(agent);
   c.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', { brand: { ...brand }, idempotency_key: 'k' });
+  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', {
+    brand: { ...brand },
+    idempotency_key: 'k',
+  });
   assert.deepEqual(out.brand, {
     domain: 'goldpeaktea.com',
     brand_id: 'b',
@@ -42,7 +45,10 @@ test('create_media_buy brand: brand_kit_override stripped for legacy 3.0 seller,
 test('create_media_buy brand: overrides preserved for 3.1 seller, no drift log', () => {
   const c = new SingleAgentClient(agent);
   c.cachedCapabilities = { version: 'v3', majorVersions: [3], buildVersion: '3.1.0', _synthetic: false };
-  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', { brand: { ...brand }, idempotency_key: 'k' });
+  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', {
+    brand: { ...brand },
+    idempotency_key: 'k',
+  });
   assert.deepEqual(out.brand.brand_kit_override, { colors: { accent: '#f5ce65' } });
   assert.deepEqual(out.brand.industries, ['cpg']);
   assert.equal(driftLog, undefined);
