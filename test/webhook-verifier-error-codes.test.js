@@ -1,7 +1,10 @@
 /**
- * Error-code coverage for the webhook-signing verifier split added in
- * adcp#2467: `webhook_mode_mismatch` (wrong adcp_use for mode) and
- * `webhook_target_uri_malformed` (syntactically invalid @target-uri).
+ * Error-code coverage for the webhook-signing verifier step-8 key-purpose
+ * check and `webhook_target_uri_malformed` (syntactically invalid
+ * @target-uri). Webhook delivery accepts `adcp_use` of `webhook-signing` or
+ * `request-signing`; every other purpose failure returns
+ * `webhook_signature_key_purpose_invalid`. `webhook_mode_mismatch` is reserved
+ * for the HMAC-vs-9421 auth-mode selector and is NOT used for key purpose.
  *
  * Exercises the verifier directly rather than going through the storyboard
  * runner so the step-level semantics — distinct codes for distinct
@@ -107,7 +110,7 @@ describe('webhook verifier: key-purpose acceptance at step 8 (adcp#2467)', () =>
     assert.strictEqual(result.keyid, 'test-wrong-purpose-2026');
   });
 
-  test('JWK with adcp_use="response-signing" rejected with webhook_mode_mismatch', async () => {
+  test('JWK with adcp_use="response-signing" rejected with webhook_signature_key_purpose_invalid', async () => {
     const now = Math.floor(Date.now() / 1000);
     const signerKey = signerKeyFor('test-response-purpose-2026');
     const request = {
@@ -135,7 +138,7 @@ describe('webhook verifier: key-purpose acceptance at step 8 (adcp#2467)', () =>
       thrown instanceof WebhookSignatureError,
       `Expected WebhookSignatureError, got ${thrown?.constructor?.name}: ${thrown?.message}`
     );
-    assert.strictEqual(thrown.code, 'webhook_mode_mismatch');
+    assert.strictEqual(thrown.code, 'webhook_signature_key_purpose_invalid');
     assert.strictEqual(thrown.failedStep, 8);
     assert.match(thrown.message, /response-signing/);
   });

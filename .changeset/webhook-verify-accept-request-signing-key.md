@@ -8,9 +8,11 @@ A signer may now reuse its `adcp_use: "request-signing"` key to sign outbound
 webhooks instead of minting a dedicated `adcp_use: "webhook-signing"` key. The
 webhook verifier (step 8) accepts a key whose `adcp_use` is either
 `"webhook-signing"` or `"request-signing"`; any other purpose
-(`response-signing`, `governance-signing`, unknown) is still rejected with
-`webhook_mode_mismatch`. The signer helpers (`signWebhook` /
-`signWebhookAsync`) accept the same set.
+(`response-signing`, `governance-signing`, unknown), absent `adcp_use`, or a
+missing `verify` key_op is rejected with `webhook_signature_key_purpose_invalid`.
+`webhook_mode_mismatch` is unchanged — it remains reserved for the HMAC-vs-9421
+auth-mode selector and is not used for key-purpose failures. The signer helpers
+(`signWebhook` / `signWebhookAsync`) accept the same set.
 
 This is safe because cross-protocol confusion is prevented by the RFC 9421
 `tag` (`adcp/webhook-signing/v1`, part of the signed base) and mandatory

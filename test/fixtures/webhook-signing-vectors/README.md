@@ -2,17 +2,17 @@
 
 Test vectors for the AdCP RFC 9421 webhook-signing profile. These fixtures drive cross-implementation conformance testing so a signer written in one SDK and a verifier written in another agree on the wire format of outbound push-notification webhooks.
 
-Specification: [Webhook callbacks](https://adcontextprotocol.org/docs/building/implementation/security#webhook-callbacks) in `docs/building/implementation/security.mdx`.
+Specification: [Webhook callbacks](https://adcontextprotocol.org/docs/building/by-layer/L1/security#webhook-callbacks) in `docs/building/by-layer/L1/security.mdx`.
 
-**Canonical URLs.** These vectors are served at `https://adcontextprotocol.org/test-vectors/webhook-signing/` (tree preserved — `keys.json`, `negative/*.json`, `positive/*.json` all resolvable). SDKs SHOULD fetch from the CDN path rather than requiring a checkout of the spec repo. Example: `https://adcontextprotocol.org/test-vectors/webhook-signing/positive/001-basic-post.json`.
+**Canonical URLs.** These vectors are served at `https://adcontextprotocol.org/compliance/{version}/test-vectors/webhook-signing/`, with `{version}` being either a specific release (e.g. `3.0.0`) or `latest` (tracks the most recent GA). Tree preserved — `keys.json`, `negative/*.json`, `positive/*.json` all resolvable. SDKs SHOULD fetch from the versioned CDN path and record the version under test rather than requiring a checkout of the spec repo. Example: `https://adcontextprotocol.org/compliance/latest/test-vectors/webhook-signing/positive/001-basic-post.json`.
 
 ## ⚠️ Security — test keys are public
 
-`keys.json` publishes the full private key material for every test keypair in the `_private_d_for_test_only` field so SDKs can exercise both signer and verifier roles against the same material. **Any production verifier that adds `test-ed25519-webhook-2026`, `test-es256-webhook-2026`, `test-wrong-purpose-2026`, or `test-revoked-webhook-2026` to its trust store is exploitable** — anyone who downloads `keys.json` can forge signatures under those kids. These keys are valid ONLY for grading against this conformance suite. Production signers MUST mint and publish their own keypairs under their own `jwks_uri`; production verifiers MUST NOT treat the test kids as trusted in any deployment exposed to live traffic.
+`keys.json` publishes the full private key material for every test keypair in the `_private_d_for_test_only` field so SDKs can exercise both signer and verifier roles against the same material. **Any production verifier that adds `test-ed25519-webhook-2026`, `test-es256-webhook-2026`, `test-wrong-purpose-2026`, `test-response-purpose-2026`, or `test-revoked-webhook-2026` to its trust store is exploitable** — anyone who downloads `keys.json` can forge signatures under those kids. These keys are valid ONLY for grading against this conformance suite. Production signers MUST mint and publish their own keypairs under their own `jwks_uri`; production verifiers MUST NOT treat the test kids as trusted in any deployment exposed to live traffic.
 
 ## Scope
 
-These vectors exercise the [webhook verifier checklist](https://adcontextprotocol.org/docs/building/implementation/security#verifier-checklist-for-webhooks) and the RFC 9421 profile constraints specific to webhooks: required covered components (content-digest is REQUIRED, no policy branch), the distinct `tag="adcp/webhook-signing/v1"`, the `adcp_use: "webhook-signing"` key-purpose discriminator, and the `webhook_signature_*` error taxonomy. They do not exercise live JWKS fetch, brand.json discovery, or revocation-list polling — those require live endpoints and belong in integration suites.
+These vectors exercise the [webhook verifier checklist](https://adcontextprotocol.org/docs/building/by-layer/L1/security#verifier-checklist-for-webhooks) and the RFC 9421 profile constraints specific to webhooks: required covered components (content-digest is REQUIRED, no policy branch), the distinct `tag="adcp/webhook-signing/v1"`, the `adcp_use: "webhook-signing"` key-purpose discriminator, and the `webhook_signature_*` error taxonomy. They do not exercise live JWKS fetch, brand.json discovery, or revocation-list polling — those require live endpoints and belong in integration suites.
 
 Vectors cover the receiver side (buyer verifying inbound webhooks). Sender-side grading — does the agent-under-test emit conformant signatures on live traffic — is handled by the [`webhook-emission` universal](https://adcontextprotocol.org/compliance/latest/universal/webhook-emission) via a runner that hosts a receiver during storyboard execution.
 
@@ -32,8 +32,9 @@ The distinct surface is the purpose-discriminator chain: `adcp_use` MUST be `"we
 test-vectors/webhook-signing/
 ├── README.md                             this file
 ├── keys.json                             test keypairs (Ed25519 + ES256) with adcp_use: "webhook-signing",
-│                                         plus a wrong-purpose key (adcp_use: "request-signing") for vector 008
-│                                         and a revoked key for vector 017
+│                                         plus a request-signing key reused by positive vector
+│                                         008-request-signing-key-reuse, a response-signing key for negative
+│                                         vector 008-wrong-adcp-use, and a revoked key for vector 017
 ├── negative/                             vectors that MUST fail verification
 │   ├── 001-wrong-tag.json                → webhook_signature_tag_invalid (step 3; uses request-signing tag)
 │   ├── 002-expired-signature.json        → webhook_signature_window_invalid (step 5; expired)
@@ -42,7 +43,7 @@ test-vectors/webhook-signing/
 │   ├── 005-missing-authority-component.json → webhook_signature_components_incomplete (step 6; @authority missing)
 │   ├── 006-missing-content-digest.json   → webhook_signature_components_incomplete (step 6; REQUIRED on webhooks)
 │   ├── 007-unknown-keyid.json            → webhook_signature_key_unknown (step 7)
-│   ├── 008-wrong-adcp-use.json           → webhook_mode_mismatch (step 8; adcp_use=request-signing, split from key_purpose_invalid per adcp#2467)
+│   ├── 008-wrong-adcp-use.json           → webhook_signature_key_purpose_invalid (step 8; adcp_use=response-signing — request-signing is now accepted, see positive/008)
 │   ├── 009-content-digest-mismatch.json  → webhook_signature_digest_mismatch (step 11)
 │   ├── 010-malformed-signature-input.json → webhook_signature_header_malformed (step 1)
 │   ├── 011-signature-without-input.json  → webhook_signature_header_malformed (step 1; bound pair broken, one header without the other)
@@ -63,7 +64,8 @@ test-vectors/webhook-signing/
     ├── 004-default-port-stripped.json        URL has :443; canonical strips it before signing
     ├── 005-percent-encoded-path.json         Path has lowercase %xx; canonical uppercases
     ├── 006-query-byte-preserved.json         Query b=2&a=1&c=3 — preserved byte-for-byte, not alphabetized
-    └── 007-body-without-idempotency-key.json Body omits idempotency_key; signature still verifies (schema vs. signature separation)
+    ├── 007-body-without-idempotency-key.json Body omits idempotency_key; signature still verifies (schema vs. signature separation)
+    └── 008-request-signing-key-reuse.json    adcp_use=request-signing key accepted for webhook delivery (signer reusing its request key; step 8)
 ```
 
 ## Vector shape
@@ -102,7 +104,7 @@ Fixed Unix-seconds timestamp representing "now" at vector construction time (202
 
 ### `jwks_ref`
 
-Array of `kid` values the vector expects in the signer JWKS. Verifiers load `keys.json`, filter to the listed `kid`s, and present that subset to their verifier under test. Not all keys in `keys.json` are in every vector's JWKS — for example, vector 008 references only `test-wrong-purpose-2026`, which causes step 8 to reject.
+Array of `kid` values the vector expects in the signer JWKS. Verifiers load `keys.json`, filter to the listed `kid`s, and present that subset to their verifier under test. Not all keys in `keys.json` are in every vector's JWKS — for example, negative vector 008 references only `test-response-purpose-2026`, which causes step 8 to reject, while positive vector `008-request-signing-key-reuse` references `test-wrong-purpose-2026` (a request-signing key), which step 8 now accepts.
 
 ### `expected_signature_base`
 
@@ -140,7 +142,7 @@ Vector 020 tests that the verifier rejects JWKs whose `key_ops` lacks `"verify"`
 
 ### `jwks_ref` semantics (positive vector 003)
 
-Vector 003 includes two `Signature-Input` labels: the vector's own `sig1` and a decorative `relay` label. Verifiers MUST process the label named `sig1` specifically — not "the first label in the header," not "any label." The spec at [`#adcp-rfc-9421-profile`](https://adcontextprotocol.org/docs/building/implementation/security#adcp-rfc-9421-profile) says signers name the label `sig1` by convention, and verifiers key off the name rather than position. If an implementation picks a different label, the vector will fail even if that label's signature is individually valid.
+Vector 003 includes two `Signature-Input` labels: the vector's own `sig1` and a decorative `relay` label. Verifiers MUST process the label named `sig1` specifically — not "the first label in the header," not "any label." The spec at [`#adcp-rfc-9421-profile`](https://adcontextprotocol.org/docs/building/by-layer/L1/security#adcp-rfc-9421-profile) says signers name the label `sig1` by convention, and verifiers key off the name rather than position. If an implementation picks a different label, the vector will fail even if that label's signature is individually valid.
 
 ### Signature validity vs. payload schema validation (positive vector 007)
 
@@ -186,9 +188,9 @@ For each vector in `negative/`:
 3. Feed `vec.request` to your verifier.
 4. Assert the verifier rejects with `success: false` AND `error_code` equal to `vec.expected_outcome.error_code` byte-for-byte. The `failed_step` is not graded.
 
-### Integration with `@adcp/sdk`
+### Integration with `@adcp/client`
 
-Receiver libraries built on top of `@adcp/sdk` SHOULD run these vectors in CI against the library's 9421 webhook verifier. The `webhook-emission` universal's live E2E grading complements but does not replace this — live grading exercises positive paths; static negative vectors are the only reliable path to cover every `webhook_signature_*` error code deterministically.
+Receiver libraries built on top of `@adcp/client` SHOULD run these vectors in CI against the library's 9421 webhook verifier. The `webhook-emission` universal's live E2E grading complements but does not replace this — live grading exercises positive paths; static negative vectors are the only reliable path to cover every `webhook_signature_*` error code deterministically.
 
 ## Key material
 
@@ -204,7 +206,7 @@ A verification script at `.context/verify-webhook-vectors.mjs` checks that all p
 
 ## Specification cross-reference
 
-- Webhook callbacks profile: `docs/building/implementation/security.mdx#webhook-callbacks`
+- Webhook callbacks profile: `docs/building/by-layer/L1/security.mdx#webhook-callbacks`
 - Verifier checklist: `#verifier-checklist-for-webhooks`
 - Error taxonomy: `#webhook-error-taxonomy`
 - Replay dedup and sizing: `#webhook-replay-dedup-sizing`

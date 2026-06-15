@@ -181,23 +181,23 @@ export async function verifyWebhookSignature(
   // discriminator. A captured request signature (`tag=adcp/request-signing/v1`)
   // can never be replayed against this verifier because step 3 rejects it.
   //
-  // Split failure modes so operators can tell "key isn't scoped at all" (or
-  // lacks the verify key_op) apart from "key is scoped for a purpose that is
-  // not valid for webhook delivery" (e.g. `response-signing`, `governance-
-  // signing`). A dedicated webhook-signing key remains RECOMMENDED for
-  // blast-radius isolation, but it is no longer REQUIRED.
-  if (jwk.adcp_use === undefined || !jwk.key_ops?.includes('verify')) {
+  // All key-purpose failures use `webhook_signature_key_purpose_invalid`:
+  // absent `adcp_use`, a missing `verify` key_op, or an `adcp_use` outside the
+  // accepted set (e.g. `response-signing`, `governance-signing`). We do NOT
+  // reuse `webhook_mode_mismatch` here — that code is reserved for the
+  // HMAC-vs-9421 auth-mode selector mismatch, and overloading it would collapse
+  // two distinct failure classes onto one stable code receivers branch on. A
+  // dedicated webhook-signing key remains RECOMMENDED for blast-radius
+  // isolation, but it is no longer REQUIRED.
+  if (
+    jwk.adcp_use === undefined ||
+    !jwk.key_ops?.includes('verify') ||
+    (jwk.adcp_use !== 'webhook-signing' && jwk.adcp_use !== 'request-signing')
+  ) {
     throw new WebhookSignatureError(
       'webhook_signature_key_purpose_invalid',
       8,
-      `JWK "${jwk.kid}" is not scoped for webhook-signing verification.`
-    );
-  }
-  if (jwk.adcp_use !== 'webhook-signing' && jwk.adcp_use !== 'request-signing') {
-    throw new WebhookSignatureError(
-      'webhook_mode_mismatch',
-      8,
-      `JWK "${jwk.kid}" declares adcp_use="${jwk.adcp_use}" but webhook delivery requires "webhook-signing" or "request-signing".`
+      `JWK "${jwk.kid}" is not scoped for webhook delivery: adcp_use must be "webhook-signing" or "request-signing" with a "verify" key_op (got adcp_use="${jwk.adcp_use}").`
     );
   }
 
