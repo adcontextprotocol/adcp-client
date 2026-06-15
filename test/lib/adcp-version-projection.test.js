@@ -26,7 +26,7 @@ test('shouldOmit31Fields: 3.1 client omits for legacy sellers, sends to 3.1 sell
   assert.equal(shouldOmit31Fields('3.1.0-rc.14', { buildVersion: '3.1.0' }), false);
   assert.equal(shouldOmit31Fields('3.1.0-rc.14', undefined), true);
 });
-test('omit31BrandFields strips 3.1 inline overrides, keeps identity', () => {
+test('omit31BrandFields strips brand_kit_override only, preserves AdCP 3.0 fields', () => {
   assert.deepEqual(
     omit31BrandFields({
       domain: 'goldpeaktea.com',
@@ -35,7 +35,12 @@ test('omit31BrandFields strips 3.1 inline overrides, keeps identity', () => {
       data_subject_contestation: { email: 'p@goldpeaktea.com' },
       brand_kit_override: { colors: { accent: '#f5ce65' } },
     }),
-    { domain: 'goldpeaktea.com', brand_id: 'brand_4045' }
+    {
+      domain: 'goldpeaktea.com',
+      brand_id: 'brand_4045',
+      industries: ['cpg'],
+      data_subject_contestation: { email: 'p@goldpeaktea.com' },
+    }
   );
 });
 test('omit31BrandFields passes through non-object values untouched', () => {

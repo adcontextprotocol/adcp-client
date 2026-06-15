@@ -140,15 +140,16 @@ export function shouldOmit31Fields(
 }
 
 /**
- * Strip AdCP 3.1-only inline-override fields from a BrandReference, leaving the
- * identity fields (`domain`, `brand_id`) the seller resolves the brand by. The
- * BrandReference object is closed (`additionalProperties: false`) in every
- * version, so pre-3.1 sellers reject these fields; brand.json is the canonical
- * source the seller falls back to.
+ * Strip the AdCP 3.1-only `brand_kit_override` field from a BrandReference.
+ * `industries` and `data_subject_contestation` are declared in AdCP 3.0 and
+ * must be left on the wire for 3.0 sellers that accept and route on them.
+ * Returns the original reference unchanged when `brand_kit_override` is absent.
  */
 export function omit31BrandFields<T>(brand: T): T {
   if (!brand || typeof brand !== 'object' || Array.isArray(brand)) return brand;
-  const { industries, data_subject_contestation, brand_kit_override, ...rest } = brand as Record<string, unknown>;
+  const b = brand as Record<string, unknown>;
+  if (!('brand_kit_override' in b)) return brand;
+  const { brand_kit_override, ...rest } = b;
   return rest as T;
 }
 

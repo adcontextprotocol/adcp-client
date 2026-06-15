@@ -1656,7 +1656,7 @@ export class SingleAgentClient {
     // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
     // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
     // has populated cachedCapabilities, so the decision sees the seller's caps.
-    const projectedParams = this.projectRequestForSellerVersion(taskType, adaptedParams);
+    const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(taskType, adaptedParams);
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
@@ -1666,6 +1666,7 @@ export class SingleAgentClient {
     // the floor and adapter drift would land in production unnoticed.
     const v25DriftLogs: any[] = [];
     if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
+    if (brandDriftLog) v25DriftLogs.push(brandDriftLog);
     if (serverVersion === 'v2') {
       this.executor.validateAdaptedRequestAgainstV2(taskType, projectedParams, v25DriftLogs);
     }
@@ -2082,19 +2083,41 @@ export class SingleAgentClient {
    *
    * Not `private` so the projection can be unit-tested directly.
    */
-  projectRequestForSellerVersion(taskName: string, params: unknown): unknown {
-    if (!params || typeof params !== 'object') return params;
-    if (!shouldOmit31Fields(this.resolvedAdcpVersion, this.cachedCapabilities)) return params;
+  projectRequestForSellerVersion(
+    taskName: string,
+    params: unknown
+  ): { params: unknown; driftLog?: Record<string, unknown> } {
+    if (!params || typeof params !== 'object') return { params };
+    if (!shouldOmit31Fields(this.resolvedAdcpVersion, this.cachedCapabilities)) return { params };
     const req = { ...(params as Record<string, unknown>) };
+    let stripped = false;
+    const stripBrand = (brand: unknown): unknown => {
+      const result = omit31BrandFields(brand);
+      if (result !== brand) stripped = true;
+      return result;
+    };
     if (taskName === 'create_media_buy' || taskName === 'get_products') {
-      if (req.brand) req.brand = omit31BrandFields(req.brand);
+      if (req.brand) req.brand = stripBrand(req.brand);
     }
     if (taskName === 'sync_accounts' && Array.isArray(req.accounts)) {
       req.accounts = (req.accounts as Array<Record<string, unknown>>).map(a =>
-        a && typeof a === 'object' && a.brand ? { ...a, brand: omit31BrandFields(a.brand) } : a
+        a && typeof a === 'object' && a.brand ? { ...a, brand: stripBrand(a.brand) } : a
       );
     }
-    return req;
+    const driftLog = stripped
+      ? {
+          type: 'pre31_brand_fields_stripped',
+          message:
+            `${taskName} brand_kit_override stripped for pre-3.1 seller: ` +
+            `brand_kit_override requires AdCP 3.1 but the target seller does not advertise 3.1 support. ` +
+            `These fields will not reach the seller; brand identity (domain, brand_id) is preserved.`,
+          timestamp: new Date().toISOString(),
+          taskName,
+          strippedFields: ['brand_kit_override'],
+          clientVersion: this.resolvedAdcpVersion,
+        }
+      : undefined;
+    return { params: req, driftLog };
   }
 
   /**
@@ -3056,13 +3079,14 @@ export class SingleAgentClient {
       // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
       // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
       // has populated cachedCapabilities, so the decision sees the seller's caps.
-      const projectedParams = this.projectRequestForSellerVersion(taskName, adaptedParams);
+      const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(taskName, adaptedParams);
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter
       // regressions in production aren't silently swallowed.
       const v25DriftLogs: any[] = [];
       if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
+      if (brandDriftLog) v25DriftLogs.push(brandDriftLog);
       if (serverVersion === 'v2') {
         this.executor.validateAdaptedRequestAgainstV2(taskName, projectedParams, v25DriftLogs);
       }
