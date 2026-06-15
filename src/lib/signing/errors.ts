@@ -54,14 +54,16 @@ export type WebhookSignatureErrorCode =
   // `Signature-Input` headers themselves; this flags the covered URI.
   | 'webhook_target_uri_malformed'
   | 'webhook_signature_key_unknown'
-  // JWK has no `adcp_use` declared (or lacks the `verify` key_op). Kept
-  // distinct from `webhook_mode_mismatch` so operators can tell "key is not
-  // scoped at all" apart from "key is scoped for the wrong mode".
+  // Every webhook key-purpose failure: absent `adcp_use`, a missing `verify`
+  // key_op, or an `adcp_use` outside the accepted set. Webhooks are signed
+  // with a `request-signing` key (the deprecated `webhook-signing` is also
+  // accepted for backward compatibility); any other purpose
+  // (`response-signing`, `governance-signing`) is rejected with this code.
   | 'webhook_signature_key_purpose_invalid'
-  // JWK declares `adcp_use` but for a different mode than webhook-signing
-  // (e.g. `request-signing`). Separate code from `key_purpose_invalid` so
-  // the remediation is clear: mint a new key scoped for `webhook-signing`
-  // rather than adding the purpose to an existing request-signing key.
+  // The buyer's registered auth mode does not match the signing mode on the
+  // received webhook (HMAC-vs-9421 selector mismatch — see the spec's
+  // downgrade-resistance rules). This is NOT a key-purpose failure; reusing a
+  // request-signing key for webhooks is allowed and verifies cleanly.
   | 'webhook_mode_mismatch'
   | 'webhook_signature_key_revoked'
   | 'webhook_signature_revocation_stale'

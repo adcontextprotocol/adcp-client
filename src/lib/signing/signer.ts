@@ -110,18 +110,17 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
 }
 
 /**
- * Purpose gate for the webhook signing helpers. Unlike the single-purpose
- * gates above, webhook signing accepts EITHER a dedicated
- * `adcp_use: "webhook-signing"` key OR the signer's existing
- * `adcp_use: "request-signing"` key — reuse is the signer's choice. See
- * webhook-verifier.ts step 8 for the security rationale: the signature `tag`
- * (`adcp/webhook-signing/v1`) plus mandatory `content-digest` coverage carry
- * domain separation, so the key purpose need not be webhook-specific. Any
- * other purpose (`response-signing`, `governance-signing`, unknown) is
- * refused with the same `webhook_signature_key_purpose_invalid` code the
- * verifier emits.
+ * Purpose gate for the webhook signing helpers. Webhooks are signed with a
+ * `adcp_use: "request-signing"` key — there is no dedicated webhook key
+ * purpose. See webhook-verifier.ts step 8 for the rationale: the signature
+ * `tag` (`adcp/webhook-signing/v1`) plus mandatory `content-digest` coverage
+ * carry domain separation, so the key purpose need not be webhook-specific.
+ * The deprecated `adcp_use: "webhook-signing"` value is still accepted for
+ * backward compatibility (removed in 4.0). Any other purpose
+ * (`response-signing`, `governance-signing`, unknown) is refused with the same
+ * `webhook_signature_key_purpose_invalid` code the verifier emits.
  */
-const WEBHOOK_SIGNING_PURPOSES: readonly string[] = ['webhook-signing', 'request-signing'];
+const WEBHOOK_SIGNING_PURPOSES: readonly string[] = ['request-signing', 'webhook-signing'];
 
 function throwIfWebhookPurposeMismatch(keyid: string, actual: string | undefined): void {
   if (actual !== undefined && WEBHOOK_SIGNING_PURPOSES.includes(actual)) return;
@@ -129,7 +128,7 @@ function throwIfWebhookPurposeMismatch(keyid: string, actual: string | undefined
     'webhook_signature_key_purpose_invalid',
     8,
     `Signing key '${keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
-      `but webhook signing requires 'webhook-signing' or 'request-signing'.`
+      `but webhook signing requires 'request-signing' (the deprecated 'webhook-signing' is also accepted).`
   );
 }
 

@@ -170,34 +170,35 @@ export async function verifyWebhookSignature(
     );
   }
 
-  // Step 8: key purpose — MUST be scoped for webhook delivery.
+  // Step 8: key purpose — webhooks are signed with a `request-signing` key.
   //
-  // A signer MAY publish a dedicated `adcp_use: "webhook-signing"` key, OR
-  // reuse the `adcp_use: "request-signing"` key it already publishes for
-  // outbound request signing — the choice is the signer's. Both are accepted
-  // here because cross-protocol confusion is prevented by the signature `tag`
-  // (step 3, `adcp/webhook-signing/v1`, part of the signed base) and the
-  // mandatory `content-digest` coverage (step 6) — not by the key-purpose
-  // discriminator. A captured request signature (`tag=adcp/request-signing/v1`)
-  // can never be replayed against this verifier because step 3 rejects it.
+  // Webhooks carry no separate key purpose: the signer uses its
+  // `adcp_use: "request-signing"` key (the deprecated `"webhook-signing"`
+  // value is still accepted here for backward compatibility, removed in 4.0).
+  // This is safe because cross-protocol confusion is prevented by the
+  // signature `tag` (step 3, `adcp/webhook-signing/v1`, part of the signed
+  // base) and mandatory `content-digest` coverage (step 6) — not by the
+  // key-purpose discriminator. A captured request signature
+  // (`tag=adcp/request-signing/v1`) can never be replayed against this
+  // verifier because step 3 rejects it. Webhook key isolation, when wanted, is
+  // a second `request-signing` key under a distinct `kid` — not a distinct
+  // `adcp_use`.
   //
   // All key-purpose failures use `webhook_signature_key_purpose_invalid`:
   // absent `adcp_use`, a missing `verify` key_op, or an `adcp_use` outside the
   // accepted set (e.g. `response-signing`, `governance-signing`). We do NOT
   // reuse `webhook_mode_mismatch` here — that code is reserved for the
   // HMAC-vs-9421 auth-mode selector mismatch, and overloading it would collapse
-  // two distinct failure classes onto one stable code receivers branch on. A
-  // dedicated webhook-signing key remains RECOMMENDED for blast-radius
-  // isolation, but it is no longer REQUIRED.
+  // two distinct failure classes onto one stable code receivers branch on.
   if (
     jwk.adcp_use === undefined ||
     !jwk.key_ops?.includes('verify') ||
-    (jwk.adcp_use !== 'webhook-signing' && jwk.adcp_use !== 'request-signing')
+    (jwk.adcp_use !== 'request-signing' && jwk.adcp_use !== 'webhook-signing')
   ) {
     throw new WebhookSignatureError(
       'webhook_signature_key_purpose_invalid',
       8,
-      `JWK "${jwk.kid}" is not scoped for webhook delivery: adcp_use must be "webhook-signing" or "request-signing" with a "verify" key_op (got adcp_use="${jwk.adcp_use}").`
+      `JWK "${jwk.kid}" is not scoped for webhook delivery: adcp_use must be "request-signing" (or the deprecated "webhook-signing") with a "verify" key_op (got adcp_use="${jwk.adcp_use}").`
     );
   }
 

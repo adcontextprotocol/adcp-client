@@ -106,8 +106,11 @@ export interface WebhookRetryOptions {
 
 export interface WebhookEmitterOptions {
   /**
-   * In-process JWK signing key. `adcp_use` MUST be `"webhook-signing"`.
-   * Mutually exclusive with `signerProvider` — exactly one must be provided.
+   * In-process JWK signing key. Its JWKS entry SHOULD carry
+   * `adcp_use: "request-signing"` — webhooks are signed with the agent's
+   * request-signing key (the deprecated `"webhook-signing"` value is still
+   * accepted by verifiers for backward compatibility). Mutually exclusive
+   * with `signerProvider` — exactly one must be provided.
    */
   signerKey?: SignerKey;
   /**
@@ -116,18 +119,15 @@ export interface WebhookEmitterOptions {
    * enters process memory. Mutually exclusive with `signerKey` — exactly one
    * must be provided.
    *
-   * **Single-purpose key requirement.** The JWKS entry for the wrapped key
-   * MUST carry `adcp_use: "webhook-signing"` so receivers can validate key
-   * purpose at JWKS-publication time. The `SigningProvider` interface
-   * exposes only `keyid` / `algorithm` / `fingerprint`, not JWKS metadata,
-   * so the SDK cannot enforce the purpose binding at runtime — it's the
-   * publisher's responsibility to publish the correct `adcp_use` on the
-   * JWK and to NOT reuse the same `SigningProvider` instance for both
-   * `request_signing.provider` and `webhooks.signerProvider`. Per
-   * `docs/guides/SIGNING-GUIDE.md` § Key separation, AdCP requires
-   * **distinct key material** per purpose; mint a second
-   * `cryptoKeyVersion` for webhook signing rather than sharing the
-   * request-signing key.
+   * **Key purpose.** Webhooks are signed with a `request-signing` key; domain
+   * separation between requests and webhooks is carried by the signature
+   * `tag`, not the `adcp_use` discriminator. The same `SigningProvider` used
+   * for `request_signing.provider` MAY be reused here. To isolate webhook key
+   * material (so a webhook-key compromise does not extend to request signing,
+   * or to rotate independently), wrap a second `request-signing`
+   * `cryptoKeyVersion` published under a distinct `kid` — isolation comes from
+   * the `kid`, not a distinct `adcp_use`. (The deprecated `"webhook-signing"`
+   * purpose is still accepted by verifiers for backward compatibility.)
    */
   signerProvider?: SigningProvider;
   retries?: WebhookRetryOptions;
