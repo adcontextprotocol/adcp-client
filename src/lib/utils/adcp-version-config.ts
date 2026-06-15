@@ -118,6 +118,43 @@ export function isPre31AdcpVersion(version: string | undefined): boolean {
   return Number.isFinite(minor) && minor < 1;
 }
 
+/** Does the seller advertise AdCP 3.1+ support (via get_adcp_capabilities)? */
+export function sellerAdvertises31(
+  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined,
+): boolean {
+  if (!caps) return false;
+  if (caps.buildVersion && !isPre31AdcpVersion(caps.buildVersion)) return true;
+  return (caps.supportedVersions ?? []).some((v) => !isPre31AdcpVersion(v));
+}
+
+/**
+ * Whether to omit AdCP 3.1-only request fields from the wire. Omit when the
+ * client is pinned below 3.1, or when the seller does not advertise 3.1
+ * support (legacy 3.0 sellers, and sellers whose capabilities were synthesized
+ * from a tool list rather than declared).
+ */
+export function shouldOmit31Fields(
+  resolvedClientVersion: string | undefined,
+  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined,
+): boolean {
+  if (isPre31AdcpVersion(resolvedClientVersion)) return true;
+  return !sellerAdvertises31(caps);
+}
+
+/**
+ * Strip AdCP 3.1-only inline-override fields from a BrandReference, leaving the
+ * identity fields (`domain`, `brand_id`) the seller resolves the brand by. The
+ * BrandReference object is closed (`additionalProperties: false`) in every
+ * version, so pre-3.1 sellers reject these fields; brand.json is the canonical
+ * source the seller falls back to.
+ */
+export function omit31BrandFields<T>(brand: T): T {
+  if (!brand || typeof brand !== 'object' || Array.isArray(brand)) return brand;
+  const { industries, data_subject_contestation, brand_kit_override, ...rest } =
+    brand as Record<string, unknown>;
+  return rest as T;
+}
+
 function prereleaseFamilyAlias(version: string): string | undefined {
   const match = /^(\d+\.\d+-[0-9A-Za-z-]+)\.\d+$/.exec(version);
   return match?.[1];
