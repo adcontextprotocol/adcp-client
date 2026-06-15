@@ -2419,11 +2419,7 @@ describe('resolveStoryboardsForCapabilities: typed errors', () => {
     });
     try {
       assert.throws(
-        () =>
-          resolveStoryboardsForCapabilities(
-            { specialisms: ['not-a-real-specialism'] },
-            { complianceDir: dir }
-          ),
+        () => resolveStoryboardsForCapabilities({ specialisms: ['not-a-real-specialism'] }, { complianceDir: dir }),
         err => {
           assert.ok(err instanceof CapabilityResolutionError);
           assert.strictEqual(err.code, 'unknown_specialism');
@@ -2444,11 +2440,7 @@ describe('resolveStoryboardsForCapabilities: typed errors', () => {
     const dir = makeFakeComplianceCache({ universalStoryboards: [] });
     try {
       assert.throws(
-        () =>
-          resolveStoryboardsForCapabilities(
-            { specialisms: ['signed-requests'] },
-            { complianceDir: dir }
-          ),
+        () => resolveStoryboardsForCapabilities({ specialisms: ['signed-requests'] }, { complianceDir: dir }),
         err => {
           assert.ok(err instanceof CapabilityResolutionError);
           assert.strictEqual(err.code, 'unknown_specialism');

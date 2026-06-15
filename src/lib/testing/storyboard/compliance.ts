@@ -95,10 +95,9 @@ export const UNBASELINED_SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set([
  * Removed in AdCP 4.0 along with the enum value itself
  * (adcontextprotocol/adcp#3075).
  */
-export const DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES: Readonly<Record<string, string>> =
-  Object.freeze({
-    'signed-requests': 'signed-requests',
-  });
+export const DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  'signed-requests': 'signed-requests',
+});
 
 export interface ComplianceIndexProtocol {
   id: string;
