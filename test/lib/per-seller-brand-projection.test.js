@@ -1,22 +1,21 @@
 /**
  * Per-seller brand-override projection.
  *
- * The SDK strips the AdCP 3.1-only `brand_kit_override` field from outbound
- * requests when the negotiated target is pre-3.1 (client pinned <3.1 OR the
- * seller does not advertise 3.1). `industries` and `data_subject_contestation`
- * are declared in AdCP 3.0 and are left on the wire. Identity fields (`domain`,
- * `brand_id`) are always kept. A 3.1 seller receives the full overrides.
+ * The 3.0 version adapters strip `brand_kit_override` (a 3.1-only field)
+ * from outbound brand references when the negotiated target is pre-3.1.
+ * `industries` and `data_subject_contestation` are declared in AdCP 3.0
+ * and are left on the wire. A 3.1 seller receives the full overrides.
  *
- * `projectRequestForSellerVersion` returns `{ params, driftLog? }`. A
- * `pre31_brand_fields_stripped` drift entry is emitted whenever stripping occurs.
+ * `resolveAdapterKey` returns '3.0' whenever `shouldOmit31Fields` is true
+ * (client pinned <3.1 OR seller does not advertise 3.1). The adapter emits
+ * a `pre31_brand_fields_stripped` drift entry when stripping occurs.
  */
 
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
+const { getVersionAdapter, resolveAdapterKey } = require('../../dist/lib/adapters/version/index.js');
 
-const agent = { id: 's', name: 's', protocol: 'mcp', agent_uri: 'https://s.example/mcp' };
 const brand = {
   domain: 'goldpeaktea.com',
   brand_id: 'b',
@@ -25,76 +24,80 @@ const brand = {
   brand_kit_override: { colors: { accent: '#f5ce65' } },
 };
 
-test('create_media_buy brand: brand_kit_override stripped for legacy 3.0 seller, 3.0 fields preserved', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', {
-    brand: { ...brand },
-    idempotency_key: 'k',
-  });
-  assert.deepEqual(out.brand, {
+const caps30 = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
+const caps31 = { version: 'v3', majorVersions: [3], buildVersion: '3.1.0', _synthetic: false };
+
+test('resolveAdapterKey: returns 3.0 for pre-3.1 client', () => {
+  assert.equal(resolveAdapterKey('3.0', caps31), '3.0');
+});
+test('resolveAdapterKey: returns 3.0 for 3.1 client with 3.0 seller', () => {
+  assert.equal(resolveAdapterKey('3.1.0', caps30), '3.0');
+});
+test('resolveAdapterKey: returns undefined for 3.1 client with 3.1 seller', () => {
+  assert.equal(resolveAdapterKey('3.1.0', caps31), undefined);
+});
+
+test('create_media_buy: brand_kit_override stripped, 3.0 fields preserved', () => {
+  const adapter = getVersionAdapter('3.0', 'create_media_buy');
+  const { params, drift } = adapter.adaptRequest({ brand: { ...brand }, idempotency_key: 'k' });
+  assert.deepEqual(params.brand, {
     domain: 'goldpeaktea.com',
     brand_id: 'b',
     industries: ['cpg'],
     data_subject_contestation: { email: 'p@goldpeaktea.com' },
   });
-  assert.equal(driftLog?.type, 'pre31_brand_fields_stripped');
-  assert.deepEqual(driftLog?.strippedFields, ['brand_kit_override']);
+  assert.equal(drift?.type, 'pre31_brand_fields_stripped');
+  assert.deepEqual(drift?.strippedFields, ['brand_kit_override']);
 });
 
-test('create_media_buy brand: overrides preserved for 3.1 seller, no drift log', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], buildVersion: '3.1.0', _synthetic: false };
-  const { params: out, driftLog } = c.projectRequestForSellerVersion('create_media_buy', {
-    brand: { ...brand },
-    idempotency_key: 'k',
-  });
-  assert.deepEqual(out.brand.brand_kit_override, { colors: { accent: '#f5ce65' } });
-  assert.deepEqual(out.brand.industries, ['cpg']);
-  assert.equal(driftLog, undefined);
+test('create_media_buy: no strip when brand_kit_override absent', () => {
+  const adapter = getVersionAdapter('3.0', 'create_media_buy');
+  const input = { brand: { domain: 'goldpeaktea.com', brand_id: 'b' }, idempotency_key: 'k' };
+  const { params, drift } = adapter.adaptRequest(input);
+  assert.equal(params, input);
+  assert.equal(drift, undefined);
 });
 
-test('get_products brand: brand_kit_override stripped for legacy 3.0 seller', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-  const { params: out } = c.projectRequestForSellerVersion('get_products', { brand: { ...brand }, brief: 'x' });
-  assert.deepEqual(out.brand, {
+test('get_products: brand_kit_override stripped for 3.0 target', () => {
+  const adapter = getVersionAdapter('3.0', 'get_products');
+  const { params, drift } = adapter.adaptRequest({ brand: { ...brand }, brief: 'x' });
+  assert.deepEqual(params.brand, {
     domain: 'goldpeaktea.com',
     brand_id: 'b',
     industries: ['cpg'],
     data_subject_contestation: { email: 'p@goldpeaktea.com' },
   });
+  assert.ok(drift);
 });
 
-test('sync_accounts brand: brand_kit_override stripped at accounts[].brand for 3.0 seller', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-  const { params: out } = c.projectRequestForSellerVersion('sync_accounts', {
+test('sync_accounts: brand_kit_override stripped at accounts[].brand', () => {
+  const adapter = getVersionAdapter('3.0', 'sync_accounts');
+  const { params, drift } = adapter.adaptRequest({
     accounts: [{ brand: { ...brand }, operator: 'o', billing: 'operator' }],
     idempotency_key: 'k',
   });
-  assert.deepEqual(out.accounts[0].brand, {
+  assert.deepEqual(params.accounts[0].brand, {
     domain: 'goldpeaktea.com',
     brand_id: 'b',
     industries: ['cpg'],
     data_subject_contestation: { email: 'p@goldpeaktea.com' },
   });
-  assert.equal(out.accounts[0].operator, 'o');
+  assert.equal(params.accounts[0].operator, 'o');
+  assert.ok(drift);
 });
 
-test('sync_accounts brand: overrides preserved for 3.1 seller', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], buildVersion: '3.1.0', _synthetic: false };
-  const { params: out } = c.projectRequestForSellerVersion('sync_accounts', {
-    accounts: [{ brand: { ...brand }, operator: 'o', billing: 'operator' }],
+test('sync_accounts: no strip when no account has brand_kit_override', () => {
+  const adapter = getVersionAdapter('3.0', 'sync_accounts');
+  const input = {
+    accounts: [{ brand: { domain: 'goldpeaktea.com', brand_id: 'b' }, operator: 'o', billing: 'operator' }],
     idempotency_key: 'k',
-  });
-  assert.deepEqual(out.accounts[0].brand.brand_kit_override, { colors: { accent: '#f5ce65' } });
+  };
+  const { params, drift } = adapter.adaptRequest(input);
+  assert.equal(params, input);
+  assert.equal(drift, undefined);
 });
 
-test('projectRequestForSellerVersion passes through non-object params', () => {
-  const c = new SingleAgentClient(agent);
-  c.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
-  const { params } = c.projectRequestForSellerVersion('get_products', undefined);
-  assert.equal(params, undefined);
+test('adapters return undefined for unregistered tools at 3.0', () => {
+  assert.equal(getVersionAdapter('3.0', 'list_creative_formats'), undefined);
+  assert.equal(getVersionAdapter('3.0', 'get_signals'), undefined);
 });

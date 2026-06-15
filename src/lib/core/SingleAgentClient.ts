@@ -5,13 +5,8 @@ import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
-import {
-  isAdcpVersionSupported,
-  isPre31AdcpVersion,
-  omit31BrandFields,
-  resolveAdcpVersion,
-  shouldOmit31Fields,
-} from '../utils/adcp-version-config';
+import { isAdcpVersionSupported, isPre31AdcpVersion, resolveAdcpVersion } from '../utils/adcp-version-config';
+import { getVersionAdapter, resolveAdapterKey } from '../adapters/version';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -1649,16 +1644,12 @@ export class SingleAgentClient {
       this.executor.validateRequest(taskType, normalizedParams);
     }
 
-    // Adapt request for v2 servers if needed
+    // Adapt request for the detected server and AdCP protocol versions.
     const serverVersion = await this.detectServerVersion();
-    const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
-
-    // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
-    // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
-    // has populated cachedCapabilities, so the decision sees the seller's caps.
-    const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(
+    const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
-      adaptedParams
+      normalizedParams,
+      serverVersion
     );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
@@ -1667,17 +1658,16 @@ export class SingleAgentClient {
     // here and merged into result.metadata.debug_logs after executeTask
     // returns — without that merge the warning would silently drop on
     // the floor and adapter drift would land in production unnoticed.
-    const v25DriftLogs: any[] = [];
+    const v25DriftLogs: any[] = [...adaptDriftLogs];
     if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
-    if (brandDriftLog) v25DriftLogs.push(brandDriftLog);
     if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskType, projectedParams, v25DriftLogs);
+      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
     }
 
     let result = await this.executor.executeTask<T>(
       agent,
       taskType,
-      projectedParams,
+      adaptedParams,
       inputHandler,
       effectiveOptions,
       serverVersion
@@ -2072,69 +2062,24 @@ export class SingleAgentClient {
   }
 
   /**
-   * Strip AdCP 3.1-only brand inline-override fields from a request when the
-   * negotiated target is pre-3.1 (client pinned <3.1 OR the seller does not
-   * advertise 3.1). Keeps the brand identity fields (`domain`, `brand_id`) the
-   * seller resolves the brand by; the closed BrandReference object would
-   * otherwise be rejected by a pre-3.1 seller. Runs after
-   * `adaptRequestForServerVersion` so `cachedCapabilities` is populated.
+   * Adapt a request for the detected server wire version and the seller's
+   * AdCP protocol version. Applies wire-format adapters (v2.5) when talking
+   * to a v2 server, then applies protocol-version adapters (e.g. stripping
+   * 3.1-only fields for a 3.0 seller). Returns the adapted params and any
+   * drift log entries describing what was changed.
    *
-   * Brand path per tool: `create_media_buy` / `get_products` carry brand at
-   * the top level; `sync_accounts` carries it at `accounts[].brand` (only on
-   * provisioning-mode entries; settings-update entries key by `account` and
-   * have no `brand`, so they pass through untouched).
-   *
-   * Not `private` so the projection can be unit-tested directly.
+   * Runs after `detectServerVersion` so `cachedCapabilities` is populated
+   * and the protocol-version adapters see the seller's declared caps.
    */
-  projectRequestForSellerVersion(
-    taskName: string,
-    params: unknown
-  ): { params: unknown; driftLog?: Record<string, unknown> } {
-    if (!params || typeof params !== 'object') return { params };
-    if (!shouldOmit31Fields(this.resolvedAdcpVersion, this.cachedCapabilities)) return { params };
-    const req = { ...(params as Record<string, unknown>) };
-    let stripped = false;
-    const stripBrand = (brand: unknown): unknown => {
-      const result = omit31BrandFields(brand);
-      if (result !== brand) stripped = true;
-      return result;
-    };
-    if (taskName === 'create_media_buy' || taskName === 'get_products') {
-      if (req.brand) req.brand = stripBrand(req.brand);
-    }
-    if (taskName === 'sync_accounts' && Array.isArray(req.accounts)) {
-      req.accounts = (req.accounts as Array<Record<string, unknown>>).map(a =>
-        a && typeof a === 'object' && a.brand ? { ...a, brand: stripBrand(a.brand) } : a
-      );
-    }
-    const driftLog = stripped
-      ? {
-          type: 'pre31_brand_fields_stripped',
-          message:
-            `${taskName} brand_kit_override stripped for pre-3.1 seller: ` +
-            `brand_kit_override requires AdCP 3.1 but the target seller does not advertise 3.1 support. ` +
-            `These fields will not reach the seller; brand identity (domain, brand_id) is preserved.`,
-          timestamp: new Date().toISOString(),
-          taskName,
-          strippedFields: ['brand_kit_override'],
-          clientVersion: this.resolvedAdcpVersion,
-        }
-      : undefined;
-    return { params: req, driftLog };
-  }
-
-  /**
-   * Adapt request parameters for the detected server version
-   *
-   * Converts v3-style requests to v2 format when talking to v2 servers.
-   */
-  private async adaptRequestForServerVersion(taskType: string, params: any): Promise<any> {
-    // Get server version (cached after first call)
-    const version = await this.detectServerVersion();
-
+  private adaptRequest(
+    taskType: string,
+    params: any,
+    serverVersion: string
+  ): { params: any; driftLogs: Record<string, unknown>[] } {
+    const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
 
-    if (version !== 'v3') {
+    if (serverVersion !== 'v3') {
       // Dispatch through the legacy v2.5 adapter registry. Per-tool pairs
       // live in `src/lib/adapters/legacy/v2-5/<tool>.ts`. Tools without a
       // registered pair (or pairs whose request side is pass-through)
@@ -2142,7 +2087,7 @@ export class SingleAgentClient {
       // adding a sibling `legacy/<version>/` directory, not editing
       // this dispatch.
       const pair = getV25Adapter(taskType);
-      if (pair) adapted = pair.adaptRequest(params);
+      if (pair) adapted = pair.adaptRequest(adapted);
     }
 
     // Strip any top-level fields not declared in the agent's tool schema.
@@ -2167,57 +2112,81 @@ export class SingleAgentClient {
     // (e.g. `applyBrandInvariant` in the storyboard runner — see #940),
     // not to lean on this strip path as a backstop.
     const toolSchema = this.cachedToolSchemas?.get(taskType);
-    if (!toolSchema || Object.keys(toolSchema).length === 0) return adapted;
+    if (toolSchema && Object.keys(toolSchema).length > 0) {
+      const declaredFields = new Set(Object.keys(toolSchema));
 
-    const declaredFields = new Set(Object.keys(toolSchema));
+      // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
+      // v3 server — misdetected as v2 — doesn't declare. Reconcile known
+      // adapter mappings so the value isn't silently dropped.
+      //
+      // CRITICAL: only alias when the JS type of the moved value is
+      // compatible with the destination field's declared shape. v2.5 sellers
+      // (e.g. Wonderstruck) declare `brand` in their tool schema as a
+      // BrandReference object — v2 adapter produces a `brand_manifest` URL
+      // string, and blindly aliasing the string into the object slot causes
+      // the seller to reject with `Input should be a valid dictionary or
+      // instance of BrandReference`. Skip the alias when shapes don't match
+      // and let the field-stripping path drop the v2-shaped value cleanly.
+      const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
+      for (const [adapterField, schemaField] of adapterAliases) {
+        if (
+          adapted[adapterField] !== undefined &&
+          !declaredFields.has(adapterField) &&
+          declaredFields.has(schemaField) &&
+          adapted[schemaField] === undefined &&
+          valueMatchesSchemaType(adapted[adapterField], (toolSchema as Record<string, unknown>)[schemaField])
+        ) {
+          adapted[schemaField] = adapted[adapterField];
+          delete adapted[adapterField];
+        }
+      }
 
-    // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
-    // v3 server — misdetected as v2 — doesn't declare. Reconcile known
-    // adapter mappings so the value isn't silently dropped.
-    //
-    // CRITICAL: only alias when the JS type of the moved value is
-    // compatible with the destination field's declared shape. v2.5 sellers
-    // (e.g. Wonderstruck) declare `brand` in their tool schema as a
-    // BrandReference object — v2 adapter produces a `brand_manifest` URL
-    // string, and blindly aliasing the string into the object slot causes
-    // the seller to reject with `Input should be a valid dictionary or
-    // instance of BrandReference`. Skip the alias when shapes don't match
-    // and let the field-stripping path drop the v2-shaped value cleanly.
-    const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
-    for (const [adapterField, schemaField] of adapterAliases) {
-      if (
-        adapted[adapterField] !== undefined &&
-        !declaredFields.has(adapterField) &&
-        declaredFields.has(schemaField) &&
-        adapted[schemaField] === undefined &&
-        valueMatchesSchemaType(adapted[adapterField], (toolSchema as Record<string, unknown>)[schemaField])
-      ) {
-        adapted[schemaField] = adapted[adapterField];
-        delete adapted[adapterField];
+      // Protocol envelope fields are always preserved — they live at the
+      // protocol layer, not in individual tool schemas.
+      const envelopeFields = ADCP_ENVELOPE_FIELDS;
+      const filtered: Record<string, unknown> = {};
+      const schemaStripped: string[] = [];
+
+      for (const [key, value] of Object.entries(adapted)) {
+        if (declaredFields.has(key) || envelopeFields.has(key)) {
+          filtered[key] = value;
+        } else {
+          schemaStripped.push(key);
+        }
+      }
+
+      if (schemaStripped.length > 0) {
+        console.warn(
+          `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${schemaStripped.join(', ')}`
+        );
+      }
+
+      adapted = filtered;
+    }
+
+    // Protocol version adaptation: strip fields not accepted by the target
+    // AdCP version. `resolveAdapterKey` returns the effective target version
+    // based on the client pin and the seller's advertised caps; adapters live
+    // in `src/lib/adapters/version/<target>/`.
+    const adapterKey = resolveAdapterKey(this.resolvedAdcpVersion, this.cachedCapabilities);
+    if (adapterKey) {
+      const versionAdapter = getVersionAdapter(adapterKey, taskType);
+      if (versionAdapter) {
+        const result = versionAdapter.adaptRequest(adapted);
+        adapted = result.params;
+        if (result.drift) {
+          driftLogs.push({
+            ...result.drift,
+            taskName: taskType,
+            clientVersion: this.resolvedAdcpVersion,
+            targetVersion: adapterKey,
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
     }
 
-    // Protocol envelope fields are always preserved — they live at the
-    // protocol layer, not in individual tool schemas.
-    const envelopeFields = ADCP_ENVELOPE_FIELDS;
-    const filtered: Record<string, unknown> = {};
-    const stripped: string[] = [];
-
-    for (const [key, value] of Object.entries(adapted)) {
-      if (declaredFields.has(key) || envelopeFields.has(key)) {
-        filtered[key] = value;
-      } else {
-        stripped.push(key);
-      }
-    }
-
-    if (stripped.length > 0) {
-      console.warn(
-        `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${stripped.join(', ')}`
-      );
-    }
-
-    return filtered;
+    return { params: adapted, driftLogs };
   }
 
   /**
@@ -3074,33 +3043,27 @@ export class SingleAgentClient {
         this.executor.validateRequest(taskName, normalizedParams);
       }
 
-      // Adapt request for the server's protocol version (e.g. strip v3-only
-      // fields like buying_mode when talking to v2 agents).
+      // Adapt request for the detected server and AdCP protocol versions.
       const serverVersion = await this.detectServerVersion();
-      const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
-
-      // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
-      // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
-      // has populated cachedCapabilities, so the decision sees the seller's caps.
-      const { params: projectedParams, driftLog: brandDriftLog } = this.projectRequestForSellerVersion(
+      const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
         taskName,
-        adaptedParams
+        normalizedParams,
+        serverVersion
       );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter
       // regressions in production aren't silently swallowed.
-      const v25DriftLogs: any[] = [];
+      const v25DriftLogs: any[] = [...adaptDriftLogs];
       if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
-      if (brandDriftLog) v25DriftLogs.push(brandDriftLog);
       if (serverVersion === 'v2') {
-        this.executor.validateAdaptedRequestAgainstV2(taskName, projectedParams, v25DriftLogs);
+        this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
       }
 
       let result = await this.executor.executeTask<T>(
         agent,
         taskName,
-        projectedParams,
+        adaptedParams,
         inputHandler,
         effectiveOptions,
         serverVersion
@@ -3718,7 +3681,7 @@ export class SingleAgentClient {
 
     // Cache raw tool schemas for field-level compatibility checks (e.g. buying_mode on get_products).
     // INVARIANT: must be assigned before cachedCapabilities below so that any code path
-    // reaching adaptRequestForServerVersion always finds the schemas populated.
+    // reaching adaptRequest always finds the schemas populated.
     this.cachedToolSchemas = new Map(
       agentInfo.tools
         .filter(t => t.inputSchema?.properties)
@@ -4277,7 +4240,7 @@ export class SingleAgentClient {
    * but unknown top-level keys pass through. This matters because callers —
    * including the storyboard runner's `applyBrandInvariant` — inject
    * scoping fields (`brand`, `account`) onto every outgoing request, and
-   * `adaptRequestForServerVersion` strips those fields downstream for tools
+   * `adaptRequest` strips those fields downstream for tools
    * whose schema doesn't declare them. A strict parse here rejects the
    * injected fields before the adapter gets a chance to clean them up, so
    * the two passes have to agree on "extra keys are fine."
