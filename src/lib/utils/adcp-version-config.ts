@@ -119,12 +119,10 @@ export function isPre31AdcpVersion(version: string | undefined): boolean {
 }
 
 /** Does the seller advertise AdCP 3.1+ support (via get_adcp_capabilities)? */
-export function sellerAdvertises31(
-  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined,
-): boolean {
+export function sellerAdvertises31(caps: { supportedVersions?: string[]; buildVersion?: string } | undefined): boolean {
   if (!caps) return false;
   if (caps.buildVersion && !isPre31AdcpVersion(caps.buildVersion)) return true;
-  return (caps.supportedVersions ?? []).some((v) => !isPre31AdcpVersion(v));
+  return (caps.supportedVersions ?? []).some(v => !isPre31AdcpVersion(v));
 }
 
 /**
@@ -135,7 +133,7 @@ export function sellerAdvertises31(
  */
 export function shouldOmit31Fields(
   resolvedClientVersion: string | undefined,
-  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined,
+  caps: { supportedVersions?: string[]; buildVersion?: string } | undefined
 ): boolean {
   if (isPre31AdcpVersion(resolvedClientVersion)) return true;
   return !sellerAdvertises31(caps);
@@ -150,8 +148,7 @@ export function shouldOmit31Fields(
  */
 export function omit31BrandFields<T>(brand: T): T {
   if (!brand || typeof brand !== 'object' || Array.isArray(brand)) return brand;
-  const { industries, data_subject_contestation, brand_kit_override, ...rest } =
-    brand as Record<string, unknown>;
+  const { industries, data_subject_contestation, brand_kit_override, ...rest } = brand as Record<string, unknown>;
   return rest as T;
 }
 

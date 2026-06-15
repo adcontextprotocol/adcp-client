@@ -29,12 +29,13 @@ test('shouldOmit31Fields: 3.1 client omits for legacy sellers, sends to 3.1 sell
 test('omit31BrandFields strips 3.1 inline overrides, keeps identity', () => {
   assert.deepEqual(
     omit31BrandFields({
-      domain: 'goldpeaktea.com', brand_id: 'brand_4045',
+      domain: 'goldpeaktea.com',
+      brand_id: 'brand_4045',
       industries: ['cpg'],
       data_subject_contestation: { email: 'p@goldpeaktea.com' },
       brand_kit_override: { colors: { accent: '#f5ce65' } },
     }),
-    { domain: 'goldpeaktea.com', brand_id: 'brand_4045' },
+    { domain: 'goldpeaktea.com', brand_id: 'brand_4045' }
   );
 });
 test('omit31BrandFields passes through non-object values untouched', () => {
