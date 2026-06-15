@@ -5,7 +5,13 @@ import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
-import { isAdcpVersionSupported, isPre31AdcpVersion, resolveAdcpVersion } from '../utils/adcp-version-config';
+import {
+  isAdcpVersionSupported,
+  isPre31AdcpVersion,
+  omit31BrandFields,
+  resolveAdcpVersion,
+  shouldOmit31Fields,
+} from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -1639,6 +1645,11 @@ export class SingleAgentClient {
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
+    // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
+    // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
+    // has populated cachedCapabilities, so the decision sees the seller's caps.
+    const projectedParams = this.projectRequestForSellerVersion(taskType, adaptedParams);
+
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
     // shape against the cached v2.5 schema bundle. Drift gets collected
@@ -1647,13 +1658,13 @@ export class SingleAgentClient {
     // the floor and adapter drift would land in production unnoticed.
     const v25DriftLogs: any[] = [];
     if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
+      this.executor.validateAdaptedRequestAgainstV2(taskType, projectedParams, v25DriftLogs);
     }
 
     let result = await this.executor.executeTask<T>(
       agent,
       taskType,
-      adaptedParams,
+      projectedParams,
       inputHandler,
       options,
       serverVersion
@@ -2044,6 +2055,36 @@ export class SingleAgentClient {
       metadata: nextMetadata,
       suppressHandler: !policyResult.success,
     };
+  }
+
+  /**
+   * Strip AdCP 3.1-only brand inline-override fields from a request when the
+   * negotiated target is pre-3.1 (client pinned <3.1 OR the seller does not
+   * advertise 3.1). Keeps the brand identity fields (`domain`, `brand_id`) the
+   * seller resolves the brand by; the closed BrandReference object would
+   * otherwise be rejected by a pre-3.1 seller. Runs after
+   * `adaptRequestForServerVersion` so `cachedCapabilities` is populated.
+   *
+   * Brand path per tool: `create_media_buy` / `get_products` carry brand at
+   * the top level; `sync_accounts` carries it at `accounts[].brand` (only on
+   * provisioning-mode entries — settings-update entries key by `account` and
+   * have no `brand`, so they pass through untouched).
+   *
+   * Not `private` so the projection can be unit-tested directly.
+   */
+  projectRequestForSellerVersion(taskName: string, params: unknown): unknown {
+    if (!params || typeof params !== 'object') return params;
+    if (!shouldOmit31Fields(this.resolvedAdcpVersion, this.cachedCapabilities)) return params;
+    const req = { ...(params as Record<string, unknown>) };
+    if (taskName === 'create_media_buy' || taskName === 'get_products') {
+      if (req.brand) req.brand = omit31BrandFields(req.brand);
+    }
+    if (taskName === 'sync_accounts' && Array.isArray(req.accounts)) {
+      req.accounts = (req.accounts as Array<Record<string, unknown>>).map(a =>
+        a && typeof a === 'object' && a.brand ? { ...a, brand: omit31BrandFields(a.brand) } : a
+      );
+    }
+    return req;
   }
 
   /**
@@ -2993,18 +3034,23 @@ export class SingleAgentClient {
       const serverVersion = await this.detectServerVersion();
       const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
 
+      // Strip AdCP 3.1-only fields (brand inline-overrides) when the negotiated
+      // target is pre-3.1. Runs after the v2 adapter and after detectServerVersion
+      // has populated cachedCapabilities, so the decision sees the seller's caps.
+      const projectedParams = this.projectRequestForSellerVersion(taskName, adaptedParams);
+
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
       // Drift gets surfaced via result.metadata.debug_logs so adapter
       // regressions in production aren't silently swallowed.
       const v25DriftLogs: any[] = [];
       if (serverVersion === 'v2') {
-        this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
+        this.executor.validateAdaptedRequestAgainstV2(taskName, projectedParams, v25DriftLogs);
       }
 
       let result = await this.executor.executeTask<T>(
         agent,
         taskName,
-        adaptedParams,
+        projectedParams,
         inputHandler,
         options,
         serverVersion
