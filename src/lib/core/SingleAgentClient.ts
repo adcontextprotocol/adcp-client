@@ -1589,6 +1589,14 @@ export class SingleAgentClient {
     });
     this.assertRequestSupportedByConfiguredVersion(taskType, normalizedParams, options);
 
+    // Degrade an auto-injected discovery webhook to polling for pre-3.1 pins
+    // (get_products / get_signals). `effectiveOptions` carries disableWebhook
+    // so no push_notification_config reaches a seller that can't accept it.
+    const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+      taskType,
+      options
+    );
+
     // Inject an idempotency_key for mutating tools before schema validation
     // so callers don't have to supply one. TaskExecutor also guards against
     // missing keys, but validation happens here first — do the injection up
@@ -1657,6 +1665,7 @@ export class SingleAgentClient {
     // returns — without that merge the warning would silently drop on
     // the floor and adapter drift would land in production unnoticed.
     const v25DriftLogs: any[] = [];
+    if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
     if (serverVersion === 'v2') {
       this.executor.validateAdaptedRequestAgainstV2(taskType, projectedParams, v25DriftLogs);
     }
@@ -1666,15 +1675,16 @@ export class SingleAgentClient {
       taskType,
       projectedParams,
       inputHandler,
-      options,
+      effectiveOptions,
       serverVersion
     );
 
     // Merge collected drift into the executor's debug_logs so adopters
-    // reading result.debug_logs see post-adapter v2.5 warnings alongside
-    // the executor's own logs. On error paths the executor may not surface
-    // result.debug_logs at all — drift collected before the failure is
-    // dropped, matching the executor's own debug-log behavior.
+    // reading result.debug_logs see post-adapter v2.5 warnings (and any
+    // pre-3.1 webhook-degradation notice) alongside the executor's own logs.
+    // On error paths the executor may not surface result.debug_logs at all —
+    // drift collected before the failure is dropped, matching the executor's
+    // own debug-log behavior.
     if (v25DriftLogs.length > 0) {
       result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
     }
@@ -3014,6 +3024,15 @@ export class SingleAgentClient {
         skipAccountValidation: options?.skipAccountValidation,
       });
       this.assertRequestSupportedByConfiguredVersion(taskName, normalizedParams, options);
+
+      // Degrade an auto-injected discovery webhook to polling for pre-3.1 pins
+      // (get_products / get_signals). `effectiveOptions` carries disableWebhook
+      // so no push_notification_config reaches a seller that can't accept it.
+      const { options: effectiveOptions, driftLog: webhookDriftLog } = this.suppressPre31DiscoveryWebhook(
+        taskName,
+        options
+      );
+
       await this.validateTaskFeatures(taskName);
       if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
         await this.requireSupportedMajor(taskName);
@@ -3043,6 +3062,7 @@ export class SingleAgentClient {
       // Drift gets surfaced via result.metadata.debug_logs so adapter
       // regressions in production aren't silently swallowed.
       const v25DriftLogs: any[] = [];
+      if (webhookDriftLog) v25DriftLogs.push(webhookDriftLog);
       if (serverVersion === 'v2') {
         this.executor.validateAdaptedRequestAgainstV2(taskName, projectedParams, v25DriftLogs);
       }
@@ -3052,7 +3072,7 @@ export class SingleAgentClient {
         taskName,
         projectedParams,
         inputHandler,
-        options,
+        effectiveOptions,
         serverVersion
       );
 
@@ -3988,12 +4008,10 @@ export class SingleAgentClient {
    * result set. A pre-3.1 client pin should not silently drop those controls
    * or let a generic schema error hide the recovery path.
    */
-  private assertRequestSupportedByConfiguredVersion(taskName: string, params: unknown, options?: TaskOptions): void {
+  private assertRequestSupportedByConfiguredVersion(taskName: string, params: unknown, _options?: TaskOptions): void {
     if (!isPre31AdcpVersion(this.resolvedAdcpVersion)) return;
     const request =
       params && typeof params === 'object' && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
-    const willInjectDiscoveryWebhook =
-      !options?.disableWebhook && selectWebhookTemplate(this.config.webhookUrlTemplate, taskName) !== undefined;
 
     if (taskName === 'get_signals' && request.discovery_mode === 'wholesale') {
       this.throwPre31UnsupportedFeature(taskName, 'discovery_mode', 'get_signals.discovery_mode=wholesale', {
@@ -4002,10 +4020,12 @@ export class SingleAgentClient {
       });
     }
 
-    if (
-      (taskName === 'get_products' || taskName === 'get_signals') &&
-      (request.push_notification_config !== undefined || willInjectDiscoveryWebhook)
-    ) {
+    // An EXPLICIT push_notification_config on a discovery task is caller misuse
+    // while hard-pinned <3.1 — surface it rather than silently dropping the
+    // caller's webhook. An AUTO-injected discovery webhook (from
+    // `webhookUrlTemplate`) is degraded to polling instead; see
+    // `suppressPre31DiscoveryWebhook`.
+    if ((taskName === 'get_products' || taskName === 'get_signals') && request.push_notification_config !== undefined) {
       this.throwPre31UnsupportedFeature(taskName, 'push_notification_config', `${taskName}.push_notification_config`, {
         capabilityPath: 'adcp.supported_versions',
         suffix: 'Probe get_adcp_capabilities at adcp.supported_versions before relying on discovery task webhooks.',
@@ -4016,6 +4036,45 @@ export class SingleAgentClient {
     // `if_pricing_version`: 3.1 defines them as optimistic conditional
     // probes, and pre-3.1 sellers may safely ignore them and return the full
     // payload.
+  }
+
+  /**
+   * Degrade the auto-injected get_products / get_signals discovery webhook to
+   * polling when the client is pinned below 3.1. Discovery-task
+   * `push_notification_config` is an AdCP 3.1 feature; a pre-3.1 seller would
+   * reject it. Rather than throwing on the library's own auto-injected webhook
+   * (which the caller never asked for), suppress it via `disableWebhook` and
+   * record a `pre31_webhook_degraded` drift entry so the loss of push is
+   * visible in `debug_logs`.
+   *
+   * Returns the effective options (a `disableWebhook` copy when suppressing,
+   * otherwise the caller's unchanged) and an optional drift log to merge into
+   * the result. Explicit caller-supplied `push_notification_config` is handled
+   * by `assertRequestSupportedByConfiguredVersion` (it throws) and never
+   * reaches here.
+   */
+  private suppressPre31DiscoveryWebhook(
+    taskName: string,
+    options?: TaskOptions
+  ): { options: TaskOptions | undefined; driftLog?: Record<string, unknown> } {
+    if (!isPre31AdcpVersion(this.resolvedAdcpVersion)) return { options };
+    if (taskName !== 'get_products' && taskName !== 'get_signals') return { options };
+    if (options?.disableWebhook) return { options };
+    if (selectWebhookTemplate(this.config.webhookUrlTemplate, taskName) === undefined) return { options };
+
+    return {
+      options: { ...options, disableWebhook: true },
+      driftLog: {
+        type: 'pre31_webhook_degraded',
+        message:
+          `${taskName} discovery webhook degraded to polling: discovery-task push_notification_config ` +
+          `requires AdCP 3.1, but this client is pinned to ${this.resolvedAdcpVersion}. ` +
+          'The seller will not receive a push webhook; poll for the result instead.',
+        timestamp: new Date().toISOString(),
+        taskName,
+        clientVersion: this.resolvedAdcpVersion,
+      },
+    };
   }
 
   private throwPre31UnsupportedFeature(

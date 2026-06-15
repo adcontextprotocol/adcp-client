@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   SingleAgentClient,
+  ProtocolClient,
   FeatureUnsupportedError,
   ProtocolFeatureUnsupportedError,
   getClientPreflightAdcpError,
@@ -169,18 +170,34 @@ describe('get_signals wholesale against pre-3.1 client pin', () => {
     );
   });
 
-  test('webhookUrlTemplate injection throws the same pre-3.1 push_notification_config error', async () => {
+  test('auto-injected webhookUrlTemplate degrades to polling (no throw, webhook suppressed)', async () => {
+    // An auto-injected discovery webhook (from webhookUrlTemplate) is the
+    // library's doing, not the caller's — degrade it to polling for a pre-3.1
+    // pin instead of throwing. Contrast with the explicit-config cases above,
+    // which remain caller misuse and still throw.
     const client = makePre31Client({
       webhookUrlTemplate: 'https://buyer.example.com/adcp-webhook/{task_type}/{agent_id}/{operation_id}',
     });
+    client.ensureEndpointDiscovered = async () => client.agent;
+    client.detectServerVersion = async () => 'v3';
+    client.cachedCapabilities = { version: 'v3', majorVersions: [3], supportedVersions: ['3.0'], _synthetic: false };
 
-    await assert.rejects(
-      () =>
-        client.getSignals({
-          signal_spec: 'sports fans',
-        }),
-      assertPushConfigUnsupported('get_signals')
-    );
+    const calls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agent, _taskName, _params, options) => {
+      calls.push(options);
+      return { status: 'completed', signals: [] };
+    };
+    try {
+      const result = await client.getSignals({ signal_spec: 'sports fans' });
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].webhookUrl, undefined);
+      const driftLog = (result.debug_logs ?? []).find(l => l.type === 'pre31_webhook_degraded');
+      assert.ok(driftLog, 'expected a pre31_webhook_degraded debug log');
+      assert.strictEqual(driftLog.taskName, 'get_signals');
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
   });
 
   test('conditional feed version probes are not treated as pre-3.1 unsupported features', async () => {
