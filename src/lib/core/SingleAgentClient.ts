@@ -1682,7 +1682,7 @@ export class SingleAgentClient {
     // Merge collected drift into the executor's debug_logs so adopters
     // reading result.debug_logs see post-adapter v2.5 warnings (and any
     // pre-3.1 webhook-degradation notice) alongside the executor's own logs.
-    // On error paths the executor may not surface result.debug_logs at all —
+    // On error paths the executor may not surface result.debug_logs at all;
     // drift collected before the failure is dropped, matching the executor's
     // own debug-log behavior.
     if (v25DriftLogs.length > 0) {
@@ -2077,7 +2077,7 @@ export class SingleAgentClient {
    *
    * Brand path per tool: `create_media_buy` / `get_products` carry brand at
    * the top level; `sync_accounts` carries it at `accounts[].brand` (only on
-   * provisioning-mode entries — settings-update entries key by `account` and
+   * provisioning-mode entries; settings-update entries key by `account` and
    * have no `brand`, so they pass through untouched).
    *
    * Not `private` so the projection can be unit-tested directly.
@@ -4021,7 +4021,7 @@ export class SingleAgentClient {
     }
 
     // An EXPLICIT push_notification_config on a discovery task is caller misuse
-    // while hard-pinned <3.1 — surface it rather than silently dropping the
+    // while hard-pinned <3.1: surface it rather than silently dropping the
     // caller's webhook. An AUTO-injected discovery webhook (from
     // `webhookUrlTemplate`) is degraded to polling instead; see
     // `suppressPre31DiscoveryWebhook`.

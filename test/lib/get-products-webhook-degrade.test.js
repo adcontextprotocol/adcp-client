@@ -3,8 +3,8 @@
  *
  * Discovery-task push notifications (`push_notification_config`) are an AdCP
  * 3.1 feature. When the client is pinned below 3.1, an AUTO-injected discovery
- * webhook (from `webhookUrlTemplate`) must degrade to polling — suppressed so
- * no `push_notification_config` reaches the wire — rather than throwing. A
+ * webhook (from `webhookUrlTemplate`) must degrade to polling, suppressed so
+ * no `push_notification_config` reaches the wire, rather than throwing. A
  * 3.1+ pin still gets the webhook. An EXPLICIT `push_notification_config`
  * passed by the caller while hard-pinned <3.1 is misuse and still throws.
  */

@@ -172,7 +172,7 @@ describe('get_signals wholesale against pre-3.1 client pin', () => {
 
   test('auto-injected webhookUrlTemplate degrades to polling (no throw, webhook suppressed)', async () => {
     // An auto-injected discovery webhook (from webhookUrlTemplate) is the
-    // library's doing, not the caller's — degrade it to polling for a pre-3.1
+    // library's doing, not the caller's: degrade it to polling for a pre-3.1
     // pin instead of throwing. Contrast with the explicit-config cases above,
     // which remain caller misuse and still throw.
     const client = makePre31Client({
