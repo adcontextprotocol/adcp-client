@@ -85,8 +85,8 @@ async function verify(requestLike, jwks, opts = {}) {
   });
 }
 
-describe('webhook verifier: webhook_mode_mismatch (adcp#2467)', () => {
-  test('JWK with adcp_use="request-signing" rejected with webhook_mode_mismatch', async () => {
+describe('webhook verifier: key-purpose acceptance at step 8 (adcp#2467)', () => {
+  test('JWK with adcp_use="request-signing" is ACCEPTED (signer may reuse its request key)', async () => {
     const now = Math.floor(Date.now() / 1000);
     const signerKey = signerKeyFor('test-wrong-purpose-2026');
     const request = {
@@ -95,11 +95,32 @@ describe('webhook verifier: webhook_mode_mismatch (adcp#2467)', () => {
       headers: { 'Content-Type': 'application/json' },
       body: '{"idempotency_key":"whk_01HW9D3H8FZP2N6R8T0V4X6Z9B","status":"completed"}',
     };
-    // Bypass the signer-side adcp_use gate: this test exists precisely to
-    // exercise the verifier's step-8 cross-purpose rejection, which requires
-    // a wire payload signed with a request-signing key.
+    // Signing with a request-signing key is now a supported choice, so the
+    // convenience signer would accept it; sign directly to assert the
+    // verifier accepts the resulting wire payload at step 8.
     const signed = signWebhookBypassingPurposeGate(request, signerKey, { now: () => now });
     const jwk = toPublicJwk(keyByKid('test-wrong-purpose-2026')); // adcp_use: "request-signing"
+    const jwks = new StaticJwksResolver([jwk]);
+
+    const result = await verify({ ...request, headers: { ...request.headers, ...signed.headers } }, jwks, { now });
+    assert.strictEqual(result.status, 'verified');
+    assert.strictEqual(result.keyid, 'test-wrong-purpose-2026');
+  });
+
+  test('JWK with adcp_use="response-signing" rejected with webhook_mode_mismatch', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-response-purpose-2026');
+    const request = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/create_media_buy/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_01HW9D3H8FZP2N6R8T0V4X6Z9B","status":"completed"}',
+    };
+    // Bypass the signer-side gate to construct a wire payload signed by a
+    // genuinely non-webhook key, exercising the verifier's step-8 rejection
+    // for purposes that are neither webhook-signing nor request-signing.
+    const signed = signWebhookBypassingPurposeGate(request, signerKey, { now: () => now });
+    const jwk = toPublicJwk(keyByKid('test-response-purpose-2026')); // adcp_use: "response-signing"
     const jwks = new StaticJwksResolver([jwk]);
 
     let thrown;
@@ -116,7 +137,7 @@ describe('webhook verifier: webhook_mode_mismatch (adcp#2467)', () => {
     );
     assert.strictEqual(thrown.code, 'webhook_mode_mismatch');
     assert.strictEqual(thrown.failedStep, 8);
-    assert.match(thrown.message, /request-signing/);
+    assert.match(thrown.message, /response-signing/);
   });
 
   test('JWK with adcp_use undefined still rejected with webhook_signature_key_purpose_invalid', async () => {

@@ -8,7 +8,8 @@
  *
  * Distinct from request-signing:
  *   - Tag: `adcp/webhook-signing/v1` (vs `adcp/request-signing/v1`).
- *   - Key purpose: `adcp_use: "webhook-signing"` (vs `"request-signing"`).
+ *   - Key purpose: `adcp_use: "webhook-signing"` OR `"request-signing"` — a
+ *     signer may reuse its request-signing key for webhooks (see step 8).
  *   - Covered components MUST include `@method`, `@target-uri`, `@authority`,
  *     `content-type`, and `content-digest` — `content-digest` is unconditional
  *     for webhooks (vs policy-driven on requests) because every webhook
@@ -169,15 +170,22 @@ export async function verifyWebhookSignature(
     );
   }
 
-  // Step 8: key purpose — MUST be scoped for webhook signing.
+  // Step 8: key purpose — MUST be scoped for webhook delivery.
+  //
+  // A signer MAY publish a dedicated `adcp_use: "webhook-signing"` key, OR
+  // reuse the `adcp_use: "request-signing"` key it already publishes for
+  // outbound request signing — the choice is the signer's. Both are accepted
+  // here because cross-protocol confusion is prevented by the signature `tag`
+  // (step 3, `adcp/webhook-signing/v1`, part of the signed base) and the
+  // mandatory `content-digest` coverage (step 6) — not by the key-purpose
+  // discriminator. A captured request signature (`tag=adcp/request-signing/v1`)
+  // can never be replayed against this verifier because step 3 rejects it.
   //
   // Split failure modes so operators can tell "key isn't scoped at all" (or
-  // lacks the verify key_op) apart from "key is scoped for a different
-  // mode". The former needs the publisher to add a purpose; the latter
-  // needs a new keypair minted for the right mode (a request-signing key
-  // MUST NOT be reused for webhook-signing even if the crypto material is
-  // compatible — purpose binding is the whole point of the `adcp_use`
-  // discriminator).
+  // lacks the verify key_op) apart from "key is scoped for a purpose that is
+  // not valid for webhook delivery" (e.g. `response-signing`, `governance-
+  // signing`). A dedicated webhook-signing key remains RECOMMENDED for
+  // blast-radius isolation, but it is no longer REQUIRED.
   if (jwk.adcp_use === undefined || !jwk.key_ops?.includes('verify')) {
     throw new WebhookSignatureError(
       'webhook_signature_key_purpose_invalid',
@@ -185,11 +193,11 @@ export async function verifyWebhookSignature(
       `JWK "${jwk.kid}" is not scoped for webhook-signing verification.`
     );
   }
-  if (jwk.adcp_use !== 'webhook-signing') {
+  if (jwk.adcp_use !== 'webhook-signing' && jwk.adcp_use !== 'request-signing') {
     throw new WebhookSignatureError(
       'webhook_mode_mismatch',
       8,
-      `JWK "${jwk.kid}" declares adcp_use="${jwk.adcp_use}" but this endpoint requires "webhook-signing".`
+      `JWK "${jwk.kid}" declares adcp_use="${jwk.adcp_use}" but webhook delivery requires "webhook-signing" or "request-signing".`
     );
   }
 

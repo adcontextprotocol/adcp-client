@@ -109,7 +109,43 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
   }
 }
 
-export { assertProviderPurpose };
+/**
+ * Purpose gate for the webhook signing helpers. Unlike the single-purpose
+ * gates above, webhook signing accepts EITHER a dedicated
+ * `adcp_use: "webhook-signing"` key OR the signer's existing
+ * `adcp_use: "request-signing"` key — reuse is the signer's choice. See
+ * webhook-verifier.ts step 8 for the security rationale: the signature `tag`
+ * (`adcp/webhook-signing/v1`) plus mandatory `content-digest` coverage carry
+ * domain separation, so the key purpose need not be webhook-specific. Any
+ * other purpose (`response-signing`, `governance-signing`, unknown) is
+ * refused with the same `webhook_signature_key_purpose_invalid` code the
+ * verifier emits.
+ */
+const WEBHOOK_SIGNING_PURPOSES: readonly string[] = ['webhook-signing', 'request-signing'];
+
+function throwIfWebhookPurposeMismatch(keyid: string, actual: string | undefined): void {
+  if (actual !== undefined && WEBHOOK_SIGNING_PURPOSES.includes(actual)) return;
+  throw new WebhookSignatureError(
+    'webhook_signature_key_purpose_invalid',
+    8,
+    `Signing key '${keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
+      `but webhook signing requires 'webhook-signing' or 'request-signing'.`
+  );
+}
+
+function assertWebhookKeyPurpose(key: SignerKey): void {
+  throwIfWebhookPurposeMismatch(key.keyid, key.privateKey.adcp_use);
+}
+
+function assertWebhookProviderPurpose(
+  provider: { readonly keyid: string; readonly adcpUse?: string },
+  options: { requirePurpose?: boolean } = {}
+): void {
+  if (provider.adcpUse === undefined && !options.requirePurpose) return;
+  throwIfWebhookPurposeMismatch(provider.keyid, provider.adcpUse);
+}
+
+export { assertProviderPurpose, assertWebhookProviderPurpose };
 
 export interface SignRequestOptions {
   coverContentDigest?: boolean;
@@ -291,7 +327,7 @@ export function prepareWebhookSignature(
  * conformant webhooks should use this instead of hand-rolling signatures.
  */
 export function signWebhook(request: RequestLike, key: SignerKey, options: SignWebhookOptions = {}): SignedRequest {
-  assertKeyPurpose(key, 'webhook-signing');
+  assertWebhookKeyPurpose(key);
   const prepared = prepareWebhookSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
