@@ -116,7 +116,7 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
  * `tag` (`adcp/webhook-signing/v1`) plus mandatory `content-digest` coverage
  * carry domain separation, so the key purpose need not be webhook-specific.
  * The deprecated `adcp_use: "webhook-signing"` value is still accepted for
- * backward compatibility (removed in 4.0). Any other purpose
+ * backward compatibility (pending removal — adcontextprotocol/adcp#5555). Any other purpose
  * (`response-signing`, `governance-signing`, unknown) is refused with the same
  * `webhook_signature_key_purpose_invalid` code the verifier emits.
  */

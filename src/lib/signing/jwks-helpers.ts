@@ -20,7 +20,7 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
 /**
  * AdCP JWK purpose discriminator.
  *
- * `'webhook-signing'` is **deprecated** (removed in AdCP 4.0): webhooks are
+ * `'webhook-signing'` is **deprecated** (pending removal — adcontextprotocol/adcp#5555): webhooks are
  * signed with a `'request-signing'` key, differentiated from request
  * signatures by the RFC 9421 `tag`. Verifiers still accept `'webhook-signing'`
  * on the webhook path for backward compatibility, but new signers SHOULD
@@ -55,7 +55,7 @@ export interface PemToAdcpJwkOptions {
    * Purpose binding, enforced by AdCP verifiers at step 8.
    * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`. Also
    *   signs outbound webhook callbacks (differentiated by the RFC 9421 `tag`).
-   * - `'webhook-signing'` — **deprecated** (removed in 4.0); use
+   * - `'webhook-signing'` — **deprecated** (pending removal — adcontextprotocol/adcp#5555); use
    *   `'request-signing'` for webhooks. Still accepted by verifiers for
    *   backward compatibility.
    * - `'response-signing'` — for compatibility with agents that sign JSON

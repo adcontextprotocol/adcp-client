@@ -7,7 +7,7 @@ feat(signing): sign and verify webhooks with the request-signing key
 Webhooks are signed with the agent's `adcp_use: "request-signing"` key — there
 is no separate webhook key purpose. The webhook verifier (step 8) accepts a key
 whose `adcp_use` is `"request-signing"`; the deprecated `"webhook-signing"`
-value is still accepted for backward compatibility (removed in 4.0). Any other
+value is still accepted for backward compatibility (pending removal — adcontextprotocol/adcp#5555). Any other
 purpose (`response-signing`, `governance-signing`, unknown), absent `adcp_use`,
 or a missing `verify` key_op is rejected with
 `webhook_signature_key_purpose_invalid`. `webhook_mode_mismatch` is unchanged —

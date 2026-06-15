@@ -174,7 +174,7 @@ export async function verifyWebhookSignature(
   //
   // Webhooks carry no separate key purpose: the signer uses its
   // `adcp_use: "request-signing"` key (the deprecated `"webhook-signing"`
-  // value is still accepted here for backward compatibility, removed in 4.0).
+  // value is still accepted here for backward compatibility, pending removal — adcontextprotocol/adcp#5555).
   // This is safe because cross-protocol confusion is prevented by the
   // signature `tag` (step 3, `adcp/webhook-signing/v1`, part of the signed
   // base) and mandatory `content-digest` coverage (step 6) — not by the
