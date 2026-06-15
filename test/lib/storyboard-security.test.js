@@ -2390,6 +2390,76 @@ describe('resolveStoryboardsForCapabilities: typed errors', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  // Deprecated `signed-requests` specialism resolves to `universal/signed-requests.yaml`
+  // — must NOT throw unknown_specialism. The universal storyboard runs and the
+  // deprecation notice fires from runner.ts. See adcp-client#2237.
+  it('does NOT throw on deprecated `signed-requests` specialism alias when universal bundle exists', () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [{ id: 'signed-requests', title: 'Signed requests' }],
+    });
+    try {
+      const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+        { specialisms: ['signed-requests'] },
+        { complianceDir: dir }
+      );
+      assert.deepStrictEqual(
+        storyboards.map(s => s.id),
+        ['signed-requests']
+      );
+      assert.deepStrictEqual(not_applicable, []);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still throws unknown_specialism for non-aliased specialisms without a bundle', () => {
+    const dir = makeFakeComplianceCache({
+      universalStoryboards: [{ id: 'signed-requests', title: 'Signed requests' }],
+    });
+    try {
+      assert.throws(
+        () =>
+          resolveStoryboardsForCapabilities(
+            { specialisms: ['not-a-real-specialism'] },
+            { complianceDir: dir }
+          ),
+        err => {
+          assert.ok(err instanceof CapabilityResolutionError);
+          assert.strictEqual(err.code, 'unknown_specialism');
+          assert.strictEqual(err.specialism, 'not-a-real-specialism');
+          return true;
+        }
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws unknown_specialism for deprecated alias when the universal bundle is absent (stale cache)', () => {
+    // Cache has neither specialisms/signed-requests/ nor universal/signed-requests.yaml
+    // (e.g. cache pinned to a pre-3.1 version). The deprecated-alias fast path
+    // must require the universal bundle's presence — otherwise we'd silently
+    // skip a real configuration error.
+    const dir = makeFakeComplianceCache({ universalStoryboards: [] });
+    try {
+      assert.throws(
+        () =>
+          resolveStoryboardsForCapabilities(
+            { specialisms: ['signed-requests'] },
+            { complianceDir: dir }
+          ),
+        err => {
+          assert.ok(err instanceof CapabilityResolutionError);
+          assert.strictEqual(err.code, 'unknown_specialism');
+          assert.strictEqual(err.specialism, 'signed-requests');
+          return true;
+        }
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────
