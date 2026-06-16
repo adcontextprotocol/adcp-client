@@ -27,7 +27,8 @@ export interface SignerKey {
   /**
    * Private JWK. MUST carry `adcp_use` matching the helper being called:
    * - `signRequest` requires `adcp_use: 'request-signing'`
-   * - `signWebhook` requires `adcp_use: 'webhook-signing'`
+   * - `signWebhook` requires `adcp_use: 'request-signing'` (the deprecated
+   *   `'webhook-signing'` is still accepted — adcontextprotocol/adcp#5555)
    * - `signResponse` requires `adcp_use: 'response-signing'`
    *
    * Mismatched or missing `adcp_use` throws at the signer with the same

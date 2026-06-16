@@ -4689,7 +4689,12 @@ async function executeProbeStep(
   } else if (step.task === 'fetch_brand_jwks') {
     httpResult = await probeBrandJwks(options._profile?.raw_capabilities, probeOpts);
   } else if (step.task === 'assert_jwks_purpose') {
-    httpResult = assertJwksPurpose(runState.priorProbes.get('fetch_brand_jwks'), 'webhook-signing');
+    // Webhook delivery is signed with the agent's request-signing key; the
+    // deprecated webhook-signing purpose is still accepted (adcontextprotocol/adcp#5555).
+    httpResult = assertJwksPurpose(runState.priorProbes.get('fetch_brand_jwks'), [
+      'request-signing',
+      'webhook-signing',
+    ]);
   } else if (step.task === 'expect_rate_limit_not_replayed') {
     const specError = validateRateLimitTripSpec(step.rate_limit_trip);
     if (specError) {
@@ -5532,7 +5537,8 @@ async function probeBrandJwks(
   return jwks;
 }
 
-function assertJwksPurpose(prior: HttpProbeResult | undefined, purpose: string): HttpProbeResult {
+function assertJwksPurpose(prior: HttpProbeResult | undefined, purposes: string | readonly string[]): HttpProbeResult {
+  const accepted = typeof purposes === 'string' ? [purposes] : purposes;
   if (!prior || prior.error) {
     return {
       url: prior?.url ?? '',
@@ -5555,7 +5561,12 @@ function assertJwksPurpose(prior: HttpProbeResult | undefined, purpose: string):
   const matching = keys.filter(key => {
     if (!key || typeof key !== 'object') return false;
     const rec = key as { adcp_use?: unknown; status?: unknown; revoked?: unknown };
-    return rec.adcp_use === purpose && rec.status !== 'revoked' && rec.revoked !== true;
+    return (
+      typeof rec.adcp_use === 'string' &&
+      accepted.includes(rec.adcp_use) &&
+      rec.status !== 'revoked' &&
+      rec.revoked !== true
+    );
   });
   if (matching.length === 0) {
     return {
@@ -5563,14 +5574,14 @@ function assertJwksPurpose(prior: HttpProbeResult | undefined, purpose: string):
       status: 0,
       headers: {},
       body: prior.body,
-      error: `JWKS contains no active key with adcp_use="${purpose}"`,
+      error: `JWKS contains no active key with adcp_use in {${accepted.join(', ')}}`,
     };
   }
   return {
     url: prior.url,
     status: 200,
     headers: prior.headers,
-    body: { purpose, matching_key_count: matching.length },
+    body: { accepted_purposes: accepted, matching_key_count: matching.length },
   };
 }
 
