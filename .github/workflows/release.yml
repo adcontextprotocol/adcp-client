@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - backport-2114-adcp-3.0
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -42,6 +43,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+
+      - name: Update AdCP 3.0 npm dist-tag
+        if: steps.changesets.outputs.published == 'true' && github.ref_name == 'backport-2114-adcp-3.0'
+        run: npm dist-tag add "@adcp/sdk@$(node -p "require('./package.json').version")" adcp-3.0
 
       # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
       # OIDC trusted-publishing tokens are scoped to the publishing package, so
