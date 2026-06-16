@@ -8,10 +8,12 @@
  * `static/compliance/source/universal/runner-output-contract.yaml`.
  */
 
-import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
+import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
+import { hasSchemaBundle } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
+import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 import type { TaskResult } from '../types';
 import type {
   A2ATaskEnvelope,
@@ -40,6 +42,10 @@ import { PROBE_TASK_ALLOWLIST } from './test-kit';
  */
 export interface ValidationContext {
   taskName: string;
+  /** AdCP schema bundle to use for strict AJV validation. */
+  adcpVersion?: string;
+  /** Server-declared AdCP version to use for response-shape compatibility decisions. */
+  responseAdcpVersion?: string;
   taskResult?: TaskResult;
   httpResult?: HttpProbeResult;
   agentUrl: string;
@@ -473,14 +479,16 @@ function validateResponseSchema(
         const { _message, ...rest } = rawData as Record<string, unknown>;
         return rest;
       })();
-  const parseResult = schema.safeParse(dataWithoutMessage);
+  const responseAdcpVersion = ctx.responseAdcpVersion ?? ctx.adcpVersion;
+  const dataForValidation = prepareResponseForSchemaValidation(taskName, dataWithoutMessage, responseAdcpVersion);
+  const parseResult = schema.safeParse(dataForValidation);
 
   // Strict (AJV) verdict runs alongside the lenient Zod check so the run
   // report surfaces strictness deltas (issue #820 follow-up). The AJV path
   // enforces `format` keywords and `additionalProperties: false` that Zod's
   // `passthrough()` omits — a response can pass Zod and fail AJV. The step's
   // overall pass/fail stays Zod-driven to preserve backwards compatibility.
-  const strict = computeStrictVerdict(taskName, dataWithoutMessage);
+  const strict = computeStrictVerdict(taskName, dataWithoutMessage, ctx.adcpVersion, ctx.responseAdcpVersion);
 
   // Shape-drift no longer rides on `ValidationResult.warning` — issue #935
   // moved that diagnostic to `StoryboardStepResult.hints[]` as a structured
@@ -534,8 +542,19 @@ function validateResponseSchema(
  * the SDK — notably the brand-rights and governance schemas that live
  * outside the `bundled/` tree the loader walks today).
  */
-function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
-  const outcome = validateResponse(taskName, payload);
+function computeStrictVerdict(
+  taskName: string,
+  payload: unknown,
+  adcpVersion?: string,
+  responseAdcpVersion?: string
+): StrictValidationVerdict | undefined {
+  const validationVersion =
+    responseAdcpVersion && hasSchemaBundle(responseAdcpVersion) ? responseAdcpVersion : adcpVersion;
+  if (responseAdcpVersion && isPre31AdcpVersion(responseAdcpVersion) && !hasSchemaBundle(responseAdcpVersion)) {
+    return undefined;
+  }
+  const payloadForValidation = prepareResponseForSchemaValidation(taskName, payload, responseAdcpVersion);
+  const outcome = validateResponse(taskName, payloadForValidation, validationVersion);
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
   if (outcome.variant === 'skipped') return undefined;

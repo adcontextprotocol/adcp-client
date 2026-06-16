@@ -7,7 +7,7 @@
  */
 
 import { getOrCreateClient, getOrDiscoverProfile, runStep, type TestClient } from '../client';
-import { closeConnections } from '../../protocols';
+import { closeConnections, type VersionEnvelopeMode } from '../../protocols';
 import { getCapturesFromError, withRawResponseCapture, type RawHttpCapture } from '../../protocols/rawResponseCapture';
 import { executeStoryboardTask } from './task-map';
 import {
@@ -37,7 +37,8 @@ import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSucc
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
-import { schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import { resolveBundleKey, schemaAllowsTopLevelField } from '../../validation/schema-loader';
+import { parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -136,6 +137,32 @@ const CONTROLLER_SEEDING_FAILED_DETAIL =
 
 const OAUTH_NOT_ADVERTISED_DETAIL =
   'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
+
+export function applyStoryboardVersionOptions(
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): StoryboardRunOptions {
+  return applyAdcpVersionRunOptions(storyboard.adcp_version, options);
+}
+
+export function applyAdcpVersionRunOptions(
+  defaultAdcpVersion: string | undefined,
+  options: StoryboardRunOptions
+): StoryboardRunOptions {
+  const adcpVersion = options.adcpVersion ?? defaultAdcpVersion;
+  if (adcpVersion === undefined) return options;
+
+  const versionEnvelope = options.versionEnvelope ?? storyboardVersionEnvelopeMode(adcpVersion);
+  if (options.adcpVersion === adcpVersion && options.versionEnvelope === versionEnvelope) return options;
+  return { ...options, adcpVersion, versionEnvelope };
+}
+
+function storyboardVersionEnvelopeMode(adcpVersion: string): VersionEnvelopeMode {
+  const bundleKey = resolveBundleKey(adcpVersion);
+  const major = parseAdcpMajorVersion(bundleKey);
+  if (Number.isFinite(major) && major < 3) return 'none';
+  return 'auto';
+}
 
 /**
  * Suffix appended to the skip detail when the sole-stateful-step exemption
@@ -722,6 +749,7 @@ export async function runStoryboard(
   storyboard: Storyboard,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardResult> {
+  options = applyStoryboardVersionOptions(storyboard, options);
   validateTestKit(options.test_kit);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
@@ -2861,6 +2889,7 @@ export async function runStoryboardStep(
   stepId: string,
   options: StoryboardRunOptions = {}
 ): Promise<StoryboardStepResult> {
+  options = applyStoryboardVersionOptions(storyboard, options);
   validateTestKit(options.test_kit);
   const client = getOrCreateClient(agentUrl, options);
 
@@ -3643,6 +3672,8 @@ async function executeStep(
 
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
+      ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+      ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
       ...(taskResult && { taskResult }),
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
@@ -4064,6 +4095,8 @@ async function executeProbeStep(
 
   const vctx: ValidationContext = {
     taskName: step.task,
+    ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+    ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
     httpResult,
     agentUrl: runState.agentUrl,
     contributions: runState.contributions,

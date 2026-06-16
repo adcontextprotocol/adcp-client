@@ -197,6 +197,12 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    * accepting forward-compatible strings.
    */
   adcpVersion?: AdcpVersion | (string & {});
+  /**
+   * Version-envelope emission mode. Defaults to `auto`. Compliance runners
+   * use `major-only` for strict AdCP 3.0 sellers that reject the newer
+   * release-precision `adcp_version` request field.
+   */
+  versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** Enable debug logging */
   debug?: boolean;
   /** Custom User-Agent header sent with all outbound protocol requests.
@@ -452,6 +458,7 @@ export class SingleAgentClient {
       onActivity: config.onActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
+      versionEnvelope: config.versionEnvelope,
       transport: config.transport,
     });
 

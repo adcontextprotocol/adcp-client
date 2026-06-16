@@ -21,6 +21,8 @@ export interface Storyboard {
   narrative: string;
   /** Maps to a ComplianceTrack for comply() integration */
   track?: string;
+  /** AdCP protocol version this storyboard cache was generated for. */
+  adcp_version?: string;
   /**
    * AdCP spec version that introduced this storyboard, e.g. "3.1".
    * When set, the runner skips the storyboard for agents whose declared

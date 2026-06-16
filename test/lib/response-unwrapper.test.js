@@ -53,6 +53,21 @@ describe('Response Unwrapper', () => {
       assert.strictEqual(result.products[0].name, 'Test Product');
     });
 
+    test('should unwrap markerless 3.0 get_products MCP response without leaking synthetic version marker', () => {
+      const mcpResponse = {
+        structuredContent: {
+          products: [],
+        },
+      };
+
+      const result = unwrapProtocolResponse(mcpResponse, 'get_products', 'mcp', {
+        responseAdcpVersion: '3.0',
+      });
+
+      assert.deepStrictEqual(result.products, []);
+      assert.strictEqual(result.adcp_version, undefined);
+    });
+
     test('should unwrap nested response field in A2A data part', () => {
       // Some agents wrap AdCP responses in an extra { response: { ... } } layer
       const a2aResponse = {

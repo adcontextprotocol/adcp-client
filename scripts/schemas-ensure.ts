@@ -17,19 +17,19 @@
  * No CI-time cost: CI's explicit `sync-schemas:all` populates both
  * caches before tests run, so this guard is a no-op there.
  */
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 
 const REPO_ROOT = path.join(__dirname, '..');
 const CACHE_ROOT = path.join(REPO_ROOT, 'schemas/cache');
 
+function currentAdcpVersion(): string {
+  return readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
+}
+
 function hasV3Cache(): boolean {
-  if (!existsSync(CACHE_ROOT)) return false;
-  // Any `<major>.<minor>.<patch>` directory under cache satisfies the v3
-  // bundle — `sync-schemas` writes the exact upstream version, currently
-  // 3.0.1, but pin updates land here without needing a script change.
-  return readdirSync(CACHE_ROOT, { withFileTypes: true }).some(e => e.isDirectory() && /^\d+\.\d+\.\d+$/.test(e.name));
+  return existsSync(path.join(CACHE_ROOT, currentAdcpVersion()));
 }
 
 function hasV25Cache(): boolean {
