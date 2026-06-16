@@ -1,5 +1,15 @@
 # Changelog
 
+## 7.11.2
+
+### Patch Changes
+
+- fabf2b4: Bump the 7.x AdCP 3.0 schema/compliance pin from 3.0.12 to 3.0.18.
+
+  The schema sync script now falls back to the signed GitHub release asset when the `adcontextprotocol.org` protocol tarball mirror has not caught up yet.
+
+- fabf2b4: Backport strict legacy AdCP storyboard negotiation so compliance discovery can use the legacy `adcp_major_version` envelope without sending `adcp_version` to strict 3.0 sellers.
+
 ## 7.11.1
 
 ### Patch Changes
