@@ -181,10 +181,42 @@ async function postSigned({ url, body, sign, nonce }) {
 
 describe('createAdcpServer: signedRequests auto-wiring', () => {
   describe('startup validation', () => {
-    it('throws when signedRequests config is provided without the specialism', () => {
+    // Canonical 3.1+ path: signedRequests config + request_signing.supported:true,
+    // no deprecated `signed-requests` specialism claim. Should boot. The universal
+    // signed_requests storyboard grades on the capability flag alone — the deprecated
+    // claim is only kept for back-compat through the AdCP 4.0 deprecation window.
+    // See adcp-client#2237.
+    it('does not throw when signedRequests + request_signing.supported:true (no deprecated specialism claim)', () => {
+      assert.doesNotThrow(() => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: false })));
+    });
+
+    it('throws when signedRequests config is provided with neither discovery surface declared', () => {
       assert.throws(
-        () => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: false })),
-        /specialisms.*does not include "signed-requests"/
+        () =>
+          createAdcpServer({
+            ...sellerConfig({ withSignedRequests: true, withSpecialism: false }),
+            capabilities: {
+              features: { inlineCreativeManagement: false },
+              specialisms: [],
+              // request_signing omitted — no discovery surface at all.
+            },
+          }),
+        err => /request_signing\.supported: true.*specialisms.*signed-requests/.test(err.message)
+      );
+    });
+
+    it('throws when signedRequests + specialism omitted + request_signing.supported:false', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            ...sellerConfig({ withSignedRequests: true, withSpecialism: false }),
+            capabilities: {
+              features: { inlineCreativeManagement: false },
+              specialisms: [],
+              request_signing: { supported: false },
+            },
+          }),
+        err => /request_signing\.supported: true.*specialisms.*signed-requests/.test(err.message)
       );
     });
 
@@ -243,12 +275,23 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
     });
 
     it('gives the expected error message shape for each misconfiguration pattern', () => {
-      // config + no claim
+      // config + no discovery surface (no claim AND request_signing absent/supported:false)
       assert.throws(
-        () => createAdcpServer(sellerConfig({ withSignedRequests: true, withSpecialism: false })),
-        err => /signedRequests.*is configured but.*specialisms.*does not include "signed-requests"/.test(err.message)
+        () =>
+          createAdcpServer({
+            ...sellerConfig({ withSignedRequests: true, withSpecialism: false }),
+            capabilities: {
+              features: { inlineCreativeManagement: false },
+              specialisms: [],
+              request_signing: { supported: false },
+            },
+          }),
+        err =>
+          /signedRequests.*is configured but neither.*request_signing\.supported: true.*specialisms.*signed-requests/.test(
+            err.message
+          )
       );
-      // claim + supported:false — third guard
+      // claim + supported:false — third guard (back-compat path requires capability flag too)
       assert.throws(
         () =>
           createAdcpServer({

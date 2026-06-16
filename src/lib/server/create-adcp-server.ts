@@ -1080,11 +1080,26 @@ export interface AdcpCapabilitiesOverrides {
  * mounts it as the transport-layer `preTransport` hook, so every inbound MCP
  * request passes the verifier before reaching the JSON-RPC router.
  *
- * A seller that declares the `signed-requests` specialism in
- * `capabilities.specialisms` MUST provide this config, and vice-versa — both
- * together or neither. `createAdcpServer` throws at construction time when
- * only one is set, closing the footgun where claiming the specialism
- * accepts unsigned mutating traffic.
+ * A seller wiring this config MUST also publish a buyer-visible discovery
+ * surface in `capabilities`, one of:
+ *
+ * - **3.1+ canonical (recommended):** set
+ *   `capabilities.request_signing.supported: true`. Buyers learn the agent
+ *   verifies signatures from `get_adcp_capabilities`; no deprecated specialism
+ *   claim required. The universal `signed_requests` storyboard grades on this
+ *   signal alone.
+ * - **Back-compat:** add `'signed-requests'` to `capabilities.specialisms`.
+ *   The 3.0-era enum value is preserved through the AdCP 4.0 deprecation cycle
+ *   (adcp#3075); when this path is taken the runner emits
+ *   `signed_requests_specialism_deprecated` (adcp-client#2082, adcp#4796).
+ *
+ * `createAdcpServer` throws at construction time when `signedRequests` is set
+ * but neither discovery surface is declared, closing the footgun where the
+ * verifier silently rejects every signed request from buyers who never learned
+ * to sign. The inverse (specialism or capability declared without a
+ * `signedRequests` config) is logged loudly but not thrown — legacy servers
+ * that hand-build the middleware via `serve({ preTransport })` stay
+ * conformant.
  *
  * `jwks`, `replayStore`, and `revocationStore` should be hoisted outside
  * the agent factory so a single verifier instance serves every request —
@@ -3645,26 +3660,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }
   }
 
-  // Enforce lock-step between the `signed-requests` specialism claim and the
-  // verifier config for the auto-wiring path. When `signedRequests` is set
-  // but the specialism isn't declared, buyers can't discover the signing
-  // requirement from `get_adcp_capabilities` — they won't sign, the
-  // verifier rejects every mutating call, and the agent is dead on arrival.
-  // That's unambiguously wrong, so we throw.
+  // Enforce that the verifier config has a buyer-visible discovery surface.
+  // When `signedRequests` is set but neither the deprecated `signed-requests`
+  // specialism claim NOR `capabilities.request_signing.supported: true` is
+  // declared, buyers can't discover the signing requirement from
+  // `get_adcp_capabilities` — they won't sign, the verifier rejects every
+  // mutating call, and the agent is dead on arrival. Two discovery surfaces
+  // are accepted:
   //
-  // The opposite direction — claiming the specialism without a
-  // `signedRequests` config — is only wrong when the agent also doesn't
-  // wire a verifier via `serve({ preTransport })`. Legacy servers that
-  // hand-build the middleware fall into this case and are still conformant.
-  // We log a loud error so operators notice (matching the idempotency
-  // guardrail precedent) but don't throw, leaving the manual path working.
+  // - **3.1+ canonical (recommended):** `capabilities.request_signing.supported: true`.
+  //   The universal signed_requests storyboard runs on this signal alone and
+  //   the runner emits `request_signing.required` notices for buyers.
+  // - **Back-compat:** `specialisms: ['signed-requests']`. The 3.0-era enum
+  //   is preserved through the AdCP 4.0 deprecation cycle (adcp#3075). The
+  //   runner emits `signed_requests_specialism_deprecated` notice when this
+  //   path is taken (adcp-client#2082, adcp#4796).
+  //
+  // The opposite direction — advertising signing without a `signedRequests`
+  // config — is only wrong when the agent also doesn't wire a verifier via
+  // `serve({ preTransport })`. Legacy servers that hand-build the middleware
+  // fall into this case and are still conformant. We log a loud error so
+  // operators notice (matching the idempotency guardrail precedent) but
+  // don't throw, leaving the manual path working.
   const specialismsClaimed = capConfig?.specialisms ?? [];
   const claimsSignedRequests = specialismsClaimed.includes('signed-requests');
-  if (signedRequests && !claimsSignedRequests) {
+  const declaresRequestSigningCapability = capConfig?.request_signing?.supported === true;
+  if (signedRequests && !claimsSignedRequests && !declaresRequestSigningCapability) {
     throw new Error(
-      'createAdcpServer: `signedRequests` is configured but `capabilities.specialisms` does not include "signed-requests". ' +
-        'Add "signed-requests" to the specialisms list — buyers discover the signing requirement from get_adcp_capabilities, ' +
-        "and omitting the claim means they won't sign their requests."
+      'createAdcpServer: `signedRequests` is configured but neither ' +
+        '`capabilities.request_signing.supported: true` nor `capabilities.specialisms: ["signed-requests"]` is declared. ' +
+        'Buyers discover the signing requirement from get_adcp_capabilities — ' +
+        'set `capabilities.request_signing = { supported: true, ... }` (canonical 3.1+ form, recommended) ' +
+        'or claim the deprecated `signed-requests` specialism (back-compat). ' +
+        "Omitting both surfaces means buyers won't sign their requests."
     );
   }
   if (claimsSignedRequests && !signedRequests) {
