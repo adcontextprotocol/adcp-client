@@ -44,12 +44,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
 
-      - name: Update AdCP 3.0 npm dist-tag
-        if: github.ref_name == 'backport-2114-adcp-3.0'
-        run: |
-          unset NODE_AUTH_TOKEN NPM_CONFIG_USERCONFIG
-          npm dist-tag add "@adcp/sdk@$(node -p "require('./package.json').version")" adcp-3.0
-
       # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
       # OIDC trusted-publishing tokens are scoped to the publishing package, so
       # the token issued for @adcp/sdk's publish does not have deprecate rights
