@@ -1,5 +1,20 @@
 # Changelog
 
+## 9.0.0-beta.30
+
+### Minor Changes
+
+- b73b728: Add RegistryClient helpers for AAO brand logo assets, including listing approved or pending logos by domain and uploading community logo assets for review.
+- a22d284: Expose `resolveTaskState()` to reconcile `TaskResult.status` with task-envelope status values in response payloads.
+
+### Patch Changes
+
+- 16ee37f: fix(deps): resolve npm audit advisories via non-breaking lockfile bumps
+
+  `npm audit fix` (non-breaking): `ws` 8.20.1 → 8.21.0 (GHSA-96hv-2xvq-fx4p, high — memory-exhaustion DoS; the only runtime dep affected), `tar` 7.5.15 → 7.5.16 (GHSA-vmf3-w455-68vh, moderate — build-time devDependency) and `markdown-it` 14.1.1 → 14.2.0 (GHSA-6v5v-wf23-fmfq, moderate — dev-only, via typedoc). Lockfile-only; no `package.json` range changes. Incidentally re-resolves a few unrelated dev-only transitives to satisfy the tree (`js-yaml` 4.1.1 → 4.2.0, `hono` 4.12.23 → 4.12.25) — distinct from the `@changesets/*` → `js-yaml` advisory chain, which requires a breaking major bump and is left for a separate maintainer decision.
+
+- 076e5ea: Thread storyboard contribution flags through `runStoryboardStep()` and the `adcp storyboard step` CLI so step-by-step runners preserve branch-set state for synthetic `assert_contribution` checks.
+
 ## 9.0.0-beta.29
 
 ### Minor Changes
