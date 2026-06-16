@@ -3481,8 +3481,9 @@ async function runStoryboardStepBody(
   const responseDerivedNotApplicableContextKeys = new Map<string, string>(
     Object.entries(options.response_derived_not_applicable_context_keys ?? {})
   );
+  const contributions = new Set(options.contributions ?? []);
   const result = await executeStep(client, found.step, found.phaseId, context, allSteps, options, {
-    contributions: new Set(),
+    contributions,
     priorStepResults: new Map(),
     priorProbes: new Map(),
     agentUrl,
@@ -3495,13 +3496,19 @@ async function runStoryboardStepBody(
     agentLibraryVersion: profile?.library_version,
   });
 
+  if (!result.skipped && result.passed && found.step.contributes_to) {
+    if (evalContributesIf(found.step.contributes_if, new Map())) {
+      contributions.add(found.step.contributes_to);
+    }
+  }
+
   if (!clientResolution.reusedShared) {
     await closeConnections(options.protocol);
   }
 
   if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
 
-  return result;
+  return { ...result, contributions: Array.from(contributions) };
 }
 
 // ────────────────────────────────────────────────────────────

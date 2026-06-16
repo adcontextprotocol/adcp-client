@@ -1363,6 +1363,13 @@ export interface StoryboardRunOptions extends TestOptions {
    * semantics as full `runStoryboard` runs.
    */
   response_derived_not_applicable_context_keys?: Record<string, string>;
+  /**
+   * Contribution flags accumulated by prior `runStoryboardStep` invocations.
+   * Thread this from `StoryboardStepResult.contributions` so synthetic
+   * aggregate steps such as `assert_contribution` see the same branch-set
+   * state they would see inside a full `runStoryboard` execution.
+   */
+  contributions?: string[];
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
   /** Agent's available tools for storyboard/step-level tool gates. */
@@ -2127,6 +2134,12 @@ export interface StoryboardStepResult {
    * `not_applicable` rather than `prerequisite_failed`.
    */
   response_derived_not_applicable_context_keys?: Record<string, string>;
+  /**
+   * Contribution flags accumulated after this step. Thread back into
+   * `StoryboardRunOptions.contributions` on the next `runStoryboardStep`
+   * invocation when orchestrating a storyboard step-by-step.
+   */
+  contributions?: string[];
   error?: string;
   /**
    * Structured AdCP error forwarded from the transport layer when the step failed.

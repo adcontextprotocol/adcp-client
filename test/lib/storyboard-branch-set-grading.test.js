@@ -2,7 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
-const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { parseStoryboard } = require('../../dist/lib/testing/storyboard/loader');
 
 /**
@@ -234,6 +234,134 @@ phases:
       assert.strictEqual(result.phases[1].steps[0].skip_reason, 'peer_branch_taken');
       assert.strictEqual(result.phases[1].steps[0].skip.detail, 'handled contributed by accept.a — reject is moot');
       assert.strictEqual(result.overall_passed, true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('normalizes programmatic `contributes: true` storyboards before recording contributions', async () => {
+    const { server, url } = await startStub(500, {});
+    try {
+      const storyboard = {
+        id: 'programmatic_shorthand_sb',
+        version: '1.0.0',
+        title: 'Programmatic branch set shorthand',
+        category: 'test',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'past_start_reject',
+            title: 'Reject past start',
+            optional: true,
+            branch_set: { id: 'past_start_handled', semantics: 'any_of' },
+            steps: [
+              {
+                id: 'reject_step',
+                title: 'reject',
+                task: 'list_creatives',
+                auth: 'none',
+                expect_error: true,
+                contributes: true,
+                validations: [{ check: 'http_status', value: 500, description: '' }],
+              },
+            ],
+          },
+          {
+            id: 'gate',
+            title: 'gate',
+            steps: [
+              {
+                id: 'assert_past_start_handled',
+                title: 'Require past_start_handled from either path',
+                task: 'assert_contribution',
+                validations: [
+                  {
+                    check: 'any_of',
+                    allowed_values: ['past_start_handled'],
+                    description: '',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = await runStoryboard(url, storyboard, runOpts);
+
+      assert.strictEqual(storyboard.phases[0].steps[0].contributes_to, 'past_start_handled');
+      assert.strictEqual(storyboard.phases[0].steps[0].contributes, undefined);
+      assert.strictEqual(result.phases[0].steps[0].passed, true);
+      assert.strictEqual(result.phases[1].steps[0].passed, true);
+      assert.strictEqual(result.overall_passed, true);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('threads contributions through stateless step-by-step runs for assert_contribution', async () => {
+    const { server, url } = await startStub(500, {});
+    try {
+      const storyboard = {
+        id: 'stepwise_contributions_sb',
+        version: '1.0.0',
+        title: 'Stepwise branch set contribution',
+        category: 'test',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          {
+            id: 'past_start_reject',
+            title: 'Reject past start',
+            optional: true,
+            branch_set: { id: 'past_start_handled', semantics: 'any_of' },
+            steps: [
+              {
+                id: 'reject_step',
+                title: 'reject',
+                task: 'list_creatives',
+                auth: 'none',
+                expect_error: true,
+                contributes: true,
+                validations: [{ check: 'http_status', value: 500, description: '' }],
+              },
+            ],
+          },
+          {
+            id: 'gate',
+            title: 'gate',
+            steps: [
+              {
+                id: 'assert_past_start_handled',
+                title: 'Require past_start_handled from either path',
+                task: 'assert_contribution',
+                validations: [
+                  {
+                    check: 'any_of',
+                    allowed_values: ['past_start_handled'],
+                    description: '',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const first = await runStoryboardStep(url, storyboard, 'reject_step', runOpts);
+      assert.deepStrictEqual(first.contributions, ['past_start_handled']);
+
+      const gate = await runStoryboardStep(url, storyboard, 'assert_past_start_handled', {
+        ...runOpts,
+        contributions: first.contributions,
+      });
+      assert.strictEqual(gate.passed, true);
+      assert.deepStrictEqual(gate.contributions, ['past_start_handled']);
     } finally {
       server.close();
     }

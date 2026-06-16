@@ -873,6 +873,31 @@ function parseJsonFlag(flagName, value) {
   }
 }
 
+function parseStringListFlag(flagName, value) {
+  const parseValue = raw => {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[') || trimmed.startsWith('@')) {
+      const parsed = trimmed.startsWith('@') ? parseJsonFlag(flagName, trimmed) : JSON.parse(trimmed);
+      if (!Array.isArray(parsed) || parsed.some(v => typeof v !== 'string')) {
+        console.error(`${flagName} must be a JSON array of strings or a comma-separated string`);
+        process.exit(2);
+      }
+      return parsed;
+    }
+    return trimmed
+      .split(',')
+      .map(v => v.trim())
+      .filter(Boolean);
+  };
+
+  try {
+    return parseValue(value);
+  } catch (e) {
+    console.error(`Invalid value for ${flagName}: ${e.message}`);
+    process.exit(2);
+  }
+}
+
 function closestFlag(input, known) {
   let best = null;
   let bestDist = Infinity;
@@ -927,11 +952,21 @@ function parseAgentOptions(args) {
     brief = args[briefIndex + 1];
   }
 
-  // Storyboard-specific flags (--context, --request) with JSON values
+  // Storyboard-specific flags with step-threaded state values.
   const contextIndex = args.indexOf('--context');
   let contextValue = null;
   if (contextIndex !== -1 && contextIndex + 1 < args.length && !args[contextIndex + 1].startsWith('--')) {
     contextValue = args[contextIndex + 1];
+  }
+
+  const contributionsIndex = args.indexOf('--contributions');
+  let contributionsValue = null;
+  if (
+    contributionsIndex !== -1 &&
+    contributionsIndex + 1 < args.length &&
+    !args[contributionsIndex + 1].startsWith('--')
+  ) {
+    contributionsValue = args[contributionsIndex + 1];
   }
 
   const requestIndex = args.indexOf('--request');
@@ -1110,6 +1145,7 @@ function parseAgentOptions(args) {
     protocolFlag,
     brief,
     contextValue,
+    contributionsValue,
     requestValue,
     tracksValue,
     storyboardsValue,
@@ -1816,6 +1852,8 @@ WEBHOOK OPTIONS:
 
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
+  --contributions JSON|CSV
+                      Pass contribution flags from previous step (step only)
   --request JSON      Override sample_request for the step (step only)
   --json              JSON output (recommended for LLM consumption)
   --auth TOKEN        Authentication token (or 'user:pass' with --auth-scheme basic)
@@ -4473,12 +4511,17 @@ async function handleStoryboardStepCmd(args) {
     oauthClientCredentials: resolvedOauthClientCredentials,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme);
 
-  // Parse --context and --request flags (supports inline JSON or @file.json)
+  // Parse --context, --contributions, and --request flags (supports inline JSON or @file.json)
   let context = {};
+  let contributions;
   let request;
   const contextIndex = args.indexOf('--context');
   if (contextIndex !== -1 && args[contextIndex + 1]) {
     context = parseJsonFlag('--context', args[contextIndex + 1]);
+  }
+  const contributionsIndex = args.indexOf('--contributions');
+  if (contributionsIndex !== -1 && args[contributionsIndex + 1]) {
+    contributions = parseStringListFlag('--contributions', args[contributionsIndex + 1]);
   }
   const requestIndex = args.indexOf('--request');
   if (requestIndex !== -1 && args[requestIndex + 1]) {
@@ -4488,6 +4531,7 @@ async function handleStoryboardStepCmd(args) {
   const options = {
     protocol,
     context,
+    ...(contributions && { contributions }),
     request,
     ...(complianceVersion && { adcpVersion: complianceVersion }),
     ...(schemaRoot && { schemaRoot }),
