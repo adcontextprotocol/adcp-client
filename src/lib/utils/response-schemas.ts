@@ -8,6 +8,21 @@
 import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import { SyncCreativesResponseStrictSchema } from '../validation/sync-creatives';
+import { isPre31AdcpVersion } from './adcp-version-config';
+
+export function prepareResponseForSchemaValidation(
+  toolName: string,
+  data: unknown,
+  responseAdcpVersion?: string
+): unknown {
+  if (toolName !== 'get_products') return data;
+  if (!isPre31AdcpVersion(responseAdcpVersion)) return data;
+  if (data == null || typeof data !== 'object' || Array.isArray(data)) return data;
+
+  const response = data as Record<string, unknown>;
+  if (response.adcp_version !== undefined || response.adcp_major_version !== undefined) return data;
+  return { ...response, adcp_version: '3.0' };
+}
 
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy

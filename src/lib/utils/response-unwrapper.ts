@@ -32,7 +32,7 @@ import type {
   GetSignalsResponse,
   ActivateSignalResponse,
 } from '../types/tools.generated';
-import { TOOL_RESPONSE_SCHEMAS } from './response-schemas';
+import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from './response-schemas';
 
 /**
  * Typed error thrown when the response unwrapper's Zod schema rejects an
@@ -106,7 +106,7 @@ export function unwrapProtocolResponse(
   protocolResponse: any,
   toolName?: string,
   protocol?: 'mcp' | 'a2a',
-  options?: { filterInvalidProducts?: boolean }
+  options?: { filterInvalidProducts?: boolean; responseAdcpVersion?: string }
 ): AdCPResponse & { _message?: string } {
   if (!protocolResponse) {
     throw new Error('Protocol response is null or undefined');
@@ -158,7 +158,12 @@ export function unwrapProtocolResponse(
     if (schema) {
       // Strip _message before validation — it's a text summary added by the unwrapper,
       // not part of the AdCP response schema. Intersection with union schemas fails in Zod v4.
-      const { _message: _msg, ...dataToValidate } = unwrapped as Record<string, unknown>;
+      const { _message: _msg, ...stripped } = unwrapped as Record<string, unknown>;
+      const dataToValidate = prepareResponseForSchemaValidation(
+        toolName,
+        stripped,
+        options?.responseAdcpVersion
+      ) as Record<string, unknown>;
       const result = schema.safeParse(dataToValidate);
       if (!result.success) {
         // When filterInvalidArrayItems is enabled and this is a get_products response,
@@ -166,7 +171,11 @@ export function unwrapProtocolResponse(
         if (options?.filterInvalidProducts && toolName === 'get_products') {
           const filtered = filterInvalidProducts(schema, dataToValidate);
           if (filtered) {
-            const validated = filtered as unknown as AdCPResponse & { _message?: string };
+            let validated = filtered as unknown as AdCPResponse & { _message?: string };
+            if (!('adcp_version' in stripped)) {
+              const { adcp_version: _v, ...rest } = validated as unknown as Record<string, unknown>;
+              validated = rest as unknown as typeof validated;
+            }
             if (_msg) validated._message = _msg as string;
             return retag(validated);
           }
@@ -189,7 +198,11 @@ export function unwrapProtocolResponse(
       }
 
       // Re-attach _message after validation so it's available for text summaries
-      const validated = result.data as AdCPResponse & { _message?: string };
+      let validated = result.data as AdCPResponse & { _message?: string };
+      if (!('adcp_version' in stripped)) {
+        const { adcp_version: _v, ...rest } = validated as unknown as Record<string, unknown>;
+        validated = rest as unknown as typeof validated;
+      }
       if (_msg) validated._message = _msg as string;
       return retag(validated);
     }
@@ -544,7 +557,7 @@ export function isAdcpError(response: any): boolean {
  * Uses Zod schemas to validate the response structure matches the expected
  * success response format for the given task.
  */
-export function isAdcpSuccess(response: any, taskName: string): boolean {
+export function isAdcpSuccess(response: any, taskName: string, responseAdcpVersion?: string): boolean {
   // First check if it's an error response
   if (isAdcpError(response)) {
     return false;
@@ -553,7 +566,8 @@ export function isAdcpSuccess(response: any, taskName: string): boolean {
   // Try to validate with Zod schema if available
   const schema = TOOL_RESPONSE_SCHEMAS[taskName];
   if (schema) {
-    const { _message: _, ...dataToValidate } = (response ?? {}) as Record<string, unknown>;
+    const { _message: _, ...stripped } = (response ?? {}) as Record<string, unknown>;
+    const dataToValidate = prepareResponseForSchemaValidation(taskName, stripped, responseAdcpVersion);
     const result = schema.safeParse(dataToValidate);
     return result.success;
   }

@@ -21,6 +21,8 @@ import path from 'path';
 import * as tar from 'tar';
 
 const ADCP_BASE_URL = process.env.ADCP_BASE_URL || 'https://adcontextprotocol.org';
+const ADCP_RELEASE_ASSET_BASE_URL =
+  process.env.ADCP_RELEASE_ASSET_BASE_URL || 'https://github.com/adcontextprotocol/adcp/releases/download';
 const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
@@ -151,14 +153,14 @@ async function fetchText(url: string): Promise<string> {
  *   - Sidecars present but `cosign` binary missing → checksum-only, log install hint.
  *   - Sidecars present and `cosign` available → verify; throw on failure.
  */
-async function verifyCosignSignature(tgzPath: string, version: string): Promise<void> {
+async function verifyCosignSignature(tgzPath: string, version: string, tgzUrl: string): Promise<void> {
   if (version === 'latest') {
     console.log('ℹ️  latest.tgz is intentionally unsigned upstream (checksum-only trust).');
     return;
   }
 
-  const sigUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.sig`;
-  const crtUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz.crt`;
+  const sigUrl = `${tgzUrl}.sig`;
+  const crtUrl = `${tgzUrl}.crt`;
 
   const [sigProbe, crtProbe] = await Promise.all([
     fetch(sigUrl, { method: 'HEAD' }),
@@ -315,14 +317,31 @@ function syncSkillsFromBundle(extractRoot: string): void {
  * endpoint returns 404 (caller may fall back to per-file schema sync).
  */
 async function syncFromTarball(version: string): Promise<boolean> {
-  const tgzUrl = `${ADCP_BASE_URL}/protocol/${version}.tgz`;
-  const shaUrl = `${tgzUrl}.sha256`;
+  const candidates = [
+    `${ADCP_BASE_URL}/protocol/${version}.tgz`,
+    ...(version === 'latest' ? [] : [`${ADCP_RELEASE_ASSET_BASE_URL}/v${version}/${version}.tgz`]),
+  ];
+  let tgzUrl: string | undefined;
 
-  const probe = await fetch(tgzUrl, { method: 'HEAD' });
-  if (probe.status === 404) {
-    console.warn(`⚠️  Tarball not found at ${tgzUrl} (404). Falling back to per-file sync.`);
+  for (const candidate of candidates) {
+    const probe = await fetch(candidate, { method: 'HEAD' });
+    if (probe.ok) {
+      tgzUrl = candidate;
+      break;
+    }
+    if (probe.status === 404) {
+      console.warn(`⚠️  Tarball not found at ${candidate} (404).`);
+      continue;
+    }
+    throw new Error(`Unexpected status for protocol tarball ${candidate}: ${probe.status} ${probe.statusText}`);
+  }
+
+  if (!tgzUrl) {
+    console.warn(`⚠️  No protocol tarball found for ${version}. Falling back to per-file sync.`);
     return false;
   }
+
+  const shaUrl = `${tgzUrl}.sha256`;
 
   console.log(`📥 Fetching protocol bundle: ${tgzUrl}`);
   const [tgzBuf, shaText] = await Promise.all([fetchBinary(tgzUrl), fetchText(shaUrl)]);
@@ -343,7 +362,7 @@ async function syncFromTarball(version: string): Promise<boolean> {
 
     // Cosign keyless signature verification (adcontextprotocol/adcp#2273).
     // Best-effort: latest is unsigned, sidecars may be absent on older releases.
-    await verifyCosignSignature(tgzPath, version);
+    await verifyCosignSignature(tgzPath, version, tgzUrl);
 
     await tar.x({ file: tgzPath, cwd: workDir });
 

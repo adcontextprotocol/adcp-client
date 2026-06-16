@@ -5,6 +5,8 @@
 import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
 import type { WebhookReceiver } from './storyboard/webhook-receiver';
+import type { AdcpVersion } from '../version';
+import type { VersionEnvelopeMode } from '../protocols';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -73,6 +75,17 @@ export type TestScenario =
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
+  /**
+   * AdCP protocol version the test client should speak. Storyboard runners
+   * set this from the compliance cache version instead of relying on the
+   * installed package default.
+   */
+  adcpVersion?: AdcpVersion | (string & {});
+  /**
+   * Version-envelope emission mode. Defaults to `auto`; compliance discovery
+   * may negotiate `major-only` for strict pre-3.1 agents.
+   */
+  versionEnvelope?: VersionEnvelopeMode;
   /** Custom User-Agent string sent with all outbound requests */
   userAgent?: string;
   // Brand reference for product discovery (preferred over brand_manifest)
@@ -222,6 +235,11 @@ export interface TestOptions {
   _client?: unknown;
   /** @internal Pre-discovered profile from comply() — skips per-scenario discovery */
   _profile?: AgentProfile;
+  /**
+   * @internal Server-declared AdCP version learned during capability discovery.
+   * Storyboard response validation uses this for version-skew compatibility.
+   */
+  _serverAdcpVersion?: string;
   /** @internal Test controller capabilities from comply() — set when comply_test_controller detected */
   _controllerCapabilities?: ControllerDetection;
   /** @internal Pre-created webhook receiver, used for unit-test injection. When
@@ -287,6 +305,16 @@ export interface AgentProfile {
    * storyboard introduced in a later minor version.
    */
   adcp_major_versions?: number[];
+  /**
+   * Exact/release-precision versions from
+   * `get_adcp_capabilities.adcp.supported_versions`.
+   */
+  adcp_supported_versions?: string[];
+  /**
+   * Seller's full AdCP build version from
+   * `get_adcp_capabilities.adcp.build_version`.
+   */
+  adcp_build_version?: string;
   supported_protocols?: string[];
   /** Specialism claims from get_adcp_capabilities.specialisms */
   specialisms?: string[];

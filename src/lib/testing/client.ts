@@ -16,7 +16,7 @@ import type {
   BrandReference,
 } from '../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
-import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
+import { prepareResponseForSchemaValidation, TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
 import { classifyProbeUrl } from '../utils/probe-policy';
 import { SsrfRefusedError } from '../net/ssrf-fetch';
@@ -176,6 +176,8 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
     validation: { logSchemaViolations: false },
+    ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
+    ...(options.versionEnvelope && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
   });
 
@@ -357,6 +359,9 @@ export async function discoverAgentProfile(
         profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);
         profile.adcp_version = parsed.version;
+        profile.adcp_major_versions = parsed.majorVersions;
+        if (parsed.supportedVersions !== undefined) profile.adcp_supported_versions = parsed.supportedVersions;
+        if (parsed.buildVersion !== undefined) profile.adcp_build_version = parsed.buildVersion;
         profile.supported_protocols = parsed.protocols;
         profile.supports_governance = parsed.protocols.includes('governance');
         profile.supports_si = parsed.protocols.includes('sponsored_intelligence');
@@ -657,7 +662,7 @@ export async function discoverSignals(
  *  - constraint keyword (`minimum`, `maximum`, `enum`, `format`, …) — the
  *    field is present but violates a JSON Schema keyword constraint.
  */
-export function validateResponseSchema(toolName: string, data: unknown): TestStepResult {
+export function validateResponseSchema(toolName: string, data: unknown, responseAdcpVersion?: string): TestStepResult {
   const schema = TOOL_RESPONSE_SCHEMAS[toolName];
   if (!schema) {
     return {
@@ -669,7 +674,7 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     };
   }
 
-  const result = schema.safeParse(data);
+  const result = schema.safeParse(prepareResponseForSchemaValidation(toolName, data, responseAdcpVersion));
   if (result.success) {
     return {
       step: `Schema validation: ${toolName}`,

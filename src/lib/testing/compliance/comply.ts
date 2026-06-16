@@ -11,7 +11,7 @@
 import { createTestClient, discoverAgentProfile } from '../client';
 import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
-import { runStoryboard } from '../storyboard/runner';
+import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate } from './spec-conformance';
 
@@ -25,6 +25,7 @@ import {
   resolveStoryboardsForCapabilities,
   resolveBundleOrStoryboard,
   listAllComplianceStoryboards,
+  loadComplianceIndex,
 } from '../storyboard/compliance';
 import type { NotApplicableStoryboard } from '../storyboard/compliance';
 import type { RunnerNotice, Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
@@ -38,9 +39,11 @@ import type {
   OverallStatus,
 } from './types';
 import { closeConnections } from '../../protocols';
+import type { VersionEnvelopeMode } from '../../protocols';
 import { detectController, hasTestController } from '../test-controller';
 import type { ControllerDetection } from '../test-controller';
 import { randomBytes } from 'crypto';
+import { isPre31AdcpVersion } from '../../utils/adcp-version-config';
 
 /**
  * All compliance tracks in display order.
@@ -614,6 +617,105 @@ function resolveFromCapabilities(profile: AgentProfile): {
   return { storyboards, not_applicable };
 }
 
+export function applyNegotiatedComplianceVersionOptions(
+  profile: AgentProfile,
+  options: TestOptions,
+  params: {
+    complianceVersion: string;
+    callerAdcpVersion?: string;
+    callerVersionEnvelope?: VersionEnvelopeMode;
+  }
+): TestOptions {
+  const responseAdcpVersion = inferServerAdcpVersion(profile, params.complianceVersion, params.callerAdcpVersion);
+  let next: TestOptions =
+    responseAdcpVersion && options._serverAdcpVersion !== responseAdcpVersion
+      ? { ...options, _serverAdcpVersion: responseAdcpVersion }
+      : options;
+
+  if (params.callerVersionEnvelope !== undefined) return next;
+
+  const negotiatedEnvelope = negotiateVersionEnvelope(profile, params.complianceVersion);
+  if (negotiatedEnvelope && next.versionEnvelope !== negotiatedEnvelope) {
+    next = { ...next, versionEnvelope: negotiatedEnvelope };
+  }
+  return next;
+}
+
+function inferServerAdcpVersion(
+  profile: AgentProfile,
+  complianceVersion: string,
+  callerAdcpVersion: string | undefined
+): string | undefined {
+  const discoveredVersion = inferDiscoveredServerAdcpVersion(profile, complianceVersion);
+  if (discoveredVersion) return discoveredVersion;
+  if (callerAdcpVersion) return callerAdcpVersion;
+  return complianceVersion;
+}
+
+function inferDiscoveredServerAdcpVersion(profile: AgentProfile, complianceVersion: string): string | undefined {
+  const supported = profile.adcp_supported_versions;
+  if (supported?.length) {
+    if (isComplianceVersionSupported(complianceVersion, supported)) return complianceVersion;
+    const sorted = [...supported].sort(compareAdcpVersionStrings);
+    return sorted[sorted.length - 1];
+  }
+  if (profile.adcp_build_version) return profile.adcp_build_version;
+  if (isLegacyPre31TypescriptSdkProfile(profile)) return '3.0';
+  if (isLegacyV2Profile(profile)) return 'v2.5';
+  return undefined;
+}
+
+function negotiateVersionEnvelope(profile: AgentProfile, complianceVersion: string): VersionEnvelopeMode | undefined {
+  if (isLegacyV2Profile(profile)) return 'none';
+  const supported = profile.adcp_supported_versions;
+  if (supported?.length && supported.every(isPre31AdcpVersion)) return 'major-only';
+  if (profile.adcp_build_version && isPre31AdcpVersion(profile.adcp_build_version)) return 'major-only';
+  if (isLegacyPre31TypescriptSdkProfile(profile)) return 'major-only';
+  if (isPre31AdcpVersion(complianceVersion) && isLegacyV3Profile(profile)) return 'major-only';
+  return undefined;
+}
+
+function isLegacyV2Profile(profile: AgentProfile): boolean {
+  if (profile.adcp_version === 'v2') return true;
+  const majors = profile.adcp_major_versions ?? [];
+  if (majors.length > 0) return majors.includes(2) && !majors.includes(3);
+  return !profile.tools.includes('get_adcp_capabilities');
+}
+
+function isLegacyV3Profile(profile: AgentProfile): boolean {
+  if (profile.adcp_version === 'v3') return true;
+  if (profile.adcp_major_versions?.includes(3)) return true;
+  return profile.tools.includes('get_adcp_capabilities') && !profile.adcp_supported_versions?.length;
+}
+
+function isLegacyPre31TypescriptSdkProfile(profile: AgentProfile): boolean {
+  const match = /^@adcp\/(?:client|sdk)@(\d+)\./.exec(profile.library_version ?? '');
+  if (!match?.[1]) return false;
+  const major = Number.parseInt(match[1], 10);
+  return Number.isFinite(major) && major < 8;
+}
+
+function isComplianceVersionSupported(version: string, supportedVersions: readonly string[]): boolean {
+  if (supportedVersions.includes(version)) return true;
+  const requested = parseAdcpVersionPair(version);
+  return supportedVersions.some(candidate => {
+    const supported = parseAdcpVersionPair(candidate);
+    return requested[0] === supported[0] && requested[1] === supported[1];
+  });
+}
+
+function compareAdcpVersionStrings(a: string, b: string): number {
+  const [aMajor, aMinor] = parseAdcpVersionPair(a);
+  const [bMajor, bMinor] = parseAdcpVersionPair(b);
+  return aMajor - bMajor || aMinor - bMinor || a.localeCompare(b);
+}
+
+function parseAdcpVersionPair(value: string): [number, number] {
+  const trimmed = value.startsWith('v') ? value.slice(1) : value;
+  const match = /^(\d+)(?:\.(\d+))?/.exec(trimmed);
+  return [Number.parseInt(match?.[1] ?? '0', 10), Number.parseInt(match?.[2] ?? '0', 10)];
+}
+
 /**
  * Expand `requires_scenarios` references against the full compliance cache.
  * A specialism bundle may reference scenarios that live in its parent protocol
@@ -891,11 +993,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   const signal = abortController?.signal;
 
   try {
-    const effectiveOptions: TestOptions = {
+    const complianceIndex = loadComplianceIndex();
+    let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
       ...testOptions,
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
-    };
+    });
 
     // Check for abort before starting
     signal?.throwIfAborted();
@@ -906,8 +1009,21 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Discover agent capabilities once and share across all storyboards.
     // Pass the combined signal so a slow/unresponsive agent can't hold the
     // comply pipeline past its own timeout (adcp-client#1612).
-    const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(client, signal);
+    const discoveryOptions =
+      testOptions.versionEnvelope === undefined
+        ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
+        : effectiveOptions;
+    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
+    const { profile, step: profileStep } = await discoverAgentProfile(discoveryClient, signal);
+    effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
+      complianceVersion: complianceIndex.adcp_version,
+      ...(testOptions.adcpVersion !== undefined && { callerAdcpVersion: testOptions.adcpVersion }),
+      ...(testOptions.versionEnvelope !== undefined && { callerVersionEnvelope: testOptions.versionEnvelope }),
+    });
+    const client =
+      discoveryOptions === effectiveOptions
+        ? discoveryClient
+        : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 
