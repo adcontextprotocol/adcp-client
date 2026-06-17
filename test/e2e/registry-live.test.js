@@ -16,11 +16,11 @@ describe('RegistryClient live AAO brand logo endpoints', () => {
     const result = await client.listBrandLogos(READ_DOMAIN);
 
     assert.equal(result.domain, READ_DOMAIN);
-    assert.ok(Array.isArray(result.logos), 'logos must be an array');
-    if (ALLOW_EMPTY_READ_DOMAIN && result.logos.length === 0) return;
-    assert.ok(result.logos.length > 0, `expected live logos for ${READ_DOMAIN}`);
+    assert.ok(Array.isArray(result.assets), 'assets must be an array');
+    if (ALLOW_EMPTY_READ_DOMAIN && result.assets.length === 0) return;
+    assert.ok(result.assets.length > 0, `expected live logos for ${READ_DOMAIN}`);
 
-    for (const logo of result.logos) {
+    for (const logo of result.assets) {
       assert.equal(typeof logo.id, 'string');
       assert.ok(logo.id.length > 0, 'logo.id must be non-empty');
       assert.equal(typeof logo.content_type, 'string');
@@ -40,11 +40,11 @@ describe('RegistryClient live AAO brand logo endpoints', () => {
     const result = await client.listBrandLogos(READ_DOMAIN, { tags: ['primary'] });
 
     assert.equal(result.domain, READ_DOMAIN);
-    if (ALLOW_EMPTY_READ_DOMAIN && result.logos.length === 0) return;
-    assert.ok(result.logos.length > 0, `expected primary logos for ${READ_DOMAIN}`);
+    if (ALLOW_EMPTY_READ_DOMAIN && result.assets.length === 0) return;
+    assert.ok(result.assets.length > 0, `expected primary logos for ${READ_DOMAIN}`);
     assert.ok(
-      result.logos.every(logo => logo.tags.includes('primary')),
-      `expected every returned logo to include primary tag: ${JSON.stringify(result.logos)}`
+      result.assets.every(logo => logo.tags.includes('primary')),
+      `expected every returned logo to include primary tag: ${JSON.stringify(result.assets)}`
     );
   });
 
@@ -59,7 +59,7 @@ describe('RegistryClient live AAO brand logo endpoints', () => {
       const client = new RegistryClient({ baseUrl: BASE_URL, apiKey: process.env.ADCP_REGISTRY_API_KEY });
       const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>';
 
-      const result = await client.uploadBrandLogo({
+      const result = await client.saveBrandLogo({
         domain: UPLOAD_DOMAIN,
         data: Buffer.from(svg, 'utf8'),
         filename: `adcp-sdk-e2e-${Date.now()}.svg`,
@@ -76,7 +76,7 @@ describe('RegistryClient live AAO brand logo endpoints', () => {
 
       const listed = await client.listBrandLogos(UPLOAD_DOMAIN, { tags: ['primary'] });
       assert.ok(
-        listed.logos.some(logo => logo.id === result.logo_id),
+        listed.assets.some(logo => logo.id === result.logo_id),
         `expected uploaded logo ${result.logo_id} in list response: ${JSON.stringify(listed)}`
       );
     }

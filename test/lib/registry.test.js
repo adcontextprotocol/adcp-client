@@ -344,7 +344,7 @@ describe('RegistryClient', () => {
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
-        return new Response(JSON.stringify({ domain: 'acme.com', logos: [LOGO_ASSET] }), { status: 200 });
+        return new Response(JSON.stringify({ domain: 'acme.com', assets: [LOGO_ASSET] }), { status: 200 });
       });
 
       const client = new RegistryClient();
@@ -354,14 +354,15 @@ describe('RegistryClient', () => {
       assert.strictEqual(parsed.pathname, '/api/brands/acme.com/logos');
       assert.strictEqual(parsed.searchParams.get('tags'), 'primary,light-bg');
       assert.strictEqual(result.domain, 'acme.com');
-      assert.strictEqual(result.logos[0].id, 'logo_123');
+      assert.strictEqual(result.assets[0].id, 'logo_123');
+      assert.strictEqual(result.logos, result.assets);
     });
 
-    test('accepts options object for logo tag filters', async () => {
+    test('accepts options object for logo tag filters and preserves legacy logos responses', async () => {
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
-        return new Response(JSON.stringify({ domain: 'acme.com', logos: [] }), { status: 200 });
+        return new Response(JSON.stringify({ domain: 'acme.com', logos: [LOGO_ASSET] }), { status: 200 });
       });
 
       const client = new RegistryClient();
@@ -369,10 +370,11 @@ describe('RegistryClient', () => {
 
       const parsed = new URL(capturedUrl);
       assert.strictEqual(parsed.searchParams.get('tags'), 'dark-bg');
-      assert.deepStrictEqual(result.logos, []);
+      assert.strictEqual(result.assets[0].id, 'logo_123');
+      assert.strictEqual(result.logos[0].id, 'logo_123');
     });
 
-    test('uploads logo assets as multipart form data', async () => {
+    test('saves logo assets as multipart form data', async () => {
       restore = mockFetch(async (url, opts) => {
         assert.ok(url.includes('/api/brands/acme.com/logos'));
         assert.strictEqual(opts.method, 'POST');
@@ -401,7 +403,7 @@ describe('RegistryClient', () => {
       });
 
       const client = new RegistryClient({ apiKey: 'sk_test' });
-      const result = await client.uploadBrandLogo({
+      const result = await client.saveBrandLogo({
         domain: 'acme.com',
         data: Buffer.from('logo-bytes'),
         filename: 'logo.png',
@@ -413,6 +415,31 @@ describe('RegistryClient', () => {
       assert.strictEqual(result.logo_id, 'logo_pending');
       assert.strictEqual(result.review_status, 'pending');
       assert.strictEqual(result.review_sla_hours, 24);
+    });
+
+    test('keeps uploadBrandLogo as a deprecated alias', async () => {
+      restore = mockFetch(async () => {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            domain: 'acme.com',
+            logo_id: 'logo_alias',
+            review_status: 'pending',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.uploadBrandLogo({
+        domain: 'acme.com',
+        data: Buffer.from('logo-bytes'),
+        filename: 'logo.png',
+        mimeType: 'image/png',
+        tags: ['primary'],
+      });
+
+      assert.strictEqual(result.logo_id, 'logo_alias');
     });
 
     test('accepts Blob and ArrayBuffer logo data', async () => {
@@ -432,14 +459,14 @@ describe('RegistryClient', () => {
       });
 
       const client = new RegistryClient({ apiKey: 'sk_test' });
-      await client.uploadBrandLogo({
+      await client.saveBrandLogo({
         domain: 'acme.com',
         data: new Blob(['blob-logo'], { type: 'text/plain' }),
         filename: 'blob.txt',
         mimeType: 'image/svg+xml',
         tags: ['primary'],
       });
-      await client.uploadBrandLogo({
+      await client.saveBrandLogo({
         domain: 'acme.com',
         data: new TextEncoder().encode('array-buffer-logo').buffer,
         filename: 'array-buffer.svg',
@@ -457,7 +484,7 @@ describe('RegistryClient', () => {
       const client = new RegistryClient();
       await assert.rejects(
         () =>
-          client.uploadBrandLogo({
+          client.saveBrandLogo({
             domain: 'acme.com',
             data: Buffer.from('logo'),
             filename: 'logo.png',
@@ -476,7 +503,7 @@ describe('RegistryClient', () => {
       await assert.rejects(() => client.listBrandLogos(''), { message: /domain is required/ });
       await assert.rejects(
         () =>
-          client.uploadBrandLogo({
+          client.saveBrandLogo({
             domain: 'acme.com',
             data: Buffer.from('logo'),
             filename: '',
@@ -487,7 +514,7 @@ describe('RegistryClient', () => {
       );
       await assert.rejects(
         () =>
-          client.uploadBrandLogo({
+          client.saveBrandLogo({
             domain: 'acme.com',
             data: Buffer.from('logo'),
             filename: 'logo.png',

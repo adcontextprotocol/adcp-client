@@ -7,6 +7,8 @@ import type {
   SaveBrandResponse,
   ListBrandLogosOptions,
   ListBrandLogosResponse,
+  SaveBrandLogoInput,
+  SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
   SavePropertyRequest,
@@ -85,6 +87,8 @@ export type {
   BrandLogoAsset,
   ListBrandLogosOptions,
   ListBrandLogosResponse,
+  SaveBrandLogoInput,
+  SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
   SavePropertyRequest,
@@ -341,18 +345,27 @@ export class RegistryClient {
     return this.get(`${this.baseUrl}/api/brands/enrich?domain=${encodeURIComponent(domain)}`);
   }
 
-  /** List AAO brand logo assets for a domain, optionally filtered by tags. */
+  /**
+   * List AAO brand logo assets for a domain, optionally filtered by tags.
+   *
+   * @remarks
+   * Passing a raw `string[]` as the second argument is deprecated; pass
+   * `{ tags }` instead.
+   */
   async listBrandLogos(domain: string, options?: ListBrandLogosOptions | string[]): Promise<ListBrandLogosResponse> {
     if (!domain?.trim()) throw new Error('domain is required');
     const params = new URLSearchParams();
     const tags = Array.isArray(options) ? options : options?.tags;
     if (tags?.length) params.set('tags', tags.join(','));
     const qs = params.toString();
-    return this.get(`${this.baseUrl}/api/brands/${encodeURIComponent(domain)}/logos${qs ? `?${qs}` : ''}`);
+    const response = await this.get<Record<string, unknown>>(
+      `${this.baseUrl}/api/brands/${encodeURIComponent(domain)}/logos${qs ? `?${qs}` : ''}`
+    );
+    return this.normalizeBrandLogoList(response);
   }
 
-  /** Upload an AAO brand logo asset for review. Requires authentication. */
-  async uploadBrandLogo(input: UploadBrandLogoInput): Promise<UploadBrandLogoResponse> {
+  /** Save an AAO brand logo asset for review. Requires authentication. */
+  async saveBrandLogo(input: SaveBrandLogoInput): Promise<SaveBrandLogoResponse> {
     if (!input?.domain?.trim()) throw new Error('domain is required');
     if (!input?.filename?.trim()) throw new Error('filename is required');
     if (!input?.mimeType?.trim()) throw new Error('mimeType is required');
@@ -366,6 +379,11 @@ export class RegistryClient {
     form.append('tags', input.tags.join(','));
 
     return this.postFormData(`${this.baseUrl}/api/brands/${encodeURIComponent(input.domain)}/logos`, form);
+  }
+
+  /** @deprecated Use `saveBrandLogo()`. */
+  async uploadBrandLogo(input: UploadBrandLogoInput): Promise<UploadBrandLogoResponse> {
+    return this.saveBrandLogo(input);
   }
 
   /** Save or update a community brand. Requires authentication. */
@@ -1156,7 +1174,26 @@ export class RegistryClient {
     return this.parseJson(text);
   }
 
-  private toBrandLogoBlob(data: UploadBrandLogoInput['data'], mimeType: string): Blob {
+  private normalizeBrandLogoList(response: Record<string, unknown>): ListBrandLogosResponse {
+    const assets = Array.isArray(response.assets)
+      ? (response.assets as ListBrandLogosResponse['assets'])
+      : Array.isArray(response.logos)
+        ? (response.logos as ListBrandLogosResponse['assets'])
+        : [];
+    const logos = Array.isArray(response.logos) ? (response.logos as ListBrandLogosResponse['assets']) : assets;
+
+    const normalized: ListBrandLogosResponse = {
+      assets,
+      logos,
+    };
+    if (typeof response.domain === 'string') normalized.domain = response.domain;
+    if (response.stats != null && typeof response.stats === 'object' && !Array.isArray(response.stats)) {
+      normalized.stats = response.stats as Record<string, unknown>;
+    }
+    return normalized;
+  }
+
+  private toBrandLogoBlob(data: SaveBrandLogoInput['data'], mimeType: string): Blob {
     if (data instanceof Blob) return new Blob([data], { type: mimeType });
     if (data instanceof ArrayBuffer) return new Blob([data], { type: mimeType });
     if (ArrayBuffer.isView(data)) {

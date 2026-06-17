@@ -408,8 +408,11 @@ export type BrandLogoAsset = ApprovedBrandLogoAsset | PendingBrandLogoAsset | Re
 
 /** Response from GET /api/brands/:domain/logos. */
 export interface ListBrandLogosResponse {
-  domain: string;
-  logos: BrandLogoAsset[];
+  domain?: string;
+  assets: BrandLogoAsset[];
+  stats?: Record<string, unknown>;
+  /** @deprecated Use `assets`. Preserved for older AAO responses and callers. */
+  logos?: BrandLogoAsset[];
 }
 
 /** Options for listing brand logo assets. */
@@ -419,7 +422,7 @@ export interface ListBrandLogosOptions {
 }
 
 /** Input for POST /api/brands/:domain/logos. */
-export interface UploadBrandLogoInput {
+export interface SaveBrandLogoInput {
   domain: string;
   data: Blob | Buffer | ArrayBuffer | ArrayBufferView;
   filename: string;
@@ -428,6 +431,9 @@ export interface UploadBrandLogoInput {
   note?: string;
 }
 
+/** @deprecated Use `SaveBrandLogoInput`. */
+export type UploadBrandLogoInput = SaveBrandLogoInput;
+
 /**
  * Response from POST /api/brands/:domain/logos.
  *
@@ -435,7 +441,7 @@ export interface UploadBrandLogoInput {
  * These endpoints are not yet present in the generated registry OpenAPI
  * types, so this hand-rolled shape mirrors the current AAO response contract.
  */
-export type UploadBrandLogoResponse = {
+export type SaveBrandLogoResponse = {
   success?: boolean;
   domain: string;
   logo_id: string;
@@ -445,6 +451,9 @@ export type UploadBrandLogoResponse = {
   message?: string;
   review_sla_hours?: number;
 };
+
+/** @deprecated Use `SaveBrandLogoResponse`. */
+export type UploadBrandLogoResponse = SaveBrandLogoResponse;
 
 // ====== Backward compatibility ======
 

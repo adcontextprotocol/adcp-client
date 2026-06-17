@@ -654,6 +654,22 @@ export interface PaginationOptions {
   cursor?: string;
 }
 
+export type ManageCreativeAssetsError = {
+  creative_id?: string;
+  message: string;
+} & (
+  | {
+      code: string;
+      /** @deprecated Use `code`. Preserved for older creative-library integrations. */
+      error_code?: string;
+    }
+  | {
+      code?: string;
+      /** @deprecated Use `code`. Preserved for older creative-library integrations. */
+      error_code: string;
+    }
+);
+
 // Response Types
 export interface ManageCreativeAssetsResponse {
   success: boolean;
@@ -684,11 +700,7 @@ export interface ManageCreativeAssetsResponse {
       archived: boolean;
     }[];
   };
-  errors?: {
-    creative_id?: string;
-    error_code: string;
-    message: string;
-  }[];
+  errors?: ManageCreativeAssetsError[];
 }
 
 export interface ListCreativesResponse {
