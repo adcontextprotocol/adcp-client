@@ -775,6 +775,7 @@ describe('v3 partial-schema field stripping', () => {
     ]);
 
     const capturedCalls = [];
+    let result;
     const originalCallTool = ProtocolClient.callTool;
     ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
       capturedCalls.push({ toolName, args });
@@ -782,7 +783,7 @@ describe('v3 partial-schema field stripping', () => {
     };
 
     try {
-      await agent.getProducts({
+      result = await agent.getProducts({
         brand: { domain: 'fanta.com' },
         brief: 'love chocolate and have 20k to spend',
       });
@@ -803,6 +804,10 @@ describe('v3 partial-schema field stripping', () => {
       'brand should be stripped when not declared in agent schema'
     );
     assert.ok(getProductsCall.args.brief, 'brief should be preserved');
+    const stripLog = result.debug_logs.find(log => log.details?.code === 'input_schema_field_stripped');
+    assert.ok(stripLog, 'stripped fields should be surfaced in structured debug_logs');
+    assert.strictEqual(stripLog.details.task, 'get_products');
+    assert.deepStrictEqual(stripLog.details.fields, ['brand']);
   });
 
   test('should pass through all fields when v3 agent schema declares them', async () => {
