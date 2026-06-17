@@ -191,7 +191,9 @@ export function isTerminalAdcpError(response: unknown, toolName?: string): boole
   const obj = response as Record<string, unknown> | null | undefined;
   if (obj?.status === 'failed' || obj?.status === 'rejected') return true;
   if (obj?.adcp_error && typeof (obj.adcp_error as { code?: unknown }).code === 'string') return true;
-  if (typeof obj?.error_code === 'string') return true;
+  if (typeof obj?.error_code === 'string') {
+    return !hasAdvisorySuccessPayload(obj, toolName);
+  }
   if (Array.isArray(obj?.errors) && obj.errors.length > 0) {
     return !hasAdvisorySuccessPayload(obj, toolName);
   }
