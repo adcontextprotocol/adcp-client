@@ -78,6 +78,32 @@ const inlineCreativeGatedStoryboard = {
   ],
 };
 
+const proposalLifecycleGatedStoryboard = {
+  id: 'proposal_lifecycle_optional_feature_gate_test',
+  version: '1.0.0',
+  title: 'Proposal lifecycle (optional feature gated)',
+  category: 'test',
+  summary: 'Skipped when media-buy proposal lifecycle support is not advertised.',
+  narrative: '',
+  agent: { interaction_model: 'media_buy_seller', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: { path: 'media_buy.supports_proposals', equals: true },
+  phases: [
+    {
+      id: 'proposal_lifecycle',
+      title: 'Proposal lifecycle phase',
+      steps: [
+        {
+          id: 'proposal_finalize',
+          title: 'Finalize a proposal',
+          task: 'proposal_finalize',
+          sample_request: { proposal_id: 'proposal_test' },
+        },
+      ],
+    },
+  ],
+};
+
 describe('requires_capability storyboard skip gate (#933)', () => {
   test('emits capability_unsupported skip when agent declares supported: false', async () => {
     // _profile bypasses discoverAgentProfile; no network calls made because
@@ -199,6 +225,43 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.equal(step.skip_reason, 'capability_unsupported');
     assert.equal(step.skip.reason, 'unsatisfied_contract');
     assert.ok(step.skip.detail.includes('media_buy.features.inline_creative_management'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
+
+  test('optional proposal lifecycle feature skips when omitted', async () => {
+    const result = await runStoryboard('http://fake-local-99990', proposalLifecycleGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no proposal support declared)',
+        tools: ['get_adcp_capabilities', 'proposal_finalize'],
+        raw_capabilities: { media_buy: {} },
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.supports_proposals'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
+
+  test('optional proposal lifecycle feature skips when raw capabilities are unavailable', async () => {
+    const result = await runStoryboard('http://fake-local-99989', proposalLifecycleGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (proposal capability unavailable)',
+        tools: ['proposal_finalize'],
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.supports_proposals'));
     assert.ok(step.skip.detail.includes('did not declare'));
   });
 
@@ -336,6 +399,10 @@ describe('requires_capability `present:` matcher (#1811)', () => {
       path: 'media_buy.features.inline_creative_management',
       equals: true,
     };
+    const proposalFeatureEqualsTrue = {
+      path: 'media_buy.supports_proposals',
+      equals: true,
+    };
 
     // present: true
     assert.equal(evaluateCapabilityPredicate(presentTrue, undefined)?.includes('must be present'), true);
@@ -364,6 +431,17 @@ describe('requires_capability `present:` matcher (#1811)', () => {
       'inline_creative_management is an optional feature gate: absent skips'
     );
     assert.equal(evaluateCapabilityPredicate(inlineFeatureEqualsTrue, true), null);
+    assert.equal(
+      evaluateCapabilityPredicate(proposalFeatureEqualsTrue, undefined)?.includes('did not declare'),
+      true,
+      'supports_proposals is an optional feature gate: absent skips'
+    );
+    assert.equal(evaluateCapabilityPredicate(proposalFeatureEqualsTrue, true), null);
+    assert.equal(
+      evaluateCapabilityPredicate(proposalFeatureEqualsTrue, false)?.includes('not satisfied'),
+      true,
+      'supports_proposals: false skips proposal lifecycle storyboards'
+    );
   });
 });
 

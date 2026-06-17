@@ -339,11 +339,10 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
   // the agent affirmatively refused. Skip ONLY when the agent declared a
   // value AND that value disagrees with the predicate.
   //
-  // Exception: media_buy.features.inline_creative_management is an optional
-  // feature flag whose rc.9 storyboard states that non-advertising sellers
-  // grade not_applicable. Treat absence as unsupported only for that feature.
-  if (actual === undefined && isInlineCreativeManagementGate(predicate)) {
-    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare the feature.`;
+  // Exception: a small set of optional opt-in features treat absence as
+  // unsupported. These storyboards must skip when the seller stays silent.
+  if (actual === undefined && isAbsenceMeansUnsupportedGate(predicate)) {
+    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare support.`;
   }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
@@ -354,12 +353,17 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
   return null;
 }
 
-function isInlineCreativeManagementGate(
+const ABSENCE_MEANS_UNSUPPORTED_EQUALS_TRUE_PATHS = new Set([
+  'media_buy.features.inline_creative_management',
+  'media_buy.supports_proposals',
+]);
+
+function isAbsenceMeansUnsupportedGate(
   predicate: RequiresCapabilityPredicate
-): predicate is { path: 'media_buy.features.inline_creative_management'; equals: true } {
+): predicate is { path: string; equals: true } {
   return (
     'equals' in predicate &&
-    predicate.path === 'media_buy.features.inline_creative_management' &&
+    ABSENCE_MEANS_UNSUPPORTED_EQUALS_TRUE_PATHS.has(predicate.path) &&
     predicate.equals === true
   );
 }
@@ -374,7 +378,7 @@ function evaluateRequiresCapabilityGate(
     return evaluateCapabilityPredicate(predicate, actual);
   }
   if (
-    isInlineCreativeManagementGate(predicate) &&
+    isAbsenceMeansUnsupportedGate(predicate) &&
     profile !== undefined &&
     !profile.tools.includes('get_adcp_capabilities')
   ) {

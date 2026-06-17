@@ -147,10 +147,11 @@ export interface Storyboard {
    *
    * When `raw_capabilities` is not available (e.g. the agent doesn't expose
    * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
-   * Exception: `media_buy.features.inline_creative_management === true` gates
-   * treat missing raw capabilities as unsupported when the discovered profile
-   * does not expose `get_adcp_capabilities`, because inline package creative
-   * upload is an optional rc.9 feature that sellers must advertise.
+   * Exception: optional opt-in feature gates such as
+   * `media_buy.features.inline_creative_management === true` and
+   * `media_buy.supports_proposals === true` treat missing raw capabilities as
+   * unsupported when the discovered profile does not expose
+   * `get_adcp_capabilities`, because sellers must advertise those features.
    */
   requires_capability?: RequiresCapabilityPredicate;
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
