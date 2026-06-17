@@ -253,9 +253,7 @@ function selectionForProbeSkip(reason: RunnerDetailedSkipReason, detail: string)
 /**
  * Walk a dotted key path (e.g. `"adcp.idempotency.supported"`) through a
  * nested object. Returns `undefined` when any segment is missing or the
- * intermediate value is not an object — the caller treats `undefined` as
- * "path absent" and does NOT skip the storyboard (absence means the agent
- * hasn't explicitly opted out, so failing the storyboard surfaces the gap).
+ * intermediate value is not an object.
  *
  * Exported for direct testing. Inline copies of this logic in test code
  * silently drift from the runtime when edge cases (null prototypes,
@@ -275,14 +273,14 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
 /**
  * Evaluate a `requires_capability` predicate against the value already
  * resolved from the agent's raw capabilities. Returns `null` when the
- * predicate is satisfied (or unresolvable, per `equals` absence semantics)
- * and a human-readable detail string when the storyboard should be skipped.
+ * predicate is satisfied and a human-readable detail string when the
+ * storyboard should be skipped.
  *
  * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
  *
- * - `equals: V` — skip only when `actual` is declared AND disagrees with `V`.
- *   Absent fields (`undefined`) RUN the storyboard so the failure surfaces
- *   an under-declared agent.
+ * - `equals: V` — scalar equality. `actual` must be declared and must equal
+ *   `V`. Absent fields (`undefined`) skip because the agent has not opted
+ *   into the capability or capability variant this storyboard tests.
  *
  * - `present: B` — presence is the load-bearing signal. `present: true`
  *   skips when the field is absent (treats `undefined` and `null` as absent).
@@ -330,19 +328,13 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
     }
     return null;
   }
-  // `equals` form — absence semantics are load-bearing. `actual === undefined`
-  // means the agent didn't declare the capability at all (field missing from
-  // `get_adcp_capabilities` response). We deliberately RUN the storyboard in
-  // that case rather than skip it: an agent that pre-dates the capability
-  // field hasn't explicitly opted out, so the storyboard's failures surface
-  // a real spec-coverage gap (under-declared agent) rather than a behavior
-  // the agent affirmatively refused. Skip ONLY when the agent declared a
-  // value AND that value disagrees with the predicate.
-  //
-  // Exception: a small set of optional opt-in features treat absence as
-  // unsupported. These storyboards must skip when the seller stays silent.
-  if (actual === undefined && isAbsenceMeansUnsupportedGate(predicate)) {
-    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare support.`;
+  // `equals` form: absence means the agent did not declare the capability or
+  // capability variant this storyboard tests, so skip as unsupported.
+  if (actual === undefined) {
+    return (
+      `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
+      `agent did not declare support.`
+    );
   }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
@@ -353,35 +345,18 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
   return null;
 }
 
-const ABSENCE_MEANS_UNSUPPORTED_EQUALS_TRUE_PATHS = new Set([
-  'media_buy.features.inline_creative_management',
-  'media_buy.supports_proposals',
-]);
-
-function isAbsenceMeansUnsupportedGate(
-  predicate: RequiresCapabilityPredicate
-): predicate is { path: string; equals: true } {
-  return (
-    'equals' in predicate &&
-    ABSENCE_MEANS_UNSUPPORTED_EQUALS_TRUE_PATHS.has(predicate.path) &&
-    predicate.equals === true
-  );
-}
-
 function evaluateRequiresCapabilityGate(
   predicate: RequiresCapabilityPredicate,
-  profile: AgentProfile | undefined
+  profile: AgentProfile | undefined,
+  agentTools?: readonly string[]
 ): string | null {
   const rawCaps = profile?.raw_capabilities;
   if (rawCaps !== undefined) {
     const actual = resolveCapabilityPath(rawCaps, predicate.path);
     return evaluateCapabilityPredicate(predicate, actual);
   }
-  if (
-    isAbsenceMeansUnsupportedGate(predicate) &&
-    profile !== undefined &&
-    !profile.tools.includes('get_adcp_capabilities')
-  ) {
+  const tools = agentTools ?? profile?.tools;
+  if ('equals' in predicate && tools !== undefined && !tools.includes('get_adcp_capabilities')) {
     return evaluateCapabilityPredicate(predicate, undefined);
   }
   return null;
@@ -389,12 +364,13 @@ function evaluateRequiresCapabilityGate(
 
 function collectPhaseCapabilitySkipDetails(
   storyboard: Storyboard,
-  profile: AgentProfile | undefined
+  profile: AgentProfile | undefined,
+  agentTools?: readonly string[]
 ): Map<string, string> {
   const skipDetails = new Map<string, string>();
   for (const phase of storyboard.phases) {
     if (!phase.requires_capability) continue;
-    const unmetDetail = evaluateRequiresCapabilityGate(phase.requires_capability, profile);
+    const unmetDetail = evaluateRequiresCapabilityGate(phase.requires_capability, profile, agentTools);
     if (unmetDetail !== null) {
       skipDetails.set(phase.id, unmetDetail);
     }
@@ -2048,7 +2024,7 @@ async function executeStoryboardPass(
   // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
   // rather than producing a cascade of misleading per-phase failures.
   if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(storyboard.requires_capability, profile);
+    const unmetDetail = evaluateRequiresCapabilityGate(storyboard.requires_capability, profile, options.agentTools);
     if (unmetDetail !== null) {
       if (!callerOwnsClients) await closeConnections(options.protocol);
       return {
@@ -2228,7 +2204,7 @@ async function executeStoryboardPass(
   // an implementor reading the report can't tell "nothing tested" from
   // "everything passed".
   const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
-  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, profile);
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, profile, options.agentTools);
   const skipControllerSeedingForPhaseGates = allExecutablePhasesCapabilitySkipped(
     storyboard,
     phaseCapabilitySkipDetails
@@ -3192,7 +3168,7 @@ async function runMultiPass(
       ...(options.agentTools ? {} : { agentTools: normalizeAgentToolNames(preSeedProfile.tools) }),
     };
   }
-  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, preSeedProfile);
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, preSeedProfile, options.agentTools);
   const preSeededResult = allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
     ? null
     : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);

@@ -118,11 +118,11 @@ export interface Storyboard {
    *
    * Two matcher forms — mutually exclusive on a single gate:
    *
-   * - `equals: V` — scalar equality. The path's resolved value must equal `V`
-   *   for the storyboard to run. When the path resolves to `undefined` (field
-   *   absent), the predicate is treated as unresolvable and the storyboard
-   *   runs — absence means the agent hasn't explicitly opted out, so failing
-   *   the storyboard surfaces the gap.
+   * - `equals: V` — scalar equality. The path's resolved value must be
+   *   declared and must equal `V` for the storyboard to run. When the path
+   *   resolves to `undefined` (field absent), the storyboard is skipped as
+   *   `capability_unsupported`; omitting a capability means the agent has not
+   *   opted into that behavior or variant.
    *
    * - `present: true|false` — presence-only matcher for spec capabilities whose
    *   contract is "presence of this object indicates support" (e.g.
@@ -145,13 +145,11 @@ export interface Storyboard {
    *   absence is the load-bearing signal — a seller that doesn't advertise
    *   the array hasn't opted into the variant this storyboard tests.
    *
-   * When `raw_capabilities` is not available (e.g. the agent doesn't expose
-   * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
-   * Exception: optional opt-in feature gates such as
-   * `media_buy.features.inline_creative_management === true` and
-   * `media_buy.supports_proposals === true` treat missing raw capabilities as
-   * unsupported when the discovered profile does not expose
-   * `get_adcp_capabilities`, because sellers must advertise those features.
+   * When `raw_capabilities` is not available and the discovered profile does
+   * not expose `get_adcp_capabilities`, `equals` gates are treated as
+   * unsupported because there is no declaration proving the agent opted into
+   * the behavior. Other matcher forms remain a no-op without raw
+   * capabilities because their authored paths cannot be inspected.
    */
   requires_capability?: RequiresCapabilityPredicate;
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
