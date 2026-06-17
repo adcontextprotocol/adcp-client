@@ -32,6 +32,8 @@ export type {
   BrandLogoAsset,
   ListBrandLogosOptions,
   ListBrandLogosResponse,
+  SaveBrandLogoInput,
+  SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
   SavePropertyRequest,
