@@ -216,7 +216,10 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.equal(result.phases[0].phase_id, 'creative_approval');
     assert.equal(result.phases[0].steps[0].skipped, undefined);
     assert.equal(result.phases[0].steps[0].passed, true);
-    assert.deepEqual(calls.map(c => c.name), ['get_products']);
+    assert.deepEqual(
+      calls.map(c => c.name),
+      ['get_products']
+    );
   });
 
   test('equals gate skips when the declared value mismatches', async () => {
@@ -870,8 +873,14 @@ describe('phase-level requires_capability gate (#2224)', () => {
     assert.ok(result.phases[0].steps[0].skip.detail.includes('did not declare'));
     assert.equal(result.phases[1].phase_id, 'ungated_discovery');
     assert.equal(result.phases[1].steps[0].passed, true);
-    assert.deepEqual(calls.map(c => c.name), ['get_products']);
-    assert.deepEqual(calls.map(c => c.params.brief), ['ungated discovery phase']);
+    assert.deepEqual(
+      calls.map(c => c.name),
+      ['get_products']
+    );
+    assert.deepEqual(
+      calls.map(c => c.params.brief),
+      ['ungated discovery phase']
+    );
   });
 
   test('phase-level equals gate skips with caller-owned client and agentTools but no profile', async () => {
@@ -891,8 +900,14 @@ describe('phase-level requires_capability gate (#2224)', () => {
     assert.ok(result.phases[0].steps[0].skip.detail.includes('media_buy.creative_approval_mode'));
     assert.ok(result.phases[0].steps[0].skip.detail.includes('did not declare'));
     assert.equal(result.phases[1].steps[0].passed, true);
-    assert.deepEqual(calls.map(c => c.name), ['get_products']);
-    assert.deepEqual(calls.map(c => c.params.brief), ['ungated discovery phase']);
+    assert.deepEqual(
+      calls.map(c => c.name),
+      ['get_products']
+    );
+    assert.deepEqual(
+      calls.map(c => c.params.brief),
+      ['ungated discovery phase']
+    );
   });
 
   test('optional-only gated phases do not create a vacuous overall pass', async () => {
