@@ -1,5 +1,93 @@
 # Changelog
 
+## 9.0.0-beta.31
+
+### Minor Changes
+
+- 1e57767: feat: strip AdCP 3.1-only request fields when the negotiated target is pre-3.1
+
+  `BrandReference` is a closed object (`additionalProperties: false`) in every AdCP version. The 3.1 inline override `brand_kit_override` was added in AdCP 3.1 and does not exist in the 3.0 schema — 3.0 sellers reject requests carrying it. `industries` and `data_subject_contestation` are declared in AdCP 3.0 GA and are accepted by 3.0 sellers; they are left on the wire. Separately, the `get_products` discovery webhook (`push_notification_config`, a 3.1 feature) caused the SDK to throw for pre-3.1 clients.
+
+  The client now omits 3.1-only fields when the negotiated target is pre-3.1 (the client is pinned below 3.1, or the seller does not advertise 3.1 via `get_adcp_capabilities`), degrading gracefully:
+  - `brand_kit_override` is stripped from outbound brand references on `create_media_buy`, `sync_accounts`, and `get_products`; identity fields (`domain`, `brand_id`) and 3.0 fields (`industries`, `data_subject_contestation`) are preserved.
+  - The auto-injected `get_products` discovery webhook is skipped (results are polled via `tasks/get`) instead of throwing. An explicit caller-supplied `push_notification_config` on a pre-3.1 client still throws (unchanged).
+  - Both are surfaced as `debug_logs` drift entries (`pre31_brand_fields_stripped`, `pre31_webhook_degraded`) so the drops are visible and not silent.
+
+  The brand strip is keyed on `shouldOmit31Fields(clientVersion, sellerCapabilities)` — correct for 3.0-pinned callers today and per-seller when a caller pins to 3.1. The webhook suppression is keyed on the client pin only (`isPre31AdcpVersion`), since suppression runs before `detectServerVersion` populates seller caps.
+
+- 1b0aa12: Add `RegistryClient.saveBrandLogo()` as the canonical AAO brand-logo helper, normalize list responses to `assets` while preserving the legacy `logos` alias, and bridge creative asset errors to canonical `code` with deprecated `error_code` compatibility.
+- 3652403: feat(signing): sign and verify webhooks with the request-signing key
+
+  Webhooks are signed with the agent's `adcp_use: "request-signing"` key — there
+  is no separate webhook key purpose. The webhook verifier (step 8) accepts a key
+  whose `adcp_use` is `"request-signing"`; the deprecated `"webhook-signing"`
+  value is still accepted for backward compatibility (pending removal — adcontextprotocol/adcp#5555). Any other
+  purpose (`response-signing`, `governance-signing`, unknown), absent `adcp_use`,
+  or a missing `verify` key_op is rejected with
+  `webhook_signature_key_purpose_invalid`. `webhook_mode_mismatch` is unchanged —
+  it remains reserved for the HMAC-vs-9421 auth-mode selector and is not used for
+  key-purpose failures. The signer helpers (`signWebhook` / `signWebhookAsync`)
+  accept the same set, and the webhook emitter may reuse the request-signing
+  provider/key.
+
+  This is safe because cross-protocol confusion is prevented by the RFC 9421
+  `tag` (`adcp/webhook-signing/v1`, part of the signed base) and mandatory
+  `content-digest` coverage — not by the key-purpose discriminator. A captured
+  request signature (`tag=adcp/request-signing/v1`) can never be replayed
+  against the webhook verifier because step 3 rejects the tag.
+
+  Webhook key isolation, when wanted, is a second `request-signing` key under a
+  distinct `kid` — not a distinct `adcp_use`.
+
+  Conformance vectors: positive `008-request-signing-key-reuse` covers a
+  request-signing key signing a webhook; negative `008-wrong-adcp-use` covers a
+  `response-signing` key (rejected); the existing `webhook-signing` positive
+  vectors continue to exercise the deprecated-but-accepted path. Tracks the spec
+  change in adcontextprotocol/adcp.
+
+### Patch Changes
+
+- fcf4622: Treat flat `error_code` fields as advisory when the response also has a tool-specific success payload.
+- b4defa5: Surface input-schema field stripping as structured runner notices so compliance JSON output no longer hides stripped request fields in console warnings only.
+- eeaa641: fix(conformance): skip proposal storyboards when supports_proposals is absent
+
+  Treat omitted `media_buy.supports_proposals` as unsupported for proposal lifecycle
+  `requires_capability` gates, including profiles without raw capabilities.
+
+- 604a956: Unblock 3.1 `signed-requests` adopters. Two coupled fixes; the runner-side fix alone leaves adopters stuck on the boot guard, and vice versa (per #2237 triage).
+
+  **1. Pre-flight `resolveStoryboardsForCapabilities` (`compliance.ts`).**
+  `resolveStoryboardsForCapabilities` was throwing `unknown_specialism` on the
+  deprecated `signed-requests` claim because the bundle lives under
+  `universal/signed-requests.yaml`, not `specialisms/signed-requests/`. That
+  blocked every other storyboard from running and prevented the
+  `signed_requests_specialism_deprecated` notice (#2082) from ever firing.
+
+  Adds `DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES` mapping the deprecated
+  specialism enum value to its universal bundle base name. When the deprecated
+  alias is declared AND the universal bundle is present in the cache,
+  resolution continues silently (the universal storyboard is pushed
+  unconditionally and the deprecation notice fires from runner.ts).
+  Otherwise the throw is preserved — unknown specialism without a universal
+  fallback is still a configuration error.
+
+  **2. Boot guard `createAdcpServer` (`create-adcp-server.ts`).**
+  The previous guard required the deprecated `signed-requests` specialism claim
+  whenever `signedRequests` was configured, contradicting the universal
+  storyboard's "drop the now-redundant specialism claim and rely solely on
+  `request_signing.supported: true`" guidance. Widens the guard to accept
+  either discovery surface: the canonical 3.1+ form
+  (`capabilities.request_signing.supported: true`, no deprecated claim) or
+  the back-compat form (`specialisms: ['signed-requests']`). Still rejects
+  the "config present, nothing advertised" case so buyers can't be left
+  unable to discover the signing requirement. JSDoc on `SignedRequestsConfig`
+  updated to document both paths.
+
+  Closes #2237.
+
+- 59fb56a: Skip storyboard `requires_capability.equals` gates when the agent omits the capability field.
+- 68b8f38: Bump ws to 8.21.0 to resolve high-severity memory exhaustion DoS vulnerability (GHSA-96hv-2xvq-fx4p).
+
 ## 9.0.0-beta.30
 
 ### Minor Changes
