@@ -283,6 +283,12 @@ export function evaluateCapabilityPredicate(
   // a real spec-coverage gap (under-declared agent) rather than a behavior
   // the agent affirmatively refused. Skip ONLY when the agent declared a
   // value AND that value disagrees with the predicate.
+  //
+  // Exception: optional proposal lifecycle storyboards require an explicit
+  // seller opt-in. Absent support is equivalent to unsupported.
+  if (actual === undefined && isProposalLifecycleGate(predicate)) {
+    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare support.`;
+  }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
       `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
@@ -290,6 +296,13 @@ export function evaluateCapabilityPredicate(
     );
   }
   return null;
+}
+
+function isProposalLifecycleGate(predicate: {
+  path: string;
+  equals?: boolean | string | number | null;
+}): predicate is { path: 'media_buy.supports_proposals'; equals: true } {
+  return predicate.path === 'media_buy.supports_proposals' && predicate.equals === true;
 }
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
@@ -1593,11 +1606,24 @@ async function executeStoryboardPass(
   // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
   // rather than producing a cascade of misleading per-phase failures.
   if (storyboard.requires_capability) {
+    const cap = storyboard.requires_capability;
     const rawCaps = profile?.raw_capabilities;
     if (rawCaps !== undefined) {
-      const cap = storyboard.requires_capability;
       const actual = resolveCapabilityPath(rawCaps, cap.path);
       const unmetDetail = evaluateCapabilityPredicate(cap, actual);
+      if (unmetDetail !== null) {
+        if (!options._client) await closeConnections(options.protocol);
+        return {
+          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+          notices: preflightNotices,
+        };
+      }
+    } else if (
+      isProposalLifecycleGate(cap) &&
+      profile !== undefined &&
+      !profile.tools.includes('get_adcp_capabilities')
+    ) {
+      const unmetDetail = evaluateCapabilityPredicate(cap, undefined);
       if (unmetDetail !== null) {
         if (!options._client) await closeConnections(options.protocol);
         return {
