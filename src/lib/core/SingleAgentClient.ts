@@ -1646,10 +1646,12 @@ export class SingleAgentClient {
 
     // Adapt request for the detected server and AdCP protocol versions.
     const serverVersion = await this.detectServerVersion();
+    const inputSchemaStripLogs: any[] = [];
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
       normalizedParams,
-      serverVersion
+      serverVersion,
+      inputSchemaStripLogs
     );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
@@ -1674,13 +1676,14 @@ export class SingleAgentClient {
     );
 
     // Merge collected drift into the executor's debug_logs so adopters
-    // reading result.debug_logs see post-adapter v2.5 warnings (and any
-    // pre-3.1 webhook-degradation notice) alongside the executor's own logs.
-    // On error paths the executor may not surface result.debug_logs at all;
-    // drift collected before the failure is dropped, matching the executor's
-    // own debug-log behavior.
-    if (v25DriftLogs.length > 0) {
-      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+    // reading result.debug_logs see input-schema stripping, post-adapter
+    // v2.5 warnings, and any pre-3.1 webhook-degradation notice alongside
+    // the executor's own logs. On error paths the executor may not surface
+    // result.debug_logs at all; logs collected before the failure are
+    // dropped, matching the executor's own debug-log behavior.
+    const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+    if (postAdapterLogs.length > 0) {
+      result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
     }
 
     // Normalize response to v3 format
@@ -2074,7 +2077,8 @@ export class SingleAgentClient {
   private adaptRequest(
     taskType: string,
     params: any,
-    serverVersion: string
+    serverVersion: string,
+    debugLogs?: any[]
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
@@ -2159,6 +2163,17 @@ export class SingleAgentClient {
         console.warn(
           `[AdCP] Stripping fields not declared in agent "${this.agent.id}" schema for ${taskType}: ${schemaStripped.join(', ')}`
         );
+        debugLogs?.push({
+          type: 'warning',
+          message: `Stripped fields not declared in agent tool input schema for ${taskType}: ${schemaStripped.join(', ')}`,
+          timestamp: new Date().toISOString(),
+          details: {
+            code: 'input_schema_field_stripped',
+            task: taskType,
+            fields: schemaStripped,
+            agent_id: this.agent.id,
+          },
+        });
       }
 
       adapted = filtered;
@@ -3045,10 +3060,12 @@ export class SingleAgentClient {
 
       // Adapt request for the detected server and AdCP protocol versions.
       const serverVersion = await this.detectServerVersion();
+      const inputSchemaStripLogs: any[] = [];
       const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
         taskName,
         normalizedParams,
-        serverVersion
+        serverVersion,
+        inputSchemaStripLogs
       );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
@@ -3069,8 +3086,9 @@ export class SingleAgentClient {
         serverVersion
       );
 
-      if (v25DriftLogs.length > 0) {
-        result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+      const postAdapterLogs = [...inputSchemaStripLogs, ...v25DriftLogs];
+      if (postAdapterLogs.length > 0) {
+        result.debug_logs = [...(result.debug_logs ?? []), ...postAdapterLogs];
       }
 
       // Normalize response to v3 format for consistent API surface
