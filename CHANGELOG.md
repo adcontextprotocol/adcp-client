@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.11.3
+
+### Patch Changes
+
+- 2b2086c: fix(conformance): skip proposal storyboards when supports_proposals is absent
+
+  Treat omitted `media_buy.supports_proposals` as unsupported for proposal lifecycle
+  `requires_capability` gates, including profiles without raw capabilities.
+
 ## 7.11.2
 
 ### Patch Changes
