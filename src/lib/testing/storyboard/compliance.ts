@@ -78,6 +78,27 @@ export const UNBASELINED_SUPPORTED_PROTOCOLS: ReadonlySet<string> = new Set([
   'measurement',
 ]);
 
+/**
+ * Specialism enum values that are deprecated aliases for universal-bundle
+ * storyboards. When an agent declares one of these in
+ * `get_adcp_capabilities.specialisms`, resolution MUST NOT throw
+ * `unknown_specialism` — the bundle lives in `universal/<file>.yaml` and
+ * runs unconditionally already. The deprecated claim is honored for
+ * backward compatibility per the universal storyboard's
+ * "Backward-compatible specialism claims" clause (currently
+ * `signed-requests`; see `universal/signed-requests.yaml` and the
+ * `signed_requests_specialism_deprecated` notice emitted from
+ * `runner.ts:collectCapabilityNotices`).
+ *
+ * Map shape: deprecated specialism enum value → universal bundle base name
+ * (file under `universal/<name>.yaml`, matched against `index.universal`).
+ * Removed in AdCP 4.0 along with the enum value itself
+ * (adcontextprotocol/adcp#3075).
+ */
+export const DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  'signed-requests': 'signed-requests',
+});
+
 export interface ComplianceIndexProtocol {
   id: string;
   title: string | null;
@@ -821,6 +842,15 @@ export function resolveStoryboardsForCapabilities(
   for (const specialism of declaredSpecialisms) {
     const entry = index.specialisms.find(s => s.id === specialism);
     if (!entry) {
+      // Deprecated alias path: some 3.0-era specialism enum values now resolve
+      // to a `universal/` bundle (e.g. `signed-requests` → `universal/signed-requests.yaml`).
+      // The universal storyboard is pushed unconditionally above; the deprecated
+      // claim is graded there and the deprecation notice fires from runner.ts.
+      // Don't throw — that would block every other storyboard.
+      const universalAlias = DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES[specialism];
+      if (universalAlias && index.universal.includes(universalAlias)) {
+        continue;
+      }
       throw new CapabilityResolutionError({
         code: 'unknown_specialism',
         specialism,
