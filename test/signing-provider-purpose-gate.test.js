@@ -130,19 +130,14 @@ describe('SigningProvider.adcpUse — purpose gate, async path', () => {
       assert.ok(signed.headers.Signature);
     });
 
-    test('rejects a provider with adcpUse="request-signing"', async () => {
+    test('accepts a provider with adcpUse="request-signing" (signer may reuse its request key)', async () => {
       const provider = new InMemorySigningProvider({
         keyid: KID,
         algorithm: 'ed25519',
         privateKey: privateJwk(KID, { adcp_use: 'request-signing' }),
       });
-      await assert.rejects(
-        () => signWebhookAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS),
-        err =>
-          err instanceof WebhookSignatureError &&
-          err.code === 'webhook_signature_key_purpose_invalid' &&
-          /request-signing/.test(err.message)
-      );
+      const signed = await signWebhookAsync(SAMPLE_REQUEST, provider, SIGN_OPTIONS);
+      assert.ok(signed.headers.Signature);
     });
 
     test('rejects a response-signing provider key', async () => {

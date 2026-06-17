@@ -1490,11 +1490,11 @@ describe('TenantRegistry — webhook-signing auto-wire', () => {
           signingKey: noUseKey,
           platform: basePlatform(),
         }),
-      /publicJwk\.adcp_use must be 'webhook-signing'.*<unset>/s
+      /publicJwk\.adcp_use must be 'request-signing'.*<unset>/s
     );
   });
 
-  it('wrong adcp_use (e.g., request-signing) → register throws pointing at adcp#2423', () => {
+  it('adcp_use=request-signing → register succeeds (webhooks use the request-signing key)', () => {
     const requestSigningKey = {
       ...VALID_KEY,
       publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
@@ -1506,14 +1506,35 @@ describe('TenantRegistry — webhook-signing auto-wire', () => {
       defaultServerOptions: DEFAULT_SERVER_OPTIONS,
       autoValidate: false,
     });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-request-signing', {
+        agentUrl: 'https://autowire-request-signing.example.com',
+        signingKey: requestSigningKey,
+        platform: basePlatform(),
+      })
+    );
+  });
+
+  it('non-webhook-valid adcp_use (e.g., response-signing) → register throws', () => {
+    const responseSigningKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'response-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'response-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
     assert.throws(
       () =>
-        registry.register('autowire-wrong-use', {
-          agentUrl: 'https://autowire-wrong-use.example.com',
-          signingKey: requestSigningKey,
+        registry.register('autowire-response-use', {
+          agentUrl: 'https://autowire-response-use.example.com',
+          signingKey: responseSigningKey,
           platform: basePlatform(),
         }),
-      /adcp#2423/
+      /publicJwk\.adcp_use must be 'request-signing'/
     );
   });
 
@@ -1535,7 +1556,7 @@ describe('TenantRegistry — webhook-signing auto-wire', () => {
           signingKey: asymmKey,
           platform: basePlatform(),
         }),
-      /privateJwk\.adcp_use.*same purpose as publicJwk/
+      /privateJwk\.adcp_use must match publicJwk/
     );
   });
 
@@ -1568,8 +1589,8 @@ describe('TenantRegistry — webhook-signing auto-wire', () => {
     // auto-wiring even if signingKey would have failed the strict check.
     const wrongUseKey = {
       ...VALID_KEY,
-      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
-      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'response-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'response-signing' },
     };
     const validator = fakeValidator(async () => ({ ok: true }));
     const registry = createTenantRegistry({

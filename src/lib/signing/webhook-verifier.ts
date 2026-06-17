@@ -8,7 +8,8 @@
  *
  * Distinct from request-signing:
  *   - Tag: `adcp/webhook-signing/v1` (vs `adcp/request-signing/v1`).
- *   - Key purpose: `adcp_use: "webhook-signing"` (vs `"request-signing"`).
+ *   - Key purpose: `adcp_use: "webhook-signing"` OR `"request-signing"` — a
+ *     signer may reuse its request-signing key for webhooks (see step 8).
  *   - Covered components MUST include `@method`, `@target-uri`, `@authority`,
  *     `content-type`, and `content-digest` — `content-digest` is unconditional
  *     for webhooks (vs policy-driven on requests) because every webhook
@@ -169,27 +170,35 @@ export async function verifyWebhookSignature(
     );
   }
 
-  // Step 8: key purpose — MUST be scoped for webhook signing.
+  // Step 8: key purpose — webhooks are signed with a `request-signing` key.
   //
-  // Split failure modes so operators can tell "key isn't scoped at all" (or
-  // lacks the verify key_op) apart from "key is scoped for a different
-  // mode". The former needs the publisher to add a purpose; the latter
-  // needs a new keypair minted for the right mode (a request-signing key
-  // MUST NOT be reused for webhook-signing even if the crypto material is
-  // compatible — purpose binding is the whole point of the `adcp_use`
-  // discriminator).
-  if (jwk.adcp_use === undefined || !jwk.key_ops?.includes('verify')) {
+  // Webhooks carry no separate key purpose: the signer uses its
+  // `adcp_use: "request-signing"` key (the deprecated `"webhook-signing"`
+  // value is still accepted here for backward compatibility, pending removal — adcontextprotocol/adcp#5555).
+  // This is safe because cross-protocol confusion is prevented by the
+  // signature `tag` (step 3, `adcp/webhook-signing/v1`, part of the signed
+  // base) and mandatory `content-digest` coverage (step 6) — not by the
+  // key-purpose discriminator. A captured request signature
+  // (`tag=adcp/request-signing/v1`) can never be replayed against this
+  // verifier because step 3 rejects it. Webhook key isolation, when wanted, is
+  // a second `request-signing` key under a distinct `kid` — not a distinct
+  // `adcp_use`.
+  //
+  // All key-purpose failures use `webhook_signature_key_purpose_invalid`:
+  // absent `adcp_use`, a missing `verify` key_op, or an `adcp_use` outside the
+  // accepted set (e.g. `response-signing`, `governance-signing`). We do NOT
+  // reuse `webhook_mode_mismatch` here — that code is reserved for the
+  // HMAC-vs-9421 auth-mode selector mismatch, and overloading it would collapse
+  // two distinct failure classes onto one stable code receivers branch on.
+  if (
+    jwk.adcp_use === undefined ||
+    !jwk.key_ops?.includes('verify') ||
+    (jwk.adcp_use !== 'request-signing' && jwk.adcp_use !== 'webhook-signing')
+  ) {
     throw new WebhookSignatureError(
       'webhook_signature_key_purpose_invalid',
       8,
-      `JWK "${jwk.kid}" is not scoped for webhook-signing verification.`
-    );
-  }
-  if (jwk.adcp_use !== 'webhook-signing') {
-    throw new WebhookSignatureError(
-      'webhook_mode_mismatch',
-      8,
-      `JWK "${jwk.kid}" declares adcp_use="${jwk.adcp_use}" but this endpoint requires "webhook-signing".`
+      `JWK "${jwk.kid}" is not scoped for webhook delivery: adcp_use must be "request-signing" (or the deprecated "webhook-signing") with a "verify" key_op (got adcp_use="${jwk.adcp_use}").`
     );
   }
 

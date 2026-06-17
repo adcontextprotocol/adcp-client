@@ -9,6 +9,7 @@ import type {
 } from './signer';
 import {
   assertProviderPurpose,
+  assertWebhookProviderPurpose,
   finalizeRequestSignature,
   finalizeResponseSignature,
   prepareRequestSignature,
@@ -50,7 +51,7 @@ export async function signWebhookAsync(
   provider: SigningProvider,
   options: SignWebhookOptions = {}
 ): Promise<SignedRequest> {
-  assertProviderPurpose(provider, 'webhook-signing');
+  assertWebhookProviderPurpose(provider);
   const prepared = prepareWebhookSignature(request, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);

@@ -610,29 +610,31 @@ function deriveSigningAlg(jwk: JsonWebKey): 'ed25519' | 'ecdsa-p256-sha256' {
 }
 
 /**
- * Enforce AdCP key-purpose discriminator: a key wired into webhook
- * signing MUST carry `adcp_use: "webhook-signing"`. Throws with a
- * remediation-pointing error otherwise. Called only when auto-wiring
- * fires (signingKey set + serverOptions.webhooks.signerKey unset);
- * adopters who want different keys per purpose wire them explicitly
+ * Enforce the AdCP key-purpose discriminator on the webhook auto-wire path.
+ * Webhooks are signed with the agent's `adcp_use: "request-signing"` key
+ * (the deprecated `"webhook-signing"` value is still accepted —
+ * adcontextprotocol/adcp#5555); any other purpose is rejected. Called only
+ * when auto-wiring fires (signingKey set + serverOptions.webhooks.signerKey
+ * unset); adopters who want different keys per purpose wire them explicitly
  * and bypass this check.
  */
+const WEBHOOK_WIRE_PURPOSES = ['request-signing', 'webhook-signing'];
 function assertWebhookSigningUse(key: TenantSigningKey): void {
   const publicUse = (key.publicJwk as Record<string, unknown>).adcp_use;
   const privateUse = (key.privateJwk as Record<string, unknown>).adcp_use;
-  if (publicUse !== 'webhook-signing') {
+  if (typeof publicUse !== 'string' || !WEBHOOK_WIRE_PURPOSES.includes(publicUse)) {
     throw new Error(
-      `TenantConfig.signingKey: publicJwk.adcp_use must be 'webhook-signing' for the registry's webhook auto-wire path. ` +
+      `TenantConfig.signingKey: publicJwk.adcp_use must be 'request-signing' (or the deprecated 'webhook-signing') for the registry's webhook auto-wire path. ` +
         `Got ${publicUse === undefined ? '<unset>' : JSON.stringify(publicUse)}. ` +
-        'Per AdCP, request-signing and webhook-signing keys MUST be distinct (key-purpose discriminator, adcp#2423). ' +
-        'Either: (a) tag this key with `adcp_use: "webhook-signing"` if it IS the webhook-signing key, ' +
-        '(b) mint a separate webhook-signing key and put the request-signing key on serverOptions.signedRequests instead, or ' +
+        'Webhooks are signed with the request-signing key; domain separation is carried by the RFC 9421 tag, not the key purpose. ' +
+        'Either: (a) tag this key with `adcp_use: "request-signing"`, ' +
+        '(b) mint a separate request-signing key under a distinct kid for webhook isolation, or ' +
         '(c) wire `serverOptions.webhooks.signerKey` explicitly — the explicit config bypasses auto-wiring.'
     );
   }
-  if (privateUse !== 'webhook-signing') {
+  if (publicUse !== privateUse) {
     throw new Error(
-      `TenantConfig.signingKey: privateJwk.adcp_use must be 'webhook-signing' (same purpose as publicJwk). ` +
+      `TenantConfig.signingKey: privateJwk.adcp_use must match publicJwk.adcp_use ('${publicUse}'). ` +
         `Got ${privateUse === undefined ? '<unset>' : JSON.stringify(privateUse)}.`
     );
   }

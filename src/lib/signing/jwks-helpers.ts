@@ -17,6 +17,17 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
   'ecdsa-p256-sha256': 'ES256',
 };
 
+/**
+ * AdCP JWK purpose discriminator.
+ *
+ * `'webhook-signing'` is **deprecated** (pending removal — adcontextprotocol/adcp#5555): webhooks are
+ * signed with a `'request-signing'` key, differentiated from request
+ * signatures by the RFC 9421 `tag`. Verifiers still accept `'webhook-signing'`
+ * on the webhook path for backward compatibility, but new signers SHOULD
+ * publish and sign with `'request-signing'` keys only (use a second
+ * `'request-signing'` key under a distinct `kid` when webhook key isolation
+ * is desired).
+ */
 export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing' | 'governance-signing';
 
 const ADCP_USE_VALUES = new Set<AdcpUse>([
@@ -42,8 +53,11 @@ export interface PemToAdcpJwkOptions {
   algorithm: AdcpSignAlg;
   /**
    * Purpose binding, enforced by AdCP verifiers at step 8.
-   * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`.
-   * - `'webhook-signing'` — for JWKs used to sign outbound webhook callbacks.
+   * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`. Also
+   *   signs outbound webhook callbacks (differentiated by the RFC 9421 `tag`).
+   * - `'webhook-signing'` — **deprecated** (pending removal — adcontextprotocol/adcp#5555); use
+   *   `'request-signing'` for webhooks. Still accepted by verifiers for
+   *   backward compatibility.
    * - `'response-signing'` — for compatibility with agents that sign JSON
    *   transport responses directly.
    * - `'governance-signing'` — for JWKs used to sign governance context
