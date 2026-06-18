@@ -52,6 +52,32 @@ const disabledProfile = {
   raw_capabilities: { adcp: { idempotency: { supported: false } } },
 };
 
+const creativeApprovalModeGatedStoryboard = {
+  id: 'creative_approval_mode_equals_gate_test',
+  version: '1.0.0',
+  title: 'Creative approval mode (equals-gated)',
+  category: 'test',
+  summary: 'Runs only when media_buy.creative_approval_mode is auto_approve.',
+  narrative: '',
+  agent: { interaction_model: 'media_buy_seller', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: { path: 'media_buy.creative_approval_mode', equals: 'auto_approve' },
+  phases: [
+    {
+      id: 'creative_approval',
+      title: 'Creative approval phase',
+      steps: [
+        {
+          id: 'get_products',
+          title: 'Read products',
+          task: 'get_products',
+          sample_request: { brief: 'Find inventory for a test campaign.' },
+        },
+      ],
+    },
+  ],
+};
+
 const proposalLifecycleGatedStoryboard = {
   id: 'proposal_lifecycle_optional_feature_gate_test',
   version: '1.0.0',
@@ -118,14 +144,47 @@ describe('requires_capability storyboard skip gate (#933)', () => {
     assert.equal(step.extraction.path, 'none');
   });
 
-  // Negative-path coverage (gate-passes and absent-capabilities) is provided
-  // by the resolveCapabilityPath unit tests below and the "RUN-not-skip"
-  // condition in the runner (`actual !== undefined && actual !== equals`).
-  // Earlier drafts had two integration-style smoke tests for these cases
-  // that ended with `assert.ok(true, '...')` after a try/catch — they
-  // passed regardless of gate behavior. Dropped: false-confidence tests
-  // are worse than no test, and the unit coverage below pins the actual
-  // contract that the gate evaluates.
+  test('equals gate skips when the capability path is absent', async () => {
+    const result = await runStoryboard('http://fake-local-99988', creativeApprovalModeGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no creative approval mode declared)',
+        tools: ['get_adcp_capabilities', 'get_products'],
+        raw_capabilities: { media_buy: {} },
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.failed_count, 0);
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.step_id, 'capability_unsupported');
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.creative_approval_mode'));
+    assert.ok(step.skip.detail.includes('auto_approve'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
+
+  test('equals gate skips when raw capabilities are unavailable', async () => {
+    const result = await runStoryboard('http://fake-local-99986', creativeApprovalModeGatedStoryboard, {
+      _profile: {
+        name: 'Test Agent (no raw capabilities available)',
+        tools: ['get_products'],
+      },
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(step.skip.detail.includes('media_buy.creative_approval_mode'));
+    assert.ok(step.skip.detail.includes('did not declare'));
+  });
 
   test('resolveCapabilityPath: dotted path traversal (real exported helper)', () => {
     // Tests the actual function the gate uses — not an inline copy. If
@@ -350,8 +409,13 @@ describe('requires_capability `present:` matcher (#1811)', () => {
     assert.equal(evaluateCapabilityPredicate(presentFalse, null), null);
     assert.equal(evaluateCapabilityPredicate(presentFalse, {})?.includes('must be absent'), true);
 
-    // equals semantics unchanged: absence is unresolvable, run the storyboard.
-    assert.equal(evaluateCapabilityPredicate(equalsTrue, undefined), null, 'absent: equals runs the storyboard');
+    // equals semantics: absence skips because the agent has not opted into
+    // the capability or capability variant this storyboard tests.
+    assert.equal(
+      evaluateCapabilityPredicate(equalsTrue, undefined)?.includes('did not declare'),
+      true,
+      'absent: equals skips the storyboard'
+    );
     assert.equal(evaluateCapabilityPredicate(equalsTrue, true), null);
     assert.equal(
       evaluateCapabilityPredicate(equalsTrue, false)?.includes('not satisfied'),

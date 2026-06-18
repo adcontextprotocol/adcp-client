@@ -214,14 +214,14 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
 /**
  * Evaluate a `requires_capability` predicate against the value already
  * resolved from the agent's raw capabilities. Returns `null` when the
- * predicate is satisfied (or unresolvable, per `equals` absence semantics)
- * and a human-readable detail string when the storyboard should be skipped.
+ * predicate is satisfied and a human-readable detail string when the
+ * storyboard should be skipped.
  *
  * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
  *
- * - `equals: V` — skip only when `actual` is declared AND disagrees with `V`.
- *   Absent fields (`undefined`) RUN the storyboard so the failure surfaces
- *   an under-declared agent.
+ * - `equals: V` — scalar equality. `actual` must be declared and must equal
+ *   `V`. Absent fields (`undefined`) skip because the agent has not opted
+ *   into the capability or capability variant this storyboard tests.
  *
  * - `present: B` — presence is the load-bearing signal. `present: true`
  *   skips when the field is absent (treats `undefined` and `null` as absent).
@@ -275,19 +275,13 @@ export function evaluateCapabilityPredicate(
     }
     return null;
   }
-  // `equals` form — absence semantics are load-bearing. `actual === undefined`
-  // means the agent didn't declare the capability at all (field missing from
-  // `get_adcp_capabilities` response). We deliberately RUN the storyboard in
-  // that case rather than skip it: an agent that pre-dates the capability
-  // field hasn't explicitly opted out, so the storyboard's failures surface
-  // a real spec-coverage gap (under-declared agent) rather than a behavior
-  // the agent affirmatively refused. Skip ONLY when the agent declared a
-  // value AND that value disagrees with the predicate.
-  //
-  // Exception: optional proposal lifecycle storyboards require an explicit
-  // seller opt-in. Absent support is equivalent to unsupported.
-  if (actual === undefined && isProposalLifecycleGate(predicate)) {
-    return `Capability predicate \`${predicate.path} === true\` not satisfied: ` + `agent did not declare support.`;
+  // `equals` form: absence means the agent did not declare the capability or
+  // capability variant this storyboard tests, so skip as unsupported.
+  if (actual === undefined) {
+    return (
+      `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
+      `agent did not declare support.`
+    );
   }
   if (actual !== undefined && actual !== predicate.equals) {
     return (
@@ -296,13 +290,6 @@ export function evaluateCapabilityPredicate(
     );
   }
   return null;
-}
-
-function isProposalLifecycleGate(predicate: {
-  path: string;
-  equals?: boolean | string | number | null;
-}): predicate is { path: 'media_buy.supports_proposals'; equals: true } {
-  return predicate.path === 'media_buy.supports_proposals' && predicate.equals === true;
 }
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
@@ -1618,11 +1605,7 @@ async function executeStoryboardPass(
           notices: preflightNotices,
         };
       }
-    } else if (
-      isProposalLifecycleGate(cap) &&
-      profile !== undefined &&
-      !profile.tools.includes('get_adcp_capabilities')
-    ) {
+    } else if ('equals' in cap && profile !== undefined && !profile.tools.includes('get_adcp_capabilities')) {
       const unmetDetail = evaluateCapabilityPredicate(cap, undefined);
       if (unmetDetail !== null) {
         if (!options._client) await closeConnections(options.protocol);
