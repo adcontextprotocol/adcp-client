@@ -161,6 +161,11 @@ export const CanonicalFormatVASTVideo_VpaidVersionValues = ["1.0", "2.0"] as con
 /** single | CatalogFieldMapping.transform */
 export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean", "split"] as const;
 
+// ====== CollectionPayload ======
+
+/** single | CollectionPayload.status */
+export const CollectionPayload_StatusValues = ["active", "stale", "removed"] as const;
+
 // ====== ControllerError ======
 
 /** single | ControllerError.error */
@@ -290,7 +295,7 @@ export const GetProductsAsyncInputRequired_ReasonValues = ["CLARIFICATION_NEEDED
 /** single | GetProductsRequest.buying_mode */
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
-export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "sponsored_placement_types", "social_placement_surfaces", "format_ids", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_allowed", "signal_targeting_options", "signal_targeting_rules", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_ids", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "outcome_measurement", "delivery_measurement", "reporting_capabilities", "creative_policy", "catalog_types", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_allowed", "signal_targeting_options", "signal_targeting_rules", "max_optimization_goals", "catalog_match", "collections", "collection_targeting_allowed", "installments", "brief_relevance", "expires_at", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
 // ====== GetProductsResponse ======
 

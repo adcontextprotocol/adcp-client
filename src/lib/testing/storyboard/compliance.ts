@@ -417,6 +417,7 @@ function schemaRootCandidatesForComplianceDir(complianceDir: string, adcpVersion
 
 function addVersionedSchemaRoots(packageRoot: string, adcpVersion: string, add: (candidate: string) => void): void {
   const key = resolveBundleKey(adcpVersion);
+  add(join(packageRoot, 'dist', 'lib', 'schemas-data', adcpVersion));
   add(join(packageRoot, 'dist', 'lib', 'schemas-data', key));
   add(join(packageRoot, 'dist', 'schemas', adcpVersion));
   add(join(packageRoot, 'dist', 'schemas', key));

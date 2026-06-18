@@ -3,15 +3,22 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { ADCP_VERSION } = require('../../dist/lib/version.js');
+const { ADCP_VERSION, toReleasePrecisionVersion } = require('../../dist/lib/version.js');
 
 const CURRENT_PRERELEASE_VERSION = ADCP_VERSION;
-const CURRENT_PRERELEASE_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
-const CURRENT_PRERELEASE_FAMILY = CURRENT_PRERELEASE_RELEASE_PRECISION.replace(/\.\d+$/, '');
+const CURRENT_IS_PRERELEASE = CURRENT_PRERELEASE_VERSION.includes('-');
+const CURRENT_PRERELEASE_RELEASE_PRECISION = toReleasePrecisionVersion(ADCP_VERSION);
+const CURRENT_PRERELEASE_FAMILY = CURRENT_PRERELEASE_RELEASE_PRECISION.includes('-')
+  ? CURRENT_PRERELEASE_RELEASE_PRECISION.replace(/\.\d+$/, '')
+  : CURRENT_PRERELEASE_RELEASE_PRECISION;
 const CURRENT_PRERELEASE_NUMBER = Number(CURRENT_PRERELEASE_RELEASE_PRECISION.match(/\.(\d+)$/)?.[1] ?? 0);
 const DIFFERENT_PRERELEASE_NUMBER = CURRENT_PRERELEASE_NUMBER + 1;
-const DIFFERENT_PRERELEASE_RELEASE_PRECISION = CURRENT_PRERELEASE_FAMILY + `.${DIFFERENT_PRERELEASE_NUMBER}`;
-const DIFFERENT_PRERELEASE_VERSION = ADCP_VERSION.replace(/\.\d+$/, `.${DIFFERENT_PRERELEASE_NUMBER}`);
+const DIFFERENT_PRERELEASE_RELEASE_PRECISION = CURRENT_PRERELEASE_RELEASE_PRECISION.includes('-')
+  ? CURRENT_PRERELEASE_FAMILY + `.${DIFFERENT_PRERELEASE_NUMBER}`
+  : '3.2';
+const DIFFERENT_PRERELEASE_VERSION = ADCP_VERSION.includes('-')
+  ? ADCP_VERSION.replace(/\.\d+$/, `.${DIFFERENT_PRERELEASE_NUMBER}`)
+  : '3.2.0';
 
 function writeComplianceIndex(complianceDir, version = '3.0.12') {
   fs.mkdirSync(complianceDir, { recursive: true });
@@ -401,7 +408,7 @@ describe('storyboard runner AdCP version negotiation', () => {
     assert.strictEqual(options._serverAdcpVersion, '3.0');
   });
 
-  test('hosted stable-line alias keeps beta validators while emitting stable wire version', () => {
+  test('hosted stable-line alias keeps prerelease validators while emitting stable wire version', () => {
     const { applyNegotiatedComplianceVersionOptions } = require('../../dist/lib/testing/compliance/comply.js');
 
     const options = applyNegotiatedComplianceVersionOptions(
@@ -418,8 +425,8 @@ describe('storyboard runner AdCP version negotiation', () => {
     );
 
     assert.strictEqual(options.adcpVersion, CURRENT_PRERELEASE_VERSION);
-    assert.strictEqual(options.wireAdcpVersion, '3.1');
-    assert.strictEqual(options._serverAdcpVersion, '3.1');
+    assert.strictEqual(options.wireAdcpVersion, CURRENT_IS_PRERELEASE ? '3.1' : undefined);
+    assert.strictEqual(options._serverAdcpVersion, CURRENT_IS_PRERELEASE ? '3.1' : CURRENT_PRERELEASE_VERSION);
   });
 
   test('missing supported_versions alone does not downgrade a v3 seller', () => {
@@ -493,7 +500,10 @@ describe('storyboard runner AdCP version negotiation', () => {
     try {
       writeComplianceIndex(complianceDir, CURRENT_PRERELEASE_VERSION);
 
-      assert.strictEqual(isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1']), false);
+      assert.strictEqual(
+        isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1']),
+        !CURRENT_PRERELEASE_VERSION.includes('-')
+      );
       assert.strictEqual(
         isComplianceVersionSupported(CURRENT_PRERELEASE_VERSION, ['3.1'], { hostedStableLineAlias: '3.1' }),
         true
@@ -503,14 +513,22 @@ describe('storyboard runner AdCP version negotiation', () => {
         false
       );
 
-      assert.throws(
-        () =>
-          resolveStoryboardsForCapabilities(
-            { supported_protocols: [], supported_versions: ['3.1'] },
-            { complianceDir }
-          ),
-        err => err instanceof CapabilityResolutionError && err.code === 'unsupported_adcp_version'
-      );
+      if (CURRENT_IS_PRERELEASE) {
+        assert.throws(
+          () =>
+            resolveStoryboardsForCapabilities(
+              { supported_protocols: [], supported_versions: ['3.1'] },
+              { complianceDir }
+            ),
+          err => err instanceof CapabilityResolutionError && err.code === 'unsupported_adcp_version'
+        );
+      } else {
+        assert.deepStrictEqual(
+          resolveStoryboardsForCapabilities({ supported_protocols: [], supported_versions: ['3.1'] }, { complianceDir })
+            .storyboards,
+          []
+        );
+      }
       assert.deepStrictEqual(
         resolveStoryboardsForCapabilities(
           { supported_protocols: [], supported_versions: ['3.1'] },

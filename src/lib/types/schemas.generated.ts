@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-06-13T08:57:02.101Z
+// Generated at: 2026-06-18T11:23:39.882Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -4699,7 +4699,7 @@ export const PublisherCollectionsSourceSchema = z.object({
     collection_ids: z.array(z.string())
 }).passthrough();
 
-export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("rss_url"), z.literal("podcast_guid"), z.literal("amazon_music_id"), z.literal("iheart_id"), z.literal("podcast_index_id"), z.literal("youtube_channel_id"), z.literal("youtube_playlist_id"), z.literal("amazon_title_id"), z.literal("roku_channel_id"), z.literal("pluto_channel_id"), z.literal("tubi_id"), z.literal("peacock_id"), z.literal("tiktok_id"), z.literal("twitch_channel"), z.literal("imdb_id"), z.literal("gracenote_id"), z.literal("eidr_id"), z.literal("domain"), z.literal("substack_id")]);
+export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("rss_url"), z.literal("podcast_guid"), z.literal("amazon_music_id"), z.literal("iheart_id"), z.literal("podcast_index_id"), z.literal("youtube_channel_id"), z.literal("youtube_channel_handle"), z.literal("youtube_channel_url"), z.literal("youtube_playlist_id"), z.literal("amazon_title_id"), z.literal("roku_channel_id"), z.literal("pluto_channel_id"), z.literal("tubi_id"), z.literal("peacock_id"), z.literal("tiktok_id"), z.literal("twitch_channel"), z.literal("imdb_id"), z.literal("gracenote_id"), z.literal("eidr_id"), z.literal("domain"), z.literal("substack_id")]);
 
 export const GenreTaxonomySchema = z.union([z.literal("iab_content_3.0"), z.literal("iab_content_2.2"), z.literal("gracenote"), z.literal("eidr"), z.literal("apple_genres"), z.literal("google_genres"), z.literal("roku"), z.literal("amazon_genres"), z.literal("custom")]);
 
@@ -5377,6 +5377,7 @@ export const PublisherAdagentsPayloadSchema = z.object({
     agents_removed: z.array(z.string()).optional(),
     agent_count: z.number().min(0).optional(),
     property_count: z.number().min(0).optional(),
+    collection_count: z.number().min(0).optional(),
     discovery_method: z.string().optional(),
     manager_domain: z.string().optional().nullable(),
     source: z.string().optional()
@@ -5402,6 +5403,37 @@ export const PropertyPayloadSchema = z.object({
     publisher_domain: DomainSchema.optional(),
     property: PropertySchema.optional(),
     changed_fields: ChangedFieldsSchema.optional()
+}).passthrough();
+
+export const CollectionIdentifierSchema = z.object({
+    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
+    type: DistributionIdentifierTypeSchema,
+    value: z.string()
+}).passthrough();
+
+export const CollectionSchema = z.object({
+    collection_id: z.string(),
+    name: z.string(),
+    kind: CollectionKindSchema.optional(),
+    description: z.string().optional(),
+    genre: z.array(z.string()).optional(),
+    genre_taxonomy: z.string().optional(),
+    language: z.string().optional(),
+    content_rating: ContentRatingSchema.optional(),
+    cadence: CollectionCadenceSchema.optional(),
+    season: z.string().optional(),
+    status: CollectionStatusSchema.optional(),
+    production_quality: ProductionQualitySchema.optional(),
+    talent: z.array(TalentSchema).optional(),
+    special: SpecialSchema.optional(),
+    limited_series: LimitedSeriesSchema.optional(),
+    distribution: z.array(CollectionDistributionSchema).optional(),
+    deadline_policy: DeadlinePolicySchema.optional(),
+    related_collections: z.array(z.object({
+        collection_id: z.string(),
+        relationship: CollectionRelationshipSchema
+    }).passthrough()).optional(),
+    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AgentProfilePayloadSchema = z.object({
@@ -9779,6 +9811,7 @@ export const GetMediaBuysResponseMediaBuySchema = z.object({
     account: AccountSchema.optional(),
     invoice_recipient: BusinessEntitySchema.optional(),
     status: MediaBuyStatusSchema,
+    status_as_of: z.iso.datetime().optional().nullable(),
     health: MediaBuyHealthSchema.and(z.string()).optional(),
     impairments: z.array(ImpairmentSchema).optional(),
     rejection_reason: z.string().optional(),
@@ -9993,31 +10026,6 @@ export const AppItemSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CollectionSchema = z.object({
-    collection_id: z.string(),
-    name: z.string(),
-    kind: CollectionKindSchema.optional(),
-    description: z.string().optional(),
-    genre: z.array(z.string()).optional(),
-    genre_taxonomy: z.string().optional(),
-    language: z.string().optional(),
-    content_rating: ContentRatingSchema.optional(),
-    cadence: CollectionCadenceSchema.optional(),
-    season: z.string().optional(),
-    status: CollectionStatusSchema.optional(),
-    production_quality: ProductionQualitySchema.optional(),
-    talent: z.array(TalentSchema).optional(),
-    special: SpecialSchema.optional(),
-    limited_series: LimitedSeriesSchema.optional(),
-    distribution: z.array(CollectionDistributionSchema).optional(),
-    deadline_policy: DeadlinePolicySchema.optional(),
-    related_collections: z.array(z.object({
-        collection_id: z.string(),
-        relationship: CollectionRelationshipSchema
-    }).passthrough()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const FormatAssetSlotSchema = z.union([IndividualAssetSlotSchema, RepeatableGroupAssetSchema]);
 
 export const InlineDeclarationSchema = z.object({
@@ -10032,6 +10040,19 @@ export const InlineDeclarationSchema = z.object({
     v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough().and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+
+export const CollectionPayloadSchema = z.object({
+    collection_rid: z.uuid().optional(),
+    publisher_domain: DomainSchema.optional(),
+    collection_id: z.string().optional().nullable(),
+    name: z.string().optional().nullable(),
+    kind: CollectionKindSchema.optional().nullable(),
+    source: PropertySourceSchema.optional(),
+    status: z.union([z.literal("active"), z.literal("stale"), z.literal("removed")]).optional(),
+    identifiers: z.array(CollectionIdentifierSchema).optional(),
+    collection: CollectionSchema.optional(),
+    changed_fields: ChangedFieldsSchema.optional()
+}).passthrough();
 
 export const AuthorizationPayloadSchema = z.object({
     id: z.uuid().optional(),
@@ -10067,8 +10088,8 @@ export const AuthorizationPayloadSchema = z.object({
 
 export const RegistryEventSchema = z.object({
     event_id: z.uuid(),
-    event_type: z.union([z.literal("property.created"), z.literal("property.updated"), z.literal("property.merged"), z.literal("property.stale"), z.literal("property.reactivated"), z.literal("agent.discovered"), z.literal("agent.removed"), z.literal("agent.profile_updated"), z.literal("agent.compliance_changed"), z.literal("agent.verification_earned"), z.literal("agent.verification_lost"), z.literal("publisher.adagents_discovered"), z.literal("publisher.adagents_changed"), z.literal("authorization.granted"), z.literal("authorization.revoked"), z.literal("authorization.modified")]),
-    entity_type: z.union([z.literal("property"), z.literal("agent"), z.literal("publisher"), z.literal("authorization")]),
+    event_type: z.union([z.literal("property.created"), z.literal("property.updated"), z.literal("property.merged"), z.literal("property.stale"), z.literal("property.reactivated"), z.literal("collection.created"), z.literal("collection.updated"), z.literal("collection.merged"), z.literal("collection.removed"), z.literal("agent.discovered"), z.literal("agent.removed"), z.literal("agent.profile_updated"), z.literal("agent.compliance_changed"), z.literal("agent.verification_earned"), z.literal("agent.verification_lost"), z.literal("publisher.adagents_discovered"), z.literal("publisher.adagents_changed"), z.literal("authorization.granted"), z.literal("authorization.revoked"), z.literal("authorization.modified")]),
+    entity_type: z.union([z.literal("property"), z.literal("collection"), z.literal("agent"), z.literal("publisher"), z.literal("authorization")]),
     entity_id: z.string(),
     payload: z.object({}).passthrough(),
     actor: z.string(),
@@ -10102,6 +10123,28 @@ export const RegistryEventSchema = z.object({
         entity_type: z.literal("property").optional(),
         payload: PropertyPayloadSchema.merge(z.object({
             reactivated_at: z.iso.datetime().optional()
+        }).passthrough()).optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("collection.created"),
+        entity_type: z.literal("collection").optional(),
+        payload: CollectionPayloadSchema.merge(z.object({}).passthrough()).optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("collection.updated"),
+        entity_type: z.literal("collection").optional(),
+        payload: CollectionPayloadSchema.merge(z.object({}).passthrough()).optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("collection.merged"),
+        entity_type: z.literal("collection").optional(),
+        payload: z.object({
+            alias_rid: z.uuid(),
+            canonical_rid: z.uuid(),
+            evidence: z.string().optional()
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("collection.removed"),
+        entity_type: z.literal("collection").optional(),
+        payload: CollectionPayloadSchema.and(z.object({
+            status: z.literal("removed")
         }).passthrough()).optional()
     }).passthrough(), z.object({
         event_type: z.literal("agent.discovered"),

@@ -50,8 +50,8 @@ function findCacheRoot(): string {
   //      checkout (e.g. `tsx`, vitest) before `build:lib`.
   //
   // Within both, versions are tried in `BETA_VERSIONS_TO_TRY` order:
-  // current beta wins; older betas survive for adopters who haven't
-  // synced; `latest` is last-resort and skipped in dist (the symlink
+  // current pin/bundle wins; older prereleases survive for adopters who
+  // haven't synced; `latest` is last-resort and skipped in dist (the symlink
   // is intentionally not copied — adopters pinned to 3.0.x GA hit the
   // throw below rather than silently picking up a v3.0 cache that
   // lacks canonical-format schemas).
@@ -67,7 +67,7 @@ function findCacheRoot(): string {
       `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
       `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
       `your install method (npm/yarn/pnpm) and Node version. ` +
-      `If you're working from a source checkout, run \`npm run sync-schemas:3.1-beta\` then \`npm run build:lib\`.`
+      `If you're working from a source checkout, run \`npm run sync-schemas\` then \`npm run build:lib\`.`
   );
 }
 

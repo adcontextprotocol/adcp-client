@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0-rc.14
-// Generated at: 2026-06-13T08:56:44.099Z
+// Generated AdCP core types from official schemas v3.1.0
+// Generated at: 2026-06-18T11:23:20.083Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -9148,7 +9148,7 @@ export interface PushNotificationConfig {
    */
   token?: string;
   /**
-   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. **Precedence is a switch, not a fallback:** presence of this block selects the legacy scheme; absence selects 9421. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT attempt 'try 9421 first, fall back to HMAC' verification — signature mode is determined solely by whether this block was present at registration time. The seller's baseline 9421 webhook-signing key published at its brand.json `agents[]` `jwks_uri` does not override this selector; it is always discoverable but only used when `authentication` is omitted. See docs/building/implementation/security.mdx#webhook-callbacks for the full precedence and downgrade-resistance rules (including the `webhook_mode_mismatch` rejection a buyer MUST apply when a received webhook's signing mode does not match the registered mode).
+   * Legacy authentication configuration (A2A-compatible). Opts the seller into Bearer or HMAC-SHA256 signing instead of the default RFC 9421 webhook profile. Deprecated; removed in AdCP 4.0. **Precedence is a switch, not a fallback:** presence of this block selects the legacy scheme; absence selects 9421. A seller MUST NOT sign the same webhook both ways, and a buyer MUST NOT attempt 'try 9421 first, fall back to HMAC' verification — signature mode is determined solely by whether this block was present at registration time. The seller's baseline 9421 webhook key is published at its brand.json `agents[]` `jwks_uri` using `adcp_use: "request-signing"` (deprecated `webhook-signing` keys remain accepted during the compatibility window); it does not override this selector and is only used when `authentication` is omitted. See docs/building/by-layer/L1/security.mdx#webhook-callbacks for the full precedence and downgrade-resistance rules (including the `webhook_mode_mismatch` rejection a buyer MUST apply when a received webhook's signing mode does not match the registered mode).
    */
   authentication?: {
     /**
@@ -19709,6 +19709,11 @@ export interface GetMediaBuysResponseMediaBuy {
   invoice_recipient?: BusinessEntity;
   status: MediaBuyStatus;
   /**
+   * ISO 8601 timestamp indicating when the seller last refreshed the returned media-buy-level `status` from its source of truth. Use this to interpret cached or rolled-up list statuses, especially for curator/storefront aggregators where one buyer-facing buy maps to multiple upstream legs. For rolled-up statuses, this timestamp MUST NOT be later than the oldest upstream status observation that could affect the returned roll-up, so it never overstates freshness. Omit or return null to make no freshness assertion; buyers MUST NOT infer that an omitted or null value means the status is live. This is distinct from `updated_at`, which records when the media buy was last modified.
+   * @format date-time
+   */
+  status_as_of?: string | null;
+  /**
    * Dependency health of the media buy, orthogonal to `status`. `ok` (default) when no upstream resource that this buy depends on is in an offline state. `impaired` when at least one such resource (audience, creative, catalog_item, event_source, property) is offline and affects delivery for one or more packages — `impairments[]` MUST be non-empty in that case. On terminal-status buys, the seller MAY leave this field in whatever state held at the terminal transition. See lifecycle.mdx § Compliance and the impairment.coherence assertion.
    */
   health?: MediaBuyHealth & string;
@@ -23245,7 +23250,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     per_principal_key_isolation?: boolean;
     /**
-     * Map of signing-key purpose → publishing origin, so counterparties can verify origin separation (e.g., governance keys served from a separate origin than transport/webhook keys) at onboarding. Absent means the operator has not declared a separation scheme; receivers SHOULD assume shared-origin. Every purpose listed MUST have a corresponding signing posture declared elsewhere — `request_signing` requires non-empty `request_signing.supported_for`/`required_for`/`protocol_methods_supported_for`/`protocol_methods_required_for`; `webhook_signing` requires `webhook_signing.supported === true` — otherwise the consistency check at signature-verification time has nothing to anchor against. See `x-adcp-validation` and docs/building/implementation/security.mdx §Origin separation.
+     * Map of signing-key surface/purpose → publishing origin, so counterparties can verify origin separation (e.g., governance keys served from a separate origin than transport/webhook keys) at onboarding. Absent means the operator has not declared a separation scheme; receivers SHOULD assume shared-origin. Every entry listed MUST have a corresponding signing posture declared elsewhere — `request_signing` requires non-empty `request_signing.supported_for`/`required_for`/`protocol_methods_supported_for`/`protocol_methods_required_for`; `webhook_signing` requires `webhook_signing.supported === true` and names the webhook delivery surface, not a required live `adcp_use: "webhook-signing"` key purpose — otherwise the consistency check at signature-verification time has nothing to anchor against. See `x-adcp-validation` and docs/building/implementation/security.mdx §Origin separation.
      */
     key_origins?: {
       /**
@@ -23257,7 +23262,7 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
        */
       request_signing?: string;
       /**
-       * Origin (scheme + host) serving the webhook-signing JWKS.
+       * Origin (scheme + host) serving the JWKS used for webhook delivery. Webhooks are signed with `adcp_use: "request-signing"` keys; the deprecated `adcp_use: "webhook-signing"` value remains accepted during the backward-compatibility window.
        */
       webhook_signing?: string;
       /**
@@ -24940,6 +24945,8 @@ export type DistributionIdentifierType =
   | 'iheart_id'
   | 'podcast_index_id'
   | 'youtube_channel_id'
+  | 'youtube_channel_handle'
+  | 'youtube_channel_url'
   | 'youtube_playlist_id'
   | 'amazon_title_id'
   | 'roku_channel_id'
@@ -27409,6 +27416,10 @@ export type RegistryEvent = {
     | 'property.merged'
     | 'property.stale'
     | 'property.reactivated'
+    | 'collection.created'
+    | 'collection.updated'
+    | 'collection.merged'
+    | 'collection.removed'
     | 'agent.discovered'
     | 'agent.removed'
     | 'agent.profile_updated'
@@ -27423,7 +27434,7 @@ export type RegistryEvent = {
   /**
    * Entity class touched by this event.
    */
-  entity_type: 'property' | 'agent' | 'publisher' | 'authorization';
+  entity_type: 'property' | 'collection' | 'agent' | 'publisher' | 'authorization';
   /**
    * Primary identifier for the changed entity. For property.* events this is the property_rid; for agent.* events this is the agent_url; for publisher.adagents_changed this is the publisher domain; for authorization.* events this is the authorization row id or a stable agent/publisher composite.
    */
@@ -27495,6 +27506,43 @@ export type RegistryEvent = {
          * @format date-time
          */
         reactivated_at?: string;
+      };
+    }
+  | {
+      event_type: 'collection.created';
+      entity_type?: 'collection';
+      payload?: CollectionPayload & {};
+    }
+  | {
+      event_type: 'collection.updated';
+      entity_type?: 'collection';
+      payload?: CollectionPayload & {};
+    }
+  | {
+      event_type: 'collection.merged';
+      entity_type?: 'collection';
+      payload?: {
+        /**
+         * Retired collection_rid that now aliases to canonical_rid.
+         * @format uuid
+         */
+        alias_rid: string;
+        /**
+         * Canonical collection_rid that consumers should retain.
+         * @format uuid
+         */
+        canonical_rid: string;
+        /**
+         * Registry evidence source for the merge, such as adagents_json or manual_review.
+         */
+        evidence?: string;
+      };
+    }
+  | {
+      event_type: 'collection.removed';
+      entity_type?: 'collection';
+      payload?: CollectionPayload & {
+        status: 'removed';
       };
     }
   | {
@@ -27608,6 +27656,35 @@ export interface PropertyPayload {
   property?: Property;
   changed_fields?: ChangedFields;
 }
+export interface CollectionPayload {
+  /**
+   * @format uuid
+   */
+  collection_rid?: string;
+  publisher_domain?: Domain;
+  /**
+   * Publisher-local collection_id from the authoritative adagents.json.
+   */
+  collection_id?: string | null;
+  name?: string | null;
+  kind?: CollectionKind | null;
+  source?: PropertySource;
+  status?: 'active' | 'stale' | 'removed';
+  /**
+   * Distribution identifiers that alias this collection across platforms.
+   */
+  identifiers?: CollectionIdentifier[];
+  collection?: Collection;
+  changed_fields?: ChangedFields;
+}
+export interface CollectionIdentifier {
+  /**
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain: string;
+  type: DistributionIdentifierType;
+  value: string;
+}
 export interface AgentProfilePayload {
   agent_url?: string;
   name?: string;
@@ -27690,6 +27767,10 @@ export interface PublisherAdagentsPayload {
    * @minimum 0
    */
   property_count?: number;
+  /**
+   * @minimum 0
+   */
+  collection_count?: number;
   discovery_method?: string;
   manager_domain?: string | null;
   source?: string;
@@ -29113,7 +29194,7 @@ export interface WebhookChallengeResponse {
 
 // core/webhook-challenge.json
 /**
- * Proof-of-control challenge payload sent by a seller to an account-level notification_configs[] URL before activating a new or changed active subscriber. The seller sends this payload as an HTTPS POST after URL normalization and SSRF validation, and before treating the subscriber as active. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook-signing key even when the candidate config selects legacy delivery auth; `delivery_auth` describes the future webhook delivery mode, not the challenge's own signing mode.
+ * Proof-of-control challenge payload sent by a seller to an account-level notification_configs[] URL before activating a new or changed active subscriber. The seller sends this payload as an HTTPS POST after URL normalization and SSRF validation, and before treating the subscriber as active. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook profile key even when the candidate config selects legacy delivery auth; new signers use `adcp_use: "request-signing"` and deprecated `webhook-signing` keys remain accepted during the compatibility window. `delivery_auth` describes the future webhook delivery mode, not the challenge's own signing mode.
  */
 export interface WebhookChallenge {
   /**
@@ -29139,7 +29220,7 @@ export interface WebhookChallenge {
    */
   subscriber_id: string;
   /**
-   * Exact seller agent URL whose RFC 9421 webhook-signing key signs this challenge and that will send subsequent webhooks.
+   * Exact seller agent URL whose RFC 9421 webhook profile key signs this challenge and that will send subsequent webhooks.
    */
   seller_agent_url: string;
   /**

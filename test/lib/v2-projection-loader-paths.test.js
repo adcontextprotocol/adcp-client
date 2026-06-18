@@ -26,7 +26,9 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SRC_DIST = path.join(REPO_ROOT, 'dist');
 const SRC_SCHEMAS_DATA = path.join(SRC_DIST, 'lib', 'schemas-data');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
+const { resolveBundleKey } = require('../../dist/lib/validation/schema-loader.js');
 const { BETA_VERSIONS_TO_TRY } = require('../../dist/lib/v2/projection/cache-versions.js');
+const ADCP_BUNDLE_KEY = resolveBundleKey(ADCP_VERSION);
 
 let tmpRoot;
 
@@ -34,10 +36,10 @@ before(() => {
   if (!fs.existsSync(path.join(SRC_DIST, 'lib', 'v2', 'projection', 'registry.js'))) {
     throw new Error('Test setup expects dist/ to be built. Run `npm run build:lib` first.');
   }
-  if (!fs.existsSync(path.join(SRC_SCHEMAS_DATA, ADCP_VERSION, 'registries', 'v1-canonical-mapping.json'))) {
+  if (!fs.existsSync(path.join(SRC_SCHEMAS_DATA, ADCP_BUNDLE_KEY, 'registries', 'v1-canonical-mapping.json'))) {
     throw new Error(
-      `Test setup expects dist/lib/schemas-data/${ADCP_VERSION}/registries/v1-canonical-mapping.json. ` +
-        'Run `npm run sync-schemas:3.1-beta && npm run build:lib` first.'
+      `Test setup expects dist/lib/schemas-data/${ADCP_BUNDLE_KEY}/registries/v1-canonical-mapping.json. ` +
+        'Run `npm run sync-schemas && npm run build:lib` first.'
     );
   }
 
@@ -68,8 +70,9 @@ function runInFakeInstall(snippet) {
 }
 
 describe('v1↔v2 projection loaders resolve from published-tarball paths', () => {
-  test('projection cache preference starts with the current prerelease pin', () => {
+  test('projection cache preference starts with the current pin and bundle key', () => {
     assert.strictEqual(BETA_VERSIONS_TO_TRY[0], ADCP_VERSION);
+    assert.ok(BETA_VERSIONS_TO_TRY.includes(ADCP_BUNDLE_KEY));
   });
 
   test('registry.ts loadRegistry() finds v1-canonical-mapping.json in dist/lib/schemas-data', () => {
