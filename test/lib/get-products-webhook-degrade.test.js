@@ -65,7 +65,7 @@ describe('get_products discovery-webhook degradation (pre-3.1)', () => {
       return { status: 'completed', products: [] };
     };
 
-    const client = makeClient('3.1.0-rc.14');
+    const client = makeClient('3.1');
     await client.getProducts({ brief: 'sneakers' });
 
     assert.equal(calls.length, 1);

@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.0-rc.14/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.0/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.0-rc.14.
+ * Manifest-derived constants for AdCP 3.1.0.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.0-rc.14/manifest.json` (adcp_version: 3.1.0-rc.14, generated_at:
- * 2026-06-13T08:34:09.358Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.0/manifest.json` (adcp_version: 3.1.0, generated_at:
+ * 2026-06-18T08:16:59.912Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 

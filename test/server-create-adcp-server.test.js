@@ -1571,12 +1571,12 @@ describe('createAdcpServer', () => {
       assert.ok(!tools.includes('list_tasks'));
     });
 
-    it('registers protocol task tools for the release-precision 3.1-rc.14 pin', async () => {
+    it('registers protocol task tools for the release-precision 3.1 pin', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
-        adcpVersion: '3.1-rc.14',
+        adcpVersion: '3.1',
         taskRegistry,
       });
       const tools = registeredTools(server);
@@ -1584,12 +1584,12 @@ describe('createAdcpServer', () => {
       assert.ok(tools.includes('list_tasks'));
     });
 
-    it('registers protocol task tools for the 3.1-rc family alias', async () => {
+    it('registers protocol task tools for the 3.1.0 stable bundle pin', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
-        adcpVersion: '3.1-rc',
+        adcpVersion: '3.1.0',
         taskRegistry,
       });
       const tools = registeredTools(server);
@@ -1781,7 +1781,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'creative');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.1-rc.14');
+      assert.strictEqual(status.adcp_version, '3.1');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -1806,7 +1806,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.1-rc.14');
+      assert.strictEqual(listed.adcp_version, '3.1');
 
       const buyerTwoList = await callTool(
         server,
@@ -1820,7 +1820,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.1-rc.14');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.1');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -2164,12 +2164,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.1-rc.14');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.1');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.1-rc.14');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.1');
 
       const contextLeak = await callToolRaw(
         server,

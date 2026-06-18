@@ -74,11 +74,11 @@ function assertSafeVersion(value: string, source: string): void {
 }
 
 // Pre-3.0 / pre-stable version names. Kept as a separate constant so the
-// 3.0.x patch enumeration below stays mechanical. Adding a future
-// major/minor (3.1.x, 4.0.0-beta.1, etc.) requires updating this list AND
-// the major/minor gate in `buildCompatibleVersions` — failing closed there
-// is intentional, so a spec move forces a human to think about which
-// historical versions stay in the compat surface.
+// stable patch enumerations below stay mechanical. Adding a future major
+// (4.0.0-beta.1, etc.) requires updating this list AND the major/minor gate
+// in `buildCompatibleVersions` — failing closed there is intentional, so a
+// spec move forces a human to think about which historical versions stay in
+// the compat surface.
 //
 // Keep historical versions in the compat surface. Consumers can also pin
 // `adcpVersion: '3.1-beta'` to follow the newest bundled 3.1 prerelease.
@@ -106,16 +106,17 @@ const COMPATIBLE_PREFIX = [
   '3.1.0-rc.14',
 ] as const;
 
+const PRE_3_1_COMPATIBLE_PREFIX = COMPATIBLE_PREFIX.filter(version => !version.startsWith('3.1.')) as string[];
+
 /**
  * Build the `COMPATIBLE_ADCP_VERSIONS` list dynamically from the current
  * `ADCP_VERSION`. The bumper PR doesn't have to remember to append a new
- * version literal — the script enumerates `3.0.0..3.0.<patch>` automatically.
+ * stable patch literal — the script enumerates the active stable range
+ * automatically.
  *
- * Fails loudly when the version isn't in the `3.0.x` range so a 3.1.x or
- * 4.x bump can't silently inherit a stale enumeration: the human bumper has
- * to extend this script to define the new range. That's the right behavior —
- * a major/minor move likely also moves the compat surface in a non-mechanical
- * way (e.g. dropping older 3.0.x once 3.1 is stable).
+ * Fails loudly when the version is outside the known 3.x ranges so a future
+ * major/minor bump can't silently inherit stale compatibility semantics: the
+ * human bumper has to extend this script deliberately.
  *
  * Background: adcontextprotocol/adcp-client schema URL pinning drift. The
  * 3.0.9 / 3.0.10 / 3.0.11 chore PRs all forgot to manually extend the
@@ -142,13 +143,18 @@ const MAX_PATCH_ENUMERATION = 500;
  */
 const LAST_3_0_GA_PATCH = 12;
 
-function withPrereleaseAliases(versions: readonly string[]): string[] {
+function withVersionAliases(versions: readonly string[]): string[] {
   const out: string[] = [];
   const add = (value: string) => {
     if (!out.includes(value)) out.push(value);
   };
   for (const version of versions) {
     add(version);
+    const fullStable = /^(\d+)\.(\d+)\.\d+$/.exec(version);
+    if (fullStable) {
+      add(`${fullStable[1]}.${fullStable[2]}`);
+      continue;
+    }
     const fullPrerelease = /^(\d+)\.(\d+)\.\d+-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)$/.exec(version);
     if (!fullPrerelease) continue;
     const releasePrecision = `${fullPrerelease[1]}.${fullPrerelease[2]}-${fullPrerelease[3]}`;
@@ -181,7 +187,7 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
     for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
     // COMPATIBLE_PREFIX already contains every 3.1.0-beta.N the SDK has
     // shipped opt-in support for; the pinned version is one of those.
-    return withPrereleaseAliases([...COMPATIBLE_PREFIX, ...range3_0_x]);
+    return withVersionAliases([...COMPATIBLE_PREFIX, ...range3_0_x]);
   }
 
   if (prerelease) {
@@ -190,6 +196,22 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
         `Extend buildCompatibleVersions in scripts/sync-version.ts to define compat semantics.`
     );
     process.exit(1);
+  }
+
+  if (major === 3 && minor === 1) {
+    if (patch > MAX_PATCH_ENUMERATION) {
+      console.error(
+        `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} exceeds MAX_PATCH_ENUMERATION ` +
+          `(${MAX_PATCH_ENUMERATION}). If the spec has genuinely produced this many patches, ` +
+          `raise the constant in scripts/sync-version.ts deliberately.`
+      );
+      process.exit(1);
+    }
+    const range3_0_x: string[] = [];
+    for (let p = 0; p <= LAST_3_0_GA_PATCH; p++) range3_0_x.push(`3.0.${p}`);
+    const range3_1_x: string[] = [];
+    for (let p = 0; p <= patch; p++) range3_1_x.push(`3.1.${p}`);
+    return withVersionAliases([...PRE_3_1_COMPATIBLE_PREFIX, ...range3_0_x, ...range3_1_x]);
   }
 
   if (major !== 3 || minor !== 0) {
@@ -210,7 +232,7 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
   }
   const range3_0_x: string[] = [];
   for (let p = 0; p <= patch; p++) range3_0_x.push(`3.0.${p}`);
-  return withPrereleaseAliases([...COMPATIBLE_PREFIX, ...range3_0_x]);
+  return withVersionAliases([...COMPATIBLE_PREFIX, ...range3_0_x]);
 }
 
 // Generate version.ts file with library and AdCP versions
@@ -243,9 +265,9 @@ export const ADCP_MAJOR_VERSION = 3;
 /**
  * AdCP versions this library maintains backward compatibility with.
  *
- * Auto-derived from \`ADCP_VERSION\` by scripts/sync-version.ts — every
- * \`3.0.0\` through the current pin is enumerated. Do not edit this list
- * by hand; bumping the AdCP pin via \`npm run sync-version\` extends it.
+ * Auto-derived from \`ADCP_VERSION\` by scripts/sync-version.ts. Do not edit
+ * this list by hand; bumping the AdCP pin via \`npm run sync-version\`
+ * extends it.
  */
 export const COMPATIBLE_ADCP_VERSIONS = [
 ${compatibleVersionsLiteral}

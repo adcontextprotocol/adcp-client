@@ -22,9 +22,9 @@ test('shouldOmit31Fields: client pinned <3.1 always omits', () => {
   assert.equal(shouldOmit31Fields('3.0', { supportedVersions: ['3.1'] }), true);
 });
 test('shouldOmit31Fields: 3.1 client omits for legacy sellers, sends to 3.1 sellers', () => {
-  assert.equal(shouldOmit31Fields('3.1.0-rc.14', { supportedVersions: ['3.0'] }), true);
-  assert.equal(shouldOmit31Fields('3.1.0-rc.14', { buildVersion: '3.1.0' }), false);
-  assert.equal(shouldOmit31Fields('3.1.0-rc.14', undefined), true);
+  assert.equal(shouldOmit31Fields('3.1', { supportedVersions: ['3.0'] }), true);
+  assert.equal(shouldOmit31Fields('3.1', { buildVersion: '3.1.0' }), false);
+  assert.equal(shouldOmit31Fields('3.1', undefined), true);
 });
 test('omit31BrandFields strips brand_kit_override only, preserves AdCP 3.0 fields', () => {
   assert.deepEqual(

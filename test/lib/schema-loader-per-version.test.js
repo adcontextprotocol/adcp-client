@@ -29,8 +29,13 @@ const {
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
-const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(/^(\d+)\.(\d+)\.\d+-(.+)$/, '$1.$2-$3');
-const ADCP_PRERELEASE_FAMILY = ADCP_RELEASE_PRECISION.replace(/\.\d+$/, '');
+const ADCP_RELEASE_PRECISION = ADCP_VERSION.replace(
+  /^(\d+)\.(\d+)\.\d+(?:-(.+))?$/,
+  (_match, major, minor, prerelease) => `${major}.${minor}${prerelease ? `-${prerelease}` : ''}`
+);
+const ADCP_PRERELEASE_FAMILY = ADCP_RELEASE_PRECISION.includes('-')
+  ? ADCP_RELEASE_PRECISION.replace(/\.\d+$/, '')
+  : ADCP_RELEASE_PRECISION;
 
 // Synthetic fixture under a different MAJOR.MINOR so the loader's state map
 // keeps it separate from the real bundle.
@@ -125,9 +130,9 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('3.1.0'), '3.1');
   });
 
-  test('resolveBundleKey keeps prereleases exact', () => {
+  test('resolveBundleKey keeps prereleases exact and collapses stable pins', () => {
     assert.strictEqual(resolveBundleKey('3.1.0-beta.5'), '3.1.0-beta.5');
-    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION);
+    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION);
   });
 
   test('stable patch pins share a compiled validator (1.0.0 ≡ 1.0.1 ≡ 1.0 via fixture)', () => {
@@ -251,8 +256,8 @@ describe('schema-loader per-version state', () => {
       err => err.code === 'CONFIGURATION_ERROR'
     );
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
-    // Valid SemVer prereleases still pass through.
-    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION);
+    // Valid SemVer prereleases still pass through; stable pins collapse.
+    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION);
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
 

@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-06-13
-> Library: @adcp/sdk v9.0.0-beta.28
+> Generated at: 2026-06-18
+> Library: @adcp/sdk v9.0.0-beta.31
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1233,6 +1233,9 @@ Flow: `get_signals`
 
 **Sponsored intelligence baseline** — Baseline domain storyboard — every SI agent must discover offerings, initiate a session, exchange messages, and terminate cleanly.
 Flow: `get_adcp_capabilities → si_get_offering → si_initiate_session → si_send_message → si_terminate_session`
+
+**Sponsored context accountability** — Validates that a brand-side SI agent claiming sponsored_context_accountability conformance emits sponsored_context on each response, accepts well-formed sponsored_context_receipt envelopes, and rejects receipts that silently downgrade declared context_use.
+Flow: `si_initiate_session → si_send_message`
 
 **Sponsored intelligence** — Specialism claim for agents that expose conversational sponsored experiences via the SI session lifecycle. Preview while the underlying SI tools remain `x-status: experimental`; SDK dispatch parity with other specialism IDs.
 
