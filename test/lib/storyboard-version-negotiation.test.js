@@ -524,10 +524,8 @@ describe('storyboard runner AdCP version negotiation', () => {
         );
       } else {
         assert.deepStrictEqual(
-          resolveStoryboardsForCapabilities(
-            { supported_protocols: [], supported_versions: ['3.1'] },
-            { complianceDir }
-          ).storyboards,
+          resolveStoryboardsForCapabilities({ supported_protocols: [], supported_versions: ['3.1'] }, { complianceDir })
+            .storyboards,
           []
         );
       }

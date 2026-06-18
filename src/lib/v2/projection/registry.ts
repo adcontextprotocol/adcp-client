@@ -71,8 +71,8 @@ let cached: CanonicalMappingRegistry | null = null;
  *      checkout (e.g. `tsx`, vitest) before `build:lib`.
  *
  * Within (2) and (3), versions are tried in `BETA_VERSIONS_TO_TRY` order
- * — current beta wins; older betas survive for adopters who haven't
- * synced; `latest` is last-resort.
+ * — current pin/bundle wins; older prereleases survive for adopters who
+ * haven't synced; `latest` is last-resort.
  *
  * Memoized — the registry is small and immutable per version.
  */
@@ -99,7 +99,7 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
       `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
       `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
       `your install method (npm/yarn/pnpm) and Node version. ` +
-      `If you're working from a source checkout, run \`npm run sync-schemas:3.1-beta\` then \`npm run build:lib\`.`
+      `If you're working from a source checkout, run \`npm run sync-schemas\` then \`npm run build:lib\`.`
   );
 }
 

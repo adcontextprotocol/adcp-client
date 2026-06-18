@@ -132,7 +132,10 @@ describe('schema-loader per-version state', () => {
 
   test('resolveBundleKey keeps prereleases exact and collapses stable pins', () => {
     assert.strictEqual(resolveBundleKey('3.1.0-beta.5'), '3.1.0-beta.5');
-    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION);
+    assert.strictEqual(
+      resolveBundleKey(ADCP_VERSION),
+      ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION
+    );
   });
 
   test('stable patch pins share a compiled validator (1.0.0 ≡ 1.0.1 ≡ 1.0 via fixture)', () => {
@@ -257,7 +260,10 @@ describe('schema-loader per-version state', () => {
     );
     assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
     // Valid SemVer prereleases still pass through; stable pins collapse.
-    assert.strictEqual(resolveBundleKey(ADCP_VERSION), ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION);
+    assert.strictEqual(
+      resolveBundleKey(ADCP_VERSION),
+      ADCP_VERSION.includes('-') ? ADCP_VERSION : ADCP_RELEASE_PRECISION
+    );
     assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
   });
 
