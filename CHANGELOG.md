@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.11.4
+
+### Patch Changes
+
+- d0154cd: Skip `requires_capability.equals` storyboards when the capability path is absent instead of running non-proposal gates against undeclared capability variants.
+
 ## 7.11.3
 
 ### Patch Changes
@@ -412,7 +418,7 @@
 
     "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
     De-duplicates `format_ids` by full identity (`{agent_url, id,
-    width, height, duration_ms}`) — multi-size declarations sharing
+width, height, duration_ms}`) — multi-size declarations sharing
     `{agent_url, id}`survive de-dup. When every chosen capability is
     V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
     from the result rather than emitted as`[]`(which would violate the
