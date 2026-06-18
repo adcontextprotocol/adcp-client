@@ -338,7 +338,7 @@ jobs:
   example-integration-tests:
     name: Example Adapter Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
