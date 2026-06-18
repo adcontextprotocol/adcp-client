@@ -1,5 +1,772 @@
 # Changelog
 
+## 9.0.0
+
+### Major Changes
+
+- c37142d: Remove generated Zod schema exports and tool schema maps from the root package
+  and `@adcp/sdk/types`. Import runtime schemas, `TOOL_REQUEST_SCHEMAS`, and
+  `TOOL_RESPONSE_SCHEMAS` from `@adcp/sdk/schemas` instead. This keeps ordinary
+  SDK imports from forcing the large generated schema declaration bundle into
+  TypeScript programs.
+
+### Minor Changes
+
+- d243157: feat(capabilities): project `supported_optimization_metrics` + `frequency_capping`; add catalog-rollup helper
+
+  Closes #1853 (projection gap) and #1818 (catalog rollup).
+
+  **The projection gap (#1853)**
+
+  AdCP 3.1 added two top-level `media_buy.*` capability fields:
+  - `supported_optimization_metrics` (adcp#4669) — seller-level rollup of optimization metrics
+  - `frequency_capping` (adcp#4670) — presence-only object declaring frequency-cap support
+
+  `from-platform.ts` only projected three rich blocks (`audience_targeting`, `conversion_tracking`, `content_standards`). Adopters who declared the new fields on `platform.capabilities` saw them silently dropped from the wire response. Now wired into the same `overrides.media_buy` deep-merge seam.
+
+  **Typed surface** (`DecisioningCapabilities`):
+
+  ```ts
+  capabilities: {
+    supported_optimization_metrics?: ('clicks' | 'views' | 'completed_views' | ...)[];
+    frequency_capping?: {
+      supported_per_units?: ('impression' | 'click')[];
+      supported_window_units?: ('hour' | 'day' | 'week' | 'month')[];
+    };
+  }
+  ```
+
+  Both are optional. Unlike the older three blocks, **the 3.1 additions do NOT force a `features.*` boolean** — buyers gate on presence-of-block directly.
+
+  **The catalog rollup helper (#1818)**
+
+  New exported helper `rollupOptimizationMetricsFromProducts(products)` computes the seller-level union from a product catalog. Returns a sorted, deduplicated array. Adopters call it at startup or on catalog mutation to keep the seller-level declaration mechanically derived from product-level facts — closes the drift surface called out in #1818.
+
+  The `conversion_tracking.supported_targets` portion of #1818 is handled by the broader 3.1 unblock changeset: explicit seller declarations are preserved, while omitted values stay omitted because the 3.1 schema only guarantees target-less event goals by default.
+
+  **Verification**
+  - 8 unit tests on the rollup helper (union, dedup, sort, empty, defensive-drop, non-mutating)
+  - 3 new integration tests on the projection
+  - All 25 affected tests pass; `tsc --noEmit --project tsconfig.lib.json` clean
+
+  Part of the 8.1.0-beta.N adoption sweep.
+
+- 49db972: feat(decisioning): expose `features`, `creative`, `account`, `overrides`, and `supported_versions` passthrough slots on `DecisioningCapabilities`
+
+  Closes #2199.
+
+  Adopters going through `definePlatform` / `createAdcpServerFromPlatform` (the documented v6 path) could not declare the per-feature capability granularity that the lower-level `createAdcpServer` exposes through `AdcpCapabilitiesConfig`. `CreateAdcpServerFromPlatformOptions extends Omit<AdcpServerConfig, 'capabilities' | ...>` cuts off the entire `AdcpCapabilitiesConfig` surface; `DecisioningCapabilities` covered a useful slice but had no path to `features`, `creative`, `account`, `overrides`, or `supported_versions`.
+
+  This adds five optional passthrough fields to `DecisioningCapabilities<TConfig>`:
+  - **`features?: Partial<MediaBuyFeatures>`** — adopter values form the base for `media_buy.features`. Auto-derived `audience_targeting` / `conversion_tracking` / `content_standards` booleans take precedence for those three keys (the framework's per-domain `media_buy` override is applied AFTER `capConfig.features` lays down the base inside `createAdcpServer`).
+  - **`creative?: Partial<CreativeCapabilities>`** — forwarded into `get_adcp_capabilities.creative`.
+  - **`account?: Partial<AccountCapabilities>`** — adopter base for the account block; existing `requireOperatorAuth` / `supportedBillings` projections overlay through the per-domain `account` override.
+  - **`overrides?: AdcpCapabilitiesOverrides`** — direct deep-merge passthrough. Adopter-declared overrides are merged BEFORE the framework's per-domain blocks (media_buy / brand / account / compliance_testing), so framework-derived blocks remain authoritative on keys the projection engine handles.
+  - **`supported_versions?: string[]`** — release-precision AdCP versions; forwarded into `get_adcp_capabilities.adcp.supported_versions`.
+
+  Non-breaking: all five fields optional. Adopters who declare none see identical wire output.
+
+  **Why this matters for adopters**
+
+  Conformance storyboards in 3.1.0-rc.10+ grade capability-absent scenarios as `fail` rather than `not_applicable` when the adopter can't declare not-supported feature blocks. A single-publisher / single-slot seller (no measurement vendor partnership, no wholesale catalog, no provenance verification pipeline) previously had 23 storyboards failing in our reference adopter because there was no path to declare those capabilities as unsupported through `definePlatform`. With this passthrough, adopters can honestly say "we don't support X" and the runner grades accordingly.
+
+  Migration: v5 adopters passing `supported_versions` via `opts.capabilities` on `AdcpServerConfig` should move it to `capabilities.supported_versions` on the platform declaration.
+
+- 156059c: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-beta.5.
+
+  The 3.1 beta write-side media-buy helpers now emit `format_option_refs` /
+  `format_option_id` instead of the removed `capability_ids` path, while keeping
+  the old capability-named helper exports as beta.3 compatibility aliases.
+  `packageRefsForCapabilities()` is now documented as beta.3-only and emits a
+  one-time warning because beta.5 sellers reject `capability_ids` on
+  `PackageRequest`.
+
+  `PROPOSAL_NOT_FOUND` recovery is aligned to beta5 as `correctable`, and the
+  projection diagnostic detail name follows the beta5 `format_option_id` field
+  instead of the beta.3 `capability_id` name. Regenerated types, Zod schemas,
+  docs, schema caches, conformance arbitraries, retry policy, and compliance
+  controller support are aligned with the beta5 protocol bundle.
+
+- 476e452: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-beta.7.
+
+  Regenerates TypeScript/Zod schemas, docs, manifest-derived constants, wire
+  field allowlists, and the 3.1 beta opt-in type surface from the beta.7
+  protocol bundle. The test-controller and `createComplyController` helpers now
+  recognize and advertise the new beta.7 compliance controller scenarios
+  (`force_creative_purge`, `seed_measurement_catalog`,
+  `query_provenance_audit_observations`), auto-seeded product/pricing fixtures
+  are projected through `compliance_testing.scenarios`, and the beta sync wrapper
+  preserves protocol-managed artifacts when the beta is also the primary pin.
+
+- 2e261c3: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.6.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, entity hydration metadata, and server wire field allowlists from the
+  rc6 protocol bundle.
+
+- a7d460d: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.2.
+
+  Regenerates TypeScript/Zod schemas, docs, registry types, manifest-derived
+  constants, and wire field allowlists from the 3.1 RC protocol bundle. Preserves
+  `SignalCatalogType` compatibility aliases across generated type, schema, and
+  enum entrypoints while adopting the renamed `SignalAvailabilityType` surface.
+
+- 6df743f: Bump the bundled AdCP schema pin to `3.1.0-rc.10`, refresh generated types, schemas, docs, and registry metadata, and include the rc10 release in the SDK version-compatibility list.
+
+  Adds codegen and runtime projection handling for rc10's postal-area migration: platform capabilities can declare either country-keyed postal system arrays or deprecated legacy booleans, and the framework emits both forms during the deprecation window. Also keeps `schemas:ensure` from leaving `schemas/cache/latest` pointed at a legacy support cache after backfilling missing local caches.
+
+- 6f57c9b: Bump the bundled AdCP schema pin to `3.1.0-rc.13`, refresh generated types, schemas, docs, and registry metadata, and include the rc13 release in the SDK version-compatibility list.
+
+  Also keep `npm run sync-schemas` on the full protocol-bundle path during release propagation windows by trying the GitHub dist tarball before falling back to schema-only sync when the canonical site has schemas but not the tarball yet.
+
+- 5272e5e: Bump the bundled AdCP schema pin to `3.1.0-rc.14`, refresh generated types and schemas, and include the rc14 release in the SDK version-compatibility list.
+
+  Adds the sponsored-intelligence sponsored-context request and response fields from rc14, plus the VAST/DAAST URL schema clarification for unsubstituted ad-server macros.
+
+- f325c11: Update the SDK schema pin and generated surfaces to AdCP 3.1.0-rc.4.
+
+  Regenerates TypeScript/Zod schemas, docs, manifest-derived constants, entity
+  hydration metadata, and server wire field allowlists from the rc4 protocol
+  bundle. Adds GitHub-dist fallback for schema syncs when the website mirror has
+  not yet published a signed protocol bundle, and keeps the media-buy mode
+  mismatch recovery path tolerant of older 3.1 prerelease sellers that still emit
+  `requires_proposal`.
+
+- b61e999: Bump the bundled AdCP schema pin to `3.1.0-rc.9`, refresh generated types, schemas, docs, and registry metadata, and include the rc9 release in the SDK version-compatibility list. The rc9 request surface adds optional `account` context on task status/listing requests.
+- 5804764: Sync registry OpenAPI types for community mirror lifecycle endpoints and expose delete plus non-format catalog support on RegistryClient.
+- fa99cfc: feat(manifest-helpers): handle `AssetVariant | AssetVariant[]` slot widening (3.1.0-beta.2)
+
+  AdCP 3.1.0-beta.2 widened each `creative_manifest.assets[asset_id]` slot from `AssetVariant` to `AssetVariant | AssetVariant[]` so carousel `cards`, responsive_creative `headlines`, and other multi-element slots can carry multiple assets per asset_id.
+
+  **Changes:**
+  - **`getAsset` / `requireAsset`**: when the slot is an array, return the first element. Preserves pre-3.1 behavior for single-asset callers without breaking the type signature.
+  - **New `getAssetSlot(manifest, assetId, assetType)`**: returns the full array (or single-element array if the slot is scalar), filtered by `asset_type`. Use when authoring carousel / responsive_creative platforms that need every asset in the slot.
+
+  **Adopter migration:**
+  - Single-asset callers: no code change required. `getAsset(m, 'cover_image', 'image')` keeps working whether `cover_image` is a single asset or a one-element array.
+  - Multi-asset callers: switch to `getAssetSlot(m, 'cards', 'image')` to receive the full array.
+
+  Part of the #1902 8.0-beta sweep (4/5 structural breaks closed).
+
+- 3db8480: Support ADCP rc8 async discovery task handoffs and webhook completion for get_products and get_signals.
+- 546f093: Document the AdCP 3.1 `AUTH_MISSING` / `AUTH_INVALID` split while keeping deprecated `AuthRequiredError` wire-compatible with `AUTH_REQUIRED`. The decisioning runtime also refreshes once on `AUTH_MISSING` when `AccountStore.refreshToken` is configured, attaching the refreshed upstream token to a request-local account clone before retrying.
+- fa8c1ba: Add framework-level `sync_accounts` commercial enforcement for AdCP 3.1 buyer-agent billing gates, including clamped per-agent billing errors, unmapped-bearer oracle protection, supported payment terms checks, and idempotency cache bypass for rejected account rows.
+- dceec03: Add brand JSON asset mapping helpers for validating PDF/model extraction output, applying approved logo mappings, selecting logos by slot, checking slot coverage, and saving updated brand manifests through the registry client.
+- b73b728: Add RegistryClient helpers for AAO brand logo assets, including listing approved or pending logos by domain and uploading community logo assets for review.
+- 8c0a7f0: Expose canonical creative format migration helpers and get_products cache-scope helpers.
+
+  Adds the `CanonicalFormat` namespace plus projection subpath builder helpers for authoring `format_options[]` and v1 fallback refs, exports the existing projection/write-side helpers from the package root, and adds `ensureGetProductsCacheScope()` / `validateGetProductsCacheScope()` for storefronts composing legacy upstream product feeds.
+
+  Also widens `SyncCreativesPayload` to include operation-level `SyncCreativesError` payloads and adds explicit `list_creative_formats` server payload aliases.
+
+- 799d5b6: Add storyboard `canonical_format_satisfaction` validation for canonical format create-time assertions.
+
+  The check compares actual `create_media_buy` package selectors against prior `get_products` product format declarations, including canonical `format_option_refs`, legacy `format_ids` normalized through `v1_format_ref` or catalog projection, richer param containment, under-specified selector rejection, and format-specific rejection diagnostics.
+
+- 6ffbdfa: Add `createCanonicalReferenceResolver` through the package root and `@adcp/sdk/canonical-references` for immutable `format_schema` and `platform_extensions` URI+SHA-256 references. The resolver applies SSRF-safe DNS-pinned fetching, redirect blocking, timeout and body caps, digest verification, caller-owned policy-scoped caching, structured non-throwing statuses, and JSON Schema validation plus pinned `$ref` sandboxing for `format_schema`.
+- e737144: feat(codegen): surface typed shapes for `oneOf` branches that express their forbidden-field set via `allOf:[{not:{required:[X]}}, ...]`
+
+  Several AdCP 3.1.0-beta.3 request/response schemas use a `oneOf` of titled
+  mutual-exclusion branches where each branch declares "these fields are
+  forbidden" as an `allOf` of single-key `not.required` clauses. Until now,
+  the codegen tightener only recognized the simpler `not: { required: [X] }`
+  shape — when it saw an `allOf`, it bailed and `json-schema-to-typescript`
+  emitted the branch as `{ [k: string]: unknown | undefined }`, dropping
+  every typed field at the parent `items.properties` level.
+
+  **Most visible impact:** `SyncAccountsRequest.accounts[]` — the two
+  branches `ProvisioningMode` and `SettingsUpdateMode` now surface their
+  actual fields instead of being loose passthroughs:
+  - `ProvisioningMode`: `brand`, `operator`, `billing`, `billing_entity`,
+    `payment_terms`, `sandbox`, `preferred_reporting_protocol`,
+    `notification_configs`
+  - `SettingsUpdateMode`: `account`, `billing_entity`, `payment_terms`,
+    `sandbox`, `preferred_reporting_protocol`, `notification_configs`
+
+  Buyers writing typed sync-accounts payloads now get autocomplete and
+  type-checking on the webhook-subscription field
+  (`notification_configs[]`) that 3.1 introduced for account-scoped
+  events (`creative.status_changed`, `creative.purged`, wholesale-feed
+  events). Previously the field would compile against the passthrough
+  arm but the typed shape was invisible to adopter tooling.
+
+  **Also surfaces:** named typed shapes for the same idiom inside
+  `CreativeAsset` (`V1CreativeNamedFormatReference` /
+  `V2CreativeCanonicalFormatKind`) and `CreativeManifest`
+  (`V1ManifestNamedFormatReference` / `V2ManifestCanonicalFormatKind`).
+
+  **Why the two forms aren't interchangeable upstream:**
+  `not: { required: [X, Y, Z] }` matches only when ALL three fields are
+  present (forbids only the conjunction). The `allOf:[{not:{required:
+[X]}}, {not:{required:[Y]}}, {not:{required:[Z]}}]` form forbids each
+  field independently — "none of them may be present." That's the
+  authorial intent for `SettingsUpdateMode`, so the spec uses idiom #2.
+  The codegen now recognizes both forms when collecting per-branch
+  forbidden-name sets; semantics on the wire are unchanged (Ajv enforces
+  the unstripped schema at runtime).
+
+  No source changes required for adopters — regenerated types are
+  strictly more typed in the affected places.
+
+- 743946b: Add typed registry helpers for community mirror adagents catalogs. `buildCommunityMirrorAdagents()` and `RegistryClient.createCommunityMirrorAdagents()` emit catalog-only descriptors with `authorized_agents: []`, while `CreateAdagentsRequest` now exposes typed `formats`, `placements`, and `placement_tags` shapes for local adopter code.
+- 6e09e6a: Add RegistryClient.upsertCommunityMirrorAdagents for keyed community-mirror publishes, while keeping createCommunityMirrorAdagents as the generator-only helper.
+- 952ff49: Add RegistryClient methods to publish, fetch, and list persisted community mirror adagents catalogs.
+- 505c09c: Hide `comply_test_controller` and `compliance_testing` discovery from live principals while preserving sandbox/mock controller dispatch and live-target `PERMISSION_DENIED` handling.
+- b61e999: Add buyer-side creative delivery helpers for sellers without a creative library. `supportsSyncCreatives(caps)` now keys off `creative.has_creative_library`, and `inlineCreativesForPackages()` projects creative assets into package-scoped `packages[].creatives` payloads for create/update media-buy fallback flows.
+- fa99cfc: feat!: cut 8.0-beta line — flip primary `ADCP_VERSION` pin to `3.1.0-beta.2`
+
+  The SDK's primary AdCP pin moves from `3.0.12` to `3.1.0-beta.2`. Pre-mode is entered with tag `beta`; subsequent changesets accumulate until upstream AdCP 3.1 goes GA and we `changeset pre exit`. Releases publish as `8.0.0-beta.N` under the `@beta` npm dist-tag.
+
+  Per [v8.0-beta plan](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/v8.0-beta-plan.md):
+
+  **Wire compat retained** — `COMPATIBLE_ADCP_VERSIONS` keeps every `3.0.x` GA through `3.0.12` enumerated. An 8.0-beta SDK still talks to a 3.0-pinned seller because the wire is open per spec.
+
+  **Overlay emptied** — `FORWARD_COMPAT_ERROR_CODES` no longer needs `AUTH_MISSING`, `AUTH_INVALID`, `AGENT_SUSPENDED`, `AGENT_BLOCKED`; all four codes are now in the primary manifest-driven `ErrorCodeValues`. The compile-time disjointness check would fail if a code returned to the overlay after manifest adoption.
+
+  **Prerelease pin support added to `scripts/sync-version.ts`** — `3.1.0-beta.x` pins now build a `COMPATIBLE_ADCP_VERSIONS` enumeration that retains 3.0.x compat through the configured `LAST_3_0_GA_PATCH`.
+
+  **Breaking changes** — adopters moving to `8.0.0-beta.N` get the 3.1 typed surface across all schemas (`format_options`, `capability_ids`, `OutcomeMeasurement` reshape, asset shape changes, etc.). Migration story tracked in subsequent `needs:adcp-3.1` PRs.
+
+  **Spec changes folded in this cut:**
+  - AdCP 3.1.0-beta.2 schemas (catalog-sync cluster, V2 projection, write-side helpers, `capability_ids[]` on `PackageRequest`)
+  - Mock-server normative anchor
+
+  **Open follow-ups (separate PRs):**
+  - Envelope `status` REQUIRED on auto-registered `get_adcp_capabilities` handler (adcp release-note explicitly calls SDK out as the gap)
+  - `OutcomeMeasurement` type-import migration
+  - Brand `categories` field shape migration
+  - `AssetVariant` union handling
+  - `creative-asset` `format_id`/`manifest` shape migration
+  - Auto-derive `list_accounts`/`sync_accounts` from `AccountStore` (#1887 hinted)
+  - Drop legacy `mirror.adcontextprotocol.org` from `DEFAULT_MIRROR_HOSTS`
+
+  Closes the foundation work in #1580 (umbrella `needs:adcp-3.1`).
+
+- a59b95f: Add optional `exposeToolSchemas` server config to publish shallow top-level AdCP request key hints in MCP `tools/list`.
+- fa99cfc: fix(governance): drop `categories` from `governance_agents[]` wire emission (3.1.0-beta.2)
+
+  AdCP 3.1.0-beta.2 narrowed the `governance_agents[]` wire shape from `{url, categories?}` to `{url}` only. Per-agent category signaling moved out of band; the spec no longer carries `categories` on the wire.
+
+  **Changes:**
+  - `projectGovernanceAgent` in `src/lib/server/decisioning/account.ts` — emits `{url}` only.
+  - `stripGovernanceAgentSecrets` in `src/lib/server/responses.ts` — drops the `categories` preservation branch.
+  - The inline projection in `syncGovernanceRowToWire` — same.
+  - Tests in `test/lib/sync-governance-credential-strip.test.js` — assert `categories` is now stripped (defense-in-depth alongside the existing `authentication.credentials` strip).
+
+  **Adopter migration:** the SDK no longer emits `categories` on `governance_agents[]`. If your code was reading the field off the wire, it'll see `undefined` — switch to whatever out-of-band channel the seller now uses for per-agent category metadata.
+
+  Part of the #1902 8.0-beta sweep (3/5 structural breaks closed).
+
+- 84c3d94: Add `createLazyBackend()` for deferring idempotency backend construction until first use.
+- 8d32fe6: fix(media-buy): use generated 3.1 types for `available_actions[]` surface
+
+  The hand-written wire-shape types in `src/lib/media-buy/types.ts` (`MediaBuyValidAction`, `MediaBuyActionMode`, `MediaBuyAvailableAction`, `ActionNotAllowedReason`, `ActionNotAllowedDetails`, and the SLA window) are deleted and replaced with re-exports from `src/lib/types/core.generated.ts` now that the AdCP 3.1.0-beta.3 schema cache produces them.
+
+  **Breaking type shape fix.** The previously-shipped `SlaWindow` was `{ unit, value, response_max? }`. The spec evolved to `SLAWindow` (caps, ISO acronym convention) with shape `{ response_max?, completion_max? }` where both are ISO 8601 duration strings. Adopters reading `available_actions[0].sla.response_max` against the prior type would have hit a runtime shape mismatch when sellers actually populated `sla`. `SLAWindow` is the canonical export; `SlaWindow` remains as a deprecated import-compatibility alias to the corrected generated shape.
+
+  Helper-local types stay: `LEGACY_COARSE_ACTIONS`, `LegacyCoarseAction`, `MediaBuyActionContext`, `UpdateMediaBuyRequestLike`. These are convenience subsets the preflight resolver reads against and aren't part of the wire schema.
+
+  `scripts/generate-media-buy-update-fields.ts` re-ran against the real 3.1.0-beta.3 cache. The generated `enumMetadata.update_fields` table is unchanged from the snapshot taken against the merged-but-pre-release upstream copy.
+
+  Preflight logic, boolean gates, `ActionNotAllowedError`, and the compat shim for `valid_actions[]` are unchanged.
+
+- 965fb43: Add shared mock-server scenario scaffolding for storyboard fixtures: token-protected `/_scenario/*` HTTP routes surfaced in mock-server summaries, programmatic `handle.scenario`, fixture reset/state snapshots, authenticated scripted fault responses, loopback-only webhook emit/capture stubs, and exact `idempotency_key` replay handling on state-creation mock routes.
+- e9638ae: Reuse authorization-code OAuth MCP sessions across related tool calls and export `closeOAuthConnections()` for scoped cleanup.
+- fa99cfc: fix(types): handle `OutcomeMeasurement` → `OutcomeMeasurementDeprecated` rename (AdCP 3.1.0-beta.2)
+
+  3.1.0-beta.2 renamed the `OutcomeMeasurement` interface to `OutcomeMeasurementDeprecated` to signal the surface is on the 4.0 removal track. The rename broke the index.ts re-export and the compat.ts `Measurement` alias.
+
+  **Adopter-facing:** purely additive. The original `OutcomeMeasurement` name continues to resolve (re-exported from `OutcomeMeasurementDeprecated`); adopters who imported the old name keep working unchanged. New code SHOULD import `OutcomeMeasurementDeprecated` to make the deprecation visible at the call site.
+
+  Part of the #1902 8.0-beta sweep (closes one of the 5 structural breaks listed in the foundation PR).
+
+- f6021fe: feat(types): ship per-tool `.d.ts` slices via `@adcp/sdk/types/<tool>` (#1944)
+
+  Two consumer classes win here.
+
+  **TypeScript adopters who only need one tool's types** can opt into a narrow import and skip the full surface entirely:
+
+  ```ts
+  import type { SyncAccountsRequest } from '@adcp/sdk/types/sync-accounts';
+  ```
+
+  Each slice is a self-contained `.d.ts` containing the tool's `*Request` / `*Response` / `*Success` / `*Error` / `*Submitted` types plus the full dependency closure (request envelope, error shapes, referenced core types, enums). No cross-slice imports — an adopter pulling one slice pays exactly that slice's tsc cost. **Measured: `sync_accounts` slice peaks at ~50 MB; the same adopter importing from `@adcp/sdk` root needs 4-6 GB and crashes with FATAL mark-compact on Node's default 4 GB heap. ~95× memory reduction, ~25× wall-clock speedup.** Adopters who don't opt in see no change.
+
+  **Agentic adopters** (LLM coding agents, MCP clients reading `.d.ts` files as context to write SDK-using code) get a parallel context-token win. The full surface is ~45,000 lines (~600k tokens for a model); a single tool slice is ~900-1000 lines (~12-15k tokens). Feeding an LLM exactly one slice instead of the whole bundle is the difference between burning the conversation budget on type definitions and having room for the actual prompt.
+
+  To make those slices discoverable without filesystem-walking, the codegen also emits `@adcp/sdk/types/per-tool-index.json` — a manifest mapping spec-canonical snake_case tool names (`sync_accounts`) to the kebab-case subpath (`@adcp/sdk/types/sync-accounts`) and the symbols each slice exports. LLMs trained on the spec will instinctively type the snake_case name; the manifest is what they reach for to resolve the import.
+
+  **What changed**:
+  - `scripts/generate-per-tool-types.ts` runs at the end of `build:lib`, parses the published `tools.generated.d.ts` + `core.generated.d.ts` + `enums.generated.d.ts` into a name→declaration map, BFS-walks the dependency closure from each tool's entry-point types, and emits one self-contained `.d.ts` per tool to `dist/lib/types/<tool>.d.ts`. 50 slices total.
+  - `package.json` `exports` map and `typesVersions` add `./types/*` subpath pattern (the existing `types/v2-5` / `types/v3-1-beta` exact matches still take precedence). `per-tool-index.json` ships alongside the slices.
+  - New CI guard `check:adopter-types-narrow` exercises five slices including both `get_adcp_capabilities` and `si_get_offering` (which cover the `AdCP` / `SI` naming carve-outs) under a tight 512 MB heap cap.
+
+  **Adopter requirements**: `moduleResolution: "node16"` / `"nodenext"` / `"bundler"` to see the subpath via the `exports` field. Older `moduleResolution: "node"` adopters continue importing from the root unchanged.
+
+  This is purely additive — root `@adcp/sdk` exports are unchanged. No migration required.
+
+- 1e57767: feat: strip AdCP 3.1-only request fields when the negotiated target is pre-3.1
+
+  `BrandReference` is a closed object (`additionalProperties: false`) in every AdCP version. The 3.1 inline override `brand_kit_override` was added in AdCP 3.1 and does not exist in the 3.0 schema — 3.0 sellers reject requests carrying it. `industries` and `data_subject_contestation` are declared in AdCP 3.0 GA and are accepted by 3.0 sellers; they are left on the wire. Separately, the `get_products` discovery webhook (`push_notification_config`, a 3.1 feature) caused the SDK to throw for pre-3.1 clients.
+
+  The client now omits 3.1-only fields when the negotiated target is pre-3.1 (the client is pinned below 3.1, or the seller does not advertise 3.1 via `get_adcp_capabilities`), degrading gracefully:
+  - `brand_kit_override` is stripped from outbound brand references on `create_media_buy`, `sync_accounts`, and `get_products`; identity fields (`domain`, `brand_id`) and 3.0 fields (`industries`, `data_subject_contestation`) are preserved.
+  - The auto-injected `get_products` discovery webhook is skipped (results are polled via `tasks/get`) instead of throwing. An explicit caller-supplied `push_notification_config` on a pre-3.1 client still throws (unchanged).
+  - Both are surfaced as `debug_logs` drift entries (`pre31_brand_fields_stripped`, `pre31_webhook_degraded`) so the drops are visible and not silent.
+
+  The brand strip is keyed on `shouldOmit31Fields(clientVersion, sellerCapabilities)` — correct for 3.0-pinned callers today and per-seller when a caller pins to 3.1. The webhook suppression is keyed on the client pin only (`isPre31AdcpVersion`), since suppression runs before `detectServerVersion` populates seller caps.
+
+- fa99cfc: feat(preview-utils): adopt 3.1.0-beta.2 self-rendering `product_card` shape
+
+  AdCP 3.1.0-beta.2 changed `product_card` from a creative-agent-rendered shape (`{ format_id, manifest }`) to a self-contained visual card (`{ image, title, description, price_label, cta_label }`). The card IS the preview — no creative-agent round-trip required. (Schema note: "Receivers render the card directly from these fields.")
+
+  **Changes:**
+  - `batchPreviewProducts` rewritten: extracts `product_card.image?.url` directly from the inline card instead of round-tripping through `creativeAgent.previewCreative()`.
+  - `creativeAgentClient` and `options` parameters retained for signature compatibility (renamed to `_creativeAgentClient` / `_options` with the unused-args eslint pragma). Will be removed in 8.0 final or 9.0.
+  - `format_card` and `batchPreviewFormats` are **unchanged** — only `product_card` had this spec migration in 3.1.0-beta.2.
+
+  **Adopter migration:**
+  - Calls to `batchPreviewProducts(products, creativeAgent)` keep returning `PreviewResult[]` with `previewUrl` populated from the new inline `image.url`. No code change required.
+  - Direct field access (`product.product_card?.image?.url`) is now the recommended path; `batchPreviewProducts` is `@deprecated`.
+
+  Part of the #1902 8.0-beta sweep (5/5 structural breaks closed — **CI should now be green** on the foundation stack).
+
+- 23df5f4: Add a buyer-side product property policy validator for auditing, filtering, or rejecting get_products responses against excluded publisher domains and property IDs.
+- fa99cfc: feat(test-controller): promote `query_upstream_traffic` to first-class `CONTROLLER_SCENARIOS` member
+
+  AdCP 3.1.0-beta.2 added `query_upstream_traffic` to `ListScenariosSuccess['scenarios']` (spec PR adcp#3816 landed). The SDK previously carried it as an open-extension literal because the schema cache predated the spec PR.
+
+  **Changes:**
+  - `CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC = 'query_upstream_traffic'` — added as a first-class constant.
+  - `SCENARIO_MAP` extended with the `queryUpstreamTraffic` → `QUERY_UPSTREAM_TRAFFIC` mapping; auto-advertised via `scenariosFromStore` (canonical typed path) rather than the open-extension `allScenariosFromStore` path.
+  - Removed the local `QUERY_UPSTREAM_TRAFFIC_SCENARIO` literal and the `as unknown as ComplyTestControllerResponse` cast — `UpstreamTrafficSuccess` is now in the generated `ComplyTestControllerResponse` union.
+  - Exhaustive-scenario test fixture extended with `queryUpstreamTraffic` so the `CONTROLLER_SCENARIOS / SCENARIO_MAP coverage` invariant holds.
+
+  **Adopter migration:** purely additive. Adopters who implement the `queryUpstreamTraffic` store method now get type-safe advertisement; existing code unchanged.
+
+  Part of the #1902 8.0-beta sweep (2/5 structural breaks closed).
+
+- a809021: Re-export SSRF-safe networking helpers from the package root and the new
+  `@adcp/sdk/net` public subpath. This includes `ssrfSafeFetch`,
+  `SsrfRefusedError`, `SSRF_TRANSIENT_CODES`, `decodeBodyAsJsonOrText`,
+  `isPrivateIp`, `isAlwaysBlocked`, and `isLikelyPrivateUrl`.
+
+  Docs add the 8.0 -> 8.1 migration guide and a recipe for verifying inbound
+  webhooks with RFC 9421, per-agent isolation, multi-replica replay storage, and
+  legacy HMAC handling.
+
+- 8ec6cbd: Expose a public schema-root override for hosted compliance runs via `schemaRoot` options and `registerExternalSchemaRoot` from `@adcp/sdk/testing`.
+- bc0c21f: Add the rate-limit trip/replay observer for the AdCP 3.1 `rate_limit_trip_runner` storyboard contract.
+
+  The storyboard runner now executes `expect_rate_limit_not_replayed` by bursting fresh idempotency keys until `RATE_LIMITED`, waiting the advertised `retry_after`, replaying the same key, and grading the new `replay_not_cached_rate_limit` check. If the burst exhausts `max_attempts` without a rate-limit response, the step emits `skip_reason: "rate_limit_not_triggered"` and canonical `skip.reason: "not_applicable"`. The public `RateLimitTripObserver` helper is exported from both `@adcp/sdk` and `@adcp/sdk/testing`.
+
+- 8621ad3: Support AdCP 3.1.0-rc.7 schema updates, account authorization projection, scoped task-status aliases, and authorization-required detail sanitization.
+
+  Task registries now persist an `ownerScope` for buyer-visible polling isolation. Built-in registries set it for new tasks and keep legacy ownerless rows readable only through the old account-fallback scope; custom persistent registries should backfill or persist `ownerScope` before exposing `get_task_status` / `list_tasks` in shared-account multi-tenant deployments.
+
+  The server also tightens error handling around task polling and typed error arms. Registry-resolution failures in `tasks_get` now return `SERVICE_UNAVAILABLE` instead of warning and falling through, malformed handler-returned `errors[]` entries now fail closed as `VALIDATION_ERROR`, and standard-code error envelopes are projected through the safe-field allowlist so adopter-supplied top-level extras are not echoed on the wire. These are intentional hardening changes for adopters that previously relied on silent degradation or raw error passthrough.
+
+- 35947d7: Harden `RegistryClient` transport defaults with timeout, max body size, redirect policy, and injectable fetch options. The default registry host now uses the canonical upstream registry, and callers pinned to the legacy host can either update `baseUrl` or opt into `redirect: 'follow'`.
+
+  Regenerate registry OpenAPI types so `CreateAdagentsRequest` accepts catalog metadata fields for community mirror manifests, while preserving backward-compatible `listAgents()`/`listPublishers()` source summaries and the legacy `type: 'si'` list-agent filter. Add CI drift checks that regenerate registry types from the bundled upstream registry OpenAPI before validating generated files.
+
+- 1b0aa12: Add `RegistryClient.saveBrandLogo()` as the canonical AAO brand-logo helper, normalize list responses to `assets` while preserving the legacy `logos` alias, and bridge creative asset errors to canonical `code` with deprecated `error_code` compatibility.
+- 748e5c9: breaking: remove the preview RFC 9421 transport response-signing surface from the beta line
+
+  AdCP 3.x does not authorize generic RFC 9421 §2.2.9 transport response signing. The SDK no longer exports `signResponse`, `signResponseAsync`, `verifyResponseSignature`, `createResponseVerifier`, `ResponseSignatureError`, `RESPONSE_SIGNING_TAG`, `RESPONSE_MANDATORY_COMPONENTS`, `buildResponseSignatureBase`, `ResponseLike`, `prepareResponseSignature`, `finalizeResponseSignature`, `SignResponseOptions`, `PreparedResponseSignature`, `SignedResponse`, the response-verifier option/result types, or the `'response-signing'` JWK purpose.
+
+  Runtime helpers also reject the retired purpose: `pemToAdcpJwk({ adcp_use: 'response-signing' })` and `mintEphemeralEd25519Key({ adcp_use: 'response-signing' })` now throw, and `InMemorySigningProvider` preserves retired or unknown raw purpose strings so `signRequestAsync()` and `signWebhookAsync()` still fail closed instead of silently treating the key as unscoped.
+
+  Request signing and webhook signing are unchanged. There is no conformant AdCP 3.x replacement for generic transport response signing; future designated-task payload JWS support should land under a fresh spec-defined purpose and helper surface.
+
+- 2764c56: Adopt several SDK-side follow-ups unblocked by the AdCP 3.1 schema cache.
+  - Preserve explicit `conversion_tracking.supported_targets` declarations without inventing a default; omitted values mean only target-less event goals are guaranteed.
+  - Allow `supported_optimization_metrics` to derive from a static `productCatalog`; empty derived or explicit metric arrays are omitted from the wire response instead of advertising an empty 3.1 metric-optimization declaration.
+  - Treat `sponsored-intelligence` as a first-class specialism in compile-time and runtime platform validation, and update the SI example/skill docs.
+  - Align upstream-recorder `RecordedCall` output with the cached 3.1 `query_upstream_traffic` schema, including raw/digest attestation metadata, payload length, and digest-mode identifier proofs.
+  - Honor storyboard `required_any_of_tools` gates with `requirement_unmet` skips and skip-cause aggregation.
+
+  **BREAKING**:
+  - `RecordedCall` is now a raw/digest discriminated union for the 3.1 `query_upstream_traffic` response. Raw calls carry `payload` and `payload_length`; digest calls carry `payload_digest_sha256`, `payload_length`, and optional `identifier_match_proofs`. Consumers that assumed `RecordedCall.payload` was always present, or that construct `RecordedCall` literals, need to handle the branch-specific fields.
+  - `validatePlatform` now rejects `specialisms: ['sponsored-intelligence']` unless the platform provides the `sponsoredIntelligence` implementation required by that specialism. Adapters that previously advertised the specialism without dispatch support must either add the platform field or stop advertising the specialism.
+
+- a22d284: Expose `resolveTaskState()` to reconcile `TaskResult.status` with task-envelope status values in response payloads.
+- fd485e3: Add an optional `responseEnhancer` callback to `createAdcpServer` and `createAdcpServerFromPlatform` for mutating MCP tool responses before they are returned.
+- a06542b: Emit the canonical `signed_requests_specialism_deprecated` runner notice when
+  agents still advertise the deprecated `signed-requests` specialism on the
+  signed-requests storyboard.
+
+  The notice is a counter-neutral deprecation advisory with
+  `capability_path: "specialisms"` and `effective_version: "4.0"`. This widens
+  the public `NoticeCode` union so dashboards and CI gates can handle the new
+  canonical code explicitly.
+
+- f9ed580: fix(storyboard): add regex-backed field pattern validations
+
+  Storyboard validations now support `field_pattern` and `envelope_field_pattern` checks for string fields, with consistent handling for missing fields, non-string values, invalid regex sources, conformance replay, and schema drift detection.
+
+- 0ff96d8: feat(storyboard): echo authored validation ids in runner results
+
+  Storyboard validation entries may now declare stable `id` values, and the runner echoes those IDs unchanged on authored `ValidationResult` output across passing, failing, advisory, not-applicable, and cross-response checks. Compliance failure summaries preserve the first failed validation's ID, while runner-synthesized validations continue to omit IDs.
+
+- 9e5eeda: Surface the seller-served, release-precision response `adcp_version` echo as `result.metadata.adcpVersion`.
+- 363ddf5: Add `seed_buyer_agent` support for `comply_test_controller` and storyboard controller seeding.
+- 05bc22b: Add first-class helpers for decomposing and enforcing `update_media_buy` action requests. `decomposeUpdateMediaBuy()` exposes concrete requested mutations with action, path, scope, package IDs, and best-effort before/after values, while `assertUpdateMediaBuyAllowed()` lets server adopters throw canonical `ACTION_NOT_ALLOWED` errors from per-buy `available_actions[]`.
+- 80f255b: Harden digest-mode upstream traffic attestations with JCS length alignment, bounded identifier proof scanning, clearer not-applicable grading, and stricter storyboard identifier path validation.
+
+  `computePayloadDigestSha256()` now applies the recorder's default payload normalization and secret-key redaction before hashing, and accepts a third `RegExp | false | PayloadDigestOptions` argument. Pass `createUpstreamRecorder({ redactPattern })` through as `{ redactPattern }`, and `createUpstreamRecorder({ maxPayloadBytes })` through as `{ maxPayloadBytes }`. Pass `{ prenormalized: true }` only when the payload has already been normalized/redacted exactly as the recorder would store it; prenormalized inputs with unredacted secret-shaped keys now throw `PayloadDigestError`, malformed prenormalized JSON strings and duplicate secret-shaped form keys are rejected, and `{ redactPattern: false }` is rejected unless paired with `{ prenormalized: true }`. Secret-shaped keys in prenormalized payloads are considered safe only when their value is the literal `"[redacted]"` marker or `null`. Legacy bare `RegExp` and `false` forms remain accepted for this major but are soft-deprecated in favor of `{ redactPattern }` and `{ prenormalized: true }`.
+
+  `RecordedCall.host` and `RecordedCall.path` are emitted as strings. The recorder populates both fields from `new URL(url)` when parsing succeeds and emits empty strings when parsing fails.
+
+  BEHAVIOR CHANGE: digest-mode `payload_length` now reports the canonical byte length covered by `payload_digest_sha256`; raw calls continue to report the redacted emitted payload length.
+
+  Manual `record()` calls with JSON-string payloads now parse and secret-redact the stored payload just like wrapped `fetch()` calls, so raw and digest attestations use the same redacted body view. Parsed JSON string payloads now fail closed beyond the recorder's 256-level JSON canonicalization cap, and malformed JSON strings get a best-effort key-based secret scrub before diagnostic storage and surface an `onError` event when configured and digest-mode identifier scanning cannot parse them. Digest-mode query projection now drops only the non-canonical recorded entry and surfaces `digest_canonicalization_failed` through configured `onError` instead of throwing the whole query. Redaction now walks to the recorder's 256-level JSON canonicalization cap with cycle protection, raw recording rejects structured payloads beyond that cap, invalid purpose classifier values are omitted instead of emitting off-spec strings, and disabled recorder queries without a caller-supplied bound return a schema-valid epoch `since_timestamp`. Purpose classifier values remain a preview surface until the `purpose` field is adopted by the spec; unknown values are omitted rather than emitted on the wire.
+
+  Storyboard `identifier_paths` are request-payload-relative. Loader validation now rejects request/response/context-prefixed forms including `request.*`, `$["request"].*`, and `$..request.*`; use paths such as `audiences[*].add[*].hashed_email`. `runStoryboardStep()` now runs the same shape validation as full storyboard runs for programmatic callers without rewriting caller-owned path strings.
+
+  Digest-mode `upstream_traffic` validations now grade controller-side non-finite-number canonicalization failures as `not_applicable`, matching the 3.1 runner contract for JSON values that cannot be portably canonicalized.
+
+  Compliance summary artifacts now expose `validations_not_applicable` when any validations were downgraded, so CI and badge consumers can tell a clean pass from a pass with coverage downgrades.
+
+- 80f255b: Add `dropped_count` to `UpstreamRecorderQueryResult` to surface the number of matched entries omitted from returned items after digest canonicalization failure; `digest_canonicalization_failed` is surfaced through `onError` when that hook is configured. The field is always `0` in raw mode and on the noop recorder. Wire projection onto `toQueryUpstreamTrafficResponse` / `UpstreamTrafficSuccess` is schema-gated and will be added when the spec adopts the field.
+- 2326b27: Expose typed webhook parse/verify results, add buyer webhook receiver conformance replay checks, and clarify delivery webhook envelope docs.
+- 35c276b: Add operation-scoped webhook URL template filters and per-call webhook suppression, and capture build_creative variant context from storyboard responses.
+- 3652403: feat(signing): sign and verify webhooks with the request-signing key
+
+  Webhooks are signed with the agent's `adcp_use: "request-signing"` key — there
+  is no separate webhook key purpose. The webhook verifier (step 8) accepts a key
+  whose `adcp_use` is `"request-signing"`; the deprecated `"webhook-signing"`
+  value is still accepted for backward compatibility (pending removal — adcontextprotocol/adcp#5555). Any other
+  purpose (`response-signing`, `governance-signing`, unknown), absent `adcp_use`,
+  or a missing `verify` key_op is rejected with
+  `webhook_signature_key_purpose_invalid`. `webhook_mode_mismatch` is unchanged —
+  it remains reserved for the HMAC-vs-9421 auth-mode selector and is not used for
+  key-purpose failures. The signer helpers (`signWebhook` / `signWebhookAsync`)
+  accept the same set, and the webhook emitter may reuse the request-signing
+  provider/key.
+
+  This is safe because cross-protocol confusion is prevented by the RFC 9421
+  `tag` (`adcp/webhook-signing/v1`, part of the signed base) and mandatory
+  `content-digest` coverage — not by the key-purpose discriminator. A captured
+  request signature (`tag=adcp/request-signing/v1`) can never be replayed
+  against the webhook verifier because step 3 rejects the tag.
+
+  Webhook key isolation, when wanted, is a second `request-signing` key under a
+  distinct `kid` — not a distinct `adcp_use`.
+
+  Conformance vectors: positive `008-request-signing-key-reuse` covers a
+  request-signing key signing a webhook; negative `008-wrong-adcp-use` covers a
+  `response-signing` key (rejected); the existing `webhook-signing` positive
+  vectors continue to exercise the deprecated-but-accepted path. Tracks the spec
+  change in adcontextprotocol/adcp.
+
+- bbf735c: Export `parseWholesaleFeedWebhookNotification` /
+  `normalizeWholesaleFeedWebhookNotification` helpers for canonical wholesale-feed
+  webhook receivers and align `WholesaleFeedSync` dedupe semantics with delivery
+  `idempotency_key` plus canonical logical event identity
+  `notification_id === event.event_id`.
+
+  Add buyer-side signal discovery helpers that normalize `get_signals` rows,
+  expose the canonical `activate_signal.signal_agent_segment_id` handle, and
+  build activation requests without confusing `signal_id` provenance for the
+  activation key.
+
+### Patch Changes
+
+- f05ca49: Disambiguate A2A artifact `status` fields so domain payloads like `update_media_buy` returning `status: "canceled"` are treated as completed tool responses, not task lifecycle cancellations. Parser, validator, task polling, and signing discovery logic now consistently read the latest structured DataPart.
+- 70cdb20: Recognize `ACTION_NOT_ALLOWED` through the shared standard error-code runtime table so decisioning `AdcpError` construction does not warn for the AdCP 3.1 code.
+- f5094f8: Align adagents.json discovery HTTP redirect handling with the shared policy: follow same-registrable-domain redirects on the initial .well-known fetch, and refuse redirects from authoritative_location targets.
+- 21940e5: Pin the bundled AdCP schema release to 3.1.0 GA and exit the beta prerelease cycle.
+
+  The SDK still emits the stable release-precision wire value `3.1`, while generated schemas, types, docs, registry metadata, and compatibility aliases are refreshed from the signed 3.1.0 protocol bundle.
+
+- a312e00: Publish releases under AdCP minor-line npm dist-tags.
+
+  The release wrapper derives `adcp-<major.minor>` from `package.json#adcp_version`
+  and uses that as the publish-time npm tag, so OIDC trusted publishing can update
+  the compatibility channel without a post-publish dist-tag mutation.
+
+- b8a08bb: Accept AdCP 3.1 `vendor_metric` optimization goals in `create_media_buy` validation and treat top-level `errors[]` as advisory when a task-aware success or submitted payload is present.
+- fcf4622: Treat flat `error_code` fields as advisory when the response also has a tool-specific success payload.
+- ac57fee: Preserve generated branch fields for schemas that express mutual exclusion with `not.anyOf`, including upstream traffic attestation payload and digest fields plus stricter geo proximity and catchment union types. Require structured controller error metadata before downgrading non-finite JCS digest failures to not_applicable, and allow `TestControllerError` to carry controller `context`/`ext` metadata.
+- 9bf8fa1: Document and test the AdCP 3.1 creative-template audio storyboard path for audio-capable creative adapters.
+- c9a2e63: Expose generated input helpers for brand discovery and verification custom tools, including a full-schema helper for union-shaped `verify_brand_claim` requests.
+- 6293fd8: Document stateless BYOK provider auth for single-account adapters. Adds the single-plane Bearer pattern (provider credential presented as the AdCP request credential) to the bundled `BUILD-AN-AGENT.md` guide and the account-resolution guide, covering token read paths (`ctx.account.authInfo?.token` with `ctx.authInfo.token` fallback), non-secret identity for cache/idempotency scoping, request-local handling guardrails, and when a separate dual-auth provider channel is warranted. Also corrects the protocol auth note: SDK clients send `Authorization: Bearer <token>` with legacy `x-adcp-auth` as a compatibility fallback.
+- 8353d64: Reject catastrophic `format_schema` regex patterns in canonical reference resolution with `invalid_schema` / `budget_exceeded`.
+- 3300db7: Allow packaged catalog-era `adagents.json` schemas to validate community mirror catalogs with `authorized_agents: []`, while preserving the stricter non-empty authorization requirement for legacy authorization-only schema bundles.
+- 8c85f5c: fix: cluster-4 sub-pieces 3/4 (#1955) — storyboard completeness, security, residual drift
+
+  Three small fixes that clear the remaining storyboard cluster failures from issue #1943:
+
+  **`storyboard-completeness.test.js`** — three new harness tasks declared in 3.1.0-beta.3 compliance storyboards were missing from the test's `HARNESS_TASKS` set:
+  - `expect_rate_limit_not_replayed` (universal/idempotency.yaml) — runner drives the `rate_limit_trip_runner` contract; no standalone request shape.
+  - `fetch_brand_jwks` (universal/webhook-emission.yaml) — raw HTTP probe against `brand_json_url` then walks `agents[].jwks_uri`. Not an AdCP tool call.
+  - `assert_jwks_purpose` (universal/webhook-emission.yaml) — JWKS inspection assertion checking for `adcp_use: 'webhook-signing'` keys. Runner-side check; no tool call.
+
+  Plus one tool missing from `TOOL_RESPONSE_SCHEMAS`: **`verify_brand_claim`** — now wired to `VerifyBrandClaimResponseSchema`. The schema has existed in `schemas.generated.ts` since 3.1.0-beta.3 was generated; only the response-schemas map was lagging.
+
+  **`storyboard-security.test.js`** — the `falls back to auth_required when selected storyboards all require discovered tools` test referenced storyboard ID `creative_sales_agent`, which was removed from the spec bundle in 3.1.0-beta.3. Repointed to `billing_gate_dispatch` (a tool-driven storyboard from the same era) — the test's intent (any tool-driven storyboard should fall through to `auth_required` when discovery 401s) is preserved.
+
+  **`storyboard-drift.test.js`** — two compliance-bundle YAML storyboards (`media_buy_seller/pending_creatives_to_start/{create_buy_no_creatives, assign_creative_to_package}`) still use `field_value_or_absent` on the envelope `status` field. AdCP 3.1.0-beta.2 made `status` schema-required, so those tolerances are technically dead code. The fix is upstream — the spec bundle needs to switch them to `field_value`. Skipped here with a clear `KNOWN_REDUNDANT_TOLERANCE_PENDING_SPEC_UPDATE` carve-out tracking the upstream owner. 3 of 712 tests skipped (2 mine + 1 pre-existing); 0 failures.
+
+  After this PR, cluster-4 (#1955) is fully cleared and the remaining #1943 backlog is cluster 1 (codegen-aliases-drift; needs codegen redesign) and cluster 6 (request-signing graders; needs `protocol_methods_required_for` feature impl per adcp#4326).
+
+- f9f2498: fix: cluster-7 server-decisioning sweep — release-precision wire `adcp_version`, envelope status on error responses, plus test catch-up for 3.1.0-beta.3 field renames (#1955)
+
+  Two source-side fixes and four test catch-ups for the 3.1.0-beta.3 spec changes.
+
+  ## Source-side
+
+  **`adcp_version` wire normalization** (`src/lib/version.ts` + wire emission in `src/lib/server/create-adcp-server.ts`). Per the spec note on `adcp_version`: "SDKs that read full-semver values from bundle metadata (e.g. `ComplianceIndex.published_version = "3.1.0-beta.1"`) MUST normalize to release-precision (`"3.1-beta.1"`) before emitting on the wire — meta-field values are NOT valid wire values." The wire regex (`^\d+\.\d+(-[a-zA-Z0-9.-]+)?$`) rejects strings with a patch digit, but the SDK was reading `ADCP_VERSION` ("3.1.0-beta.3") and stamping that verbatim on every response, failing schema validation on the receiver side.
+
+  New helper `toReleasePrecisionVersion()` strips the patch digit: `3.1.0-beta.3` → `3.1-beta.3`. Wired into `injectVersionIntoResponse` so every framework-emitted response carries a wire-valid version string. Legacy aliases (`v2.5`, `v3`) pass through unchanged (v2.5 uses `adcp_major_version` for transport instead).
+
+  **Envelope `status` on error responses** (`src/lib/server/create-adcp-server.ts`). `injectEnvelopeStatusIntoResponse` previously bailed when `response.isError === true`, leaving error responses without envelope `status`. AdCP 3.1.0-beta.2+ requires envelope `status` on EVERY response — success or error. The injector now maps `isError === true` → `status: 'failed'`, defaulting `'completed'` otherwise. Tools that need richer states (`submitted`, `working`, `input-required`) still set them explicitly; this injector only fills in the default.
+
+  ## Test catch-up
+  - `test/server-assembly-helpers.test.js` — fixture gains `cache_scope: 'public'` on `get_products` validation call (required on populated-products branch since 3.1.0-beta.3).
+  - `test/server-decisioning-brand-rights.test.js` — 2 `buildAcquired` fixtures + 2 dispatch-result assertions rename `status` → `rights_status` (AcquireRights discriminator rename in 3.1.0-beta.3).
+  - `test/server-decisioning-to-wire-account.test.js` — 2 `governance_agents[]` fixtures drop `categories` (3.1.0-beta.3 tightened items to `additionalProperties: false` and dropped the deprecated field per the single-agent-owns-full-lifecycle clarification).
+  - `test/lib/update-rights-creative-approval.test.js` — `CreativeApprovalResponseSchema` 4-arm fixture: discriminator rename `status` → `approval_status` (adcp#4878), plus envelope `status: 'completed' | 'failed'` added on each arm.
+
+  110/110 across all 5 cluster-7 files pass; sibling regression check on 277 schema/storyboard/governance/extractor tests — 0 fail.
+
+  Closes #1955 cluster-7 contribution. Remaining clusters (1, 4 storyboard-completeness/security, 6) tracked separately.
+
+- 75684ab: Flush in-memory task registries from compliance.reset() so repeated storyboard runs can reuse hardcoded task IDs.
+- 6e7dfa4: Dedupe core-authored shared schemas from generated tool types while preserving compatibility re-exports.
+- 631b2a9: Deprecate schema re-exports from the root package and `@adcp/sdk/types` in favor of the dedicated `@adcp/sdk/schemas` subpath. This keeps backwards compatibility while documenting lower-footprint import paths for large TypeScript monorepos.
+- b2826bd: Capture a per-run storyboard clock and use it during request enrichment so stale media-buy fixture windows and generated fallback IDs stay deterministic across replay steps.
+- fb802e9: Document durable MCPUI preview asset patterns and add a pluggable cache backend for batch preview helpers.
+- 54afaaf: chore: enter changesets pre-mode (tag `beta`) on `main`
+
+  Following the accidental GA publish of `8.0.0`, the 8.x line moves into a beta cycle. From this commit forward, every changeset on `main` accumulates into a prerelease (`8.0.1-beta.N` for patch, `8.1.0-beta.N` for minor, `9.0.0-beta.N` for major) and ships under the `@beta` npm dist-tag.
+
+  The `latest` dist-tag is moved back to `7.11.0` separately via `npm dist-tag add @adcp/sdk@7.11.0 latest`, so `npm install @adcp/sdk` continues to resolve to the stable `7.x` line.
+
+  To exit pre-mode and ship a real GA, run `npx changeset pre exit` on `main` and merge the resulting Release PR.
+
+- fbb3804: Fix media-buy test scenarios to discover explicit seller accounts via `list_accounts` and reuse the resolved account for product discovery, media-buy creation, and creative sync.
+- 21624ef: Re-export `MediaBuyValidAction` from the package root so callers can import it directly from `@adcp/sdk` without reaching into the internal `media-buy` submodule.
+- d9a6384: Re-export the generated `Placement` type from the package root and `@adcp/sdk/types` barrel for callers that need to name placement entries from product response shapes.
+- dcefd85: Expose named server `*Payload` aliases from the root, types, and server barrels so adopters can annotate server-side adapter returns without importing wire `*Response` types.
+- 3600320: fix: let external compliance dirs provide their matching schema bundle
+
+  When `--compliance-dir` points at another SDK package or checkout, the storyboard runner now registers the sibling schema bundle before constructing the test client. This allows a beta runner that ships only the 3.1 cache to execute a supplied 3.0 compliance bundle without failing the `adcpVersion` schema-bundle preflight.
+
+- 9a81824: fix(storyboard): treat flat MCP envelope `status: "completed"` as absent for media-buy legacy status tolerance (#1961)
+
+  `field_value_or_absent` now distinguishes the AdCP 3.1 task-envelope `status` from the deprecated media-buy body `status` when `media_buy_status` is present. This lets `pending_creatives_to_start` pass for sellers that correctly emit `media_buy_status: "pending_creatives"` without the deprecated legacy field, while preserving failures for actual mismatched legacy media-buy statuses and leaving `envelope_field_*` checks unchanged.
+
+- c0a63ee: Support keyed subset matching for storyboard array wildcard checks.
+- 16ee37f: fix(deps): resolve npm audit advisories via non-breaking lockfile bumps
+
+  `npm audit fix` (non-breaking): `ws` 8.20.1 → 8.21.0 (GHSA-96hv-2xvq-fx4p, high — memory-exhaustion DoS; the only runtime dep affected), `tar` 7.5.15 → 7.5.16 (GHSA-vmf3-w455-68vh, moderate — build-time devDependency) and `markdown-it` 14.1.1 → 14.2.0 (GHSA-6v5v-wf23-fmfq, moderate — dev-only, via typedoc). Lockfile-only; no `package.json` range changes. Incidentally re-resolves a few unrelated dev-only transitives to satisfy the tree (`js-yaml` 4.1.1 → 4.2.0, `hono` 4.12.23 → 4.12.25) — distinct from the `@changesets/*` → `js-yaml` advisory chain, which requires a breaking major bump and is left for a separate maintainer decision.
+
+- 30dc394: Restore `comply()` `timeout_ms` semantics so the budget stops new storyboards from starting instead of aborting the active assessment and reporting reachable agents as unreachable.
+- fdd5fea: Recognize the `content-standards` specialism as support for governance content standards feature gates and include declared specialisms in capability diagnostics.
+- e8d05ea: Repair local compliance bundles whose `latest` selector leaked into `ComplianceIndex.adcp_version` by deriving the
+  real AdCP version from the matching schema bundle before storyboard execution.
+- 6738e2a: Export named server `*Payload` and `*HandlerResult` aliases for decisioning handlers, and keep those payload types aligned with runtime response projection by stripping write-only webhook credentials and billing bank fields.
+
+  Adopters that annotated server helper layers with generated wire `*Response` / `*Success` types should switch those annotations to the exported aliases from `@adcp/sdk/server`, or use `ServerPayload<T>` directly for less common generated response shapes.
+
+- a3d1680: Fix the storyboard `create_media_buy` request builder so stale fixture `start_time` values and same-day fixture `end_time` values cannot resolve to an inverted media-buy window.
+- 84c648b: fix(conformance): strip compat-injected envelope status from unwrapped response data
+
+  `unwrapProtocolResponse` injected a synthetic `status: "completed"` field (via
+  the 3.0.x back-compat shim) into the Zod-validated data object that was returned
+  to callers. Because the Zod schemas use `.passthrough()`, the injected field
+  survived validation and appeared in `taskResult.data`, causing storyboard
+  `field_value_or_absent` checks on the deprecated legacy `status` field to fail
+  with a false positive — the runner observed the injected `"completed"` instead of
+  the seller's actual absent field.
+
+  The fix strips the injected `status` from the returned data when the seller's
+  original payload did not include it. The validation leniency itself is unchanged:
+  the shim still injects during `safeParse` so 3.0.x responses satisfy the 3.1
+  envelope schema. The fix applies to both the main success path and the
+  `filterInvalidProducts` early-return path.
+
+  Fixes #1961.
+
+- 2239541: fix(test): add envelope `status: 'completed'` to zod-schemas test fixtures
+
+  `test/lib/zod-schemas.test.js` is part of the `prepublishOnly` gate (one of the 3 test files the publish script runs). Its fixtures predate AdCP 3.1.0-beta.2's envelope-`status`-required change, so they fail to validate against the regenerated `*ResponseSchema` Zod schemas. This blocks `8.1.0-beta.0` from publishing.
+
+  8 fixtures (across `GetProductsResponse`, `GetMediaBuysResponse`, `GetMediaBuyDeliveryResponse`, `GetSignalsResponse`) now carry `status: 'completed'` as the first field. No other test logic changes.
+
+- 448249c: Include `operation_id` in framework-emitted task webhook payloads and validate
+  push notification operation identifiers at the request boundary.
+- 80f255b: Harden type generation for conditional params by failing on conflicting promoted `params` keys instead of silently keeping the first branch.
+
+  Adopters maintaining forked schemas should expect codegen to hard-fail when multiple `allOf[].then.properties.params.properties.*` branches define incompatible shapes for the same promoted key.
+
+  Enum order differences are treated as equivalent during this conflict check so schema refactors do not fail only because two branches list the same values in a different order.
+
+- b4defa5: Surface input-schema field stripping as structured runner notices so compliance JSON output no longer hides stripped request fields in console warnings only.
+- 90d9edb: Normalize legacy media-buy lifecycle status responses during validation and storyboard capture, and export `getAuthoritativeMediaBuyStatus` / `isMediaBuyStatus` helpers for reading authoritative media-buy status from mixed-version payloads. The normalized return shape preserves seller-provided legacy `status` values while adding canonical `media_buy_status` where the lifecycle status is unambiguous.
+- 9a81824: fix: restore 3.1.0-beta.3 CI compatibility across conformance, request signing, and storyboard validation
+
+  Aligns conformance sample generation and response validation with the latest schemas, carries `protocol_methods_required_for` through the request-signing verifier/server test harness, and updates storyboard/codegen drift guards for the current compliance cache.
+
+- 9beb418: Fix idempotency storyboard grading for MCP sellers by keeping missing-field vectors on the initialized SDK transport, and allow standard `recovery` metadata on `IDEMPOTENCY_CONFLICT` error envelopes.
+- e52f1bf: Preserve ZodObject helpers for safe generated object intersections, including `validate_property_delivery` request schemas used for MCP tool registration.
+- 77252a9: Fix false-positive collision warnings in per-tool type extractor when the same type is emitted by both tools.generated and core.generated with different JSDoc but identical structure.
+- 9120dff: Enforce phase-level `requires_capability` gates in the storyboard runner so protocol-specific phases skip as `not_applicable` before dispatch when seller capabilities do not match.
+- 2be3d08: Enforce the portable 3.1 `upstream_traffic.identifier_paths` grammar in storyboard runner resolution and digest prefetch.
+- 43a98bf: Throw a typed `ProtocolFeatureUnsupportedError` before schema validation when a client pinned below AdCP 3.1 sends 3.1-only discovery controls such as `get_signals` `discovery_mode: "wholesale"` or discovery `push_notification_config`, including `push_notification_config` injected from `webhookUrlTemplate`. This protocol preflight runs independently of request schema validation. The error remains catch-compatible with `FeatureUnsupportedError`, exposes protocol code `UNSUPPORTED_FEATURE`, and includes `required_version` and `capability_path` details for buyer recovery.
+- 766cf27: Add a storyboard-level `preferred_attestation_mode` hint for upstream traffic
+  controller prefetches.
+- 8681d6e: Preserve storyboard `create_media_buy` sample requests that set `start_time: "asap"` instead of rewriting them to a generated future timestamp.
+- 94ba961: Restore ZodObject helper access on ProductSchema and marker-backed canonical format schemas by collapsing marker-only intersections during schema generation.
+
+  Also preserve exact known-key typing for exported tool request/input schema maps while keeping dynamic string lookups explicitly nullable.
+
+- eb0d260: Restore `ZodObject` ergonomics for generated schemas whose only intersection arms are opaque `Record<string, unknown>` markers.
+
+  `ProductSchema` and related marker-only format schemas now expose object helpers like `.extend()`, `.omit()`, `.pick()`, and `.shape` again without changing runtime validation behavior.
+
+- eeaa641: fix(conformance): skip proposal storyboards when supports_proposals is absent
+
+  Treat omitted `media_buy.supports_proposals` as unsupported for proposal lifecycle
+  `requires_capability` gates, including profiles without raw capabilities.
+
+- 0938599: Add a proxy-seller Snap bridge example and let `bridgeFromSessionStore` loaders receive the resolved bridge context.
+- a6dde23: Avoid advertising the slash-based `tasks/get` compatibility alias as an MCP tool and poll MCP agents through the `tasks_get` alias. A2A callers and agent cards keep the spec `tasks/get` skill; the A2A adapter maps it to the server's `tasks_get` handler at lookup time.
+- d28855e: Align the conformance/storyboard harness with the 3.1 beta compliance cache and request-signing vectors.
+
+  Adds request-signing enforcement for raw JSON-RPC protocol methods such as `tasks/cancel`, updates generated schema aliases, and teaches the storyboard runner about the latest compliance probe pseudo-steps.
+
+- cbaebbc: Restore signing-only response helpers under `@adcp/sdk/signing` for adopters that sign JSON transport responses and publish
+  `response-signing` JWKs.
+- 17b734d: fix(validation): unblock 14 tool validators from Ajv ambiguous-ref on bundled responses (#1950 item 1)
+
+  The production schema-loader compiles each tool's response/request schema lazily via Ajv. For tools whose responses live in the spec's `bundled/` subtree (those whose `$ref`s the spec publishes fully inlined), the bundled `.json` file embeds every referenced subschema with its **canonical `$id`** — e.g. `core/version-envelope.json` appears as a nested schema inside `bundled/signals/activate-signal-response.json`, with the same `$id` as the standalone `core/version-envelope.json`.
+
+  Once `ensureCoreLoaded` has run (which happens whenever any non-bundled tool, like `acquire_rights` / `get_brand_identity` / property-list tasks, is compiled — they live in flat domain trees and need `core/*` pre-registered for `$ref` resolution), the standalone core schemas are in Ajv's registry. Subsequent compile of a bundled tool response then trips Ajv's `checkAmbiguousRef` on every nested `$id` that already exists standalone.
+
+  Net effect: 14 tools (`activate_signal`, `build_creative`, `create_media_buy`, `get_adcp_capabilities`, `get_creative_delivery`, `get_media_buys`, `list_creative_formats`, `list_creatives`, `preview_creative`, `sync_audiences`, `sync_catalogs`, `sync_creatives`, `sync_event_sources`, `update_media_buy`) could not have their responses validated at all on the SDK's production loader once any flat-tree tool had been touched in the same process. Validation calls would throw `reference "/schemas/3.1.0-beta.3/core/<x>.json" resolves to more than one schema`.
+
+  **The fix**: bundled response files explicitly declare themselves as inlined (`"note": "This is a bundled schema with all $ref resolved inline"`) and carry **no internal `$ref`s** at all. The nested `$id`s are vestigial spec-build artifacts — Ajv only needs the root `$id` for validator lookup. The loader now strips every nested `$id` from bundled files before passing them to `ajv.compile`, preserving only the root `$id`.
+
+  The strip is a deep-copy walk so the on-disk schema cache is untouched, and is gated on `file.includes('/bundled/')` so flat-tree schemas (which DO have `$ref`s and need their nested registrations to resolve) are unaffected.
+
+  **Tests flipped back on**: `test/validation-oneof-cascade.test.js` — the 14-tool `SCHEMA_LOADER_AMBIGUOUS_REF_SKIP` carve-out added in #1949 is removed; all 31 tests now run and pass.
+
+- 249604c: Fix external compliance/schema bundle handling by scoping schema roots per run, preloading async response refs for request validators, preserving hosted stable-line aliases on the wire, and exposing schema-root options through conformance fuzzing.
+- 314ea71: Type server/platform handler returns as domain payloads rather than requiring protocol task-envelope fields from generated wire response types. The SDK continues to stamp envelope fields such as `status: "completed"` at dispatch time, and exports `ServerPayload<T>` for adopters that want explicit payload return annotations.
+- 604a956: Unblock 3.1 `signed-requests` adopters. Two coupled fixes; the runner-side fix alone leaves adopters stuck on the boot guard, and vice versa (per #2237 triage).
+
+  **1. Pre-flight `resolveStoryboardsForCapabilities` (`compliance.ts`).**
+  `resolveStoryboardsForCapabilities` was throwing `unknown_specialism` on the
+  deprecated `signed-requests` claim because the bundle lives under
+  `universal/signed-requests.yaml`, not `specialisms/signed-requests/`. That
+  blocked every other storyboard from running and prevented the
+  `signed_requests_specialism_deprecated` notice (#2082) from ever firing.
+
+  Adds `DEPRECATED_SPECIALISM_UNIVERSAL_ALIASES` mapping the deprecated
+  specialism enum value to its universal bundle base name. When the deprecated
+  alias is declared AND the universal bundle is present in the cache,
+  resolution continues silently (the universal storyboard is pushed
+  unconditionally and the deprecation notice fires from runner.ts).
+  Otherwise the throw is preserved — unknown specialism without a universal
+  fallback is still a configuration error.
+
+  **2. Boot guard `createAdcpServer` (`create-adcp-server.ts`).**
+  The previous guard required the deprecated `signed-requests` specialism claim
+  whenever `signedRequests` was configured, contradicting the universal
+  storyboard's "drop the now-redundant specialism claim and rely solely on
+  `request_signing.supported: true`" guidance. Widens the guard to accept
+  either discovery surface: the canonical 3.1+ form
+  (`capabilities.request_signing.supported: true`, no deprecated claim) or
+  the back-compat form (`specialisms: ['signed-requests']`). Still rejects
+  the "config present, nothing advertised" case so buyers can't be left
+  unable to discover the signing requirement. JSDoc on `SignedRequestsConfig`
+  updated to document both paths.
+
+  Closes #2237.
+
+- 59fb56a: Skip storyboard `requires_capability.equals` gates when the agent omits the capability field.
+- 2572cd3: fix: three source-side regressions surfaced by #1949's cluster-3 sweep (#1950 items 2, 3, 4)
+
+  **`getBestUnionErrors` walks `ZodIntersection` arms** (`src/lib/utils/union-errors.ts`). AdCP 3.1.0-beta.3 reshaped several response unions from bare `z.union([...])` to `z.object({...envelope...}).passthrough().and(z.union([...]))` — the required envelope-status fields became an outer object intersected with the union. The disambiguator previously looked for `_def.options` only on the top-level schema, so the intersection-wrapped form silently fell back to "Invalid input". Now unwraps one level of intersection (right arm first, then left) before walking variants. Affected tools: `create_media_buy`, `activate_signal`, `build_creative`, and any other response union that gained the envelope wrapper.
+
+  **`filterInvalidProducts` unwraps `ZodOptional<ZodArray>`** (`src/lib/utils/response-unwrapper.ts`). `get_products`'s `products` field is now optional (the `unchanged: true` wholesale-feed branch legitimately omits it) so the schema shape is `ZodOptional<ZodArray<...>>` rather than the bare `ZodArray<...>` we used to see. The helper's `instanceof ZodArray` guard failed, silently disabling the feature. Now unwraps `ZodOptional` / `ZodNullable` before the array check.
+
+  **`sync_governance` builder drops `categories` on `governance_agents[]`** (`src/lib/testing/storyboard/request-builder.ts`). 3.1.0-beta.3 tightened the items to `additionalProperties: false` and removed the deprecated `categories` array (single-agent-owns-full-lifecycle clarification). Storyboard fallback no longer emits the forbidden field.
+
+  **Source-side issue NOT fixed here**: schema-loader ambiguous-ref on bundled vs standalone `core/*` schemas (#1950 item 1) — needs careful design around Ajv's `$id` registration semantics across the bundled/standalone trees. Filed as a focused follow-up.
+
+  11 previously-skipped tests in `response-unwrapper.test.js`, `response-schema-validation.test.js`, and `request-builder-jsonschema-roundtrip.test.js` are flipped back on; the 2 tests still anchored to the old "non-union schema with required `products`" shape are repointed at `get_media_buy_delivery` (which still has required top-level fields).
+
+- ceb8b80: Add storyboard runner support for step-level HTTP Basic auth directives.
+- 1e2e9c7: Allow storyboard Basic-auth probes to use RFC 7617-valid empty passwords.
+- 31c5ae1: fix(storyboard): align `schemaAllowsTopLevelField` with `additionalProperties: true` requests (#1955 sub-piece 1)
+
+  AdCP 3.1.0-beta.3 set `additionalProperties: true` on mutating request schemas (vendor-extension friendly). Before that flip, `schemaAllowsTopLevelField` used `additionalProperties: false` as the gate: "if the schema is strict, only `properties` keys are allowed". Now that requests are universally permissive at the schema level, the old gate said `true` for any field on any request — defeating the storyboard runner's intent ("only inject envelope fields the tool's schema declares it expects to see").
+
+  The helper now checks `field in properties` directly. The question we actually care about is **"does the schema declare this field at top level?"**, not "does the schema permit this field at top level?" (it permits everything since 3.1.0-beta.3).
+
+  Concrete impact: the storyboard runner's `applyBrandInvariant` now correctly skips top-level `brand` injection on tools that don't declare it (e.g. `sync_plans`, `list_creatives`, `list_property_lists` carry brand inside `account.brand`), while still injecting on tools that DO declare it (e.g. `get_products`). Same logic governs the synthetic `account` injection and `ext` propagation.
+
+  Test fixture update: the `runStoryboard: brand invariant on the wire` test's assertion is broadened from "every step carries top-level `brand`" to "the configured BRAND is reachable from the wire request — either at top level OR via `account.brand`". This matches the actual invariant the runner enforces post-3.1-beta-3, where many tools carry brand only via the account ref.
+
+  22/22 tests in `storyboard-brand-invariant.test.js` now pass. No regressions in `storyboard-drift.test.js` (still 700/712 — those are the 6 YAML drift items tracked separately in #1955) or `storyboard-security.test.js` (97/98 — the `comply()` degraded-profile item tracked in #1955). Sub-pieces 2 (YAML drift), 3 (completeness builders), and 4 (security fallback) remain.
+
+- a5b2cd6: Fail fast when `adcp storyboard run --compliance-version` selects a compliance bundle whose matching schema bundle is unavailable.
+
+  The storyboard runner now refuses to proceed with installed default schemas in that case and points operators at `--schema-root` / `ADCP_SCHEMA_ROOT` or an SDK install that includes the requested schema bundle.
+
+- 3fd9e7f: Fix storyboard `expect_error` grading for failed AdCP payloads when the SDK task result omits `success: false`.
+- d9a6384: Treat flat `{ error_code: "..." }` responses as terminal AdCP errors in storyboard expected-error handling so permissive non-standard INVALID_REQUEST envelopes do not fail negative-path steps.
+- ca64f88: Split storyboard runner exclusions from selected-but-skipped steps in compliance summaries.
+
+  Runs now report caller-excluded work, such as version gates, explicit request-signing vector filters, live-side-effect opt-outs, and profile exclusions, under `steps_not_selected` / `not_selected_by_reason` instead of inflating `steps_skipped`. Selected steps that could not execute, such as missing tools or missing `comply_test_controller`, remain skipped.
+
+  The narrow compliance summary artifact is bumped to schema version 2 and now exposes `not_selected_count`, optional `not_selected` records, `not_selected_by_reason`, and `skipped_by_reason`.
+
+- 2d930f1: fix(testing): seed storyboard root context before applying caller overrides.
+
+  Refs #2099. The storyboard runner now uses top-level storyboard `context` defaults for full-run, multi-pass seeding, and single-step execution paths, while preserving `options.context` override behavior.
+
+- eb7ebac: Add storyboard-scoped correlation IDs and cache isolation to generated controller seeding calls, with unsupported seed scenarios graded as not applicable.
+- 21240cf: fix: make storyboard runner version negotiation explicit
+
+  Storyboards now inherit the AdCP version from the selected compliance cache, suppress the exact `adcp_version` marker for 3.0 cache runs, and opt into explicit 3.1 markers only when running 3.1 storyboards. The compliance runner and CLI also expose cache selection so the runner does not infer the spec line solely from the installed package version.
+
+- f582231: Fix storyboard webhook placeholder resolution for runner-provided requests and make raw MCP security probes complete the Streamable HTTP initialization boundary before dispatching tool calls.
+- d9a6384: Detect implicit `webhook_receiver` requirements inside `rate_limit_trip.trip_target_sample_request` so storyboards with runner webhook placeholders skip before dispatch when no receiver is configured.
+- b6a3d89: Fix compliance storyboard negotiation for strict legacy AdCP 3.0 sellers by using a major-only version envelope and validating responses against the negotiated server version.
+- 2ed0dd1: Tighten sync_accounts commercial filtering diagnostics and replay caching for
+  stable rejected rows.
+- d28855e: fix(storyboard): mark terminal `list_accounts` pagination walks not applicable
+
+  The storyboard runner can now treat a `list_accounts` first page as a response-derived `not_applicable` result when the response proves the cursor walk is terminal, such as a short single-account page without pagination or an explicit `has_more: false` page with trustworthy `total_count`.
+
+  Malformed or ambiguous pagination still fails the authored continuation assertions, and seeded multi-account pagination walks keep their continuation requirements live.
+
+- 076e5ea: Thread storyboard contribution flags through `runStoryboardStep()` and the `adcp storyboard step` CLI so step-by-step runners preserve branch-set state for synthetic `assert_contribution` checks.
+- d6528d7: Tighten beta.11 server payload migration around `get_products.cache_scope`.
+
+  Server-facing `get_products` payload aliases and `productsResponse()` now require
+  `cache_scope` whenever `products` are returned or a wholesale-feed response is
+  `unchanged`. Unchanged responses still omit `products`, but must echo
+  `cache_scope`. Strict response validation catches plain JavaScript adopters that
+  bypass TypeScript.
+
+  Framework response defaulting now infers `cache_scope: 'public'` only when there
+  is no inline account and no auth-derived/resolved account. Account-scoped
+  requests fail closed unless the adapter explicitly chooses `public` or
+  `account`, and sandbox/test-controller seeded merges no longer hide missing
+  account-scoped scope.
+
+- a415b20: Avoid false-positive `missing-valid-actions` advisories when a later `get_media_buys` observation in the same compliance run includes `valid_actions`.
+- 2b9f021: Register the generated validate_input response schema for storyboard response validation.
+- 6453cee: Harden WholesaleFeedSync lifecycle recovery by cancelling stale in-flight bootstraps after stop, committing feed indexes and version tokens atomically after successful bootstrap, and bounding version-mismatch repair retries.
+- 68b8f38: Bump ws to 8.21.0 to resolve high-severity memory exhaustion DoS vulnerability (GHSA-96hv-2xvq-fx4p).
+- 8502e9f: Preserve ZodObject JavaScript ergonomics for additional record/object schema intersections.
+
 ## 9.0.0-beta.31
 
 ### Minor Changes
