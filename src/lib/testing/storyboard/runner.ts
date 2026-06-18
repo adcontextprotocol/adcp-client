@@ -2214,18 +2214,27 @@ async function executeStoryboardPass(
         phasePassed = false;
         continue;
       }
-      const rawResult = await executeStep(assignment.client, step, storyboard.id, phase.id, context, allSteps, options, {
-        contributions,
-        priorStepResults,
-        priorProbes,
-        agentUrl: assignment.agentUrl,
-        webhookReceiver,
-        runnerVars,
-        contextProvenance,
-        priorA2aEnvelopes,
-        stepRequestStarts,
-        agentLibraryVersion: profile?.library_version,
-      });
+      const rawResult = await executeStep(
+        assignment.client,
+        step,
+        storyboard.id,
+        phase.id,
+        context,
+        allSteps,
+        options,
+        {
+          contributions,
+          priorStepResults,
+          priorProbes,
+          agentUrl: assignment.agentUrl,
+          webhookReceiver,
+          runnerVars,
+          contextProvenance,
+          priorA2aEnvelopes,
+          stepRequestStarts,
+          agentLibraryVersion: profile?.library_version,
+        }
+      );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance || useRouting) {
         // Echo per-step routing on the result so JUnit/CI consumers and
