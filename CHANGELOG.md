@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.11.6
+
+### Patch Changes
+
+- e0cf1e5: Surface input-schema field stripping as structured runner notices so compliance JSON output no longer hides stripped request fields in console warnings only.
+
 ## 7.11.5
 
 ### Patch Changes
@@ -426,10 +432,10 @@
         De-duplicates `format_ids` by full identity (`{agent_url, id,
 
     width, height, duration_ms}`) — multi-size declarations sharing
-    `{agent_url, id}`survive de-dup. When every chosen capability is
-    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
-    from the result rather than emitted as`[]`(which would violate the
-    wire schema's`minItems: 1` constraint).
+`{agent_url, id}`survive de-dup. When every chosen capability is
+V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+from the result rather than emitted as`[]`(which would violate the
+wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
