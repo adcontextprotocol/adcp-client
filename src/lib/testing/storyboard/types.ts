@@ -100,13 +100,13 @@ export interface Storyboard {
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
    * (e.g. `"adcp.idempotency.supported"`).
    *
-   * Two matcher forms — mutually exclusive on a single gate:
+   * Three matcher forms — mutually exclusive on a single gate:
    *
-   * - `equals: V` — scalar equality. The path's resolved value must equal `V`
-   *   for the storyboard to run. When the path resolves to `undefined` (field
-   *   absent), the predicate is treated as unresolvable and the storyboard
-   *   runs — absence means the agent hasn't explicitly opted out, so failing
-   *   the storyboard surfaces the gap.
+   * - `equals: V` — scalar equality. The path's resolved value must be
+   *   declared and must equal `V` for the storyboard to run. When the path
+   *   resolves to `undefined` (field absent), the storyboard is skipped as
+   *   unsupported because the agent has not opted into the capability or
+   *   capability variant this storyboard tests.
    *
    * - `present: true|false` — presence-only matcher for spec capabilities whose
    *   contract is "presence of this object indicates support" (e.g.
@@ -114,10 +114,9 @@ export interface Storyboard {
    *   `path` to exist (non-null, non-undefined); empty object `{}` counts as
    *   present. `present: false` requires the value to be absent — useful for
    *   scenarios that only apply to agents that explicitly do NOT advertise a
-   *   capability. Unlike `equals`, absence is the load-bearing signal: when
-   *   `present: true` and the field is missing, the storyboard is skipped
-   *   (not_applicable) rather than run, because the seller's silence is the
-   *   spec-defined opt-out.
+   *   capability. Absence is the load-bearing signal: when `present: true` and
+   *   the field is missing, the storyboard is skipped (not_applicable) rather
+   *   than run, because the seller's silence is the spec-defined opt-out.
    *
    * - `contains: V` — array-membership matcher for capabilities whose
    *   declaration shape is an array of allowed values (e.g.
@@ -130,7 +129,8 @@ export interface Storyboard {
    *   the array hasn't opted into the variant this storyboard tests.
    *
    * When `raw_capabilities` is not available (e.g. the agent doesn't expose
-   * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
+   * `get_adcp_capabilities`), `equals` gates skip as unsupported; other matcher
+   * forms are a no-op and the storyboard runs.
    */
   requires_capability?:
     | { path: string; equals: boolean | string | number | null }
