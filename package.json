@@ -257,7 +257,7 @@
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
     "version": "changeset version && npm run sync-version",
-    "release": "changeset publish",
+    "release": "changeset publish --tag adcp-3.0",
     "test:protocol-compliance": "node test/run-protocol-tests.js --only compliance",
     "test:protocol-schema": "node test/run-protocol-tests.js --only schema",
     "test:protocol-integration": "node test/run-protocol-tests.js --only integration",
