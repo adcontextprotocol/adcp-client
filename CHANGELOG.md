@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.11.5
+
+### Patch Changes
+
+- 97fb812: Publish 7.x backport releases under the `adcp-3.0` compatibility dist-tag.
+
 ## 7.11.4
 
 ### Patch Changes
@@ -390,35 +396,36 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-            ```ts
-            import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+                ```ts
+                import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-            const {
-              data: { products },
-            } = await agent.getProducts({ brief: '...' });
-            const product = products[0];
+                const {
+                  data: { products },
+                } = await agent.getProducts({ brief: '...' });
+                const product = products[0];
 
-            await agent.createMediaBuy({
-              packages: [
-                {
-                  package_id: 'pkg-1',
-                  product_id: product.product_id,
-                  pricing_option_id: product.pricing_options[0].pricing_option_id,
-                  ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-                  budget: { currency: 'USD', total: 5000 },
-                },
-              ],
-            });
-            ```
+                await agent.createMediaBuy({
+                  packages: [
+                    {
+                      package_id: 'pkg-1',
+                      product_id: product.product_id,
+                      pricing_option_id: product.pricing_options[0].pricing_option_id,
+                      ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                      budget: { currency: 'USD', total: 5000 },
+                    },
+                  ],
+                });
+                ```
 
-            Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-            in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+                Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+                in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
 
-        'empty_input' | 'invalid_product' }`) so adopters can branch on
+            'empty_input' | 'invalid_product' }`) so adopters can branch on
 
-    "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
-    De-duplicates `format_ids` by full identity (`{agent_url, id,
-width, height, duration_ms}`) — multi-size declarations sharing
+        "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+        De-duplicates `format_ids` by full identity (`{agent_url, id,
+
+    width, height, duration_ms}`) — multi-size declarations sharing
     `{agent_url, id}`survive de-dup. When every chosen capability is
     V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
     from the result rather than emitted as`[]`(which would violate the
