@@ -59,3 +59,6 @@ export type {
   SsrfPolicy,
   TrackerUrlRecord,
 } from './types';
+
+export { universal_macro_translation } from './translate';
+export type { MacroMapping, TranslateResult } from './translate';
