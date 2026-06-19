@@ -40,9 +40,17 @@ export type MacroMapping = Record<string, { native: string } | { value: string }
 export interface TranslateResult {
   /** The translated URL. Base, path, and fragment are unchanged. */
   url: string;
-  /** Keys of query parameters that were dropped due to unmapped macros. */
+  /**
+   * Keys of query parameters that were dropped due to unmapped macros.
+   * One entry per dropped parameter instance, so a repeated key can appear
+   * more than once.
+   */
   dropped_params: string[];
-  /** Unique unmapped macro tokens encountered across all dropped parameters. */
+  /**
+   * Unique unmapped macro tokens encountered across all dropped parameters.
+   * Deduplicated: the same token is recorded at most once regardless of how
+   * many parameters reference it.
+   */
   unmapped_macros: string[];
 }
 
@@ -103,9 +111,9 @@ export function universal_macro_translation(
     }
 
     // All macros are mapped — replace in a single pass.
-    // The regex global flag is reset by replacing from a fresh match call so
-    // replaced text is never re-scanned.
-    const translated = value.replace(/\{[A-Z][A-Z0-9_]*\}/g, token => {
+    // String.replace with a global regex does not re-scan substituted output,
+    // so macro tokens inside a translated value are never expanded.
+    const translated = value.replace(UNIVERSAL_MACRO, token => {
       const entry = mapping[token];
       if (!entry) {
         // Unreachable: all tokens were verified above, but TypeScript narrows.

@@ -143,4 +143,29 @@ describe('universal_macro_translation — query-string macro substitution', () =
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);
   });
+
+  // ─── macro token in KEY position is ignored ──────────────────────────────
+
+  it('does not substitute, drop, or flag a macro token appearing in a key position', () => {
+    // Matching runs on values only; a {MACRO} in the key must pass through raw.
+    const result = universal_macro_translation(
+      'https://px.example/i?{MEDIA_BUY_ID}=v',
+      { '{MEDIA_BUY_ID}': { value: 'buy-42' } },
+    );
+    assert.equal(result.url, 'https://px.example/i?{MEDIA_BUY_ID}=v');
+    assert.deepEqual(result.dropped_params, []);
+    assert.deepEqual(result.unmapped_macros, []);
+  });
+
+  // ─── non-ASCII value is UTF-8 percent-encoded ────────────────────────────
+
+  it('percent-encodes non-ASCII characters in a substituted value (UTF-8)', () => {
+    const result = universal_macro_translation(
+      'https://px.example/i?s={STORE_ID}',
+      { '{STORE_ID}': { value: 'café' } },
+    );
+    assert.equal(result.url, 'https://px.example/i?s=caf%C3%A9');
+    assert.deepEqual(result.dropped_params, []);
+    assert.deepEqual(result.unmapped_macros, []);
+  });
 });
