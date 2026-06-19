@@ -25,8 +25,9 @@ const {
   assertNoNestedExpansion,
   DEFAULT_MACRO_PROHIBITED_PATTERN,
   extractTrackerUrls,
-  __hasResidualEntity,
 } = require('../../dist/lib/index.js');
+
+const { __hasResidualEntity } = require('../../dist/lib/substitution/observer/html-parser.js');
 
 describe('HTML entity smuggling — values with unknown entities are dropped', () => {
   it('decodes known entities like &Tab; so WHATWG URL sees the real scheme (javascript:)', () => {

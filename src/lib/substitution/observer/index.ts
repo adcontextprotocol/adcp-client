@@ -1,7 +1,7 @@
 export { SubstitutionObserver, PreviewFetchError } from './SubstitutionObserver';
 export type { ObserverFetchOptions } from './SubstitutionObserver';
 
-export { extractTrackerUrls, __hasResidualEntity } from './html-parser';
+export { extractTrackerUrls } from './html-parser';
 export { matchBindings } from './alignment';
 export {
   assertNoNestedExpansion,

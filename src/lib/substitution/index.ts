@@ -36,7 +36,6 @@ export type { CatalogMacroVectorName } from './vectors';
 
 export {
   extractTrackerUrls,
-  __hasResidualEntity,
   matchBindings,
   assertNoNestedExpansion,
   assertRfc3986Safe,

@@ -45,6 +45,8 @@ interface MacroAssertionRunState {
   priorStepResults: Map<string, StoryboardStepResult>;
 }
 
+const POINTER_FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Resolve an RFC 6901 JSON Pointer against a parsed response object.
  * Returns `undefined` when any segment is absent or when the root is not
@@ -55,6 +57,9 @@ interface MacroAssertionRunState {
  * decoding (`~1` → `/`, `~0` → `~`). Array indexes are decoded as
  * decimal numbers for completeness, but the primary use-case is object
  * paths like `/creative_manifest/preview_html`.
+ *
+ * Guards against prototype pollution: rejects segments in `POINTER_FORBIDDEN_KEYS`
+ * and only descends into own properties.
  */
 function resolvePointer(root: unknown, pointer: string): unknown {
   if (typeof root !== 'object' || root === null) return undefined;
@@ -65,21 +70,30 @@ function resolvePointer(root: unknown, pointer: string): unknown {
   let node: unknown = root;
   for (const seg of segments) {
     if (typeof node !== 'object' || node === null) return undefined;
-    const obj = node as Record<string, unknown>;
-    node = seg in obj ? obj[seg] : undefined;
+    if (POINTER_FORBIDDEN_KEYS.has(seg)) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(node, seg)) return undefined;
+    node = (node as Record<string, unknown>)[seg];
   }
   return node;
 }
 
 /**
- * Finds the most-recently executed prior step from `priorStepResults`.
- * When `source` is `'prior_step'` without a `triggered_by` reference,
- * the handler uses the last inserted entry (Map preserves insertion order).
- * Returns `undefined` when the map is empty.
+ * Resolves the prior step result that this assertion step should inspect.
+ *
+ * When `step.triggered_by` names an earlier step, looks it up directly in
+ * `priorStepResults` — this matches the webhook-assertion convention and
+ * is robust when step execution order differs from insertion order.
+ * Falls back to the last inserted entry (Map preserves insertion order)
+ * when no `triggered_by` is declared.
+ * Returns `undefined` when the map is empty or the named step is not found.
  */
-function getLastPriorResult(
+function getPriorResult(
+  step: StoryboardStep,
   priorStepResults: Map<string, StoryboardStepResult>
 ): StoryboardStepResult | undefined {
+  if (step.triggered_by) {
+    return priorStepResults.get(step.triggered_by);
+  }
   let last: StoryboardStepResult | undefined;
   for (const v of priorStepResults.values()) last = v;
   return last;
@@ -151,7 +165,7 @@ export async function executeUniversalMacroAssertionStep(
   // ── Locate prior step HTML ─────────────────────────────────
 
   const sourcePath = step.source_path ?? '';
-  const priorResult = getLastPriorResult(state.priorStepResults);
+  const priorResult = getPriorResult(step, state.priorStepResults);
   const priorResponse = priorResult?.response;
   const rawHtml = sourcePath ? resolvePointer(priorResponse, sourcePath) : priorResponse;
 
@@ -171,6 +185,33 @@ export async function executeUniversalMacroAssertionStep(
   const macroTemplate = step.macro_template ?? '';
 
   const validations: ValidationResult[] = [];
+
+  if (macroBindings.length === 0) {
+    validations.push({
+      check: step.task,
+      passed: false,
+      description: 'Macro substitution configuration check',
+      error:
+        'Step "expect_universal_macro_substituted" has an empty or missing "macro_bindings" list. ' +
+        'Declare at least one { macro, context_key } entry for the assertion to have effect.',
+      json_pointer: null,
+      expected: 'non-empty macro_bindings array',
+      actual: null,
+    });
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: false,
+      duration_ms: Date.now() - start,
+      validations,
+      context,
+      request,
+      extraction,
+    };
+  }
+
   const catalogBindings: CatalogBinding[] = [];
 
   for (const { macro, context_key } of macroBindings) {

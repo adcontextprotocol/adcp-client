@@ -365,3 +365,53 @@ describe('executeUniversalMacroAssertionStep — fail cases', () => {
     assert.ok(result.validations.some(v => !v.passed));
   });
 });
+
+// ──────────────────────────────────────────────────────────────
+// Misconfiguration — empty macro_bindings
+// ──────────────────────────────────────────────────────────────
+
+describe('executeUniversalMacroAssertionStep — misconfiguration', () => {
+  it('fails with an explanatory validation when macro_bindings is empty', async () => {
+    const step = makeStep({ macro_bindings: [] });
+    const prior = makePriorResult(
+      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
+    );
+    const context = makeContext();
+    const priorStepResults = makePriorResults(prior);
+
+    const result = await executeUniversalMacroAssertionStep(step, 'phase_1', context, {
+      priorStepResults,
+    });
+
+    assert.strictEqual(result.passed, false);
+    assert.ok(!result.skipped);
+    assert.strictEqual(result.validations.length, 1);
+    assert.strictEqual(result.validations[0].passed, false);
+    assert.ok(
+      result.validations[0].error && result.validations[0].error.includes('macro_bindings'),
+      'error message must mention macro_bindings'
+    );
+  });
+
+  it('fails with an explanatory validation when macro_bindings is absent', async () => {
+    const step = makeStep({ macro_bindings: undefined });
+    const prior = makePriorResult(
+      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
+    );
+    const context = makeContext();
+    const priorStepResults = makePriorResults(prior);
+
+    const result = await executeUniversalMacroAssertionStep(step, 'phase_1', context, {
+      priorStepResults,
+    });
+
+    assert.strictEqual(result.passed, false);
+    assert.ok(!result.skipped);
+    assert.strictEqual(result.validations.length, 1);
+    assert.strictEqual(result.validations[0].passed, false);
+    assert.ok(
+      result.validations[0].error && result.validations[0].error.includes('macro_bindings'),
+      'error message must mention macro_bindings'
+    );
+  });
+});
