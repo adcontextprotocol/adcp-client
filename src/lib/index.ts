@@ -1681,6 +1681,7 @@ export {
   CATALOG_MACRO_VECTORS,
   getCatalogMacroVector,
   extractTrackerUrls,
+  __hasResidualEntity,
   matchBindings,
   assertRfc3986Safe,
   assertUnreservedOnly,
