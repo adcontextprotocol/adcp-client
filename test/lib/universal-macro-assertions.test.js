@@ -218,6 +218,80 @@ describe('executeUniversalMacroAssertionStep — neutral skip', () => {
 });
 
 // ──────────────────────────────────────────────────────────────
+// Multi-param tracker URL (canonical real-world case)
+// ──────────────────────────────────────────────────────────────
+
+describe('executeUniversalMacroAssertionStep — multi-param tracker URL', () => {
+  it('passes when both macros are correctly substituted in a single multi-param URL', async () => {
+    // Both {MEDIA_BUY_ID} and {PACKAGE_ID} appear in one URL.
+    // The HTML attribute must use &amp; — the only valid encoding in HTML.
+    const step = {
+      id: 'check_macro_substitution',
+      title: 'Verify macro substitution in rendered preview',
+      task: 'expect_universal_macro_substituted',
+      source: 'prior_step',
+      source_path: '/preview_html',
+      macro_template: 'https://t.example/i?mb={MEDIA_BUY_ID}&pkg={PACKAGE_ID}',
+      macro_bindings: [
+        { macro: '{MEDIA_BUY_ID}', context_key: 'media_buy_id' },
+        { macro: '{PACKAGE_ID}', context_key: 'package_id' },
+      ],
+    };
+    const prior = makePriorResult(
+      `<img src="https://t.example/i?mb=mb_123&amp;pkg=pkg_456">`
+    );
+    const context = { media_buy_id: 'mb_123', package_id: 'pkg_456' };
+    const priorStepResults = makePriorResults(prior);
+
+    const result = await executeUniversalMacroAssertionStep(step, 'phase_1', context, {
+      priorStepResults,
+    });
+
+    assert.strictEqual(result.passed, true);
+    assert.ok(!result.skipped);
+    assert.strictEqual(result.validations.length, 2);
+    assert.ok(result.validations.every(v => v.passed));
+  });
+
+  it('fails only the {PACKAGE_ID} validation when pkg= has the wrong value in a multi-param URL', async () => {
+    const step = {
+      id: 'check_macro_substitution',
+      title: 'Verify macro substitution in rendered preview',
+      task: 'expect_universal_macro_substituted',
+      source: 'prior_step',
+      source_path: '/preview_html',
+      macro_template: 'https://t.example/i?mb={MEDIA_BUY_ID}&pkg={PACKAGE_ID}',
+      macro_bindings: [
+        { macro: '{MEDIA_BUY_ID}', context_key: 'media_buy_id' },
+        { macro: '{PACKAGE_ID}', context_key: 'package_id' },
+      ],
+    };
+    // mb= is correct but pkg= has the wrong value.
+    const prior = makePriorResult(
+      `<img src="https://t.example/i?mb=mb_123&amp;pkg=WRONG">`
+    );
+    const context = { media_buy_id: 'mb_123', package_id: 'pkg_456' };
+    const priorStepResults = makePriorResults(prior);
+
+    const result = await executeUniversalMacroAssertionStep(step, 'phase_1', context, {
+      priorStepResults,
+    });
+
+    assert.strictEqual(result.passed, false);
+    assert.ok(!result.skipped);
+    assert.strictEqual(result.validations.length, 2);
+
+    const mediaBuyValidation = result.validations.find(v => v.description && v.description.includes('{MEDIA_BUY_ID}'));
+    const packageValidation = result.validations.find(v => v.description && v.description.includes('{PACKAGE_ID}'));
+
+    assert.ok(mediaBuyValidation, '{MEDIA_BUY_ID} validation should be present');
+    assert.ok(packageValidation, '{PACKAGE_ID} validation should be present');
+    assert.strictEqual(mediaBuyValidation.passed, true, '{MEDIA_BUY_ID} should pass');
+    assert.strictEqual(packageValidation.passed, false, '{PACKAGE_ID} should fail');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────
 // Fail cases
 // ──────────────────────────────────────────────────────────────
 
