@@ -58,14 +58,10 @@ export interface TranslateResult {
  * Translate universal macro tokens in the query parameters of `input_pixel_url`
  * using `mapping`.  See module-level documentation for the substitution rules.
  */
-export function universal_macro_translation(
-  input_pixel_url: string,
-  mapping: MacroMapping,
-): TranslateResult {
+export function universal_macro_translation(input_pixel_url: string, mapping: MacroMapping): TranslateResult {
   // Split off the fragment first so it is never touched.
   const fragmentIdx = input_pixel_url.indexOf('#');
-  const withoutFragment =
-    fragmentIdx === -1 ? input_pixel_url : input_pixel_url.slice(0, fragmentIdx);
+  const withoutFragment = fragmentIdx === -1 ? input_pixel_url : input_pixel_url.slice(0, fragmentIdx);
   const fragment = fragmentIdx === -1 ? '' : input_pixel_url.slice(fragmentIdx);
 
   // Split base (scheme + host + path) from query.

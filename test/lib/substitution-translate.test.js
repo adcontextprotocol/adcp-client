@@ -29,10 +29,9 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── literal param untouched ─────────────────────────────────────────────
 
   it('leaves an already-minted literal param unchanged and substitutes the other', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?pkg_id=123456&mb={MEDIA_BUY_ID}',
-      { '{MEDIA_BUY_ID}': { value: 'buy-42' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?pkg_id=123456&mb={MEDIA_BUY_ID}', {
+      '{MEDIA_BUY_ID}': { value: 'buy-42' },
+    });
     assert.equal(result.url, 'https://px.example/i?pkg_id=123456&mb=buy-42');
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);
@@ -41,10 +40,9 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── unmapped macro drops the whole param ────────────────────────────────
 
   it('drops a param whose macro is not in the mapping', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?mb={MEDIA_BUY_ID}&foo={UNSUPPORTED}',
-      { '{MEDIA_BUY_ID}': { value: 'buy-42' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?mb={MEDIA_BUY_ID}&foo={UNSUPPORTED}', {
+      '{MEDIA_BUY_ID}': { value: 'buy-42' },
+    });
     assert.equal(result.url, 'https://px.example/i?mb=buy-42');
     assert.deepEqual(result.dropped_params, ['foo']);
     assert.deepEqual(result.unmapped_macros, ['{UNSUPPORTED}']);
@@ -53,10 +51,9 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── mixed param with one unmapped macro dropped whole ───────────────────
 
   it('drops a param that contains even one unmapped macro', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?ids={MEDIA_BUY_ID}-{UNSUPPORTED}',
-      { '{MEDIA_BUY_ID}': { value: 'buy-42' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?ids={MEDIA_BUY_ID}-{UNSUPPORTED}', {
+      '{MEDIA_BUY_ID}': { value: 'buy-42' },
+    });
     assert.equal(result.url, 'https://px.example/i');
     assert.deepEqual(result.dropped_params, ['ids']);
     assert.deepEqual(result.unmapped_macros, ['{UNSUPPORTED}']);
@@ -90,13 +87,10 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── multiple macros in one param ────────────────────────────────────────
 
   it('translates multiple mapped macros within a single param in one pass', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?ids={MEDIA_BUY_ID}_{GDPR}',
-      {
-        '{MEDIA_BUY_ID}': { value: 'buy-42' },
-        '{GDPR}': { native: '%%GDPR%%' },
-      },
-    );
+    const result = universal_macro_translation('https://px.example/i?ids={MEDIA_BUY_ID}_{GDPR}', {
+      '{MEDIA_BUY_ID}': { value: 'buy-42' },
+      '{GDPR}': { native: '%%GDPR%%' },
+    });
     assert.equal(result.url, 'https://px.example/i?ids=buy-42_%%GDPR%%');
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);
@@ -105,20 +99,18 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── base / path / fragment pass through ────────────────────────────────
 
   it('preserves scheme, host, path, and fragment verbatim', () => {
-    const result = universal_macro_translation(
-      'https://px.example/path/segment?q={GDPR}#anchor',
-      { '{GDPR}': { native: '%%GDPR%%' } },
-    );
+    const result = universal_macro_translation('https://px.example/path/segment?q={GDPR}#anchor', {
+      '{GDPR}': { native: '%%GDPR%%' },
+    });
     assert.equal(result.url, 'https://px.example/path/segment?q=%%GDPR%%#anchor');
   });
 
   // ─── non-universal tokens not matched ────────────────────────────────────
 
   it('does not treat native ad-server tokens (%%X%%) as universal macros', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?gdpr=%%GDPR%%',
-      { '{GDPR}': { native: '%%GDPR%%' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?gdpr=%%GDPR%%', {
+      '{GDPR}': { native: '%%GDPR%%' },
+    });
     // no universal macro present → param is literal, left untouched
     assert.equal(result.url, 'https://px.example/i?gdpr=%%GDPR%%');
     assert.deepEqual(result.dropped_params, []);
@@ -126,10 +118,7 @@ describe('universal_macro_translation — query-string macro substitution', () =
   });
 
   it('does not treat double-brace tokens ({{x}}) as universal macros', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?t={{timestamp}}',
-      {},
-    );
+    const result = universal_macro_translation('https://px.example/i?t={{timestamp}}', {});
     assert.equal(result.url, 'https://px.example/i?t={{timestamp}}');
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);
@@ -148,10 +137,9 @@ describe('universal_macro_translation — query-string macro substitution', () =
 
   it('does not substitute, drop, or flag a macro token appearing in a key position', () => {
     // Matching runs on values only; a {MACRO} in the key must pass through raw.
-    const result = universal_macro_translation(
-      'https://px.example/i?{MEDIA_BUY_ID}=v',
-      { '{MEDIA_BUY_ID}': { value: 'buy-42' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?{MEDIA_BUY_ID}=v', {
+      '{MEDIA_BUY_ID}': { value: 'buy-42' },
+    });
     assert.equal(result.url, 'https://px.example/i?{MEDIA_BUY_ID}=v');
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);
@@ -160,10 +148,9 @@ describe('universal_macro_translation — query-string macro substitution', () =
   // ─── non-ASCII value is UTF-8 percent-encoded ────────────────────────────
 
   it('percent-encodes non-ASCII characters in a substituted value (UTF-8)', () => {
-    const result = universal_macro_translation(
-      'https://px.example/i?s={STORE_ID}',
-      { '{STORE_ID}': { value: 'café' } },
-    );
+    const result = universal_macro_translation('https://px.example/i?s={STORE_ID}', {
+      '{STORE_ID}': { value: 'café' },
+    });
     assert.equal(result.url, 'https://px.example/i?s=caf%C3%A9');
     assert.deepEqual(result.dropped_params, []);
     assert.deepEqual(result.unmapped_macros, []);

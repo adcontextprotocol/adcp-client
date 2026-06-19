@@ -32,9 +32,7 @@ import type {
   ValidationResult,
 } from './types';
 
-export const UNIVERSAL_MACRO_ASSERTION_TASKS: Set<string> = new Set([
-  'expect_universal_macro_substituted',
-]);
+export const UNIVERSAL_MACRO_ASSERTION_TASKS: Set<string> = new Set(['expect_universal_macro_substituted']);
 
 /**
  * Minimal run-state shape consumed by the handler — a strict subset of
@@ -66,7 +64,10 @@ function resolvePointer(root: unknown, pointer: string): unknown {
   if (pointer === '' || pointer === '/') return root;
 
   // Strip leading slash, then split and decode each segment.
-  const segments = pointer.replace(/^\//, '').split('/').map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+  const segments = pointer
+    .replace(/^\//, '')
+    .split('/')
+    .map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
   let node: unknown = root;
   for (const seg of segments) {
     if (typeof node !== 'object' || node === null) return undefined;

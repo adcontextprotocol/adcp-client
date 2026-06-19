@@ -34,9 +34,7 @@ function makeStep(overrides = {}) {
     // `match_bindings` is called once per step with all bindings. To handle
     // two separate URLs, we test the {MEDIA_BUY_ID} macro with its URL here.
     macro_template: 'https://cdn.example/track?mb={MEDIA_BUY_ID}',
-    macro_bindings: [
-      { macro: '{MEDIA_BUY_ID}', context_key: 'media_buy_id' },
-    ],
+    macro_bindings: [{ macro: '{MEDIA_BUY_ID}', context_key: 'media_buy_id' }],
     ...overrides,
   };
 }
@@ -92,9 +90,7 @@ describe('executeUniversalMacroAssertionStep — pass cases', () => {
     // Use an img src URL so the parser can extract it. Each URL has exactly
     // one query param — raw & in multi-param query strings is intentionally
     // rejected by the HTML parser as a security measure.
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`);
     const context = makeContext();
     const priorStepResults = makePriorResults(prior);
 
@@ -116,9 +112,7 @@ describe('executeUniversalMacroAssertionStep — pass cases', () => {
       macro_template: 'https://cdn.example/pkg?pkg={PACKAGE_ID}',
       macro_bindings: [{ macro: '{PACKAGE_ID}', context_key: 'package_id' }],
     };
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/pkg?pkg=pkg-xyz-456"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/pkg?pkg=pkg-xyz-456"></body></html>`);
     const context = { package_id: 'pkg-xyz-456' };
     const priorStepResults = makePriorResults(prior);
 
@@ -237,9 +231,7 @@ describe('executeUniversalMacroAssertionStep — multi-param tracker URL', () =>
         { macro: '{PACKAGE_ID}', context_key: 'package_id' },
       ],
     };
-    const prior = makePriorResult(
-      `<img src="https://t.example/i?mb=mb_123&amp;pkg=pkg_456">`
-    );
+    const prior = makePriorResult(`<img src="https://t.example/i?mb=mb_123&amp;pkg=pkg_456">`);
     const context = { media_buy_id: 'mb_123', package_id: 'pkg_456' };
     const priorStepResults = makePriorResults(prior);
 
@@ -267,9 +259,7 @@ describe('executeUniversalMacroAssertionStep — multi-param tracker URL', () =>
       ],
     };
     // mb= is correct but pkg= has the wrong value.
-    const prior = makePriorResult(
-      `<img src="https://t.example/i?mb=mb_123&amp;pkg=WRONG">`
-    );
+    const prior = makePriorResult(`<img src="https://t.example/i?mb=mb_123&amp;pkg=WRONG">`);
     const context = { media_buy_id: 'mb_123', package_id: 'pkg_456' };
     const priorStepResults = makePriorResults(prior);
 
@@ -317,9 +307,7 @@ describe('executeUniversalMacroAssertionStep — fail cases', () => {
   it('fails when the macro slot is entirely absent from the rendered URL', async () => {
     const step = makeStep();
     // The rendered URL has no mb= parameter at all — the seller dropped it.
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?other=value"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?other=value"></body></html>`);
     const context = makeContext();
     const priorStepResults = makePriorResults(prior);
 
@@ -334,9 +322,7 @@ describe('executeUniversalMacroAssertionStep — fail cases', () => {
   it('fails when the substituted value is wrong (different id)', async () => {
     const step = makeStep();
     // Seller substituted a different media_buy_id than the one in context.
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?mb=WRONG-ID"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?mb=WRONG-ID"></body></html>`);
     const context = makeContext();
     const priorStepResults = makePriorResults(prior);
 
@@ -350,9 +336,7 @@ describe('executeUniversalMacroAssertionStep — fail cases', () => {
 
   it('fails when a context key is missing (context not yet captured)', async () => {
     const step = makeStep();
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`);
     // media_buy_id is missing from context — prior capture step failed/skipped
     const context = {};
     const priorStepResults = makePriorResults(prior);
@@ -373,9 +357,7 @@ describe('executeUniversalMacroAssertionStep — fail cases', () => {
 describe('executeUniversalMacroAssertionStep — misconfiguration', () => {
   it('fails with an explanatory validation when macro_bindings is empty', async () => {
     const step = makeStep({ macro_bindings: [] });
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`);
     const context = makeContext();
     const priorStepResults = makePriorResults(prior);
 
@@ -395,9 +377,7 @@ describe('executeUniversalMacroAssertionStep — misconfiguration', () => {
 
   it('fails with an explanatory validation when macro_bindings is absent', async () => {
     const step = makeStep({ macro_bindings: undefined });
-    const prior = makePriorResult(
-      `<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`
-    );
+    const prior = makePriorResult(`<html><body><img src="https://cdn.example/track?mb=mb-abc-123"></body></html>`);
     const context = makeContext();
     const priorStepResults = makePriorResults(prior);
 
