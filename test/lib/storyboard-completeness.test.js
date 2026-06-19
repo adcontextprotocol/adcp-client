@@ -56,6 +56,10 @@ const HARNESS_TASKS = new Set([
   // inspects the previous step's preview artifact rather than issuing a
   // tool call — no request or response schema applies.
   'expect_substitution_safe',
+  // Universal macro substitution assertion: verifies build-time identifier
+  // macros ({MEDIA_BUY_ID}, {PACKAGE_ID}) were replaced with real captured
+  // values in a creative's rendered tracker URL. Inspects prior step HTML.
+  'expect_universal_macro_substituted',
   // Rate-limit replay observer (universal/idempotency.yaml). The runner
   // drives the `rate_limit_trip_runner` contract — fresh-key burst until a
   // `RATE_LIMITED` arrives, then replays the captured key after
