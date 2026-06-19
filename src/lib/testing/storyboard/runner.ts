@@ -65,6 +65,7 @@ import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
+import { UNIVERSAL_MACRO_ASSERTION_TASKS, executeUniversalMacroAssertionStep } from './universal-macro-assertions';
 import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
@@ -3642,6 +3643,12 @@ async function executeStep(
   // driving the agent. They never reach the MCP/A2A transport.
   if (WEBHOOK_ASSERTION_TASKS.has(step.task)) {
     return executeWebhookAssertionStep(step, phaseId, context, allSteps, options, runState);
+  }
+
+  // Universal macro substitution assertions inspect rendered HTML from the
+  // prior step's response. They do not drive the agent.
+  if (UNIVERSAL_MACRO_ASSERTION_TASKS.has(step.task)) {
+    return executeUniversalMacroAssertionStep(step, phaseId, context, runState);
   }
 
   // Inbound webhook receiver conformance posts canonical vectors to a
