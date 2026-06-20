@@ -1172,10 +1172,49 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
           );
         }
         if (auth === `Bearer ${validApiKey}`) {
+          if (body.method === 'initialize') {
+            return reply(200, {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                protocolVersion: '2024-11-05',
+                capabilities: { tools: {} },
+                serverInfo: { name: 'auth-test-agent', version: '1.0.0' },
+              },
+            });
+          }
+          if (body.method === 'notifications/initialized') {
+            res.writeHead(202);
+            res.end();
+            return;
+          }
+          if (body.method === 'tools/list') {
+            return reply(200, {
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                tools: [
+                  {
+                    name: 'list_creatives',
+                    description: 'List creatives',
+                    inputSchema: { type: 'object', additionalProperties: true },
+                  },
+                ],
+              },
+            });
+          }
           return reply(200, {
             jsonrpc: '2.0',
             id: body.id,
-            result: { structuredContent: { creatives: [], context } },
+            result: {
+              content: [{ type: 'text', text: JSON.stringify({ creatives: [], context }) }],
+              structuredContent: {
+                creatives: [],
+                query_summary: { total_matching: 0, returned: 0, filters_applied: [] },
+                pagination: { limit: 1, offset: 0, total: 0, has_more: false },
+                context,
+              },
+            },
           });
         }
         return reply(
@@ -1207,9 +1246,7 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
       allow_http: true,
       agentTools: ['list_creatives'],
       _profile: { name: 'T', tools: ['list_creatives'] },
-      _client: {
-        getAgentInfo: async () => ({ name: 'T', tools: [{ name: 'list_creatives' }] }),
-      },
+      ...(testKit.auth?.api_key ? { auth: { type: 'bearer', token: testKit.auth.api_key } } : {}),
       test_kit: testKit,
     };
   }

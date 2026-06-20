@@ -1702,7 +1702,9 @@ RUN OPTIONS (full assessment):
   --tracks TRACKS     Comma-separated tracks to include in the report
   --storyboards IDS   Comma-separated storyboard/bundle IDs to run
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
-  --timeout SECONDS   Timeout in seconds (default: 120)
+  --timeout SECONDS   Soft budget in seconds: stop starting new storyboards
+                      after this budget, without aborting an active storyboard
+                      (default: 120)
   --brief TEXT        Custom brief for product discovery
   --no-sandbox        Force production-path responses (#841). Sets
                       account.sandbox=false on every request AND stamps

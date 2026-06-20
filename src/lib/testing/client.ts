@@ -321,11 +321,9 @@ export async function runStep<T>(
  * `supported_protocols` + `specialisms` on the profile so the compliance
  * runner can select domain and specialism bundles.
  *
- * Pass `signal` (typically comply()'s combined timeout/external signal) to
- * bound discovery latency. Without it, an unhealthy agent whose well-known
- * card path returns 503-with-30s-tail or whose MCP transport silently
- * retries against a non-MCP root can stretch a single `getAgentInfo` call
- * past comply()'s timeout — the wall-clock symptom in adcp-client#1612.
+ * Pass `signal` for hard external cancellation. `comply()` deliberately does
+ * not pass its soft `timeout_ms` storyboard-start budget here; that budget
+ * stops new storyboards after discovery instead of aborting an active run.
  */
 export async function discoverAgentProfile(
   client: TestClient,

@@ -14,25 +14,15 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, readdirSync, existsSync } = require('node:fs');
+const { readFileSync, readdirSync } = require('node:fs');
 const path = require('node:path');
 
 const { projectV2ProductToV1 } = require('../../dist/lib/v2/projection/v2-to-v1.js');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 
-// The projection layer reads the v1-canonical-mapping registry and the
-// canonical-format schemas (for v1_translatable). Both live under
-// `schemas/cache/<3.1+>/` — CI now syncs `3.1.0-beta.1` via
-// `npm run sync-schemas:3.1-beta`; the loader (registry.ts) tracks
-// whichever 3.1 beta the workspace has.
-const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
-const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
-  existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
-);
-const SKIP_REASON = REGISTRY_EXISTS
-  ? false
-  : 'requires a 3.1+ schemas/cache/<beta>/ — only present in workspaces with a local 3.1-beta sync';
+const SKIP_REASON = betaProjectionSkipReason();
 
 function loadFixtures() {
   return readdirSync(FIXTURE_DIR)

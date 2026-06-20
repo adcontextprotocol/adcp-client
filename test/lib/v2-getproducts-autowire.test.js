@@ -18,6 +18,7 @@ const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 const z = require('zod');
 
 const { AgentClient } = require('../../dist/lib/index.js');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
 /**
  * Build a mock seller that returns the supplied get_products response
@@ -48,7 +49,7 @@ async function buildMockSeller(getProductsResponse) {
   };
 }
 
-describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
+describe('AgentClient.getProducts — auto-wired v1→v2 projection', { skip: betaProjectionSkipReason() }, () => {
   test('v1 seller response gains format_options[] by default; format_ids preserved', async () => {
     const v1Response = {
       success: true,

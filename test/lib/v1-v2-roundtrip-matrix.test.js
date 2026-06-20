@@ -31,29 +31,16 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, readdirSync, existsSync } = require('node:fs');
+const { readFileSync, readdirSync } = require('node:fs');
 const path = require('node:path');
 
 const { projectV1ProductToV2 } = require('../../dist/lib/v2/projection/v1-to-v2.js');
 const { projectV2ProductToV1 } = require('../../dist/lib/v2/projection/v2-to-v1.js');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
-const REGISTRY_PATH = path.join(
-  __dirname,
-  '..',
-  '..',
-  'schemas',
-  'cache',
-  '3.1.0-beta.1',
-  'registries',
-  'v1-canonical-mapping.json'
-);
-
-const SKIP_REASON =
-  existsSync(CATALOG_PATH) && existsSync(REGISTRY_PATH)
-    ? false
-    : 'requires schemas/cache/3.1.0-beta.1/ + vendored aao-reference-formats.json';
+const SKIP_REASON = betaProjectionSkipReason({ catalogPath: CATALOG_PATH });
 
 function loadCatalog() {
   return JSON.parse(readFileSync(CATALOG_PATH, 'utf-8'));

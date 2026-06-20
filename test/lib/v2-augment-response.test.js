@@ -3,15 +3,14 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, existsSync } = require('node:fs');
+const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
 const { withFormatOptions, augmentProductWithFormatOptions } = require('../../dist/lib/v2/projection/index.js');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
-const SKIP_REASON = existsSync(CATALOG_PATH)
-  ? false
-  : 'requires test/lib/v2-projection-fixtures/aao-reference-formats.json';
+const SKIP_REASON = betaProjectionSkipReason({ catalogPath: CATALOG_PATH });
 
 describe('augmentProductWithFormatOptions', { skip: SKIP_REASON }, () => {
   test('v1 product gains format_options[] derived from format_ids[]', () => {
