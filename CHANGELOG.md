@@ -1,5 +1,11 @@
 # Changelog
 
+## 7.11.7
+
+### Patch Changes
+
+- 94581d2: Restore `comply()` `timeout_ms` semantics so the budget stops new storyboards from starting instead of aborting the active assessment and reporting reachable agents as unreachable.
+
 ## 7.11.6
 
 ### Patch Changes
@@ -402,40 +408,41 @@
     v1-only sellers — which ignore unknown fields via
     `additionalProperties: true` — fall back to `format_ids`).
 
-                ```ts
-                import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
+                    ```ts
+                    import { packageRefsForCapabilities } from '@adcp/sdk/v2/projection';
 
-                const {
-                  data: { products },
-                } = await agent.getProducts({ brief: '...' });
-                const product = products[0];
+                    const {
+                      data: { products },
+                    } = await agent.getProducts({ brief: '...' });
+                    const product = products[0];
 
-                await agent.createMediaBuy({
-                  packages: [
-                    {
-                      package_id: 'pkg-1',
-                      product_id: product.product_id,
-                      pricing_option_id: product.pricing_options[0].pricing_option_id,
-                      ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
-                      budget: { currency: 'USD', total: 5000 },
-                    },
-                  ],
-                });
-                ```
+                    await agent.createMediaBuy({
+                      packages: [
+                        {
+                          package_id: 'pkg-1',
+                          product_id: product.product_id,
+                          pricing_option_id: product.pricing_options[0].pricing_option_id,
+                          ...packageRefsForCapabilities(product, ['nytimes_mrec', 'nytimes_video_30s']),
+                          budget: { currency: 'USD', total: 5000 },
+                        },
+                      ],
+                    });
+                    ```
 
-                Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
-                in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
+                    Throws a structured `CapabilityIdsLookupError` (with normalized `.code`
+                    in `{ 'unknown_capability_id' | 'capability_ids_not_published' |
 
-            'empty_input' | 'invalid_product' }`) so adopters can branch on
+                'empty_input' | 'invalid_product' }`) so adopters can branch on
 
-        "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
-        De-duplicates `format_ids` by full identity (`{agent_url, id,
+            "fall back to v1 helpers" vs "this capability genuinely doesn't exist."
+            De-duplicates `format_ids` by full identity (`{agent_url, id,
 
-    width, height, duration_ms}`) — multi-size declarations sharing
-`{agent_url, id}`survive de-dup. When every chosen capability is
-V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
-from the result rather than emitted as`[]`(which would violate the
-wire schema's`minItems: 1` constraint).
+        width, height, duration_ms}`) — multi-size declarations sharing
+
+    `{agent_url, id}`survive de-dup. When every chosen capability is
+    V2-only (no`v1_format_ref`), `format_ids`is **omitted entirely**
+    from the result rather than emitted as`[]`(which would violate the
+    wire schema's`minItems: 1` constraint).
 
   - **`legacy*` rename for the v1-only bridges.** `formatIdsFromOptions` /
     `tryFormatIdsFromOptions` / `formatIdsForCapability` are renamed to
