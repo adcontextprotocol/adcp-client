@@ -26,8 +26,9 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { withFormatOptions } = require('../../dist/lib/v2/projection/index.js');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
-describe('cross-version smoke — buyer sees V2 shape regardless of seller wire version', () => {
+describe('cross-version smoke — buyer sees V2 shape regardless of seller wire version', { skip: betaProjectionSkipReason() }, () => {
   test('v1 seller (format_ids only) — buyer reads format_options after augmentation', () => {
     // Simulates the wire shape a 3.0.x seller would emit.
     const v1WireResponse = {

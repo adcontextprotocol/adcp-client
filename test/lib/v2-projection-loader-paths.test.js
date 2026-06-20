@@ -21,35 +21,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { betaProjectionSkipReason } = require('./helpers/optional-3-1-beta.js');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const SRC_DIST = path.join(REPO_ROOT, 'dist');
-const SRC_SCHEMAS_DATA = path.join(SRC_DIST, 'lib', 'schemas-data');
+const SKIP_REASON = betaProjectionSkipReason({ distOnly: true });
 
 let tmpRoot;
-
-before(() => {
-  if (!fs.existsSync(path.join(SRC_DIST, 'lib', 'v2', 'projection', 'registry.js'))) {
-    throw new Error('Test setup expects dist/ to be built. Run `npm run build:lib` first.');
-  }
-  if (!fs.existsSync(path.join(SRC_SCHEMAS_DATA, '3.1.0-beta.2', 'registries', 'v1-canonical-mapping.json'))) {
-    throw new Error(
-      'Test setup expects dist/lib/schemas-data/3.1.0-beta.2/registries/v1-canonical-mapping.json. ' +
-        'Run `npm run sync-schemas:3.1-beta && npm run build:lib` first.'
-    );
-  }
-
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-projection-loader-paths-'));
-  // Mimic node_modules/@adcp/sdk/dist by copying only the dist tree.
-  // Intentionally do NOT copy schemas/cache — that's the bug we're guarding.
-  fs.cpSync(SRC_DIST, path.join(tmpRoot, 'dist'), { recursive: true });
-});
-
-after(() => {
-  if (tmpRoot && fs.existsSync(tmpRoot)) {
-    fs.rmSync(tmpRoot, { recursive: true, force: true });
-  }
-});
 
 /**
  * Run a snippet in a child process whose CWD is the fake-install temp dir.
@@ -65,7 +43,23 @@ function runInFakeInstall(snippet) {
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-describe('v1↔v2 projection loaders resolve from published-tarball paths', () => {
+describe('v1↔v2 projection loaders resolve from published-tarball paths', { skip: SKIP_REASON }, () => {
+  before(() => {
+    if (!fs.existsSync(path.join(SRC_DIST, 'lib', 'v2', 'projection', 'registry.js'))) {
+      throw new Error('Test setup expects dist/ to be built. Run `npm run build:lib` first.');
+    }
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-projection-loader-paths-'));
+    // Mimic node_modules/@adcp/sdk/dist by copying only the dist tree.
+    // Intentionally do NOT copy schemas/cache — that's the bug we're guarding.
+    fs.cpSync(SRC_DIST, path.join(tmpRoot, 'dist'), { recursive: true });
+  });
+
+  after(() => {
+    if (tmpRoot && fs.existsSync(tmpRoot)) {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   test('registry.ts loadRegistry() finds v1-canonical-mapping.json in dist/lib/schemas-data', () => {
     const registryPath = path.join(tmpRoot, 'dist', 'lib', 'v2', 'projection', 'registry.js').replace(/\\/g, '/');
     const { code, stdout, stderr } = runInFakeInstall(
