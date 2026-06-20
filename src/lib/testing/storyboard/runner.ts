@@ -3570,6 +3570,7 @@ async function executeStep(
         executeStoryboardTask(client, effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsMissingIdempotencyKey,
           skipAccountValidation: testsMissingAccount,
+          signal: options.signal,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
         if (!captureA2a) return dispatch();
@@ -3591,6 +3592,9 @@ async function executeStep(
       taskResult = run.result;
       stepResult = run.step;
       caughtError = run.caughtError;
+      if (caughtError !== undefined && options.signal?.aborted) {
+        throw caughtError;
+      }
       if (captureA2a && a2aCaptures) {
         a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
       }

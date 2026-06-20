@@ -969,356 +969,368 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   // Fail fast on malformed test kits before we spin up any agent connection.
   validateTestKit(testOptions.test_kit);
 
-  // Build a combined AbortSignal from timeout_ms and/or external signal
-  const needsAbort = timeout_ms !== undefined || externalSignal !== undefined;
-  const abortController = needsAbort ? new AbortController() : undefined;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const onExternalAbort = externalSignal ? () => abortController!.abort(externalSignal.reason) : undefined;
+  // `signal` is hard external cancellation. `timeout_ms` is a soft comply()
+  // scheduling budget: once exceeded, stop starting new storyboards, but do
+  // not abort discovery or the storyboard currently in flight.
+  const signal = externalSignal;
 
-  if (timeout_ms !== undefined && abortController) {
-    timeoutId = setTimeout(
-      () => abortController.abort(new Error(`comply() timed out after ${timeout_ms}ms`)),
-      timeout_ms
+  const complianceIndex = loadComplianceIndex();
+  let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
+    ...testOptions,
+    sandbox: testOptions.sandbox !== false,
+    test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
+  });
+
+  // Check for abort before starting
+  signal?.throwIfAborted();
+
+  // Collect observations across all tracks
+  const allObservations: AdvisoryObservation[] = [];
+
+  // Discover agent capabilities once and share across all storyboards.
+  // External cancellation still aborts discovery; timeout_ms is enforced
+  // later as a soft storyboard-start budget.
+  const discoveryOptions =
+    testOptions.versionEnvelope === undefined
+      ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
+      : effectiveOptions;
+  const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
+  const { profile, step: profileStep } = await discoverAgentProfile(discoveryClient, signal);
+  effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
+    complianceVersion: complianceIndex.adcp_version,
+    ...(testOptions.adcpVersion !== undefined && { callerAdcpVersion: testOptions.adcpVersion }),
+    ...(testOptions.versionEnvelope !== undefined && { callerVersionEnvelope: testOptions.versionEnvelope }),
+  });
+  const client =
+    discoveryOptions === effectiveOptions
+      ? discoveryClient
+      : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
+  effectiveOptions._client = client;
+  effectiveOptions._profile = profile;
+
+  // Log discovered tools
+  if (profileStep.passed) {
+    allObservations.push({
+      category: 'tool_discovery',
+      severity: 'info',
+      message: `Discovered ${profile.tools.length} tools: [${profile.tools.join(', ')}]`,
+      evidence: { tools: profile.tools },
+      source: { kind: 'profile', code: 'tools-discovered' },
+    });
+  }
+
+  // Warn loudly when the runner can't make a capability-driven decision — either
+  // the agent doesn't advertise get_adcp_capabilities at all, or the call failed.
+  // Without this, an agent that just passes universal storyboards looks "compliant"
+  // when in fact none of its declared domains or specialisms were tested.
+  if (profileStep.passed && !explicitStoryboards?.length) {
+    if (profile.capabilities_probe_error) {
+      // The probe error text is agent-controlled. Fence it so downstream
+      // LLM summarizers of a shared ComplianceResult don't follow any
+      // instructions a hostile agent may have embedded. Raw text is kept
+      // in `evidence` for operator diagnosis — `evidence` is operator-only
+      // and MUST NOT be fed into an LLM summarizer.
+      allObservations.push({
+        category: 'tool_discovery',
+        severity: 'error',
+        message:
+          `get_adcp_capabilities is advertised but the call failed. ` +
+          `Only universal storyboards ran — domain and specialism bundles were skipped. ` +
+          `Agent-reported error: ${fenceAgentText(profile.capabilities_probe_error)}`,
+        evidence: { agent_reported_error: profile.capabilities_probe_error },
+        source: { kind: 'profile', code: 'capabilities-probe-failed' },
+      });
+    } else if (!profile.tools.includes('get_adcp_capabilities')) {
+      allObservations.push({
+        category: 'tool_discovery',
+        severity: 'warning',
+        message:
+          'Agent does not implement get_adcp_capabilities — ran universal storyboards only. ' +
+          'Domain baselines and specialisms cannot be tested without a capabilities response.',
+        source: { kind: 'profile', code: 'capabilities-missing' },
+      });
+    } else if (!profile.supported_protocols?.length) {
+      allObservations.push({
+        category: 'tool_discovery',
+        severity: 'warning',
+        message:
+          'get_adcp_capabilities returned no supported_protocols — ran universal storyboards only. ' +
+          'Agent must declare at least one domain protocol to be fully tested.',
+        source: { kind: 'profile', code: 'no-supported-protocols' },
+      });
+    }
+  }
+
+  // Detect test controller for deterministic mode
+  let controllerDetection: ControllerDetection = { detected: false };
+  if (profileStep.passed && hasTestController(profile)) {
+    controllerDetection = await detectController(client as any, profile, effectiveOptions);
+    if (controllerDetection.detected) {
+      effectiveOptions._controllerCapabilities = controllerDetection;
+    }
+  }
+
+  if (!profileStep.passed) {
+    // Capability discovery failed. If it's an auth rejection, we can still
+    // run storyboards that don't need tool discovery — crucially
+    // universal/security_baseline, which is designed precisely to diagnose
+    // agents that mishandle auth. Fall back to the unreachable result only
+    // when no such storyboards are available.
+    const authCheck = await detectAuthRejection(agentUrl, profileStep.error, signal);
+    if (authCheck.isAuth) {
+      const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
+      const candidate = explicitStoryboards?.length
+        ? resolveExplicitStoryboards(explicitStoryboards)
+        : resolveFromCapabilities(degraded).storyboards;
+      const runnable = candidate.filter(sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security');
+      if (runnable.length > 0) {
+        allObservations.push(...authCheck.observations);
+        effectiveOptions._profile = degraded;
+        // Skip the rest of the "reachable" setup — no test controller, no
+        // capability-warning observations — and jump straight to storyboard
+        // execution below with the filtered, runnable subset.
+        return await runWithDegradedProfile(
+          agentUrl,
+          degraded,
+          runnable,
+          options,
+          effectiveOptions,
+          allObservations,
+          start,
+          signal
+        );
+      }
+    }
+    return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
+  }
+
+  // Resolve storyboards: explicit IDs override capability-driven selection.
+  let initialStoryboards: Storyboard[];
+  let notApplicable: NotApplicableStoryboard[] = [];
+  let missingToolStoryboards: NotApplicableStoryboard[] = [];
+  if (explicitStoryboards?.length) {
+    initialStoryboards = resolveExplicitStoryboards(explicitStoryboards);
+  } else {
+    const resolved = resolveFromCapabilities(profile);
+    initialStoryboards = resolved.storyboards;
+    notApplicable = resolved.not_applicable;
+  }
+  const applicableStoryboards = expandScenarios(initialStoryboards);
+
+  // For capability-resolved runs, exclude storyboards and injected scenarios whose
+  // required_tools are absent from the agent's discovered toolset. These are
+  // not-applicable — the agent doesn't claim the specialism being tested. Running
+  // them produces cascading skips that pull the track to `partial`, which is a false
+  // signal for AAO badge grading (adcp-client#1680).
+  // Explicit storyboard IDs (options.storyboards) bypass this filter — they are an
+  // operator override and should run regardless of required_tools.
+  let runnableStoryboards: Storyboard[];
+  if (explicitStoryboards?.length) {
+    runnableStoryboards = applicableStoryboards;
+  } else {
+    const discoveredToolNames = new Set(profile.tools);
+    const filtered: Storyboard[] = [];
+    for (const sb of applicableStoryboards) {
+      const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
+      if (missing.length > 0) {
+        missingToolStoryboards.push({
+          storyboard_id: sb.id,
+          storyboard_title: sb.title,
+          track: sb.track,
+          reason: `missing required_tools: ${missing.join(', ')}`,
+        });
+      } else {
+        filtered.push(sb);
+      }
+    }
+    runnableStoryboards = filtered;
+  }
+
+  // Run storyboards
+  const storyboardResults: StoryboardResult[] = [];
+  const executedStoryboards: Storyboard[] = [];
+  const runOptions: StoryboardRunOptions = {
+    ...effectiveOptions,
+    agentTools: profile.tools,
+    ...(webhook_receiver !== undefined && { webhook_receiver }),
+    ...(contracts !== undefined && { contracts }),
+    ...(signal !== undefined && { signal }),
+  };
+
+  let stoppedForTimeoutBudget = false;
+  for (const sb of runnableStoryboards) {
+    signal?.throwIfAborted();
+    if (hasComplyTimeoutBudgetExpired(start, timeout_ms)) {
+      stoppedForTimeoutBudget = true;
+      break;
+    }
+    const result = await runStoryboard(agentUrl, sb, runOptions);
+    storyboardResults.push(result);
+    executedStoryboards.push(sb);
+  }
+  if (stoppedForTimeoutBudget) {
+    allObservations.push(
+      buildComplyTimeoutBudgetObservation(timeout_ms!, storyboardResults.length, runnableStoryboards.length)
     );
   }
 
-  if (externalSignal && abortController) {
-    if (externalSignal.aborted) {
-      abortController.abort(externalSignal.reason);
-    } else {
-      externalSignal.addEventListener('abort', onExternalAbort!, { once: true });
-    }
+  // Surface storyboards the agent's declared major version predates as a
+  // distinct skip row. Not running them is correct (they didn't exist at
+  // the spec the agent certified against), but hiding them risks silent
+  // green builds against agents that haven't bumped their declared
+  // major_versions.
+  for (const na of [...notApplicable, ...missingToolStoryboards]) {
+    storyboardResults.push(buildNotApplicableStoryboardResult(agentUrl, na));
   }
 
-  const signal = abortController?.signal;
+  // Cross-storyboard spec-conformance gates. Push synthetic StoryboardResults
+  // for protocol-level invariants the AdCP spec mandates regardless of which
+  // specialism is being tested. Currently wires the universal account-discovery
+  // gate (adcp-client#1624 / adcp#4302; AdCP 3.0.9 §accounts/overview).
+  // Will migrate to per-storyboard `required_any_of_tools` tags once
+  // adcp#4325 lands; tracked in #1642.
+  const accountDiscoveryFailure = checkAccountDiscoveryGate(profile, agentUrl);
+  if (accountDiscoveryFailure) {
+    storyboardResults.push(accountDiscoveryFailure);
+  }
 
-  try {
-    const complianceIndex = loadComplianceIndex();
-    let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
-      ...testOptions,
-      sandbox: testOptions.sandbox !== false,
-      test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
-    });
+  // Group results by track and build TrackResults
+  const grouped = groupByTrack(storyboardResults, runnableStoryboards, [...notApplicable, ...missingToolStoryboards]);
+  const trackResults: TrackResult[] = [];
 
-    // Check for abort before starting
-    signal?.throwIfAborted();
+  // Tracks represented by the selected storyboards (used for deciding which rows to emit).
+  // Includes not-applicable entries so a version-gated track still gets a row.
+  const poolTrackSet = new Set<ComplianceTrack>();
+  for (const sb of runnableStoryboards) {
+    if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
+  }
+  // Synthetic spec-conformance gates always land in `core`; ensure `core`
+  // is in the pool so its track row renders even when the run targeted a
+  // non-core specialism bundle that excluded universal storyboards.
+  if (accountDiscoveryFailure) poolTrackSet.add('core');
+  for (const na of [...notApplicable, ...missingToolStoryboards]) {
+    if (na.track) poolTrackSet.add(na.track as ComplianceTrack);
+  }
 
-    // Collect observations across all tracks
-    const allObservations: AdvisoryObservation[] = [];
+  const trackFilterSet = trackFilter?.length ? new Set(trackFilter) : null;
 
-    // Discover agent capabilities once and share across all storyboards.
-    // Pass the combined signal so a slow/unresponsive agent can't hold the
-    // comply pipeline past its own timeout (adcp-client#1612).
-    const discoveryOptions =
-      testOptions.versionEnvelope === undefined
-        ? { ...effectiveOptions, versionEnvelope: 'major-only' as const }
-        : effectiveOptions;
-    const discoveryClient = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', discoveryOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(discoveryClient, signal);
-    effectiveOptions = applyNegotiatedComplianceVersionOptions(profile, effectiveOptions, {
-      complianceVersion: complianceIndex.adcp_version,
-      ...(testOptions.adcpVersion !== undefined && { callerAdcpVersion: testOptions.adcpVersion }),
-      ...(testOptions.versionEnvelope !== undefined && { callerVersionEnvelope: testOptions.versionEnvelope }),
-    });
-    const client =
-      discoveryOptions === effectiveOptions
-        ? discoveryClient
-        : createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-    effectiveOptions._client = client;
-    effectiveOptions._profile = profile;
+  for (const track of TRACK_ORDER) {
+    if (!poolTrackSet.has(track)) continue;
+    if (trackFilterSet && !trackFilterSet.has(track)) continue;
 
-    // Log discovered tools
-    if (profileStep.passed) {
-      allObservations.push({
-        category: 'tool_discovery',
-        severity: 'info',
-        message: `Discovered ${profile.tools.length} tools: [${profile.tools.join(', ')}]`,
-        evidence: { tools: profile.tools },
-        source: { kind: 'profile', code: 'tools-discovered' },
+    const results = grouped.get(track) ?? [];
+
+    if (results.length > 0) {
+      const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
+      const observations = collectObservations(track, trackResult.scenarios, profile);
+      trackResult.observations = observations;
+      allObservations.push(...observations);
+      trackResults.push(trackResult);
+    } else {
+      trackResults.push({
+        track,
+        status: 'skip',
+        label: TRACK_LABELS[track] || track,
+        scenarios: [],
+        skipped_scenarios: [],
+        observations: [],
+        duration_ms: 0,
       });
     }
+  }
 
-    // Warn loudly when the runner can't make a capability-driven decision — either
-    // the agent doesn't advertise get_adcp_capabilities at all, or the call failed.
-    // Without this, an agent that just passes universal storyboards looks "compliant"
-    // when in fact none of its declared domains or specialisms were tested.
-    if (profileStep.passed && !explicitStoryboards?.length) {
-      if (profile.capabilities_probe_error) {
-        // The probe error text is agent-controlled. Fence it so downstream
-        // LLM summarizers of a shared ComplianceResult don't follow any
-        // instructions a hostile agent may have embedded. Raw text is kept
-        // in `evidence` for operator diagnosis — `evidence` is operator-only
-        // and MUST NOT be fed into an LLM summarizer.
-        allObservations.push({
-          category: 'tool_discovery',
-          severity: 'error',
-          message:
-            `get_adcp_capabilities is advertised but the call failed. ` +
-            `Only universal storyboards ran — domain and specialism bundles were skipped. ` +
-            `Agent-reported error: ${fenceAgentText(profile.capabilities_probe_error)}`,
-          evidence: { agent_reported_error: profile.capabilities_probe_error },
-          source: { kind: 'profile', code: 'capabilities-probe-failed' },
-        });
-      } else if (!profile.tools.includes('get_adcp_capabilities')) {
-        allObservations.push({
-          category: 'tool_discovery',
-          severity: 'warning',
-          message:
-            'Agent does not implement get_adcp_capabilities — ran universal storyboards only. ' +
-            'Domain baselines and specialisms cannot be tested without a capabilities response.',
-          source: { kind: 'profile', code: 'capabilities-missing' },
-        });
-      } else if (!profile.supported_protocols?.length) {
-        allObservations.push({
-          category: 'tool_discovery',
-          severity: 'warning',
-          message:
-            'get_adcp_capabilities returned no supported_protocols — ran universal storyboards only. ' +
-            'Agent must declare at least one domain protocol to be fully tested.',
-          source: { kind: 'profile', code: 'no-supported-protocols' },
-        });
-      }
-    }
+  const summary = buildSummary(trackResults, storyboardResults);
+  // Tag `_view` so grep-style triage can distinguish the canonical
+  // `tracks` entry from its appearance under the `tested_tracks` filter
+  // (adcp-client#1674). Shallow-copy on the `tested_tracks` side keeps
+  // the shared nested `scenarios` references intact while preventing
+  // the marker from colliding on the same object.
+  for (const t of trackResults) t._view = 'canonical';
+  const testedTracks: TrackResult[] = trackResults
+    .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
+    .map(t => ({ ...t, _view: 'reference' as const }));
+  const skippedTracks = trackResults
+    .filter(t => t.status === 'skip')
+    .map(t => ({
+      track: t.track,
+      label: t.label,
+      reason: 'No storyboards produced results for this track',
+    }));
 
-    // Detect test controller for deterministic mode
-    let controllerDetection: ControllerDetection = { detected: false };
-    if (profileStep.passed && hasTestController(profile)) {
-      controllerDetection = await detectController(client as any, profile, effectiveOptions);
-      if (controllerDetection.detected) {
-        effectiveOptions._controllerCapabilities = controllerDetection;
-      }
-    }
+  const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
 
-    if (!profileStep.passed) {
-      // Capability discovery failed. If it's an auth rejection, we can still
-      // run storyboards that don't need tool discovery — crucially
-      // universal/security_baseline, which is designed precisely to diagnose
-      // agents that mishandle auth. Fall back to the unreachable result only
-      // when no such storyboards are available.
-      const authCheck = await detectAuthRejection(agentUrl, profileStep.error, signal);
-      if (authCheck.isAuth) {
-        const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
-        const candidate = explicitStoryboards?.length
-          ? resolveExplicitStoryboards(explicitStoryboards)
-          : resolveFromCapabilities(degraded).storyboards;
-        const runnable = candidate.filter(sb => (sb.required_tools?.length ?? 0) === 0 || sb.track === 'security');
-        if (runnable.length > 0) {
-          allObservations.push(...authCheck.observations);
-          effectiveOptions._profile = degraded;
-          // Skip the rest of the "reachable" setup — no test controller, no
-          // capability-warning observations — and jump straight to storyboard
-          // execution below with the filtered, runnable subset.
-          return await runWithDegradedProfile(
-            agentUrl,
-            degraded,
-            runnable,
-            options,
-            effectiveOptions,
-            allObservations,
-            start,
-            signal
-          );
+  const agentRef = options.agent_alias || agentUrl;
+  const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
+
+  // Aggregate notices from all storyboard runs. Dedup is by `code` (each
+  // notice type appears once in the rollup), but the per-occurrence
+  // `storyboard_ids` arrays are merged so auditors can see how widespread
+  // a deprecation or future-required signal is without re-walking the
+  // per-storyboard arrays. Order is stable: first occurrence wins for
+  // the notice body; storyboard_ids preserves insertion order across the
+  // run's storyboard execution order.
+  const aggregatedNotices = new Map<string, RunnerNotice>();
+  for (const sbResult of storyboardResults) {
+    for (const notice of sbResult.notices) {
+      const existing = aggregatedNotices.get(notice.code);
+      if (existing) {
+        for (const sid of notice.storyboard_ids) {
+          if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
         }
-      }
-      return buildUnreachableResult(agentUrl, profile, profileStep.error, start, effectiveOptions, signal);
-    }
-
-    // Resolve storyboards: explicit IDs override capability-driven selection.
-    let initialStoryboards: Storyboard[];
-    let notApplicable: NotApplicableStoryboard[] = [];
-    let missingToolStoryboards: NotApplicableStoryboard[] = [];
-    if (explicitStoryboards?.length) {
-      initialStoryboards = resolveExplicitStoryboards(explicitStoryboards);
-    } else {
-      const resolved = resolveFromCapabilities(profile);
-      initialStoryboards = resolved.storyboards;
-      notApplicable = resolved.not_applicable;
-    }
-    const applicableStoryboards = expandScenarios(initialStoryboards);
-
-    // For capability-resolved runs, exclude storyboards and injected scenarios whose
-    // required_tools are absent from the agent's discovered toolset. These are
-    // not-applicable — the agent doesn't claim the specialism being tested. Running
-    // them produces cascading skips that pull the track to `partial`, which is a false
-    // signal for AAO badge grading (adcp-client#1680).
-    // Explicit storyboard IDs (options.storyboards) bypass this filter — they are an
-    // operator override and should run regardless of required_tools.
-    let runnableStoryboards: Storyboard[];
-    if (explicitStoryboards?.length) {
-      runnableStoryboards = applicableStoryboards;
-    } else {
-      const discoveredToolNames = new Set(profile.tools);
-      const filtered: Storyboard[] = [];
-      for (const sb of applicableStoryboards) {
-        const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
-        if (missing.length > 0) {
-          missingToolStoryboards.push({
-            storyboard_id: sb.id,
-            storyboard_title: sb.title,
-            track: sb.track,
-            reason: `missing required_tools: ${missing.join(', ')}`,
-          });
-        } else {
-          filtered.push(sb);
-        }
-      }
-      runnableStoryboards = filtered;
-    }
-
-    // Run storyboards
-    const storyboardResults: StoryboardResult[] = [];
-    const runOptions: StoryboardRunOptions = {
-      ...effectiveOptions,
-      agentTools: profile.tools,
-      ...(webhook_receiver !== undefined && { webhook_receiver }),
-      ...(contracts !== undefined && { contracts }),
-      ...(signal !== undefined && { signal }),
-    };
-
-    for (const sb of runnableStoryboards) {
-      signal?.throwIfAborted();
-      const result = await runStoryboard(agentUrl, sb, runOptions);
-      storyboardResults.push(result);
-    }
-
-    // Surface storyboards the agent's declared major version predates as a
-    // distinct skip row. Not running them is correct (they didn't exist at
-    // the spec the agent certified against), but hiding them risks silent
-    // green builds against agents that haven't bumped their declared
-    // major_versions.
-    for (const na of [...notApplicable, ...missingToolStoryboards]) {
-      storyboardResults.push(buildNotApplicableStoryboardResult(agentUrl, na));
-    }
-
-    // Cross-storyboard spec-conformance gates. Push synthetic StoryboardResults
-    // for protocol-level invariants the AdCP spec mandates regardless of which
-    // specialism is being tested. Currently wires the universal account-discovery
-    // gate (adcp-client#1624 / adcp#4302; AdCP 3.0.9 §accounts/overview).
-    // Will migrate to per-storyboard `required_any_of_tools` tags once
-    // adcp#4325 lands; tracked in #1642.
-    const accountDiscoveryFailure = checkAccountDiscoveryGate(profile, agentUrl);
-    if (accountDiscoveryFailure) {
-      storyboardResults.push(accountDiscoveryFailure);
-    }
-
-    // Group results by track and build TrackResults
-    const grouped = groupByTrack(storyboardResults, runnableStoryboards, [...notApplicable, ...missingToolStoryboards]);
-    const trackResults: TrackResult[] = [];
-
-    // Tracks represented by the selected storyboards (used for deciding which rows to emit).
-    // Includes not-applicable entries so a version-gated track still gets a row.
-    const poolTrackSet = new Set<ComplianceTrack>();
-    for (const sb of runnableStoryboards) {
-      if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
-    }
-    // Synthetic spec-conformance gates always land in `core`; ensure `core`
-    // is in the pool so its track row renders even when the run targeted a
-    // non-core specialism bundle that excluded universal storyboards.
-    if (accountDiscoveryFailure) poolTrackSet.add('core');
-    for (const na of [...notApplicable, ...missingToolStoryboards]) {
-      if (na.track) poolTrackSet.add(na.track as ComplianceTrack);
-    }
-
-    const trackFilterSet = trackFilter?.length ? new Set(trackFilter) : null;
-
-    for (const track of TRACK_ORDER) {
-      if (!poolTrackSet.has(track)) continue;
-      if (trackFilterSet && !trackFilterSet.has(track)) continue;
-
-      const results = grouped.get(track) ?? [];
-
-      if (results.length > 0) {
-        const trackResult = mapStoryboardResultsToTrackResult(track, results, profile);
-        const observations = collectObservations(track, trackResult.scenarios, profile);
-        trackResult.observations = observations;
-        allObservations.push(...observations);
-        trackResults.push(trackResult);
       } else {
-        trackResults.push({
-          track,
-          status: 'skip',
-          label: TRACK_LABELS[track] || track,
-          scenarios: [],
-          skipped_scenarios: [],
-          observations: [],
-          duration_ms: 0,
-        });
+        // Clone so subsequent merges don't mutate the per-storyboard array.
+        aggregatedNotices.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
       }
-    }
-
-    const summary = buildSummary(trackResults, storyboardResults);
-    // Tag `_view` so grep-style triage can distinguish the canonical
-    // `tracks` entry from its appearance under the `tested_tracks` filter
-    // (adcp-client#1674). Shallow-copy on the `tested_tracks` side keeps
-    // the shared nested `scenarios` references intact while preventing
-    // the marker from colliding on the same object.
-    for (const t of trackResults) t._view = 'canonical';
-    const testedTracks: TrackResult[] = trackResults
-      .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
-      .map(t => ({ ...t, _view: 'reference' as const }));
-    const skippedTracks = trackResults
-      .filter(t => t.status === 'skip')
-      .map(t => ({
-        track: t.track,
-        label: t.label,
-        reason: 'No storyboards produced results for this track',
-      }));
-
-    const overallStatus = computeOverallStatus(summary);
-
-    const agentRef = options.agent_alias || agentUrl;
-    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
-
-    // Aggregate notices from all storyboard runs. Dedup is by `code` (each
-    // notice type appears once in the rollup), but the per-occurrence
-    // `storyboard_ids` arrays are merged so auditors can see how widespread
-    // a deprecation or future-required signal is without re-walking the
-    // per-storyboard arrays. Order is stable: first occurrence wins for
-    // the notice body; storyboard_ids preserves insertion order across the
-    // run's storyboard execution order.
-    const aggregatedNotices = new Map<string, RunnerNotice>();
-    for (const sbResult of storyboardResults) {
-      for (const notice of sbResult.notices) {
-        const existing = aggregatedNotices.get(notice.code);
-        if (existing) {
-          for (const sid of notice.storyboard_ids) {
-            if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
-          }
-        } else {
-          // Clone so subsequent merges don't mutate the per-storyboard array.
-          aggregatedNotices.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
-        }
-      }
-    }
-    const noticesDedup = [...aggregatedNotices.values()];
-
-    return {
-      agent_url: agentUrl,
-      agent_profile: profile,
-      overall_status: overallStatus,
-      tracks: trackResults,
-      tested_tracks: testedTracks,
-      skipped_tracks: skippedTracks,
-      summary,
-      observations: allObservations,
-      failures: failures.length > 0 ? failures : undefined,
-      storyboards_executed: runnableStoryboards.map(sb => sb.id),
-      ...(notApplicable.length > 0 && { storyboards_not_applicable: notApplicable.map(na => na.storyboard_id) }),
-      ...(missingToolStoryboards.length > 0 && {
-        storyboards_missing_tools: missingToolStoryboards.map(na => na.storyboard_id),
-      }),
-      controller_detected: controllerDetection.detected,
-      controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
-      tested_at: new Date().toISOString(),
-      total_duration_ms: Date.now() - start,
-      notices: noticesDedup,
-    };
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    if (onExternalAbort && externalSignal) {
-      externalSignal.removeEventListener('abort', onExternalAbort);
     }
   }
+  const noticesDedup = [...aggregatedNotices.values()];
+
+  return {
+    agent_url: agentUrl,
+    agent_profile: profile,
+    overall_status: overallStatus,
+    tracks: trackResults,
+    tested_tracks: testedTracks,
+    skipped_tracks: skippedTracks,
+    summary,
+    observations: allObservations,
+    failures: failures.length > 0 ? failures : undefined,
+    storyboards_executed: executedStoryboards.map(sb => sb.id),
+    ...(notApplicable.length > 0 && { storyboards_not_applicable: notApplicable.map(na => na.storyboard_id) }),
+    ...(missingToolStoryboards.length > 0 && {
+      storyboards_missing_tools: missingToolStoryboards.map(na => na.storyboard_id),
+    }),
+    controller_detected: controllerDetection.detected,
+    controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
+    tested_at: new Date().toISOString(),
+    total_duration_ms: Date.now() - start,
+    notices: noticesDedup,
+  };
+}
+
+function hasComplyTimeoutBudgetExpired(start: number, timeout_ms: number | undefined, now = Date.now()): boolean {
+  return timeout_ms !== undefined && now - start >= timeout_ms;
+}
+
+function buildComplyTimeoutBudgetObservation(
+  timeout_ms: number,
+  storyboardsExecuted: number,
+  storyboardsSelected: number
+): AdvisoryObservation {
+  return {
+    category: 'performance',
+    severity: 'warning',
+    message:
+      `Compliance timeout budget of ${timeout_ms}ms was reached. ` +
+      `Stopped starting new storyboards after ${storyboardsExecuted}/${storyboardsSelected} selected storyboard(s).`,
+    evidence: {
+      timeout_ms,
+      storyboards_executed: storyboardsExecuted,
+      storyboards_selected: storyboardsSelected,
+      storyboards_remaining: Math.max(0, storyboardsSelected - storyboardsExecuted),
+    },
+    source: { kind: 'profile', code: 'timeout-budget-exceeded' },
+  };
 }
 
 /**
@@ -1453,10 +1465,22 @@ async function runWithDegradedProfile(
     ...(signal !== undefined && { signal }),
   };
 
+  let stoppedForTimeoutBudget = false;
+  const executedStoryboards: Storyboard[] = [];
   for (const sb of storyboards) {
     signal?.throwIfAborted();
+    if (hasComplyTimeoutBudgetExpired(start, options.timeout_ms)) {
+      stoppedForTimeoutBudget = true;
+      break;
+    }
     const result = await runStoryboard(agentUrl, sb, runOptions);
     storyboardResults.push(result);
+    executedStoryboards.push(sb);
+  }
+  if (stoppedForTimeoutBudget && options.timeout_ms !== undefined) {
+    allObservations.push(
+      buildComplyTimeoutBudgetObservation(options.timeout_ms, storyboardResults.length, storyboards.length)
+    );
   }
 
   const grouped = groupByTrack(storyboardResults, storyboards);
@@ -1472,11 +1496,21 @@ async function runWithDegradedProfile(
       trackResult.observations = obs;
       allObservations.push(...obs);
       trackResults.push(trackResult);
+    } else {
+      trackResults.push({
+        track,
+        status: 'skip',
+        label: TRACK_LABELS[track] || track,
+        scenarios: [],
+        skipped_scenarios: [],
+        observations: [],
+        duration_ms: 0,
+      });
     }
   }
 
   const summary = buildSummary(trackResults, storyboardResults);
-  const overallStatus = computeOverallStatus(summary);
+  const overallStatus: OverallStatus = stoppedForTimeoutBudget ? 'partial' : computeOverallStatus(summary);
   const agentRef = options.agent_alias || agentUrl;
   const failures = extractFailures(storyboardResults, storyboards, agentRef);
 
@@ -1484,6 +1518,14 @@ async function runWithDegradedProfile(
   // TrackResult appearing in both `tracks` and `tested_tracks`
   // (adcp-client#1674).
   for (const t of trackResults) t._view = 'canonical';
+  const skippedTracks = trackResults
+    .filter(t => t.status === 'skip')
+    .map(t => ({
+      track: t.track,
+      label: t.label,
+      reason: 'No storyboards produced results for this track',
+    }));
+
   return {
     agent_url: agentUrl,
     agent_profile: profile,
@@ -1492,11 +1534,11 @@ async function runWithDegradedProfile(
     tested_tracks: trackResults
       .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
       .map(t => ({ ...t, _view: 'reference' as const })),
-    skipped_tracks: [],
+    skipped_tracks: skippedTracks,
     summary,
     observations: allObservations,
     failures: failures.length > 0 ? failures : undefined,
-    storyboards_executed: storyboards.map(sb => sb.id),
+    storyboards_executed: executedStoryboards.map(sb => sb.id),
     controller_detected: false,
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
