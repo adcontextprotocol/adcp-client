@@ -176,4 +176,37 @@ describe('translateUniversalMacros — query-string macro substitution', () => {
     });
     assert.deepEqual(result.suspect_native_values, []);
   });
+
+  it('does not flag ordinary bracketed values as native tokens', () => {
+    const result = translateUniversalMacros('https://px.example/i?a={A}&b={B}', {
+      '{A}': { value: '[1,2,3]' },
+      '{B}': { value: '[redacted]' },
+    });
+    assert.deepEqual(result.suspect_native_values, []);
+  });
+
+  it('flags an upper-snake bracketed token (VAST-style) as native', () => {
+    const result = translateUniversalMacros('https://px.example/i?cb={CB}', {
+      '{CB}': { value: '[CACHEBUSTING]' },
+    });
+    assert.deepEqual(result.suspect_native_values, ['{CB}']);
+  });
+
+  // ─── dropped consent/privacy macros are surfaced separately ──────────────
+
+  it('reports a dropped consent macro in dropped_consent_macros', () => {
+    const result = translateUniversalMacros('https://px.example/i?mb={MEDIA_BUY_ID}&c={GDPR_CONSENT}&x={FOO}', {
+      '{MEDIA_BUY_ID}': { value: 'mb_123' },
+    });
+    assert.equal(result.url, 'https://px.example/i?mb=mb_123');
+    assert.deepEqual(result.dropped_params.sort(), ['c', 'x']);
+    assert.deepEqual(result.unmapped_macros.sort(), ['{FOO}', '{GDPR_CONSENT}']);
+    // Only the consent macro is highlighted; the benign {FOO} drop is not.
+    assert.deepEqual(result.dropped_consent_macros, ['{GDPR_CONSENT}']);
+  });
+
+  it('leaves dropped_consent_macros empty when no consent macro is dropped', () => {
+    const result = translateUniversalMacros('https://px.example/i?x={FOO}', {});
+    assert.deepEqual(result.dropped_consent_macros, []);
+  });
 });

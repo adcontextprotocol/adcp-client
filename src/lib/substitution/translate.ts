@@ -18,10 +18,14 @@
  * The substitution is a single pass: a translated value that itself contains
  * `{…}` is not re-expanded.
  *
+ * A URL ending in a bare `?` with no parameters returns without the trailing
+ * `?` (e.g. `https://px.example/i?` → `https://px.example/i`).
+ *
  * Privacy note: dropping a parameter whose macro is unmapped silently removes
  * that tracker — including consent/privacy macros (`{GDPR_CONSENT}`,
- * `{US_PRIVACY}`) if a mapping is forgotten. Callers SHOULD inspect
- * `unmapped_macros` and `dropped_params` so a missing consent signal is caught
+ * `{US_PRIVACY}`) if a mapping is forgotten. Consent/privacy macros that get
+ * dropped are surfaced separately in `dropped_consent_macros`; callers SHOULD
+ * inspect it (and `unmapped_macros`) so a missing consent signal is caught
  * rather than shipped as a degraded pixel.
  *
  * URLSearchParams is intentionally avoided — it force-encodes values and would
@@ -38,8 +42,25 @@ const UNIVERSAL_MACRO = /\{[A-Z][A-Z0-9_]*\}/g;
  * Shapes of common ad-server native tokens (`%%X%%`, `{{x}}`, `${x}`, `[X]`).
  * A legitimate `value` entry — a literal data value — never takes this shape,
  * so a `value` that matches it almost certainly belongs in a `native` entry.
+ * The bracket form is constrained to upper-snake token names (VAST-style, e.g.
+ * `[CACHEBUSTING]`) so ordinary bracketed values like `[1,2,3]` or `[redacted]`
+ * are not flagged.
  */
-const NATIVE_TOKEN_SHAPE = /^(?:%%.+%%|\{\{.+\}\}|\$\{.+\}|\[.+\])$/;
+const NATIVE_TOKEN_SHAPE = /^(?:%%.+%%|\{\{.+\}\}|\$\{.+\}|\[[A-Z][A-Z0-9_]*\])$/;
+
+/**
+ * Consent/privacy-signalling universal macros. Dropping one because its
+ * mapping was forgotten is a compliance hazard, so these are reported
+ * separately from benign drops.
+ */
+const CONSENT_MACROS = new Set<string>([
+  '{GDPR}',
+  '{GDPR_CONSENT}',
+  '{US_PRIVACY}',
+  '{GPP_STRING}',
+  '{GPP_SID}',
+  '{LIMIT_AD_TRACKING}',
+]);
 
 /**
  * A mapping from universal macro token (e.g. `'{GDPR}'`) to either:
@@ -67,10 +88,22 @@ export interface TranslateResult {
    */
   unmapped_macros: string[];
   /**
+   * Subset of `unmapped_macros` that are consent/privacy signals (`{GDPR}`,
+   * `{GDPR_CONSENT}`, `{US_PRIVACY}`, `{GPP_STRING}`, `{GPP_SID}`,
+   * `{LIMIT_AD_TRACKING}`). Surfaced separately so a forgotten-mapping drop of
+   * a compliance-relevant macro isn't lost among benign drops. Deduplicated.
+   */
+  dropped_consent_macros: string[];
+  /**
    * Macro tokens whose `value` entry looks like a native ad-server token
-   * (`%%…%%`, `{{…}}`, `${…}`, `[…]`). Such a value will be percent-encoded
-   * and break at impression time — almost always it should have been a
-   * `native` entry. Deduplicated. Empty when no mapping is suspect.
+   * (`%%…%%`, `{{…}}`, `${…}`, `[UPPER_SNAKE]`). Such a value will be
+   * percent-encoded and break at impression time — almost always it should
+   * have been a `native` entry. Deduplicated.
+   *
+   * Note: this is mapping-scoped, not URL-scoped — it lints the whole
+   * `mapping`, so a suspect entry is reported even if its macro never appears
+   * in `input_pixel_url` (unlike `unmapped_macros`/`dropped_params`, which are
+   * URL-scoped). Empty when no mapping is suspect.
    */
   suspect_native_values: string[];
 }
@@ -98,7 +131,13 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   // Split base (scheme + host + path) from query.
   const queryIdx = withoutFragment.indexOf('?');
   if (queryIdx === -1) {
-    return { url: input_pixel_url, dropped_params: [], unmapped_macros: [], suspect_native_values };
+    return {
+      url: input_pixel_url,
+      dropped_params: [],
+      unmapped_macros: [],
+      dropped_consent_macros: [],
+      suspect_native_values,
+    };
   }
 
   const base = withoutFragment.slice(0, queryIdx);
@@ -107,6 +146,8 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   const dropped_params: string[] = [];
   const unmapped_macros: string[] = [];
   const unmappedSeen = new Set<string>();
+  const dropped_consent_macros: string[] = [];
+  const consentSeen = new Set<string>();
 
   const outputParts: string[] = [];
 
@@ -133,6 +174,10 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
           unmappedSeen.add(m);
           unmapped_macros.push(m);
         }
+        if (CONSENT_MACROS.has(m) && !consentSeen.has(m)) {
+          consentSeen.add(m);
+          dropped_consent_macros.push(m);
+        }
       }
       continue;
     }
@@ -155,5 +200,5 @@ export function translateUniversalMacros(input_pixel_url: string, mapping: Macro
   const newQuery = outputParts.join('&');
   const url = newQuery ? `${base}?${newQuery}${fragment}` : `${base}${fragment}`;
 
-  return { url, dropped_params, unmapped_macros, suspect_native_values };
+  return { url, dropped_params, unmapped_macros, dropped_consent_macros, suspect_native_values };
 }
