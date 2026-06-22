@@ -89,9 +89,6 @@ export type { RunnerVariables } from './context';
 // Webhook-assertion pseudo-tasks
 export { WEBHOOK_ASSERTION_TASKS } from './webhook-assertions';
 
-// Universal macro substitution assertion pseudo-task
-export { UNIVERSAL_MACRO_ASSERTION_TASKS, executeUniversalMacroAssertionStep } from './universal-macro-assertions';
-
 // Runner
 export {
   runStoryboard,

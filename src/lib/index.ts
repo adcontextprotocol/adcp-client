@@ -1694,7 +1694,7 @@ export {
   equalUnderHexCasePolicy,
   isUnreservedOnly,
   divergenceOffset,
-  universal_macro_translation,
+  translateUniversalMacros,
 } from './substitution';
 export type {
   ObserverFetchOptions,

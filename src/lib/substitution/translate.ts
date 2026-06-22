@@ -1,6 +1,7 @@
 /**
  * Seller-side helper that translates universal macro tokens in a pixel URL's
- * query parameters using a caller-supplied mapping.
+ * query parameter VALUES using a caller-supplied mapping. Macro tokens in key
+ * position pass through untouched — only query-parameter values are translated.
  *
  * Universal macros match `\{[A-Z][A-Z0-9_]*\}` (upper-snake, single braces).
  * Native ad-server tokens (`%%X%%`, `{{x}}`) are not matched and pass through.
@@ -17,6 +18,12 @@
  * The substitution is a single pass: a translated value that itself contains
  * `{…}` is not re-expanded.
  *
+ * Privacy note: dropping a parameter whose macro is unmapped silently removes
+ * that tracker — including consent/privacy macros (`{GDPR_CONSENT}`,
+ * `{US_PRIVACY}`) if a mapping is forgotten. Callers SHOULD inspect
+ * `unmapped_macros` and `dropped_params` so a missing consent signal is caught
+ * rather than shipped as a degraded pixel.
+ *
  * URLSearchParams is intentionally avoided — it force-encodes values and would
  * corrupt native ad-server tokens (e.g. `%%GDPR%%`).  Query manipulation is
  * done textually so native tokens remain raw and value-encoding is controlled.
@@ -28,6 +35,13 @@ import { encodeUnreserved } from './rfc3986';
 const UNIVERSAL_MACRO = /\{[A-Z][A-Z0-9_]*\}/g;
 
 /**
+ * Shapes of common ad-server native tokens (`%%X%%`, `{{x}}`, `${x}`, `[X]`).
+ * A legitimate `value` entry — a literal data value — never takes this shape,
+ * so a `value` that matches it almost certainly belongs in a `native` entry.
+ */
+const NATIVE_TOKEN_SHAPE = /^(?:%%.+%%|\{\{.+\}\}|\$\{.+\}|\[.+\])$/;
+
+/**
  * A mapping from universal macro token (e.g. `'{GDPR}'`) to either:
  *   - `{ native: string }` — inserted verbatim (not percent-encoded), for
  *     downstream ad-server tokens like `%%GDPR%%`.
@@ -36,7 +50,7 @@ const UNIVERSAL_MACRO = /\{[A-Z][A-Z0-9_]*\}/g;
  */
 export type MacroMapping = Record<string, { native: string } | { value: string }>;
 
-/** Result of {@link universal_macro_translation}. */
+/** Result of {@link translateUniversalMacros}. */
 export interface TranslateResult {
   /** The translated URL. Base, path, and fragment are unchanged. */
   url: string;
@@ -52,13 +66,30 @@ export interface TranslateResult {
    * many parameters reference it.
    */
   unmapped_macros: string[];
+  /**
+   * Macro tokens whose `value` entry looks like a native ad-server token
+   * (`%%…%%`, `{{…}}`, `${…}`, `[…]`). Such a value will be percent-encoded
+   * and break at impression time — almost always it should have been a
+   * `native` entry. Deduplicated. Empty when no mapping is suspect.
+   */
+  suspect_native_values: string[];
 }
 
 /**
- * Translate universal macro tokens in the query parameters of `input_pixel_url`
- * using `mapping`.  See module-level documentation for the substitution rules.
+ * Translate universal macro tokens in the query-parameter values of
+ * `input_pixel_url` using `mapping`. See module-level documentation for the
+ * substitution rules and the privacy note on dropped parameters.
  */
-export function universal_macro_translation(input_pixel_url: string, mapping: MacroMapping): TranslateResult {
+export function translateUniversalMacros(input_pixel_url: string, mapping: MacroMapping): TranslateResult {
+  const suspect_native_values: string[] = [];
+  const suspectSeen = new Set<string>();
+  for (const [macro, entry] of Object.entries(mapping)) {
+    if ('value' in entry && NATIVE_TOKEN_SHAPE.test(entry.value) && !suspectSeen.has(macro)) {
+      suspectSeen.add(macro);
+      suspect_native_values.push(macro);
+    }
+  }
+
   // Split off the fragment first so it is never touched.
   const fragmentIdx = input_pixel_url.indexOf('#');
   const withoutFragment = fragmentIdx === -1 ? input_pixel_url : input_pixel_url.slice(0, fragmentIdx);
@@ -67,7 +98,7 @@ export function universal_macro_translation(input_pixel_url: string, mapping: Ma
   // Split base (scheme + host + path) from query.
   const queryIdx = withoutFragment.indexOf('?');
   if (queryIdx === -1) {
-    return { url: input_pixel_url, dropped_params: [], unmapped_macros: [] };
+    return { url: input_pixel_url, dropped_params: [], unmapped_macros: [], suspect_native_values };
   }
 
   const base = withoutFragment.slice(0, queryIdx);
@@ -124,5 +155,5 @@ export function universal_macro_translation(input_pixel_url: string, mapping: Ma
   const newQuery = outputParts.join('&');
   const url = newQuery ? `${base}?${newQuery}${fragment}` : `${base}${fragment}`;
 
-  return { url, dropped_params, unmapped_macros };
+  return { url, dropped_params, unmapped_macros, suspect_native_values };
 }

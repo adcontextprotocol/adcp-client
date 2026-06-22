@@ -723,34 +723,6 @@ export interface StoryboardStep {
    * Requires the `rate_limit_trip_runner` test-kit contract.
    */
   rate_limit_trip?: RateLimitTripSpec;
-  // ──────────────────────────────────────────────────────────
-  // Universal macro substitution assertion step fields (only
-  // used when task is `expect_universal_macro_substituted`).
-  // The runner resolves rendered HTML from a prior step's
-  // response and checks that build-time identifier macros were
-  // replaced with their captured real values.
-  // ──────────────────────────────────────────────────────────
-  /**
-   * Source of rendered output for `expect_universal_macro_substituted`.
-   * Only `prior_step` is supported: the runner reads the prior step's
-   * parsed response body and extracts HTML at `source_path`.
-   */
-  source?: 'prior_step';
-  /**
-   * RFC 6901 JSON Pointer into the prior step's response body where the
-   * rendered HTML string lives, e.g. `/creative_manifest/preview_html`.
-   */
-  source_path?: string;
-  /**
-   * Macro-bearing tracker URL template the submitted creative declared.
-   * Example: `https://cdn.example/track?mb={MEDIA_BUY_ID}&pkg={PACKAGE_ID}`.
-   */
-  macro_template?: string;
-  /**
-   * Each entry pairs an AdCP macro token (e.g. `{MEDIA_BUY_ID}`) with the
-   * `StoryboardContext` key whose value holds the expected substituted id.
-   */
-  macro_bindings?: Array<{ macro: string; context_key: string }>;
 }
 
 /**
@@ -1813,15 +1785,7 @@ export type RunnerDetailedSkipReason =
    * runner-output-contract: `universal/runner-output-contract.yaml` >
    * `skip_result.reasons.force_scenario_unsupported`.
    */
-  | 'force_scenario_unsupported'
-  /**
-   * The step requires rendered HTML from a prior step's response but no
-   * preview surface (non-empty HTML string) was found at the configured
-   * `source_path`. The step grades `not_applicable` — absence of a preview
-   * is the seller's declared opt-out for this surface, not a failure.
-   * Maps to canonical `not_applicable`.
-   */
-  | 'no_preview_surface';
+  | 'force_scenario_unsupported';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -1839,7 +1803,6 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
-  no_preview_surface: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
