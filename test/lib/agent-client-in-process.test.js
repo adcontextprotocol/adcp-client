@@ -50,7 +50,14 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
           content: [{ type: 'text', text: '{}' }],
           structuredContent: {
             success: true,
-            products: [{ id: 'prod-1', name: 'Display', channels: ['display'] }],
+            products: [
+              {
+                id: 'prod-1',
+                name: 'Display',
+                channels: ['display'],
+                pricing_options: [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
+              },
+            ],
           },
         };
       }

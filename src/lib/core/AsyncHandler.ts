@@ -101,6 +101,12 @@ export interface WebhookMetadata {
    * result before dispatching it to handlers.
    */
   productPropertyPolicy?: TaskResultMetadata['productPropertyPolicy'];
+  /**
+   * Buyer-side pricing-options enforcement summary for completed get_products
+   * webhooks. Present when the client drops products that arrived without a
+   * usable `pricing_options[]` array before dispatching to handlers.
+   */
+  productPricingPolicy?: TaskResultMetadata['productPricingPolicy'];
 }
 
 /**

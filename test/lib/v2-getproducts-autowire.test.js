@@ -24,6 +24,8 @@ const { AgentClient } = require('../../dist/lib/index.js');
  * verbatim. Returns `{ agent, close }` where `agent` is a connected
  * `AgentClient` wired to the mock.
  */
+const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
+
 async function buildMockSeller(getProductsResponse) {
   const server = new McpServer({ name: 'autowire-test', version: '1.0.0' });
   server.registerTool(
@@ -58,6 +60,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           name: 'IAB MREC',
           description: 'standard banner',
           format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+          pricing_options: PRICING_OPTIONS,
         },
       ],
     };
@@ -91,6 +94,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           name: 'native',
           description: 'v2-native',
           format_ids: [],
+          pricing_options: PRICING_OPTIONS,
           format_options: [
             {
               format_kind: 'video_hosted',
@@ -122,6 +126,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           name: 'm',
           description: 'd',
           format_ids: [{ agent_url: 'https://obscure.example/', id: 'unknown_format_xyz' }],
+          pricing_options: PRICING_OPTIONS,
         },
       ],
     };
@@ -149,6 +154,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           name: 'IAB MREC',
           description: '',
           format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+          pricing_options: PRICING_OPTIONS,
         },
       ],
     };

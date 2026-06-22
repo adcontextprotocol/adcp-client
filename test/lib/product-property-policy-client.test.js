@@ -15,6 +15,7 @@ function makeProduct(product_id, publisher_domain, overrides = {}) {
     product_id,
     name: product_id,
     publisher_properties: [{ selection_type: 'all', publisher_domain }],
+    pricing_options: [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
     ...overrides,
   };
 }
