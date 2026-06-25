@@ -17,6 +17,7 @@ import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
+import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -540,13 +541,14 @@ async function connectMCPWithFallbackImpl(
   // buffer a hostile reply in memory).
   const networkFetch = transportFetch ?? ((input, init) => fetch(input as any, init));
   const sizeLimited = wrapFetchWithSizeLimit(networkFetch);
+  const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const baseFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: sizeLimited,
+        upstream: diagnosticFetch,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : sizeLimited;
+    : diagnosticFetch;
   const transportOptions: StreamableHTTPClientTransportOptions = {
     requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
     fetch: wrapFetchWithCapture(baseFetch),
@@ -910,13 +912,14 @@ export async function connectMCP(options: {
   // decides per outbound request whether to sign. Size-limit sits innermost so
   // the response body is bounded before signing/capture observe it.
   const sizeLimited = wrapFetchWithSizeLimit((input, init) => fetch(input as string | URL, init));
+  const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const signedFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: sizeLimited,
+        upstream: diagnosticFetch,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : sizeLimited;
+    : diagnosticFetch;
   transportOptions.fetch = wrapFetchWithCapture(signedFetch);
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);

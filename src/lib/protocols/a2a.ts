@@ -19,6 +19,7 @@ import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
+import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
 if (!A2AClient) {
@@ -300,7 +301,9 @@ function buildFetchImpl(authToken: string | undefined) {
 
   // Innermost wrapper: enforce response body size cap from the active
   // `responseSizeLimitStorage` slot. Pass-through when no slot is set.
-  const networkFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as any, init));
+  const networkFetch = wrapFetchWithTransportDiagnostics(
+    wrapFetchWithSizeLimit((input, init) => fetch(input as any, init))
+  );
 
   // Inner fetch handles auth/header injection and 401 detection. If the
   // agent has request-signing configured, we wrap it with the AdCP signing

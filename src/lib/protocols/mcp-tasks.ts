@@ -17,6 +17,8 @@ import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { withResponseSizeLimit } from './responseSizeLimit';
+import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -24,6 +26,18 @@ type CallToolResponse = {
   content?: Array<{ type: string; text?: string }>;
   [key: string]: unknown;
 };
+
+interface MCPTaskProtocolOptions {
+  transport?: { maxResponseBytes?: number };
+  onTransportActivity?: TransportActivityHandler;
+  transportActivityContext?: {
+    agentId: string;
+    operationId?: string;
+    taskId?: string;
+    contextId?: string;
+    idempotencyKey?: string;
+  };
+}
 
 /**
  * Track which MCP clients have had listTools() called.
@@ -469,19 +483,33 @@ export async function getMCPTaskResult(
 export async function listMCPTasks(
   agentUrl: string,
   authToken?: string,
-  debugLogs: DebugLogEntry[] = []
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskProtocolOptions = {}
 ): Promise<TaskInfo[]> {
   const authHeaders = buildAuthHeaders(authToken);
 
-  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, 'tasks/list', async client => {
-    const result = await client.experimental.tasks.listTasks();
-    debugLogs.push({
-      type: 'info',
-      message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
-      timestamp: new Date().toISOString(),
-    });
-    return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
-  });
+  return withResponseSizeLimit(options.transport?.maxResponseBytes, () =>
+    withTransportDiagnostics(
+      {
+        agentId: options.transportActivityContext?.agentId ?? 'unknown-agent',
+        protocol: 'mcp',
+        tool: 'tasks/list',
+        taskType: 'tasks/list',
+        ...options.transportActivityContext,
+        onTransportActivity: options.onTransportActivity,
+      },
+      () =>
+        withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, 'tasks/list', async client => {
+          const result = await client.experimental.tasks.listTasks();
+          debugLogs.push({
+            type: 'info',
+            message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
+            timestamp: new Date().toISOString(),
+          });
+          return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
+        })
+    )
+  );
 }
 
 /**

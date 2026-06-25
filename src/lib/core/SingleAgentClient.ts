@@ -352,6 +352,14 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   /** Activity callback for observability (logging, UI updates, etc) */
   onActivity?: (activity: Activity) => void | Promise<void>;
   /**
+   * Transport-level diagnostics callback for outbound HTTP requests.
+   *
+   * Receives sanitized request/response/failure events from the SDK's
+   * protocol fetch layer. Header maps are allowlisted/redacted and URLs have
+   * credentials, query strings, and fragments stripped before emission.
+   */
+  onTransportActivity?: import('../protocols').TransportActivityHandler;
+  /**
    * Task completion handlers — called for both sync responses and webhook
    * completions.
    *
@@ -670,6 +678,7 @@ export class SingleAgentClient {
         ...(config.validation?.responses != null && { responses: config.validation.responses }),
       },
       onActivity: config.onActivity,
+      onTransportActivity: config.onTransportActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
       ...(config.wireAdcpVersion !== undefined && { wireAdcpVersion: config.wireAdcpVersion }),

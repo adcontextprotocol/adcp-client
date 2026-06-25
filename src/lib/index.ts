@@ -1169,9 +1169,17 @@ export {
   closeMCPConnections,
   closeOAuthConnections,
   bundleSupportsAdcpVersionField,
+  sanitizeTransportHeaders,
+  sanitizeTransportUrl,
 } from './protocols';
 export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
-export type { CallToolOptions, TransportOptions } from './protocols';
+export type {
+  CallToolOptions,
+  TransportActivity,
+  TransportActivityContext,
+  TransportActivityHandler,
+  TransportOptions,
+} from './protocols';
 
 // ====== WIRE VERSION HELPERS (NAMESPACE) ======
 // Grouped re-exports of the three AdCP `adcp_version` envelope helpers
