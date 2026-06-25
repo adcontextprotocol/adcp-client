@@ -123,7 +123,7 @@ import {
   RoutingError,
   type AgentRoutingContext,
 } from './agent-routing';
-import { DETAILED_SKIP_TO_CANONICAL } from './types';
+import { DETAILED_SKIP_TO_CANONICAL, KNOWN_REQUIREMENTS } from './types';
 import type { AgentProfile, TaskResult, TestStepResult } from '../types';
 import {
   type AssertionContext,
@@ -1279,6 +1279,10 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   request_signer: 'not_applicable',
 };
 
+function isKnownRequirement(requirement: string): requirement is RequirementName {
+  return KNOWN_REQUIREMENTS.has(requirement as RequirementName);
+}
+
 /**
  * Build a minimal StoryboardResult for a storyboard skipped because a
  * `requires:` tag named a requirement that isn't available on this run
@@ -1291,10 +1295,10 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
 function buildRequirementUnmetResult(
   agentUrls: string[],
   storyboard: Storyboard,
-  requirement: RequirementName,
+  requirement: string,
   detail: string
 ): StoryboardResult {
-  const reason = REQUIREMENT_TO_SKIP_REASON[requirement];
+  const reason = isKnownRequirement(requirement) ? REQUIREMENT_TO_SKIP_REASON[requirement] : 'requirement_unmet';
   const syntheticStep: StoryboardStepResult = {
     storyboard_id: storyboard.id,
     step_id: `requirement_unmet:${requirement}`,
@@ -1445,11 +1449,20 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *     client. Spec: adcp-client#1702.
  */
 function checkRequires(
-  requires: readonly RequirementName[],
+  requires: readonly string[],
   options: StoryboardRunOptions,
   profile?: AgentProfile
-): { requirement: RequirementName; detail: string } | null {
+): { requirement: string; detail: string } | null {
   for (const requirement of requires) {
+    if (!isKnownRequirement(requirement)) {
+      return {
+        requirement,
+        detail:
+          `Storyboard requires unknown runtime requirement '${requirement}'. ` +
+          `This SDK does not know how to satisfy it, so the requirement is treated as unmet ` +
+          `for forward compatibility.`,
+      };
+    }
     switch (requirement) {
       case 'controller': {
         if (!options.agentTools) continue;

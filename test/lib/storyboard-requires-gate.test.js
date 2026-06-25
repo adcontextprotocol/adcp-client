@@ -148,6 +148,25 @@ describe('Storyboard.requires gate (#1626)', () => {
     const step = result.phases[0].steps[0];
     assert.equal(step.skip.requirement, 'controller', 'first unmet requirement is reported');
   });
+
+  test('unknown requires values load and skip with requirement_unmet at runtime', async () => {
+    const sb = buildStoryboard({ requires: ['multi_agent'] });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    assert.equal(result.overall_passed, true, 'unknown requires-unmet is not a failure');
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'multi_agent');
+    assert.match(step.skip.detail, /unknown runtime requirement 'multi_agent'/);
+  });
 });
 
 describe('Storyboard upstream_traffic authoring checks', () => {
@@ -312,15 +331,15 @@ phases:
     assert.throws(() => parseStoryboard(yaml), /requires: \[\] is not allowed/);
   });
 
-  test('rejects unknown requirement names', () => {
+  test('accepts unknown requirement names for forward-compatible runtime gating', () => {
     const yaml = `
-id: bad_unknown
+id: ok_unknown
 version: "1.0.0"
-title: bad name
+title: future gate
 category: test
 summary: ""
 narrative: ""
-requires: [contoller]
+requires: [multi_agent]
 agent:
   interaction_model: sync
   capabilities: []
@@ -331,7 +350,8 @@ phases:
     title: P
     steps: []
 `;
-    assert.throws(() => parseStoryboard(yaml), /unknown requirement 'contoller'/);
+    const parsed = parseStoryboard(yaml);
+    assert.deepEqual(parsed.requires, ['multi_agent']);
   });
 
   test('rejects non-array requires', () => {
@@ -348,6 +368,17 @@ phases:
       phases: [{ id: 'p1', title: 'P', steps: [] }],
     };
     assert.throws(() => validateStoryboardShape(sb), /requires: must be an array/);
+  });
+
+  test('rejects malformed requires entries', () => {
+    assert.throws(
+      () => validateStoryboardShape(buildStoryboard({ requires: [''] })),
+      /requires\[0\]: entries must be non-empty strings/
+    );
+    assert.throws(
+      () => validateStoryboardShape(buildStoryboard({ requires: ['controller', 42] })),
+      /requires\[1\]: entries must be non-empty strings/
+    );
   });
 
   test('accepts known requirement names', () => {

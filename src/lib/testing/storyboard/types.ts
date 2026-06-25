@@ -98,14 +98,17 @@ export interface Storyboard {
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
-   * additive opt-in; loader rejects unknown requirement names and an
-   * empty array (`requires: []`) so authoring mistakes fail loud.
+   * additive opt-in; loader rejects malformed values and an empty array
+   * (`requires: []`) so authoring mistakes fail loud. Unknown string
+   * requirements are forward-compatible: they load successfully, then skip
+   * at runtime with `skip_reason: 'requirement_unmet'` and the authored name
+   * on `RunnerSkipResult.requirement`.
    *
    * Spec: adcp-client#1626. The schema may be proposed upstream to
    * `adcontextprotocol/adcp` once it has bedded in across SDK
    * storyboards.
    */
-  requires?: RequirementName[];
+  requires?: string[];
   /**
    * Predicate evaluated against the agent's declared capabilities before any
    * phase runs. When the predicate is false, the runner emits a single
@@ -1698,7 +1701,8 @@ export type RunnerSkipReason =
    * didn't pass `--asserts-seeded-state`). Distinct from `missing_tool` /
    * `missing_test_controller` (per-step tool gates) and `unsatisfied_contract`
    * (capability predicate). The `RunnerSkipResult.requirement` field carries
-   * the unmet requirement name. Spec: adcp-client#1626.
+   * the unmet requirement name, including unknown forward-compatible strings.
+   * Spec: adcp-client#1626.
    */
   | 'requirement_unmet'
   /**
@@ -1815,13 +1819,16 @@ export interface RunnerSkipResult {
   reason: RunnerSkipReason;
   detail: string;
   /**
-   * Set when `reason === 'requirement_unmet'` to name the storyboard-level
-   * requirement that was not available on this run. Carries the same value
-   * authored in `Storyboard.requires`. Consumers (skip-cause aggregation,
-   * dashboards) key on this field to group not-applicable scenarios by
-   * cause. Absent for every other skip reason. Spec: adcp-client#1626.
+   * Set on storyboard-level `requires:` skips to name the requirement that was
+   * not available on this run. Most such skips use
+   * `reason === 'requirement_unmet'`; legacy-preserving mappings such as
+   * `controller -> missing_test_controller` also carry this field. Carries the
+   * same value authored in `Storyboard.requires`, including unknown
+   * forward-compatible strings. Consumers (skip-cause aggregation, dashboards)
+   * key on this field to group not-applicable scenarios by cause. Spec:
+   * adcp-client#1626.
    */
-  requirement?: RequirementName;
+  requirement?: string;
 }
 
 export type RunnerSelectionReason =
@@ -1846,10 +1853,10 @@ export interface RunnerSelectionResult {
 export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver' | 'request_signer';
 
 /**
- * Closed enumeration of every known requirement. Used by the loader to
- * reject typos in `Storyboard.requires` (`requires: [contoller]` fails
- * load rather than silently dropping coverage) and by the runner to
- * compute available requirements for the gate. Keep in sync with
+ * Enumeration of every requirement this SDK knows how to satisfy. The loader
+ * accepts other non-empty strings for forward compatibility; the runner treats
+ * those as unmet runtime requirements so future source-authored gates degrade
+ * to `requirement_unmet` instead of failing load. Keep in sync with
  * `RequirementName`.
  */
 export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
