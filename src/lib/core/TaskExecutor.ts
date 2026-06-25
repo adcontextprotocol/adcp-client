@@ -311,6 +311,8 @@ export class TaskExecutor {
       filterInvalidProducts?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Transport-level diagnostics callback for outbound HTTP requests. */
+      onTransportActivity?: import('../protocols').TransportActivityHandler;
       /** Governance configuration for buyer-side campaign governance */
       governance?: GovernanceConfig;
       /**
@@ -342,7 +344,8 @@ export class TaskExecutor {
         config.governance,
         config.onActivity,
         config.adcpVersion,
-        config.versionEnvelope
+        config.versionEnvelope,
+        config.onTransportActivity
       );
     }
     const modes = resolveValidationModes(config.validation);
@@ -602,6 +605,13 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          operationId: taskId,
+          taskId: options.taskId ?? taskId,
+          contextId: options.contextId,
+          idempotencyKey,
+        },
       });
 
       // Emit protocol_response activity
@@ -1340,7 +1350,13 @@ export class TaskExecutor {
     if (agent.protocol === 'mcp') {
       const authToken = getAuthToken(agent);
       try {
-        return await listMCPTasks(agent.agent_uri, authToken);
+        return await listMCPTasks(agent.agent_uri, authToken, undefined, {
+          transport: transport ?? this.config.transport,
+          onTransportActivity: this.config.onTransportActivity,
+          transportActivityContext: {
+            agentId: agent.id,
+          },
+        });
       } catch (err) {
         if (is401Error(err)) throw err;
         // Fall through to tool call if protocol method is not supported
@@ -1356,6 +1372,7 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
+        onTransportActivity: this.config.onTransportActivity,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1419,6 +1436,10 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          taskId,
+        },
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1725,6 +1746,12 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          operationId: taskId,
+          taskId,
+          contextId,
+        },
       }
     );
 
