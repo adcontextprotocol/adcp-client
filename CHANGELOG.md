@@ -1,5 +1,11 @@
 # Changelog
 
+## 9.1.0
+
+### Minor Changes
+
+- 918067d: Add `onTransportActivity` diagnostics for sanitized outbound MCP/A2A transport request, response, and failure events.
+
 ## 9.0.0
 
 ### Major Changes
