@@ -299,6 +299,17 @@ describe('parseSseStream', () => {
     });
     await assert.rejects(() => collect(parseSseStream(stream, { maxFrameBytes: 1000 })), FeedStreamParseError);
   });
+
+  test('fails closed on a complete oversized frame (blank line in the same chunk) — never yields it', async () => {
+    // The whole frame, terminating blank line included, arrives in one chunk;
+    // the cap must trip before the event is dispatched/yielded.
+    const frame = 'event: feed\ndata: ' + 'x'.repeat(5000) + '\n\n';
+    const events = [];
+    await assert.rejects(async () => {
+      for await (const e of parseSseStream(streamFromChunks([frame]), { maxFrameBytes: 1000 })) events.push(e);
+    }, FeedStreamParseError);
+    assert.strictEqual(events.length, 0, 'oversized frame was not yielded before the cap tripped');
+  });
 });
 
 describe('RegistryClient.streamFeed', () => {
@@ -728,5 +739,63 @@ describe('RegistrySync SSE transport', () => {
     } finally {
       sync2.stop();
     }
+  });
+
+  test('auto falls back to polling when each stream heartbeats then sends a malformed frame', async () => {
+    // A heartbeat must NOT reset the failure counter — otherwise this pattern
+    // loops on the stream forever and never honors the parse-failure fallback.
+    let streamCount = 0;
+    const pollUrls = [];
+    const enc = new TextEncoder();
+    const restore = mockFetch(async url => {
+      if (url.includes('/agents/search')) return searchResponse([AGENT]);
+      if (url.includes('/registry/feed/stream')) {
+        streamCount++;
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(enc.encode(frameText('heartbeat', { generated_at: 't', cursor: 'boot-0' })));
+            c.enqueue(enc.encode('event: feed\ndata: {bad json\n\n')); // malformed → parse error
+            c.close();
+          },
+        });
+        return sseResponse(body);
+      }
+      if (url.includes('/registry/feed')) {
+        pollUrls.push(url);
+        return jsonResponse(feedPage([], { cursor: 'boot-0' }));
+      }
+      return new Response('nf', { status: 404 });
+    });
+    mock = { restore };
+    const client = new RegistryClient({ apiKey: 'sk_test' });
+    sync = new RegistrySync({
+      client,
+      maxStreamFailures: 2,
+      pollIntervalMs: 20,
+      streamReconnectMinMs: 5,
+      streamReconnectMaxMs: 20,
+    });
+    sync.on('error', () => {});
+    await sync.start();
+
+    await waitFor(() => sync.getTransport() === 'poll', { timeout: 3000 });
+    assert.ok(streamCount >= 2, 'retried the stream (heartbeat did not mask the parse failures)');
+    const pollsAtFallback = pollUrls.length;
+    await waitFor(() => pollUrls.length > pollsAtFallback);
+  });
+
+  test('reset() clears the persisted cursor store', async () => {
+    const store = new InMemoryCursorStore();
+    await store.setCursor('stale-from-old-types');
+    mock = installMock({ poll: () => jsonResponse(feedPage([], { cursor: 'boot-0' })) });
+    const client = new RegistryClient({ apiKey: 'sk_test' });
+    sync = new RegistrySync({ client, cursorStore: store, streamReconnectMinMs: 5, streamReconnectMaxMs: 20 });
+    sync.on('error', () => {});
+    await sync.start();
+    await waitFor(() => mock.streamCount >= 1);
+
+    await sync.reset();
+    assert.strictEqual(await store.getCursor(), null, 'reset() dropped the persisted cursor');
+    assert.strictEqual(sync.getCursor(), null);
   });
 });

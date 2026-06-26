@@ -122,8 +122,13 @@ interface ParseState {
  * WHATWG rules: `:`-prefixed comments ignored, one leading space stripped from
  * each value, `id`/`retry` ignored (the registry uses `data.cursor`, not
  * Last-Event-ID).
+ *
+ * Throws {@link FeedStreamParseError} as soon as accumulated `data` exceeds
+ * `maxFrameBytes` — before the dispatching blank line — so an oversized frame is
+ * never yielded (or JSON-parsed downstream), even when the whole frame, blank
+ * line included, arrives in a single chunk.
  */
-function feedLine(line: string, st: ParseState): SseEvent | null {
+function feedLine(line: string, st: ParseState, maxFrameBytes: number): SseEvent | null {
   if (line === '') {
     const ev = st.dataLines.length > 0 ? { event: st.eventType || 'message', data: st.dataLines.join('\n') } : null;
     st.dataLines = [];
@@ -140,6 +145,9 @@ function feedLine(line: string, st: ParseState): SseEvent | null {
   else if (field === 'data') {
     st.dataLines.push(value);
     st.dataBytes += value.length;
+    if (st.dataBytes > maxFrameBytes) {
+      throw new FeedStreamParseError(`registry feed stream event exceeded ${maxFrameBytes} bytes without dispatching`);
+    }
   }
   return null;
 }
@@ -225,7 +233,7 @@ export async function* parseSseStream(
       const line = lineFragments.length === 1 ? lineFragments[0]! : lineFragments.join('');
       lineFragments = [];
       lineFragmentsLen = 0;
-      const ev = feedLine(line, st);
+      const ev = feedLine(line, st, maxFrameBytes);
       if (ev) yield ev;
       if (c[j] === '\r') {
         if (j === c.length - 1) {
@@ -319,10 +327,47 @@ function buildStreamUrl(baseUrl: string, query?: FeedStreamQuery): string {
   return `${baseUrl}/api/registry/feed/stream${qs ? `?${qs}` : ''}`;
 }
 
+/** Read at most `maxBytes` of a response body, then cancel — never buffers a hostile multi-GB error body. */
+async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    // No stream (e.g. a mocked Response): fall back, but still bound the result.
+    const text = await res.text().catch(() => '');
+    return text.slice(0, maxBytes);
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        total += value.byteLength;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(concatChunks(chunks)).slice(0, maxBytes);
+}
+
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
 async function readErrorMessage(res: Response): Promise<string | undefined> {
   try {
-    const text = await res.text();
-    const trimmed = text.slice(0, ERROR_BODY_LIMIT_BYTES);
+    const trimmed = await readBoundedText(res, ERROR_BODY_LIMIT_BYTES);
     try {
       const body = JSON.parse(trimmed) as { message?: unknown; error?: unknown };
       if (typeof body.message === 'string') return sanitizeStreamText(body.message);

@@ -90,8 +90,13 @@ export type RegistrySyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
 /** Active feed transport once syncing. */
 export type RegistrySyncTransport = 'stream' | 'poll';
 
-/** Outcome of one SSE connection, driving the reconnect loop. */
-type StreamDisposition = 'reconnect' | 'rebootstrap' | 'fallback' | 'fatal' | 'stopped';
+/**
+ * Outcome of one SSE connection, driving the reconnect loop.
+ * - `closed`: the server ended the stream cleanly (EOF), no error.
+ * - `reconnect`: a transport/parse failure or a server `feed_stream_error` —
+ *   counts toward `auto` polling fallback.
+ */
+type StreamDisposition = 'closed' | 'reconnect' | 'rebootstrap' | 'fallback' | 'fatal' | 'stopped';
 
 // ====== Event types ======
 
@@ -264,12 +269,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     }
   }
 
-  /** Stop, clear all state. Call start() again to re-bootstrap. */
+  /**
+   * Stop, clear all in-memory state, and drop the persisted cursor. Call start()
+   * again to re-bootstrap from scratch. Because this clears the stored cursor,
+   * it is the correct way to switch the `types` subscription: `reset()` then
+   * `start()` begins a fresh subscription rather than resuming a cursor minted
+   * under the previous filter.
+   */
   async reset(): Promise<void> {
     this.stop();
     this.clearIndexes();
     this.cursor = null;
     this.lastFreshness = null;
+    await this.cursorStore.clearCursor();
     this.setState('idle');
   }
 
@@ -532,20 +544,26 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   // ====== Private: Streaming ======
 
   private async runStream(gen: number): Promise<void> {
-    // `consecutiveFailures` drives polling fallback in 'auto'; `consecutiveRebootstraps`
-    // bounds a tight cursor_expired loop with backoff. Both reset on real progress.
+    // `consecutiveFailures` drives 'auto' polling fallback. It counts connections
+    // that ended in a transport/parse failure — a heartbeat does NOT reset it
+    // (else heartbeat → malformed-frame → reconnect could loop forever and never
+    // fall back, despite the parse-failure fallback contract). It resets only on
+    // real feed progress or a clean close that delivered something.
+    // `consecutiveRebootstraps` bounds a tight cursor_expired loop.
     let consecutiveFailures = 0;
     let consecutiveRebootstraps = 0;
 
     while (gen === this.generation && this.transportMode !== 'poll') {
       const controller = new AbortController();
       this.streamController = controller;
-      let madeProgress = false;
+      let feedApplied = false;
+      let receivedAny = false;
       let disposition: StreamDisposition;
 
       try {
-        disposition = await this.streamConnection(gen, controller.signal, () => {
-          madeProgress = true;
+        disposition = await this.streamConnection(gen, controller.signal, isFeed => {
+          receivedAny = true;
+          if (isFeed) feedApplied = true;
         });
       } catch (err) {
         // Aborted by stop()/reset() (which bumps the generation): exit quietly.
@@ -563,7 +581,8 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       }
 
       if (gen !== this.generation) return;
-      if (madeProgress) {
+      // Applying a feed page proves the stream works end to end.
+      if (feedApplied) {
         consecutiveFailures = 0;
         consecutiveRebootstraps = 0;
       }
@@ -612,8 +631,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         return;
       }
 
-      // 'reconnect'
-      if (!madeProgress) consecutiveFailures++;
+      if (disposition === 'closed' && receivedAny) {
+        // Clean close after real activity (feed or heartbeat): the transport
+        // works; reconnect promptly without counting it as a failure.
+        consecutiveFailures = 0;
+        await this.delay(this.reconnectBackoffMs(0), controller.signal);
+        if (gen !== this.generation) return;
+        continue;
+      }
+
+      // 'reconnect' (transport/parse failure or server feed_stream_error), or a
+      // clean close that delivered nothing — count toward fallback so 'auto'
+      // degrades to polling rather than looping on a stream that never delivers.
+      consecutiveFailures++;
       if (this.shouldFallBack(consecutiveFailures)) {
         this.fallBackToPolling(gen);
         return;
@@ -623,8 +653,18 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     }
   }
 
-  /** Consume one SSE connection. Returns the disposition for the reconnect loop. */
-  private async streamConnection(gen: number, signal: AbortSignal, onProgress: () => void): Promise<StreamDisposition> {
+  /**
+   * Consume one SSE connection. Invokes `onMessage(isFeed)` for each feed page
+   * (true) or heartbeat (false) received. Returns the disposition for the
+   * reconnect loop: `closed` on a clean server EOF, `reconnect` on a server
+   * `feed_stream_error`, `rebootstrap` on `cursor_expired`, `stopped` if the
+   * engine was stopped mid-stream.
+   */
+  private async streamConnection(
+    gen: number,
+    signal: AbortSignal,
+    onMessage: (isFeed: boolean) => void
+  ): Promise<StreamDisposition> {
     this.armStreamIdleTimer();
     const query: FeedStreamQuery = {
       cursor: this.cursor ?? undefined,
@@ -638,12 +678,12 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       this.armStreamIdleTimer();
 
       if (msg.type === 'feed') {
-        onProgress();
+        onMessage(true);
         await this.applyStreamPage(msg.page);
       } else if (msg.type === 'heartbeat') {
-        onProgress();
-        // Heartbeats keep the connection alive and expose freshness; they do
-        // NOT advance the cursor.
+        onMessage(false);
+        // Heartbeats keep the connection alive and expose freshness; they do NOT
+        // advance the cursor and do NOT count as feed progress for fallback.
         this.observeFreshness(msg.heartbeat.freshness);
       } else {
         // 'error' — the server closes the stream after this frame.
@@ -661,7 +701,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     }
 
     // Stream closed cleanly by the server — reconnect from the last cursor.
-    return 'reconnect';
+    return 'closed';
   }
 
   /** Apply one SSE feed page: events, freshness, then advance + persist the cursor. */
