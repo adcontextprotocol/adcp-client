@@ -1,5 +1,11 @@
 # Changelog
 
+## 9.1.2
+
+### Patch Changes
+
+- 509ed55: Publish stable SDK releases under the `latest` npm dist-tag by default.
+
 ## 9.1.1
 
 ### Patch Changes
