@@ -1,5 +1,0 @@
----
-'@adcp/sdk': minor
----
-
-Add `toCanonicalOnlyProduct(product)` and `toCanonicalOnlyResponse(response)` — the read-side canonical-only narrowing. Unlike `withFormatOptions` / `augmentProductWithFormatOptions` (additive; they preserve `format_ids[]`), these return `format_options[]` with the legacy `format_ids[]` dropped, so a fully-migrated consumer can't fall back to the stale `{ agent_url, id }` shape and silently bypass the canonical model. Dropping legacy never silently loses a format: every input `format_id` is either represented in `format_options[]` or surfaced as a diagnostic — `FORMAT_PROJECTION_FAILED` on the v1→v2 projection path, or the new SDK-local `LEGACY_FORMAT_ID_DROPPED_UNMAPPED` when a v2-native product carries a `format_ids[]` entry no `format_options[].v1_format_ref` covers. Complements the write-side non-invertibility tracked at adcontextprotocol/adcp#4842 — this is the read-side transparency half. Exported from the package root and `@adcp/sdk/v2/projection` (with the `CanonicalOnlyProduct` type).

@@ -1,5 +1,17 @@
 # Changelog
 
+## 9.2.0
+
+### Minor Changes
+
+- 7710fc7: Add public bare-format-id → canonical resolvers `resolveCanonicalFormatKind(id, { agentUrl?, assetTypeHint? })` and `canonicalDeclarationFromBareId(id, { agentUrl?, assetTypeHint? })`. Adopters migrating off legacy format storage hold bare id strings (`display_300x250_image`, `video_standard_30s`) persisted before the `{ agent_url, id }` structured-ref convention. These lift a bare id to its v2 canonical `format_kind` (or a full `ProductFormatDeclaration` carrying `v1_format_ref`) using the same registry- and catalog-backed resolution the v1 → v2 product projection uses, replacing hand-rolled `inferFormatKindFromFormatId` heuristics with one source of truth. For an under-specified bare id (`display_300x250`), pass `assetTypeHint` (the asset type you already hold, e.g. a `format_type` field) and the resolver retries the disambiguated catalog variant `<id>_<suffix>` — so the SDK owns the `_image` / `_html` suffix convention. Both fail closed — returning `null`, never a guess — for unknown, under-specified (without a resolving hint), or foreign-catalog ids. Exported from the package root and `@adcp/sdk/v2/projection`; `V2ProductFormatDeclaration` is now also re-exported from the root as the public return type.
+- 7710fc7: Add `toCanonicalOnlyProduct(product)` and `toCanonicalOnlyResponse(response)` — the read-side canonical-only narrowing. Unlike `withFormatOptions` / `augmentProductWithFormatOptions` (additive; they preserve `format_ids[]`), these return `format_options[]` with the legacy `format_ids[]` dropped, so a fully-migrated consumer can't fall back to the stale `{ agent_url, id }` shape and silently bypass the canonical model. Dropping legacy never silently loses a format: every input `format_id` is either represented in `format_options[]` or surfaced as a diagnostic — `FORMAT_PROJECTION_FAILED` on the v1→v2 projection path, or the new SDK-local `LEGACY_FORMAT_ID_DROPPED_UNMAPPED` when a v2-native product carries a `format_ids[]` entry no `format_options[].v1_format_ref` covers. Complements the write-side non-invertibility tracked at adcontextprotocol/adcp#4842 — this is the read-side transparency half. Exported from the package root and `@adcp/sdk/v2/projection` (with the `CanonicalOnlyProduct` type).
+- 3552d59: Add a known storyboard `multi_agent` runtime requirement. Storyboards that already authored this previously unknown requirement now run when `default_agent` plus step-level `agent:` overrides resolve to at least two distinct entries in `options.agents`; otherwise they continue to skip with `requirement_unmet`.
+
+### Patch Changes
+
+- c416c64: Apply get_adcp_capabilities schema defaults when evaluating storyboard `equals`/`contains` requires_capability gates. Presence matchers (`present:`) keep absence as the load-bearing signal and do not materialize defaults.
+
 ## 9.1.2
 
 ### Patch Changes
