@@ -7,7 +7,15 @@ import type {
   AuthorizationEntry,
   AgentSearchResponse,
   FeedResponse,
+  FeedFreshness,
 } from './types.generated';
+import type { FeedStreamQuery } from './feed-stream';
+import {
+  FeedStreamCursorExpiredError,
+  FeedStreamUnsupportedError,
+  FeedStreamHttpError,
+  sanitizeStreamText,
+} from './feed-stream';
 import type { CursorStore } from './cursor-store';
 import { InMemoryCursorStore } from './cursor-store';
 
@@ -16,8 +24,54 @@ import { InMemoryCursorStore } from './cursor-store';
 export interface RegistrySyncConfig {
   /** RegistryClient instance to use for API calls. */
   client: RegistryClient;
+  /**
+   * Feed transport for tailing changes after bootstrap:
+   * - `'auto'` (default): try the SSE stream, fall back to polling on an
+   *   unsupported endpoint (404/406), proxy/network failure, or stream parse
+   *   failure.
+   * - `'stream'`: SSE only; reconnect on failure and never fall back to polling.
+   * - `'poll'`: polling only.
+   */
+  transport?: 'auto' | 'stream' | 'poll';
   /** Polling interval in milliseconds. Default: 30000 (30s). */
   pollIntervalMs?: number;
+  /**
+   * Comma-separated event type filter (glob, e.g. `authorization.*`) applied to
+   * every feed read (bootstrap drain, polling, and SSE).
+   *
+   * A persisted cursor is scoped to the logical `types` subscription it was
+   * minted under: a cursor from a broader subscription can skip events that were
+   * filtered out previously. This is NOT enforced by the cursor store (the store
+   * holds only the cursor string), so if you change `types` you must
+   * `reset()` before `start()`. With a persistent {@link FileCursorStore} that
+   * survives restarts, changing `types` between deploys against the same store
+   * path will silently resume from a foreign cursor — point each subscription at
+   * its own store path, or clear the store when the filter changes.
+   */
+  types?: string;
+  /** Max events requested per feed page (polling and SSE). Default: 1000. */
+  feedPageLimit?: number;
+  /**
+   * Server-side caught-up interval hint for the SSE stream, in **seconds** (5–60,
+   * default 15) — maps to the `poll_interval_seconds` query param. Note the unit:
+   * `pollIntervalMs` and `streamIdleTimeoutMs` are milliseconds.
+   */
+  streamPollIntervalSeconds?: number;
+  /**
+   * Client-side idle watchdog: reconnect the stream if no feed page or heartbeat
+   * arrives within this window. Must exceed the server poll interval.
+   * Default: 90000 (90s).
+   */
+  streamIdleTimeoutMs?: number;
+  /** Reconnect backoff floor in ms. Default: 1000. */
+  streamReconnectMinMs?: number;
+  /** Reconnect backoff ceiling in ms. Default: 30000. */
+  streamReconnectMaxMs?: number;
+  /**
+   * Consecutive stream failures (with no successful message in between) before
+   * `'auto'` mode falls back to polling. Default: 3. Ignored in `'stream'` mode.
+   */
+  maxStreamFailures?: number;
   /** Choose which indexes to maintain. */
   indexes?: {
     /** Agent inventory profiles. Default: true. */
@@ -33,6 +87,17 @@ export interface RegistrySyncConfig {
 
 export type RegistrySyncState = 'idle' | 'bootstrapping' | 'syncing' | 'error';
 
+/** Active feed transport once syncing. */
+export type RegistrySyncTransport = 'stream' | 'poll';
+
+/**
+ * Outcome of one SSE connection, driving the reconnect loop.
+ * - `closed`: the server ended the stream cleanly (EOF), no error.
+ * - `reconnect`: a transport/parse failure or a server `feed_stream_error` —
+ *   counts toward `auto` polling fallback.
+ */
+type StreamDisposition = 'closed' | 'reconnect' | 'rebootstrap' | 'fallback' | 'fatal' | 'stopped';
+
 // ====== Event types ======
 
 export interface RegistrySyncEvents {
@@ -46,6 +111,10 @@ export interface RegistrySyncEvents {
     { agentUrl: string; previousStatus: AgentCompliance['status']; currentStatus: AgentCompliance['status'] },
   ];
   stateChange: [{ from: RegistrySyncState; to: RegistrySyncState }];
+  /** Emitted whenever a feed page or heartbeat carries freshness metadata, for lag monitoring. */
+  freshness: [{ freshness: FeedFreshness }];
+  /** Emitted when the active feed transport changes (e.g. stream → polling fallback). */
+  transport: [{ transport: RegistrySyncTransport }];
 }
 
 // ====== Agent filter for client-side search ======
@@ -68,27 +137,52 @@ export interface AgentFilter {
 /**
  * In-memory replica of the AdCP registry.
  *
- * Bootstraps from the agent search endpoint, then polls the event feed
- * to maintain up-to-date indexes for zero-latency lookups.
+ * Bootstraps from the agent search endpoint, then tails the change feed —
+ * Server-Sent Events by default (`transport: 'auto'`), falling back to polling
+ * `/api/registry/feed` when streaming is unavailable — to keep its indexes
+ * current for zero-latency lookups.
+ *
+ * **Staleness:** lookups (`getAgent`, `isAuthorized`, the authorization getters)
+ * return the last synced state. After a transient failure the engine keeps
+ * reconnecting/polling, but a fatal error (e.g. `401`) leaves `state === 'error'`
+ * while the indexes still hold their last values. For decisions where staleness
+ * is unsafe (e.g. authorization enforcement), gate on `state` and
+ * `getLagSeconds()` / `getFreshness()` rather than trusting a lookup blindly.
+ * Index size is bounded only by registry trust — a replica mirrors the whole
+ * registry, so an untrusted/compromised feed could grow memory without limit.
  *
  * @example
  * ```ts
  * const client = new RegistryClient({ apiKey: 'sk_...' });
- * const sync = new RegistrySync({ client });
- * await sync.start();
+ * const sync = new RegistrySync({ client }); // transport: 'auto' (SSE, polling fallback)
  *
  * // Zero-latency lookups
+ * sync.on('event', ({ event }) => console.log('registry change:', event.event_type));
+ *
+ * // Lag monitoring for the SSE feed
+ * sync.on('transport', ({ transport }) => console.log('feed transport:', transport));
+ * sync.on('freshness', ({ freshness }) => {
+ *   if ((freshness.lag_seconds ?? 0) > 300) console.warn('registry feed lag > 5m');
+ * });
+ *
+ * await sync.start();
  * const agent = sync.getAgent('https://ads.example.com');
  * const authorized = sync.isAuthorized('https://ads.example.com', 'publisher.com');
  * const ctv = sync.findAgents({ channels: ['ctv'], markets: ['US'] });
- *
- * sync.on('event', ({ event }) => console.log('registry change:', event.event_type));
  * sync.stop();
  * ```
  */
 export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private readonly client: RegistryClient;
+  private readonly transportMode: 'auto' | 'stream' | 'poll';
   private readonly pollIntervalMs: number;
+  private readonly types: string | undefined;
+  private readonly feedPageLimit: number;
+  private readonly streamPollIntervalSeconds: number;
+  private readonly streamIdleTimeoutMs: number;
+  private readonly streamReconnectMinMs: number;
+  private readonly streamReconnectMaxMs: number;
+  private readonly maxStreamFailures: number;
   private readonly indexAgents: boolean;
   private readonly indexAuthorizations: boolean;
   private readonly errorHandler: ((error: Error) => void) | undefined;
@@ -98,6 +192,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private cursor: string | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Streaming state
+  private activeTransport: RegistrySyncTransport | null = null;
+  private streamController: AbortController | null = null;
+  private streamIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastFreshness: FeedFreshness | null = null;
+  /**
+   * Incremented by stop()/reset() and each start(). Async work (bootstrap,
+   * rebootstrap, the stream loop) captures its generation and bails the moment
+   * it no longer matches — so a stop() that lands mid-bootstrap is honored and
+   * a stale loop can never resume after the caller stopped or restarted.
+   */
+  private generation = 0;
+
   // Indexes
   private agents = new Map<string, AgentSearchResult>();
   private authByDomain = new Map<string, AuthorizationEntry[]>();
@@ -106,7 +213,27 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   constructor(config: RegistrySyncConfig) {
     super();
     this.client = config.client;
+    this.transportMode = config.transport ?? 'auto';
     this.pollIntervalMs = config.pollIntervalMs ?? 30_000;
+    this.types = config.types;
+    this.feedPageLimit = config.feedPageLimit ?? 1000;
+    // Fail closed on out-of-range values rather than letting the registry reject
+    // them with a 400 that the reconnect/poll loop would hot-retry forever.
+    if (!Number.isInteger(this.feedPageLimit) || this.feedPageLimit < 1 || this.feedPageLimit > 10_000) {
+      throw new Error('feedPageLimit must be an integer between 1 and 10000');
+    }
+    this.streamPollIntervalSeconds = config.streamPollIntervalSeconds ?? 15;
+    if (
+      !Number.isInteger(this.streamPollIntervalSeconds) ||
+      this.streamPollIntervalSeconds < 5 ||
+      this.streamPollIntervalSeconds > 60
+    ) {
+      throw new Error('streamPollIntervalSeconds must be an integer between 5 and 60');
+    }
+    this.streamIdleTimeoutMs = config.streamIdleTimeoutMs ?? 90_000;
+    this.streamReconnectMinMs = config.streamReconnectMinMs ?? 1_000;
+    this.streamReconnectMaxMs = config.streamReconnectMaxMs ?? 30_000;
+    this.maxStreamFailures = config.maxStreamFailures ?? 3;
     this.indexAgents = config.indexes?.agents !== false;
     this.indexAuthorizations = config.indexes?.authorizations !== false;
     this.cursorStore = config.cursorStore ?? new InMemoryCursorStore();
@@ -115,30 +242,59 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   // ====== Lifecycle ======
 
-  /** Bootstrap from the registry and begin polling the event feed. */
+  /** Bootstrap from the registry and begin tailing the event feed. */
   async start(): Promise<void> {
     if (this._state === 'syncing' || this._state === 'bootstrapping') return;
-    await this.bootstrap();
-    this.schedulePoll();
+    const gen = ++this.generation;
+    await this.bootstrap(gen);
+    // A stop()/reset() (or another start()) during bootstrap bumps the
+    // generation; beginSync re-validates both generation and state before
+    // starting the sync loop.
+    this.beginSync(gen);
   }
 
-  /** Stop polling. In-memory state is preserved. */
+  /** Stop tailing the feed. In-memory state is preserved. */
   stop(): void {
+    // Invalidate any in-flight bootstrap/rebootstrap/stream loop, even while
+    // state is still 'bootstrapping'.
+    this.generation++;
     if (this.pollTimer) {
       clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
-    if (this._state === 'syncing') {
+    this.abortStream();
+    this.activeTransport = null;
+    if (this._state === 'syncing' || this._state === 'bootstrapping') {
       this.setState('idle');
     }
   }
 
-  /** Stop, clear all state. Call start() again to re-bootstrap. */
+  /**
+   * Stop, clear all in-memory state, and drop the persisted cursor. Call start()
+   * again to re-bootstrap from scratch. Because this clears the stored cursor,
+   * it is the correct way to switch the `types` subscription: `reset()` then
+   * `start()` begins a fresh subscription rather than resuming a cursor minted
+   * under the previous filter.
+   */
   async reset(): Promise<void> {
     this.stop();
     this.clearIndexes();
     this.cursor = null;
+    this.lastFreshness = null;
+    await this.cursorStore.clearCursor();
     this.setState('idle');
+  }
+
+  /** Begin tailing the feed using the configured transport. Bootstrap leaves state at 'syncing'. */
+  private beginSync(gen: number): void {
+    if (gen !== this.generation || this._state !== 'syncing') return;
+    if (this.transportMode === 'poll') {
+      this.setTransport('poll');
+      this.schedulePoll(gen);
+      return;
+    }
+    this.setTransport('stream');
+    void this.runStream(gen);
   }
 
   // ====== Agent Lookups ======
@@ -190,6 +346,11 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
    * Check if an agent has any authorization for a publisher domain.
    * Does not evaluate property_id scoping, time bounds, or effective dates.
    * For scoped checks, use getAuthorizationsForDomain() and inspect entries directly.
+   *
+   * Returns the last synced state — see the class-level staleness note. For
+   * enforcement, confirm `state === 'syncing'` and an acceptable `getLagSeconds()`
+   * before trusting an allow decision, so a stalled feed can't serve a stale
+   * authorization after a missed revocation.
    */
   isAuthorized(agentUrl: string, domain: string): boolean {
     const entries = this.authByDomain.get(domain);
@@ -212,9 +373,28 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return { agents: this.agents.size, authorizations: authCount };
   }
 
+  /** The active feed transport once syncing, or null when idle. */
+  getTransport(): RegistrySyncTransport | null {
+    return this.activeTransport;
+  }
+
+  /**
+   * Latest feed freshness metadata, or null if the registry has not reported it
+   * yet (e.g. before the first feed page/heartbeat lands). For push updates,
+   * prefer the `freshness` event over polling this right after `start()`.
+   */
+  getFreshness(): FeedFreshness | null {
+    return this.lastFreshness;
+  }
+
+  /** Latest feed lag in seconds, or null when unavailable. Convenience over getFreshness(). */
+  getLagSeconds(): number | null {
+    return this.lastFreshness?.lag_seconds ?? null;
+  }
+
   // ====== Private: Bootstrap ======
 
-  private async bootstrap(): Promise<void> {
+  private async bootstrap(gen: number): Promise<void> {
     this.setState('bootstrapping');
     try {
       // Restore cursor from store if available
@@ -238,7 +418,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       }
 
       // Get initial feed cursor and apply any events
-      await this.drainFeed();
+      await this.drainFeed(gen);
+
+      // A stop()/reset() landed mid-bootstrap: do not flip to 'syncing' or emit.
+      if (gen !== this.generation) return;
 
       this.setState('syncing');
       this.emit('bootstrap', {
@@ -246,49 +429,63 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         authorizationCount: this.getStats().authorizations,
       });
     } catch (err) {
-      this.setState('error');
       const error = err instanceof Error ? err : new Error(String(err));
+      // If we were stopped mid-bootstrap, swallow the abort rather than parking
+      // the engine in 'error'.
+      if (gen !== this.generation) return;
+      this.setState('error');
       this.errorHandler?.(error);
       this.emit('error', { error });
       throw error;
     }
   }
 
-  // ====== Private: Polling ======
-
-  private schedulePoll(): void {
-    this.pollTimer = setTimeout(() => this.pollLoop(), this.pollIntervalMs);
+  /** Clear all state, drop the persisted cursor, and bootstrap again from scratch. */
+  private async rebootstrap(gen: number): Promise<void> {
+    this.clearIndexes();
+    this.cursor = null;
+    await this.cursorStore.clearCursor();
+    await this.bootstrap(gen);
   }
 
-  private async pollLoop(): Promise<void> {
+  // ====== Private: Polling ======
+
+  private schedulePoll(gen: number): void {
+    this.pollTimer = setTimeout(() => this.pollLoop(gen), this.pollIntervalMs);
+  }
+
+  private async pollLoop(gen: number): Promise<void> {
+    if (gen !== this.generation) return;
     try {
-      await this.poll();
+      await this.poll(gen);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.emit('error', { error });
       this.errorHandler?.(error);
     }
-    // Schedule next poll even after errors (will retry), unless stopped
-    if (this._state === 'syncing') {
-      this.schedulePoll();
+    // Schedule next poll even after errors (will retry), unless stopped/superseded.
+    if (gen === this.generation && this._state === 'syncing') {
+      this.schedulePoll(gen);
     }
   }
 
-  private async poll(): Promise<void> {
+  private async poll(gen: number): Promise<void> {
     let totalEventsApplied = 0;
     let hasMore = true;
 
     while (hasMore) {
-      const feed: FeedResponse = await this.client.getFeed({
-        cursor: this.cursor ?? undefined,
-        limit: 1000,
-      });
+      const feed: FeedResponse = await this.client.getFeed(this.feedQuery());
 
       if (feed.cursor_expired) {
-        // Clear state and re-bootstrap inline; the existing poll loop continues
-        this.clearIndexes();
-        this.cursor = null;
-        await this.bootstrap();
+        // Cursor aged out of retention: drop state and re-bootstrap, then resume.
+        try {
+          await this.rebootstrap(gen);
+        } catch {
+          // bootstrap() already emitted 'error' and parked state in 'error'.
+          // Restore 'syncing' so pollLoop reschedules and retries (mirrors the
+          // stream path, which also keeps trying after a failed rebootstrap).
+          if (gen === this.generation && this._state === 'error') this.setState('syncing');
+        }
         return;
       }
 
@@ -298,16 +495,16 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         totalEventsApplied++;
       }
 
+      this.observeFreshness(feed.freshness);
+
       if (feed.cursor) {
         this.cursor = feed.cursor;
       }
 
-      hasMore = feed.has_more && this.cursor != null;
+      hasMore = feed.has_more && feed.cursor != null;
     }
 
-    if (this.cursor) {
-      await this.cursorStore.setCursor(this.cursor);
-    }
+    await this.persistCursor();
 
     if (totalEventsApplied > 0) {
       this.emit('sync', { cursor: this.cursor!, eventsApplied: totalEventsApplied });
@@ -317,22 +514,322 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   /**
    * Drain all available feed pages. Used during bootstrap (does not emit 'event' per event).
    */
-  private async drainFeed(): Promise<void> {
+  private async drainFeed(gen: number): Promise<void> {
     let hasMore = true;
+    let recoveredFromExpiry = false;
     while (hasMore) {
-      const feed: FeedResponse = await this.client.getFeed({
-        cursor: this.cursor ?? undefined,
-        limit: 1000,
-      });
+      const feed: FeedResponse = await this.client.getFeed(this.feedQuery());
+      if (feed.cursor_expired) {
+        // Stored cursor aged out of retention: drop it and retry once from the
+        // start of the window. A second expiry (now cursor-less) means a
+        // misbehaving server — stop draining rather than hot-looping.
+        this.cursor = null;
+        await this.cursorStore.clearCursor();
+        if (recoveredFromExpiry) break;
+        recoveredFromExpiry = true;
+        continue;
+      }
       for (const event of feed.events) {
         this.applyEvent(event);
       }
-      this.cursor = feed.cursor;
-      hasMore = feed.has_more && this.cursor != null;
+      this.observeFreshness(feed.freshness);
+      if (feed.cursor) this.cursor = feed.cursor;
+      hasMore = feed.has_more && feed.cursor != null;
     }
+    // A stop()/reset() during the drain bumps the generation — don't persist a
+    // cursor a later start() would read back.
+    if (gen === this.generation) await this.persistCursor();
+  }
+
+  // ====== Private: Streaming ======
+
+  private async runStream(gen: number): Promise<void> {
+    // `consecutiveFailures` drives 'auto' polling fallback. It counts connections
+    // that ended in a transport/parse failure — a heartbeat does NOT reset it
+    // (else heartbeat → malformed-frame → reconnect could loop forever and never
+    // fall back, despite the parse-failure fallback contract). It resets only on
+    // real feed progress or a clean close that delivered something.
+    // `consecutiveRebootstraps` bounds a tight cursor_expired loop.
+    let consecutiveFailures = 0;
+    let consecutiveRebootstraps = 0;
+
+    while (gen === this.generation && this.transportMode !== 'poll') {
+      const controller = new AbortController();
+      this.streamController = controller;
+      let feedApplied = false;
+      let receivedAny = false;
+      let disposition: StreamDisposition;
+
+      try {
+        disposition = await this.streamConnection(gen, controller.signal, isFeed => {
+          receivedAny = true;
+          if (isFeed) feedApplied = true;
+        });
+      } catch (err) {
+        // Aborted by stop()/reset() (which bumps the generation): exit quietly.
+        if (controller.signal.aborted && gen !== this.generation) {
+          return;
+        }
+        const error = err instanceof Error ? err : new Error(String(err));
+        disposition = this.classifyStreamError(error);
+        if (disposition === 'reconnect' || disposition === 'fatal') {
+          this.emit('error', { error });
+          this.errorHandler?.(error);
+        }
+      } finally {
+        this.clearStreamIdleTimer();
+      }
+
+      if (gen !== this.generation) return;
+      // Applying a feed page proves the stream works end to end.
+      if (feedApplied) {
+        consecutiveFailures = 0;
+        consecutiveRebootstraps = 0;
+      }
+
+      if (disposition === 'stopped') return;
+
+      if (disposition === 'fatal') {
+        // Permanent error (e.g. 400/401): retrying cannot help. Park in 'error'.
+        this.setState('error');
+        this.activeTransport = null;
+        return;
+      }
+
+      if (disposition === 'rebootstrap') {
+        let ok = false;
+        try {
+          await this.rebootstrap(gen);
+          ok = true;
+        } catch {
+          // bootstrap() already emitted 'error' and parked state in 'error'.
+        }
+        if (gen !== this.generation) return;
+        if (!ok) {
+          consecutiveFailures++;
+          if (this.shouldFallBack(consecutiveFailures)) {
+            this.fallBackToPolling(gen);
+            return;
+          }
+          // Recover: bootstrap left us in 'error'. In 'stream' mode the contract
+          // is to keep reconnecting, so restore 'syncing' and back off.
+          this.setState('syncing');
+          await this.delay(this.reconnectBackoffMs(consecutiveFailures), controller.signal);
+          if (gen !== this.generation) return;
+          continue;
+        }
+        // Successful re-bootstrap. Back off proportionally to repeated expiries
+        // so a server stuck emitting cursor_expired can't drive a tight loop.
+        consecutiveRebootstraps++;
+        await this.delay(this.reconnectBackoffMs(consecutiveRebootstraps), controller.signal);
+        if (gen !== this.generation) return;
+        continue;
+      }
+
+      if (disposition === 'fallback') {
+        this.fallBackToPolling(gen);
+        return;
+      }
+
+      if (disposition === 'closed' && receivedAny) {
+        // Clean close after real activity (feed or heartbeat): the transport
+        // works; reconnect promptly without counting it as a failure.
+        consecutiveFailures = 0;
+        await this.delay(this.reconnectBackoffMs(0), controller.signal);
+        if (gen !== this.generation) return;
+        continue;
+      }
+
+      // 'reconnect' (transport/parse failure or server feed_stream_error), or a
+      // clean close that delivered nothing — count toward fallback so 'auto'
+      // degrades to polling rather than looping on a stream that never delivers.
+      consecutiveFailures++;
+      if (this.shouldFallBack(consecutiveFailures)) {
+        this.fallBackToPolling(gen);
+        return;
+      }
+      await this.delay(this.reconnectBackoffMs(consecutiveFailures), controller.signal);
+      if (gen !== this.generation) return;
+    }
+  }
+
+  /**
+   * Consume one SSE connection. Invokes `onMessage(isFeed)` for each feed page
+   * (true) or heartbeat (false) received. Returns the disposition for the
+   * reconnect loop: `closed` on a clean server EOF, `reconnect` on a server
+   * `feed_stream_error`, `rebootstrap` on `cursor_expired`, `stopped` if the
+   * engine was stopped mid-stream.
+   */
+  private async streamConnection(
+    gen: number,
+    signal: AbortSignal,
+    onMessage: (isFeed: boolean) => void
+  ): Promise<StreamDisposition> {
+    this.armStreamIdleTimer();
+    const query: FeedStreamQuery = {
+      cursor: this.cursor ?? undefined,
+      types: this.types,
+      limit: this.feedPageLimit,
+      pollIntervalSeconds: this.streamPollIntervalSeconds,
+    };
+
+    for await (const msg of this.client.streamFeed(query, { signal })) {
+      if (gen !== this.generation) return 'stopped';
+      this.armStreamIdleTimer();
+
+      if (msg.type === 'feed') {
+        onMessage(true);
+        await this.applyStreamPage(msg.page);
+      } else if (msg.type === 'heartbeat') {
+        onMessage(false);
+        // Heartbeats keep the connection alive and expose freshness; they do NOT
+        // advance the cursor and do NOT count as feed progress for fallback.
+        this.observeFreshness(msg.heartbeat.freshness);
+      } else {
+        // 'error' — the server closes the stream after this frame.
+        if (msg.error.error === 'cursor_expired') {
+          return 'rebootstrap';
+        }
+        // Registry-supplied strings are untrusted: escape before logging/emitting.
+        const code = sanitizeStreamText(msg.error.error);
+        const detail = msg.error.message ? ` (${sanitizeStreamText(msg.error.message)})` : '';
+        const error = new Error(`registry feed stream error: ${code}${detail}`);
+        this.emit('error', { error });
+        this.errorHandler?.(error);
+        return 'reconnect';
+      }
+    }
+
+    // Stream closed cleanly by the server — reconnect from the last cursor.
+    return 'closed';
+  }
+
+  /** Apply one SSE feed page: events, freshness, then advance + persist the cursor. */
+  private async applyStreamPage(page: FeedResponse): Promise<void> {
+    let applied = 0;
+    for (const event of page.events) {
+      this.applyEvent(event);
+      this.emit('event', { event });
+      applied++;
+    }
+    this.observeFreshness(page.freshness);
+
+    // Advance the cursor only after the full page is applied, so a mid-page
+    // disconnect resumes from the last fully-applied page.
+    if (page.cursor) {
+      this.cursor = page.cursor;
+      try {
+        await this.persistCursor();
+      } catch (err) {
+        // Persisting is best-effort; replay after restart is idempotent.
+        const error = err instanceof Error ? err : new Error(String(err));
+        this.emit('error', { error });
+        this.errorHandler?.(error);
+      }
+    }
+
+    if (applied > 0) {
+      this.emit('sync', { cursor: this.cursor!, eventsApplied: applied });
+    }
+  }
+
+  private classifyStreamError(error: Error): StreamDisposition {
+    if (error instanceof FeedStreamCursorExpiredError) return 'rebootstrap';
+    if (error instanceof FeedStreamUnsupportedError) {
+      // Endpoint absent (older registry) or a proxy returned non-stream content.
+      return this.transportMode === 'auto' ? 'fallback' : 'reconnect';
+    }
+    if (error instanceof FeedStreamHttpError && (error.status === 400 || error.status === 401)) {
+      // Permanent client-side error: a malformed request or bad credentials.
+      // Retrying (or polling, which hits the same status) cannot recover.
+      return 'fatal';
+    }
+    // Other HTTP errors, parse failures, idle timeouts, network/abort errors.
+    return 'reconnect';
+  }
+
+  private shouldFallBack(consecutiveFailures: number): boolean {
+    return this.transportMode === 'auto' && consecutiveFailures >= this.maxStreamFailures;
+  }
+
+  private fallBackToPolling(gen: number): void {
+    if (gen !== this.generation || this._state !== 'syncing') return;
+    this.abortStream();
+    this.setTransport('poll');
+    this.schedulePoll(gen);
+  }
+
+  private armStreamIdleTimer(): void {
+    this.clearStreamIdleTimer();
+    const controller = this.streamController;
+    if (!controller) return;
+    this.streamIdleTimer = setTimeout(() => {
+      controller.abort(new Error('registry feed stream idle timeout'));
+    }, this.streamIdleTimeoutMs);
+    this.streamIdleTimer.unref?.();
+  }
+
+  private clearStreamIdleTimer(): void {
+    if (this.streamIdleTimer) {
+      clearTimeout(this.streamIdleTimer);
+      this.streamIdleTimer = null;
+    }
+  }
+
+  private abortStream(): void {
+    this.clearStreamIdleTimer();
+    if (this.streamController) {
+      this.streamController.abort();
+      this.streamController = null;
+    }
+  }
+
+  private reconnectBackoffMs(attempt: number): number {
+    const exp = this.streamReconnectMinMs * 2 ** Math.max(0, attempt - 1);
+    return Math.min(this.streamReconnectMaxMs, Math.max(this.streamReconnectMinMs, exp));
+  }
+
+  private delay(ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      timer.unref?.();
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  // ====== Private: Shared feed helpers ======
+
+  private feedQuery(): { cursor?: string; types?: string; limit: number } {
+    const query: { cursor?: string; types?: string; limit: number } = { limit: this.feedPageLimit };
+    if (this.cursor) query.cursor = this.cursor;
+    if (this.types) query.types = this.types;
+    return query;
+  }
+
+  private observeFreshness(freshness: FeedFreshness | undefined): void {
+    if (!freshness) return;
+    this.lastFreshness = freshness;
+    this.emit('freshness', { freshness });
+  }
+
+  private async persistCursor(): Promise<void> {
     if (this.cursor) {
       await this.cursorStore.setCursor(this.cursor);
     }
+  }
+
+  private setTransport(transport: RegistrySyncTransport): void {
+    if (this.activeTransport === transport) return;
+    this.activeTransport = transport;
+    this.emit('transport', { transport });
   }
 
   // ====== Private: Event Application ======

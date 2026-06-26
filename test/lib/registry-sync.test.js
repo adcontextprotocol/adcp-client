@@ -612,8 +612,10 @@ describe('RegistrySync', () => {
         return new Response('Not found', { status: 404 });
       });
 
+      // Bootstrap drain always uses the polling feed regardless of transport;
+      // pin 'poll' so the default 'auto' SSE attempt doesn't add a feed call.
       const client = new RegistryClient({ apiKey: 'sk_test' });
-      const sync = new RegistrySync({ client });
+      const sync = new RegistrySync({ client, transport: 'poll' });
       await sync.start();
       sync.stop();
 
