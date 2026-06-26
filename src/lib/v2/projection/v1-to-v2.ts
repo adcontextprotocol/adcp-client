@@ -46,9 +46,17 @@
  *     submission flows and lands in a follow-up.
  */
 
-import type { V1Product, V1FormatId, V2Product, V2ProductFormatDeclaration, ProjectionDiagnostic } from './types';
+import type {
+  V1Product,
+  V1FormatId,
+  V2Product,
+  V2ProductFormatDeclaration,
+  ProjectionDiagnostic,
+  CanonicalFormatKind,
+} from './types';
 import { forwardLookupByGlob, forwardLookupByStructural } from './registry';
 import { lookupV1Format, type V1FormatDefinition } from './catalog';
+import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
@@ -201,6 +209,9 @@ function projectFormatId(
  * a v2-only buyer (the spec requires `format_options` to have
  * `minItems: 1` when present). The function always returns a Product
  * shape so adopters can inspect what got dropped via diagnostics.
+ *
+ * @see canonicalDeclarationFromBareId — resolve a single bare format-id
+ * string (no surrounding Product) to a declaration or `format_kind`.
  */
 export function projectV1ProductToV2(v1: V1Product): V1ToV2Result {
   const format_options: V2ProductFormatDeclaration[] = [];
@@ -222,4 +233,148 @@ export function projectV1ProductToV2(v1: V1Product): V1ToV2Result {
   } as V2Product;
 
   return { v2: v2Product, diagnostics };
+}
+
+export interface BareFormatIdResolveOptions {
+  /**
+   * `agent_url` to attach when lifting the bare `id` to a structured
+   * {@link V1FormatId} for resolution. Defaults to the canonical AAO host
+   * (`https://creative.adcontextprotocol.org/`) — the publisher of every
+   * AAO catalog id, and the source of essentially all bare ids persisted
+   * before the `{ agent_url, id }` convention. Override only when the bare
+   * id was minted under a different agent's catalog — for an AAO catalog id,
+   * leave this unset; passing a non-AAO `agentUrl` won't match the AAO-keyed
+   * catalog and resolves to `null`.
+   */
+  agentUrl?: string;
+
+  /**
+   * Asset-type disambiguator for an under-specified bare id. The AAO
+   * catalog names per-asset-type variants `<base>_<suffix>` (e.g.
+   * `display_300x250` → `display_300x250_image` / `_html` / `_generative`).
+   * A size-only bare id like `display_300x250` is genuinely ambiguous and
+   * resolves to `null` on its own; pass the asset type you already hold
+   * (an adopter's `format_type`) and the resolver retries the disambiguated
+   * catalog variant `<id>_<suffix>`.
+   *
+   * The vocabulary is the catalog **suffix**, not the canonical
+   * `format_kind` — `_image` and `_generative` both resolve to kind
+   * `image`, so a kind hint couldn't tell them apart. Accepts the suffixes
+   * `image` / `html` / `generative` / `js` directly, plus the canonical-kind
+   * aliases `html5` → `html` and `display_tag` → `js`.
+   *
+   * Only consulted when the bare id does NOT resolve on its own (a real
+   * catalog id is authoritative). Still fails closed: if `<id>_<suffix>`
+   * is not a catalog entry, returns `null` — the hint narrows, it never
+   * fabricates.
+   */
+  assetTypeHint?: string;
+}
+
+/**
+ * Resolve a bare v1 format-id string to its full v2
+ * `ProductFormatDeclaration`, or `null` when the id has no canonical
+ * mapping.
+ *
+ * Adopters migrating off legacy format storage routinely hold a bare id
+ * (`display_300x250_image`, `video_standard_30s`) persisted before the
+ * `{ agent_url, id }` structured-ref convention. This lifts that bare id
+ * to a structured ref (via `agentUrl`, default the AAO host) and runs the
+ * exact resolution the v1 → v2 product projection uses — in the registry
+ * spec's `v1-canonical-mapping.json` resolution order:
+ *
+ *   - AAO catalog `canonical:` annotation — the authoritative
+ *     seller-asserted mapping (registry resolution-order step 2).
+ *   - Registry `format_id_glob` literal match (registry resolution-order
+ *     step 3) — future-proof; 3.1 ships zero literal globs, so this fires
+ *     only when a future registry adds platform-specific literals.
+ *
+ * Fails closed: returns `null` — never a guess — when neither path
+ * resolves the id. That covers an unknown id, an under-specified id
+ * (`display_300x250`, which the catalog only carries as `_image` /
+ * `_html` / `_generative` variants), and a catalog entry the AAO has not
+ * yet annotated with a `canonical:`. Structural matching never
+ * contributes a kind: a bare id absent from the catalog carries no asset
+ * shape to match on, and a catalog entry lacking a `canonical:` fails
+ * closed before the structural step is reached.
+ *
+ * For an under-specified bare id, pass `assetTypeHint` (the asset type you
+ * already hold) and the resolver retries the disambiguated catalog variant
+ * `<id>_<suffix>` — so the SDK owns the `_image` / `_html` suffix
+ * convention instead of every adopter re-deriving it. The hint is
+ * consulted only when the bare id doesn't resolve on its own, and still
+ * fails closed when the disambiguated id isn't a catalog entry.
+ *
+ * The returned declaration carries `v1_format_ref: [{ agent_url, id }]`
+ * (the resolved id — the disambiguated `<id>_<suffix>` when a hint
+ * applied), so adopters lift a bare id to a structured ref in one step
+ * (the pre-projection step the migration docs encourage).
+ *
+ * Like the rest of the projection layer, this requires the bundled AAO
+ * catalog + canonical-mapping registry; it throws (rather than returning
+ * `null`) only when those are missing from the install — a corrupted
+ * `@adcp/sdk` package, not a normal unresolved-id outcome.
+ *
+ * For just the `format_kind`, use {@link resolveCanonicalFormatKind}. For
+ * the structured diagnostic explaining *why* an id did not resolve, run
+ * it through {@link projectV1ProductToV2} inside a one-format product.
+ */
+export function canonicalDeclarationFromBareId(
+  id: string,
+  options?: BareFormatIdResolveOptions
+): V2ProductFormatDeclaration | null {
+  if (!id) return null;
+  const agentUrl = options?.agentUrl ?? AAO_CANONICAL_AGENT_URL;
+
+  // A real catalog id is authoritative — resolve it directly first.
+  const direct = projectFormatId({ agent_url: agentUrl, id }, `<bare:${id}>`, `bareFormatId(${id})`).decl;
+  if (direct) return direct;
+
+  // Under-specified bare id + an asset-type hint: retry the disambiguated
+  // catalog variant `<id>_<suffix>`. Fails closed if that isn't a catalog
+  // entry either — the hint narrows, it never fabricates.
+  const suffix = options?.assetTypeHint ? normalizeAssetTypeSuffix(options.assetTypeHint) : '';
+  if (suffix) {
+    const disambiguated = `${id}_${suffix}`;
+    const hinted = projectFormatId(
+      { agent_url: agentUrl, id: disambiguated },
+      `<bare:${disambiguated}>`,
+      `bareFormatId(${disambiguated})`
+    ).decl;
+    if (hinted) return hinted;
+  }
+
+  return null;
+}
+
+/**
+ * Map an `assetTypeHint` to the AAO catalog's `<base>_<suffix>` suffix.
+ * The catalog suffixes are `image` / `html` / `generative` / `js`; the two
+ * canonical-kind names that differ from their suffix (`html5`, `display_tag`)
+ * are aliased. Any other value is passed through lowercased so a future
+ * suffix resolves without a code change — an unknown suffix simply misses
+ * the catalog and the caller fails closed.
+ */
+function normalizeAssetTypeSuffix(hint: string): string {
+  const h = hint.trim().toLowerCase();
+  if (h === 'html5') return 'html';
+  if (h === 'display_tag') return 'js';
+  return h;
+}
+
+/**
+ * Resolve a bare v1 format-id string to its canonical `format_kind`, or
+ * `null` when the id has no canonical mapping. Registry- and
+ * catalog-backed: the single source of truth that replaces hand-rolled
+ * `inferFormatKindFromFormatId` heuristics adopters maintain locally.
+ *
+ * Thin projection of {@link canonicalDeclarationFromBareId} down to the
+ * `format_kind`; see it for the resolution order, fail-closed semantics,
+ * the `agentUrl` default, and the `assetTypeHint` disambiguator.
+ */
+export function resolveCanonicalFormatKind(
+  id: string,
+  options?: BareFormatIdResolveOptions
+): CanonicalFormatKind | null {
+  return canonicalDeclarationFromBareId(id, options)?.format_kind ?? null;
 }
