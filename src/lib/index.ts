@@ -13,10 +13,26 @@ export {
 export type {
   RegistrySyncConfig,
   RegistrySyncState,
+  RegistrySyncTransport,
   RegistrySyncEvents,
   AgentFilter,
   CursorStore,
   PropertyRegistryConfig,
+  FeedStreamQuery,
+  FeedStreamMessage,
+  FeedHeartbeat,
+  FeedStreamErrorData,
+  OpenFeedStreamOptions,
+  FeedFreshness,
+} from './registry';
+export {
+  openFeedStream,
+  parseSseStream,
+  FeedStreamError,
+  FeedStreamUnsupportedError,
+  FeedStreamCursorExpiredError,
+  FeedStreamHttpError,
+  FeedStreamParseError,
 } from './registry';
 export type {
   ResolvedBrand,

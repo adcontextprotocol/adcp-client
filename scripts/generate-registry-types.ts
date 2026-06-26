@@ -175,10 +175,27 @@ export type CommunityMirrorDeleteResponse = components['schemas']['CommunityMirr
 /** A single event from the registry feed (inline in getRegistryFeed 200 response). */
 export type CatalogEvent = operations['getRegistryFeed']['responses']['200']['content']['application/json']['events'][number];
 
-/** Full response from GET /api/registry/feed. Includes optional cursor_expired for 410 handling. */
-export type FeedResponse = operations['getRegistryFeed']['responses']['200']['content']['application/json'] & {
+/** Feed freshness metadata for lag monitoring (adcp#5733). Reported on every real feed page. */
+export type FeedFreshness = NonNullable<
+  operations['getRegistryFeed']['responses']['200']['content']['application/json']['freshness']
+>;
+
+/**
+ * Full response from GET /api/registry/feed.
+ *
+ * \`cursor_expired\` is set by the client when the server returns 410; that
+ * synthetic marker carries no \`freshness\`, so \`freshness\` is widened to
+ * optional here even though the spec requires it on real pages. The SDK never
+ * fabricates freshness — it is present iff the server sent it.
+ */
+export type FeedResponse = Omit<
+  operations['getRegistryFeed']['responses']['200']['content']['application/json'],
+  'freshness'
+> & {
   /** Set to true by the client when the server returns 410 (cursor expired). */
   cursor_expired?: boolean;
+  /** Feed lag metadata. Present on every real feed page; absent on the cursor_expired marker. */
+  freshness?: FeedFreshness;
 };
 
 /** Raw search result from the searchAgentProfiles operation. */

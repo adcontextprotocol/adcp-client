@@ -73,6 +73,9 @@ import type {
   GetAgentStoryboardStatusBulkResponse,
 } from './types';
 
+import { openFeedStream } from './feed-stream';
+import type { FeedStreamQuery, FeedStreamMessage } from './feed-stream';
+
 export type {
   ResolvedBrand,
   ResolvedProperty,
@@ -192,7 +195,32 @@ export type {
 
 // Re-export RegistrySync
 export { RegistrySync } from './sync';
-export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './sync';
+export type {
+  RegistrySyncConfig,
+  RegistrySyncState,
+  RegistrySyncTransport,
+  RegistrySyncEvents,
+  AgentFilter,
+} from './sync';
+
+// Re-export the feed SSE transport
+export {
+  openFeedStream,
+  parseSseStream,
+  FeedStreamError,
+  FeedStreamUnsupportedError,
+  FeedStreamCursorExpiredError,
+  FeedStreamHttpError,
+  FeedStreamParseError,
+} from './feed-stream';
+export type {
+  FeedStreamQuery,
+  FeedStreamMessage,
+  FeedHeartbeat,
+  FeedStreamErrorData,
+  OpenFeedStreamOptions,
+} from './feed-stream';
+export type { FeedFreshness } from './types.generated';
 
 // Re-export CursorStore
 export { InMemoryCursorStore, FileCursorStore } from './cursor-store';
@@ -1005,7 +1033,42 @@ export class RegistryClient {
     if (options?.types) params.set('types', options.types);
     if (options?.limit != null) params.set('limit', String(options.limit));
     const qs = params.toString();
-    return this.get(`${this.baseUrl}/api/registry/feed${qs ? '?' + qs : ''}`);
+    const url = `${this.baseUrl}/api/registry/feed${qs ? '?' + qs : ''}`;
+    const { res, text } = await this.requestText(url, { headers: this.getHeaders() });
+    if (res.status === 410) {
+      // Cursor aged out of the 90-day retention window. Surface as a recoverable
+      // signal so callers re-bootstrap instead of treating it as a hard error.
+      return { events: [], cursor: null, has_more: false, cursor_expired: true };
+    }
+    if (!res.ok) {
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+    }
+    return this.parseJson(text);
+  }
+
+  /**
+   * Stream the registry change feed over Server-Sent Events
+   * (`GET /api/registry/feed/stream`).
+   *
+   * Yields typed `feed` / `heartbeat` / `error` messages until the stream
+   * closes. The connection is long-lived — no body-size cap or request timeout
+   * applies; pass an `AbortSignal` to close it. Cursor state lives in the `feed`
+   * page payloads: persist `page.cursor` and reconnect with `{ cursor }`.
+   *
+   * Requires authentication. Most consumers should use `RegistrySync` with
+   * `transport: 'auto'`, which layers reconnect, polling fallback, and
+   * cursor-expiry recovery on top of this method.
+   */
+  streamFeed(query?: FeedStreamQuery, init?: { signal?: AbortSignal }): AsyncGenerator<FeedStreamMessage> {
+    if (!this.apiKey) throw new Error('apiKey is required for feed stream access');
+    return openFeedStream({
+      fetchImpl: this.fetchImpl,
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      query,
+      redirect: this.redirect,
+      signal: init?.signal,
+    });
   }
 
   /**
