@@ -297,6 +297,7 @@ export interface StepInvariantsObject {
  * alongside the body the runner forwards into `params.fixture` for the
  * corresponding `seed_*` scenario.
  *
+ *   - `accounts[]`      → `seed_account`         — requires `account_id`
  *   - `products[]`      → `seed_product`         — requires `product_id`
  *   - `pricing_options[]` → `seed_pricing_option` — requires `product_id` + `pricing_option_id`
  *   - `creative_formats[]` → `seed_creative_format` — requires `format_id`
@@ -313,6 +314,7 @@ export interface StepInvariantsObject {
  * authoring mistake is surfaced before any real step runs.
  */
 export interface StoryboardFixtures {
+  accounts?: Array<Record<string, unknown> & { account_id?: string }>;
   products?: Array<Record<string, unknown> & { product_id?: string }>;
   pricing_options?: Array<Record<string, unknown> & { product_id?: string; pricing_option_id?: string }>;
   creative_formats?: Array<Record<string, unknown> & { format_id?: string; fixture?: unknown }>;

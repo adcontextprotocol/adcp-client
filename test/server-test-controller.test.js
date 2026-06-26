@@ -40,6 +40,7 @@ describe('handleTestControllerRequest', () => {
         async forceUpstreamUnavailable() {},
         async simulateDelivery() {},
         async simulateBudgetSpend() {},
+        async seedAccount() {},
         async seedProduct() {},
         async seedPricingOption() {},
         async seedCreative() {},
@@ -570,6 +571,46 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.success, false);
       assert.strictEqual(result.error, 'INVALID_PARAMS');
       assert.match(result.error_detail, /reason_code/);
+    });
+  });
+
+  describe('seed_account', () => {
+    it('forwards accountId + fixture to store', async () => {
+      const calls = [];
+      const store = {
+        async seedAccount(accountId, fixture) {
+          calls.push({ accountId, fixture });
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_account',
+        params: { account_id: 'acct-1', fixture: { name: 'Sandbox account', status: 'active' } },
+      });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.message, 'Fixture seeded');
+      assert.strictEqual(result.previous_state, undefined);
+      assert.deepStrictEqual(calls, [{ accountId: 'acct-1', fixture: { name: 'Sandbox account', status: 'active' } }]);
+    });
+
+    it('returns INVALID_PARAMS without account_id', async () => {
+      const store = { async seedAccount() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_account',
+        params: { fixture: {} },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.account_id/);
+    });
+
+    it('returns UNKNOWN_SCENARIO when store lacks method', async () => {
+      const result = await handleTestControllerRequest(
+        {},
+        {
+          scenario: 'seed_account',
+          params: { account_id: 'acct-1', fixture: {} },
+        }
+      );
+      assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
     });
   });
 

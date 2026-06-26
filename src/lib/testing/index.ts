@@ -144,6 +144,7 @@ export type {
   ForceMediaBuyStatusParams,
   ForceSessionStatusParams,
   ForceTaskCompletionParams,
+  SeedAccountParams,
   SeedAdapter,
   SeedBuyerAgentParams,
   SeedCreativeFormatParams,

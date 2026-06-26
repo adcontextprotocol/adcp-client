@@ -39,6 +39,7 @@ export const CONTROLLER_SEEDING_PHASE_ID = '__controller_seeding__';
  * constant from `src/lib/server/test-controller.ts` is authoritative, but
  * importing it here would cross the testing ⇄ server module boundary. */
 type SeedScenario =
+  | 'seed_account'
   | 'seed_product'
   | 'seed_pricing_option'
   | 'seed_creative_format'
@@ -75,6 +76,27 @@ interface SeedCall {
 export function buildSeedCalls(fixtures: StoryboardFixtures | undefined): SeedCall[] {
   if (!fixtures) return [];
   const calls: SeedCall[] = [];
+
+  (fixtures.accounts ?? []).forEach((entry, i) => {
+    const { account_id, ...fixtureFields } = entry;
+    const label = account_id ?? `#${i}`;
+    if (typeof account_id !== 'string' || account_id.length === 0) {
+      calls.push({
+        step_id: `seed_account.${label}`,
+        title: `Seed account ${label}`,
+        scenario: 'seed_account',
+        params: { fixture: seedFixtureFromFields(fixtureFields) },
+        authoring_error: `fixtures.accounts[${i}] requires a non-empty string 'account_id'`,
+      });
+      return;
+    }
+    calls.push({
+      step_id: `seed_account.${account_id}`,
+      title: `Seed account ${account_id}`,
+      scenario: 'seed_account',
+      params: { account_id, fixture: seedFixtureFromFields(fixtureFields) },
+    });
+  });
 
   (fixtures.buyer_agents ?? []).forEach((entry, i) => {
     const { agent_url, ...params } = entry;
