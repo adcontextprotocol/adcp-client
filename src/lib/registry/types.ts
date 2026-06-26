@@ -7,7 +7,6 @@
 
 // Re-export generated component schema types
 export type {
-  ResolvedBrand,
   LocalizedName,
   BrandRegistryItem,
   ResolvedProperty,
@@ -57,6 +56,7 @@ export type { paths, operations, components } from './types.generated';
 // Types extracted from inline OpenAPI operation schemas
 
 import type {
+  ResolvedBrand as GeneratedResolvedBrand,
   operations,
   CommunityMirrorListResponse,
   CommunityMirrorSummary,
@@ -67,6 +67,45 @@ import type {
   CommunityMirrorDeleteResponse,
 } from './types.generated';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
+
+type GeneratedBrandHierarchyResolution =
+  operations['resolveBrandHierarchy']['responses']['200']['content']['application/json'];
+type GeneratedBrandHierarchyBulkResolution =
+  operations['resolveBrandHierarchies']['responses']['200']['content']['application/json'];
+
+/**
+ * Brand identity returned by the registry resolver.
+ *
+ * `parent_brand` is a registry hierarchy reference. New registry responses use
+ * the parent brand's canonical domain when the parent has one; older rows may
+ * still carry a portfolio-internal brand id from `brand.json#/brands[].id`.
+ * Consumers that need ancestry should use `resolveBrandHierarchy()` or
+ * `RegistrySync.getAncestors()` rather than walking `parent_brand` directly.
+ */
+export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
+  parent_brand?: string;
+}
+
+/** Ordered corporate brand hierarchy for a domain, from self to house. */
+export interface BrandHierarchyResolution extends Omit<GeneratedBrandHierarchyResolution, 'chain'> {
+  chain: ResolvedBrand[];
+}
+
+/** Bulk ordered corporate brand hierarchy result keyed by the requested domain. */
+export interface BrandHierarchyBulkResolution extends Omit<GeneratedBrandHierarchyBulkResolution, 'results'> {
+  results: Record<string, BrandHierarchyResolution | null>;
+}
+
+/** Options for client-side brand hierarchy resolution caching. */
+export interface ResolveBrandHierarchyOptions {
+  /**
+   * Cache this resolution in-memory for the provided number of milliseconds.
+   * Omit or set to `0` to bypass the SDK cache.
+   */
+  ttlMs?: number;
+  /** Force a registry read and refresh any matching cache entry. */
+  fresh?: boolean;
+}
 
 /** Request body for POST /api/brands/save */
 export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody']>['content']['application/json'];

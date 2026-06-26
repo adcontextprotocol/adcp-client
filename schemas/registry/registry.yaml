@@ -87,6 +87,16 @@ components:
         - canonical_domain
         - brand_name
         - source
+    BrandHierarchyResolution:
+      type: object
+      properties:
+        chain:
+          type: array
+          description: Ordered corporate brand chain from the resolved brand itself through each parent to the house brand.
+          items:
+            $ref: "#/components/schemas/ResolvedBrand"
+      required:
+        - chain
     LocalizedName:
       type: object
       additionalProperties:
@@ -3391,6 +3401,85 @@ paths:
                         - type:
                             - object
                             - "null"
+                required:
+                  - results
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/brands/hierarchy:
+    get:
+      operationId: resolveBrandHierarchy
+      summary: Resolve brand hierarchy
+      description: Resolve a domain to its ordered corporate brand hierarchy, from self through parents to house.
+      tags:
+        - Brand Resolution
+      parameters:
+        - schema:
+            type: string
+            example: acmecorp.com
+          required: true
+          name: domain
+          in: query
+        - schema:
+            type: string
+            enum:
+              - "true"
+              - "false"
+          required: false
+          name: fresh
+          in: query
+      responses:
+        "200":
+          description: Brand hierarchy resolved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandHierarchyResolution"
+        "404":
+          description: Brand not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/brands/hierarchy/bulk:
+    post:
+      operationId: resolveBrandHierarchies
+      summary: Bulk resolve brand hierarchies
+      description: Resolve up to 100 domains to ordered corporate brand hierarchies in a single request.
+      tags:
+        - Brand Resolution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domains:
+                  type: array
+                  items:
+                    type: string
+                  maxItems: 100
+                fresh:
+                  type: boolean
+              required:
+                - domains
+      responses:
+        "200":
+          description: Bulk hierarchy resolution results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: "#/components/schemas/BrandHierarchyResolution"
+                        - type: "null"
                 required:
                   - results
         "429":

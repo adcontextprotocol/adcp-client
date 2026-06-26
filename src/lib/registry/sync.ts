@@ -9,6 +9,7 @@ import type {
   FeedResponse,
   FeedFreshness,
 } from './types.generated';
+import type { ResolvedBrand } from './types';
 import type { FeedStreamQuery } from './feed-stream';
 import {
   FeedStreamCursorExpiredError,
@@ -78,6 +79,8 @@ export interface RegistrySyncConfig {
     agents?: boolean;
     /** Authorization entries (agent→domain mappings). Default: true. */
     authorizations?: boolean;
+    /** Ordered brand hierarchy chains (self → parents → house). Default: true. */
+    brandHierarchies?: boolean;
   };
   /** Optional cursor store for persisting the feed cursor between restarts. */
   cursorStore?: CursorStore;
@@ -185,6 +188,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private readonly maxStreamFailures: number;
   private readonly indexAgents: boolean;
   private readonly indexAuthorizations: boolean;
+  private readonly indexBrandHierarchies: boolean;
   private readonly errorHandler: ((error: Error) => void) | undefined;
   private readonly cursorStore: CursorStore;
 
@@ -209,6 +213,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private agents = new Map<string, AgentSearchResult>();
   private authByDomain = new Map<string, AuthorizationEntry[]>();
   private authByAgent = new Map<string, AuthorizationEntry[]>();
+  private brandAncestorsByDomain = new Map<string, string[]>();
+  private brandHierarchyByDomain = new Map<string, ResolvedBrand[]>();
+  private brandHierarchyKeysByEntity = new Map<string, Set<string>>();
+  private brandHierarchyEntityByKey = new Map<string, string>();
 
   constructor(config: RegistrySyncConfig) {
     super();
@@ -236,6 +244,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.maxStreamFailures = config.maxStreamFailures ?? 3;
     this.indexAgents = config.indexes?.agents !== false;
     this.indexAuthorizations = config.indexes?.authorizations !== false;
+    this.indexBrandHierarchies = config.indexes?.brandHierarchies !== false;
     this.cursorStore = config.cursorStore ?? new InMemoryCursorStore();
     this.errorHandler = config.onError;
   }
@@ -357,6 +366,23 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return entries != null && entries.some(e => e.agent_url === agentUrl);
   }
 
+  // ====== Brand Hierarchy Lookups ======
+
+  /**
+   * Get the ordered corporate ancestor domain chain for a brand domain.
+   *
+   * The returned array includes the resolved brand itself as the first entry and
+   * the house domain as the last entry when known.
+   */
+  getAncestors(domain: string): string[] {
+    return [...(this.brandAncestorsByDomain.get(this.normalizeDomainKey(domain)) ?? [])];
+  }
+
+  /** Get the ordered resolved brand chain for a brand domain, when the feed supplied it. */
+  getBrandHierarchy(domain: string): ResolvedBrand[] {
+    return (this.brandHierarchyByDomain.get(this.normalizeDomainKey(domain)) ?? []).map(brand => ({ ...brand }));
+  }
+
   // ====== State ======
 
   get state(): RegistrySyncState {
@@ -367,10 +393,14 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return this.cursor;
   }
 
-  getStats(): { agents: number; authorizations: number } {
+  getStats(): { agents: number; authorizations: number; brandHierarchies: number } {
     let authCount = 0;
     for (const entries of this.authByDomain.values()) authCount += entries.length;
-    return { agents: this.agents.size, authorizations: authCount };
+    return {
+      agents: this.agents.size,
+      authorizations: authCount,
+      brandHierarchies: this.brandHierarchyKeysByEntity.size,
+    };
   }
 
   /** The active feed transport once syncing, or null when idle. */
@@ -958,6 +988,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         break;
       }
 
+      case 'brand.hierarchy_updated':
+      case 'brand.updated':
+      case 'brand.resolved': {
+        if (this.indexBrandHierarchies) this.applyBrandHierarchyEvent(event.entity_id, payload);
+        break;
+      }
+
+      case 'brand.removed':
+      case 'brand.deleted': {
+        if (this.indexBrandHierarchies) this.deleteBrandHierarchy(event.entity_id, payload);
+        break;
+      }
+
       // Property and publisher events: no-op for v1 (no property index yet)
       default:
         break;
@@ -970,6 +1013,115 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.agents.clear();
     this.authByDomain.clear();
     this.authByAgent.clear();
+    this.brandAncestorsByDomain.clear();
+    this.brandHierarchyByDomain.clear();
+    this.brandHierarchyKeysByEntity.clear();
+    this.brandHierarchyEntityByKey.clear();
+  }
+
+  private applyBrandHierarchyEvent(entityId: string, payload: Record<string, unknown>): void {
+    const resolvedChain = this.extractResolvedBrandChain(payload.chain);
+    const domainChain =
+      resolvedChain.length > 0
+        ? resolvedChain.map(brand => this.domainFromBrand(brand)).filter((domain): domain is string => domain != null)
+        : (this.extractDomainChain(payload.chain) ??
+          this.extractDomainChain(payload.ancestor_domains) ??
+          this.extractDomainChain(payload.domains));
+
+    if (!domainChain || domainChain.length === 0) return;
+
+    const keys = new Set<string>();
+    keys.add(this.normalizeDomainKey(entityId));
+    for (const field of ['domain', 'canonical_domain', 'canonical_id'] as const) {
+      const value = payload[field];
+      if (typeof value === 'string' && value.trim()) keys.add(this.normalizeDomainKey(value));
+    }
+    keys.add(this.normalizeDomainKey(domainChain[0]!));
+
+    const entityKey = this.normalizeDomainKey(entityId);
+    const entitiesToClear = new Set<string>([entityKey]);
+    for (const key of keys) {
+      const existingEntity = this.brandHierarchyEntityByKey.get(key);
+      if (existingEntity) entitiesToClear.add(existingEntity);
+    }
+    for (const key of entitiesToClear) this.clearBrandHierarchyEntity(key);
+
+    for (const key of keys) {
+      this.brandAncestorsByDomain.set(key, [...domainChain]);
+      if (resolvedChain.length > 0)
+        this.brandHierarchyByDomain.set(
+          key,
+          resolvedChain.map(brand => ({ ...brand }))
+        );
+      else this.brandHierarchyByDomain.delete(key);
+      this.brandHierarchyEntityByKey.set(key, entityKey);
+    }
+    this.brandHierarchyKeysByEntity.set(entityKey, keys);
+  }
+
+  private deleteBrandHierarchy(entityId: string, payload: Record<string, unknown>): void {
+    const keys = new Set<string>([this.normalizeDomainKey(entityId)]);
+    for (const field of ['domain', 'canonical_domain', 'canonical_id'] as const) {
+      const value = payload[field];
+      if (typeof value === 'string' && value.trim()) keys.add(this.normalizeDomainKey(value));
+    }
+    const entitiesToClear = new Set<string>();
+    for (const key of keys) {
+      const existingEntity = this.brandHierarchyEntityByKey.get(key);
+      if (existingEntity) entitiesToClear.add(existingEntity);
+    }
+    if (entitiesToClear.size > 0) {
+      for (const key of entitiesToClear) this.clearBrandHierarchyEntity(key);
+      return;
+    }
+    for (const key of keys) {
+      this.brandAncestorsByDomain.delete(key);
+      this.brandHierarchyByDomain.delete(key);
+      this.brandHierarchyEntityByKey.delete(key);
+    }
+  }
+
+  private clearBrandHierarchyEntity(entityKey: string): void {
+    const keys = this.brandHierarchyKeysByEntity.get(entityKey);
+    if (!keys) return;
+    for (const key of keys) {
+      this.brandAncestorsByDomain.delete(key);
+      this.brandHierarchyByDomain.delete(key);
+      this.brandHierarchyEntityByKey.delete(key);
+    }
+    this.brandHierarchyKeysByEntity.delete(entityKey);
+  }
+
+  private extractResolvedBrandChain(value: unknown): ResolvedBrand[] {
+    if (!Array.isArray(value)) return [];
+    if (!value.every(item => item && typeof item === 'object' && !Array.isArray(item))) return [];
+    return value.filter(
+      item => typeof (item as { canonical_domain?: unknown }).canonical_domain === 'string'
+    ) as ResolvedBrand[];
+  }
+
+  private extractDomainChain(value: unknown): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const domains: string[] = [];
+    for (const item of value) {
+      if (typeof item === 'string' && item.trim()) {
+        domains.push(item);
+        continue;
+      }
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const domain = this.domainFromBrand(item as Partial<ResolvedBrand>);
+        if (domain) domains.push(domain);
+      }
+    }
+    return domains.length > 0 ? domains : null;
+  }
+
+  private domainFromBrand(brand: Partial<ResolvedBrand>): string | null {
+    return brand.canonical_domain ?? brand.canonical_id ?? null;
+  }
+
+  private normalizeDomainKey(domain: string): string {
+    return domain.trim().toLowerCase();
   }
 
   private setState(next: RegistrySyncState): void {
