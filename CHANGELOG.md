@@ -1,5 +1,11 @@
 # Changelog
 
+## 9.1.1
+
+### Patch Changes
+
+- b5f3e20: Allow unknown storyboard `requires` values to load and skip at runtime with `requirement_unmet`.
+
 ## 9.1.0
 
 ### Minor Changes
