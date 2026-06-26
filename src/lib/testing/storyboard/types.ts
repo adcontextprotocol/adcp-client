@@ -137,7 +137,9 @@ export interface Storyboard {
    *   capability. Unlike `equals`, absence is the load-bearing signal: when
    *   `present: true` and the field is missing, the storyboard is skipped
    *   (not_applicable) rather than run, because the seller's silence is the
-   *   spec-defined opt-out.
+   *   spec-defined opt-out. Schema defaults are NOT materialized for this
+   *   matcher (unlike `equals`/`contains`): a default would make a defaulted
+   *   field never read as absent, defeating the gate.
    *
    * - `contains: V` — array-membership matcher for capabilities whose
    *   declaration shape is an array of allowed values (e.g.

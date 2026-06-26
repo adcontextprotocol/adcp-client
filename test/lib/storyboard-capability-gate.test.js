@@ -429,6 +429,36 @@ const presentAbsentGatedStoryboard = {
   requires_capability: { path: 'media_buy.conversion_tracking', present: false },
 };
 
+// `signals.discovery_modes` is a presence-gated field that ALSO carries a
+// schema default (`["brief"]`). It is the one capability where the #2278
+// default-materialization could collide with `present:` semantics, so it gets
+// dedicated coverage below.
+const discoveryModesPresentGatedStoryboard = {
+  id: 'signals_discovery_present_gate_test',
+  version: '1.0.0',
+  title: 'Signal discovery (presence-gated, schema-defaulted field)',
+  category: 'test',
+  summary: 'Runs only when the seller advertises signals.discovery_modes.',
+  narrative: '',
+  agent: { interaction_model: 'sync', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: { path: 'signals.discovery_modes', present: true },
+  phases: [
+    {
+      id: 'discovery',
+      title: 'Discovery phase',
+      steps: [
+        {
+          id: 'get_signals_step',
+          title: 'Discover signals',
+          task: 'get_signals',
+          sample_request: {},
+        },
+      ],
+    },
+  ],
+};
+
 describe('requires_capability `present:` matcher (#1811)', () => {
   test('present: true — skips when agent does not declare the capability at all', async () => {
     const profile = {
@@ -505,6 +535,35 @@ describe('requires_capability `present:` matcher (#1811)', () => {
     assert.ok(
       step.skip.detail.includes('must be absent'),
       `detail must explain absence requirement: ${step.skip.detail}`
+    );
+  });
+
+  test('present: true — schema defaults are NOT materialized; absent defaulted field still skips (#2278)', async () => {
+    // signals.discovery_modes has schema default ["brief"]. The #2278 default
+    // materialization must NOT apply to `present:` — absence is the gate's
+    // signal. A seller that declares a `signals` block but omits
+    // discovery_modes must still skip, not run. (Without the present-matcher
+    // exclusion, the default would materialize and flip this gate skip→run.)
+    const profile = {
+      name: 'Test Agent (signals declared, discovery_modes omitted)',
+      tools: ['get_adcp_capabilities', 'get_signals'],
+      raw_capabilities: { signals: { data_providers: ['example.com'] } },
+    };
+    const result = await runStoryboard('http://fake-local-99995', discoveryModesPresentGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.ok(
+      step.skip.detail.includes('signals.discovery_modes'),
+      `detail must mention the capability path: ${step.skip.detail}`
+    );
+    assert.ok(
+      step.skip.detail.includes('must be present'),
+      `detail must explain presence requirement: ${step.skip.detail}`
     );
   });
 

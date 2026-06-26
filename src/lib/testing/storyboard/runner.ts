@@ -274,11 +274,23 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
 
 const GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF = 'protocol/get-adcp-capabilities-response.json';
 
-function resolveCapabilityPathForGate(raw: unknown, dottedPath: string, adcpVersion?: string): unknown {
-  const actual = resolveCapabilityPath(raw, dottedPath);
+function resolveCapabilityPathForGate(
+  raw: unknown,
+  predicate: RequiresCapabilityPredicate,
+  adcpVersion?: string
+): unknown {
+  const actual = resolveCapabilityPath(raw, predicate.path);
   if (actual !== undefined) return actual;
-  if (!schemaDefaultShouldApply(raw, dottedPath)) return undefined;
-  return getSchemaDefaultByPath(GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF, dottedPath, adcpVersion);
+  // `present:` is an absence-detection matcher — an absent field IS the
+  // load-bearing signal. Materializing a schema default would make a defaulted
+  // field never read as absent, silently flipping the gate (e.g. a signals
+  // seller that omits `signals.discovery_modes`, default `["brief"]`, would run
+  // a `present: true`-gated scenario that should skip). Defaults are resolved
+  // only for the value matchers (`equals` / `contains`), where the default's
+  // VALUE is what the gate tests.
+  if ('present' in predicate) return undefined;
+  if (!schemaDefaultShouldApply(raw, predicate.path)) return undefined;
+  return getSchemaDefaultByPath(GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF, predicate.path, adcpVersion);
 }
 
 function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
@@ -314,7 +326,10 @@ function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
  *   non-conformant for object-typed capabilities (`"type": "object"` rejects
  *   null in JSON Schema), but is coalesced with absent here in the spirit of
  *   Postel — agents that misdeclare a not-supported capability as `null`
- *   get the same not_applicable skip as agents that omit the field.
+ *   get the same not_applicable skip as agents that omit the field. Schema
+ *   defaults are deliberately NOT materialized for this matcher: presence is
+ *   the signal, so a default would defeat the gate (see
+ *   `resolveCapabilityPathForGate`).
  *
  * - `contains: V` — array-membership. `actual` must be an array that
  *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
@@ -377,7 +392,7 @@ function evaluateRequiresCapabilityGate(
 ): string | null {
   const rawCaps = profile?.raw_capabilities;
   if (rawCaps !== undefined) {
-    const actual = resolveCapabilityPathForGate(rawCaps, predicate.path, adcpVersion);
+    const actual = resolveCapabilityPathForGate(rawCaps, predicate, adcpVersion);
     return evaluateCapabilityPredicate(predicate, actual);
   }
   const tools = agentTools ?? profile?.tools;
