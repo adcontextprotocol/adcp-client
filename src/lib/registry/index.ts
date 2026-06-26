@@ -44,6 +44,8 @@ import type {
   AgentSearchResponse,
   CrawlRequest,
   CrawlRequestResponse,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   BrandActivity,
   PropertyActivity,
   PolicySummary,
@@ -132,6 +134,8 @@ export type {
   FeedQuery,
   AgentSearchQuery,
   CrawlRequest,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   ListPoliciesQuery,
   ListPoliciesResponse,
   ResolvePolicyQuery,
@@ -1044,6 +1048,20 @@ export class RegistryClient {
     if (!domain?.trim()) throw new Error('domain is required');
     if (!this.apiKey) throw new Error('apiKey is required for crawl requests');
     return this.post(`${this.baseUrl}/api/registry/crawl-request`, { domain });
+  }
+
+  /**
+   * Request fan-out re-validation for publishers delegating to a manager domain.
+   * Use after rotating a manager's adagents.json so MANAGERDOMAIN publishers
+   * are queued without waiting for the next routine crawl cycle.
+   *
+   * Requires authentication.
+   */
+  async requestManagerRevalidation(managerDomain: string): Promise<ManagerRevalidationResponse> {
+    if (!managerDomain?.trim()) throw new Error('managerDomain is required');
+    if (!this.apiKey) throw new Error('apiKey is required for manager revalidation requests');
+    const body: ManagerRevalidationRequest = { manager_domain: managerDomain };
+    return this.post(`${this.baseUrl}/api/registry/manager-revalidation-request`, body);
   }
 
   // ====== Policy Management ======

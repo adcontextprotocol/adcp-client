@@ -290,6 +290,15 @@ export type AgentSearchQuery = NonNullable<operations['searchAgentProfiles']['pa
 /** Request body for POST /api/registry/crawl-request */
 export type CrawlRequest = NonNullable<operations['requestCrawl']['requestBody']>['content']['application/json'];
 
+/** Request body for POST /api/registry/manager-revalidation-request */
+export type ManagerRevalidationRequest = NonNullable<
+  operations['requestManagerRevalidation']['requestBody']
+>['content']['application/json'];
+
+/** Response from POST /api/registry/manager-revalidation-request (202) */
+export type ManagerRevalidationResponse =
+  operations['requestManagerRevalidation']['responses']['202']['content']['application/json'];
+
 /** Query parameters for GET /api/policies/registry */
 export type ListPoliciesQuery = NonNullable<operations['listPolicies']['parameters']['query']>;
 

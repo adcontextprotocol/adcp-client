@@ -72,6 +72,8 @@ export type {
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   ListPoliciesQuery,
   ListPoliciesResponse,
   ResolvePolicyQuery,

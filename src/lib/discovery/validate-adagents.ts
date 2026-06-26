@@ -85,6 +85,8 @@ export interface AdAgentsValidationResult {
 export interface ValidateAdAgentsOptions {
   /** Per-request timeout in ms (default 10_000). */
   timeoutMs?: number;
+  /** Maximum response body bytes for adagents.json and ads.txt fetches (default 256 KiB). */
+  maxBodyBytes?: number;
   /** Optional User-Agent suffix (validated via `validateUserAgent`). */
   userAgent?: string;
   /** Logger level (default `'warn'`). */
@@ -99,8 +101,8 @@ export interface ValidateAdAgentsOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
-const MAX_ADAGENTS_BYTES = 256 * 1024;
-const MAX_ADS_TXT_BYTES = 256 * 1024;
+const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const MAX_CONFIGURABLE_BODY_BYTES = 2 * 1024 * 1024;
 
 const FETCH_HEADERS = {
   Accept: 'application/json, text/plain, */*',
@@ -123,6 +125,7 @@ export async function validateAdAgents(
     validateUserAgent(options.userAgent);
   }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxBodyBytes = resolveMaxBodyBytes(options.maxBodyBytes);
   const logger = createLogger({ level: options.logLevel ?? 'warn' }).child('validateAdAgents');
   const userAgentHeader = `adcp-validate-adagents/${LIBRARY_VERSION} (+https://adcontextprotocol.org)`;
   const fromHeader = options.userAgent
@@ -136,7 +139,7 @@ export async function validateAdAgents(
   // Step 1: try the publisher's canonical location.
   const direct = await fetchJsonOrStatus(publisherUrl, {
     timeoutMs,
-    maxBodyBytes: MAX_ADAGENTS_BYTES,
+    maxBodyBytes,
     userAgentHeader,
     fromHeader,
     redirectPolicy: { mode: 'same-registrable-domain', originUrl: publisherUrl },
@@ -189,7 +192,7 @@ export async function validateAdAgents(
       }
       const followed = await fetchJsonOrStatus(target, {
         timeoutMs,
-        maxBodyBytes: MAX_ADAGENTS_BYTES,
+        maxBodyBytes,
         userAgentHeader,
         fromHeader,
         redirectPolicy: { mode: 'none' },
@@ -249,7 +252,7 @@ export async function validateAdAgents(
   const adsTxtUrl = buildUrl(publisher, '/ads.txt');
   const adsTxt = await fetchTextOrStatus(adsTxtUrl, {
     timeoutMs,
-    maxBodyBytes: MAX_ADS_TXT_BYTES,
+    maxBodyBytes,
     userAgentHeader,
     fromHeader,
   });
@@ -286,7 +289,7 @@ export async function validateAdAgents(
   const managerUrl = buildUrl(managerDomain, '/.well-known/adagents.json');
   const manager = await fetchJsonOrStatus(managerUrl, {
     timeoutMs,
-    maxBodyBytes: MAX_ADAGENTS_BYTES,
+    maxBodyBytes,
     userAgentHeader,
     fromHeader,
     redirectPolicy: { mode: 'same-registrable-domain', originUrl: managerUrl },
@@ -333,6 +336,14 @@ export async function validateAdAgents(
 function coerceAdAgentsObject(value: unknown): AdAgentsJson | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as AdAgentsJson;
+}
+
+function resolveMaxBodyBytes(maxBodyBytes: number | undefined): number {
+  const value = maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_CONFIGURABLE_BODY_BYTES) {
+    throw new Error(`maxBodyBytes must be an integer between 1 and ${MAX_CONFIGURABLE_BODY_BYTES}`);
+  }
+  return value;
 }
 
 /**

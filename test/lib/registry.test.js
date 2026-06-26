@@ -3008,14 +3008,23 @@ describe('RegistryClient', () => {
     });
 
     test('throws without apiKey', async () => {
-      const client = new RegistryClient();
-      await assert.rejects(
-        () => client.requestCrawl('publisher.example.com'),
-        err => {
-          assert.ok(err.message.includes('apiKey is required'));
-          return true;
-        }
-      );
+      const savedApiKey = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      restore = mockFetch(async () => {
+        throw new Error('unexpected network call');
+      });
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.requestCrawl('publisher.example.com'),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedApiKey;
+      }
     });
 
     test('throws on empty domain', async () => {
@@ -3046,6 +3055,66 @@ describe('RegistryClient', () => {
         () => client.requestCrawl('publisher.example.com'),
         err => {
           assert.ok(err.message.includes('429'));
+          return true;
+        }
+      );
+    });
+  });
+
+  // ============ requestManagerRevalidation ============
+
+  describe('requestManagerRevalidation', () => {
+    test('requests manager fan-out revalidation', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/registry/manager-revalidation-request'));
+        assert.strictEqual(opts.method, 'POST');
+        const body = JSON.parse(opts.body);
+        assert.strictEqual(body.manager_domain, 'raptive.com');
+        assert.strictEqual(opts.headers.Authorization, 'Bearer test-key');
+        return new Response(
+          JSON.stringify({
+            message: 'Manager re-validation enqueued',
+            manager_domain: 'raptive.com',
+            publishers_enqueued: 42,
+          }),
+          { status: 202 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.requestManagerRevalidation('raptive.com');
+
+      assert.strictEqual(result.message, 'Manager re-validation enqueued');
+      assert.strictEqual(result.manager_domain, 'raptive.com');
+      assert.strictEqual(result.publishers_enqueued, 42);
+    });
+
+    test('throws without apiKey', async () => {
+      const savedApiKey = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      restore = mockFetch(async () => {
+        throw new Error('unexpected network call');
+      });
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.requestManagerRevalidation('raptive.com'),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedApiKey;
+      }
+    });
+
+    test('throws on empty managerDomain', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(
+        () => client.requestManagerRevalidation(''),
+        err => {
+          assert.ok(err.message.includes('managerDomain is required'));
           return true;
         }
       );
