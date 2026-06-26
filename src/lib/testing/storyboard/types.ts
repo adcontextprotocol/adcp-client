@@ -124,8 +124,9 @@ export interface Storyboard {
    * - `equals: V` — scalar equality. The path's resolved value must be
    *   declared and must equal `V` for the storyboard to run. When the path
    *   resolves to `undefined` (field absent), the storyboard is skipped as
-   *   `capability_unsupported`; omitting a capability means the agent has not
-   *   opted into that behavior or variant.
+   *   `capability_unsupported` unless the `get_adcp_capabilities` response
+   *   schema declares a default for that exact path and the parent capability
+   *   object is present.
    *
    * - `present: true|false` — presence-only matcher for spec capabilities whose
    *   contract is "presence of this object indicates support" (e.g.
@@ -143,10 +144,11 @@ export interface Storyboard {
    *   `media_buy.conversion_tracking.supported_targets: ["cost_per",
    *   "per_ad_spend"]`). The value at `path` MUST be an array and MUST include
    *   `V` (strict equality, no coercion). Empty arrays fail; paths resolving
-   *   to undefined or non-array values fail (treated as "capability not
-   *   declared", skip the storyboard as not_applicable). Like `present:`,
-   *   absence is the load-bearing signal — a seller that doesn't advertise
-   *   the array hasn't opted into the variant this storyboard tests.
+   *   to undefined or non-array values fail unless the `get_adcp_capabilities`
+   *   response schema declares a default for that exact path and the parent
+   *   capability object is present. Like `present:`, absence is otherwise the
+   *   load-bearing signal — a seller that doesn't advertise the array hasn't
+   *   opted into the variant this storyboard tests.
    *
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
