@@ -40,7 +40,14 @@ export interface FeedStreamErrorData {
   message?: string;
 }
 
-/** A typed message decoded from the SSE stream. */
+/**
+ * A typed message decoded from the SSE stream.
+ *
+ * @remarks
+ * Registry-supplied strings (event payloads, `freshness`, `error.message`) are
+ * untrusted input. Sanitize before logging them or injecting them into LLM
+ * prompts/instructions or other executable context.
+ */
 export type FeedStreamMessage =
   | { type: 'feed'; page: FeedResponse }
   | { type: 'heartbeat'; heartbeat: FeedHeartbeat }
@@ -102,30 +109,39 @@ interface SseEvent {
   data: string;
 }
 
+/** Mutable accumulation state for the SSE field parser. */
+interface ParseState {
+  dataLines: string[];
+  dataBytes: number;
+  eventType: string;
+}
+
 /**
- * Split a buffer into complete lines, deferring a trailing lone `\r` (which may
- * be the first half of a `\r\n` split across chunks). Handles `\n`, `\r\n`, `\r`.
+ * Apply one SSE line to the accumulation state. Returns an event to yield when a
+ * blank line dispatches a buffered event with data, else null. Follows the
+ * WHATWG rules: `:`-prefixed comments ignored, one leading space stripped from
+ * each value, `id`/`retry` ignored (the registry uses `data.cursor`, not
+ * Last-Event-ID).
  */
-function extractLines(buffer: string): { lines: string[]; rest: string } {
-  const lines: string[] = [];
-  let start = 0;
-  let i = 0;
-  while (i < buffer.length) {
-    const ch = buffer[i];
-    if (ch === '\n') {
-      lines.push(buffer.slice(start, i));
-      i += 1;
-      start = i;
-    } else if (ch === '\r') {
-      if (i === buffer.length - 1) break; // defer: could be split \r\n
-      lines.push(buffer.slice(start, i));
-      i += buffer[i + 1] === '\n' ? 2 : 1;
-      start = i;
-    } else {
-      i += 1;
-    }
+function feedLine(line: string, st: ParseState): SseEvent | null {
+  if (line === '') {
+    const ev = st.dataLines.length > 0 ? { event: st.eventType || 'message', data: st.dataLines.join('\n') } : null;
+    st.dataLines = [];
+    st.dataBytes = 0;
+    st.eventType = '';
+    return ev;
   }
-  return { lines, rest: buffer.slice(start) };
+  if (line[0] === ':') return null; // comment
+  const colon = line.indexOf(':');
+  const field = colon === -1 ? line : line.slice(0, colon);
+  let value = colon === -1 ? '' : line.slice(colon + 1);
+  if (value[0] === ' ') value = value.slice(1);
+  if (field === 'event') st.eventType = value;
+  else if (field === 'data') {
+    st.dataLines.push(value);
+    st.dataBytes += value.length;
+  }
+  return null;
 }
 
 function asAsyncIterable(source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
@@ -151,10 +167,11 @@ function asAsyncIterable(source: AsyncIterable<Uint8Array> | ReadableStream<Uint
 }
 
 /**
- * Default cap on the bytes a single un-dispatched SSE event may buffer before
- * the parser fails closed. Generous enough for a full feed page (the JSON feed
- * endpoint caps responses at ~2 MiB) while bounding memory against a hostile or
- * buggy stream that never emits a blank line.
+ * Default cap on a single un-dispatched SSE event before the parser fails
+ * closed. Measured in UTF-16 code units (an approximate byte bound — JS string
+ * length, which tracks heap cost). Generous enough for a full feed page (the
+ * JSON feed endpoint caps responses at ~2 MiB) while bounding memory against a
+ * hostile or buggy stream that never emits a blank line.
  */
 export const DEFAULT_MAX_SSE_FRAME_BYTES = 16 * 1024 * 1024;
 
@@ -165,11 +182,15 @@ export const DEFAULT_MAX_SSE_FRAME_BYTES = 16 * 1024 * 1024;
  * blank line is dropped as incomplete (so a partially-transferred page is never
  * surfaced).
  *
- * The unparsed buffer plus accumulated `data` lines for a single event are
+ * The in-progress line plus accumulated `data` lines for a single event are
  * bounded by `maxFrameBytes`; a stream that exceeds it (no line terminator, or
  * an unbounded run of `data:` lines before a blank line) throws
  * {@link FeedStreamParseError} rather than growing memory without limit — the
  * JSON feed path enforces the same fail-closed posture via its body-size cap.
+ *
+ * Parsing is O(n) regardless of how the bytes are chunked: each decoded chunk is
+ * scanned once, and an un-terminated line is held as a list of fragments joined
+ * only when it completes — never re-scanning or re-flattening a growing buffer.
  */
 export async function* parseSseStream(
   source: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
@@ -177,41 +198,54 @@ export async function* parseSseStream(
 ): AsyncGenerator<SseEvent> {
   const maxFrameBytes = options?.maxFrameBytes ?? DEFAULT_MAX_SSE_FRAME_BYTES;
   const decoder = new TextDecoder();
-  let buffer = '';
-  let dataLines: string[] = [];
-  let dataBytes = 0;
-  let eventType = '';
+  const st: ParseState = { dataLines: [], dataBytes: 0, eventType: '' };
+  // Fragments of the current un-terminated line, spanning chunks; joined once
+  // when the line completes.
+  let lineFragments: string[] = [];
+  let lineFragmentsLen = 0;
+  // A `\r` ended the previous chunk; a leading `\n` here is the LF of that CRLF
+  // and must be skipped (the line already terminated at the `\r`).
+  let skipLeadingLF = false;
 
   for await (const chunk of asAsyncIterable(source)) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const { lines, rest } = extractLines(buffer);
-    buffer = rest;
-    for (const line of lines) {
-      if (line === '') {
-        if (dataLines.length > 0) {
-          yield { event: eventType || 'message', data: dataLines.join('\n') };
+    const c = decoder.decode(chunk, { stream: true });
+    if (c.length === 0) continue;
+    let pos = 0;
+    if (skipLeadingLF) {
+      if (c[0] === '\n') pos = 1;
+      skipLeadingLF = false;
+    }
+    while (pos < c.length) {
+      // Scan only this (small) chunk for the next terminator — never the
+      // accumulated frame — so indexing stays on a flat, short string.
+      let j = pos;
+      while (j < c.length && c[j] !== '\n' && c[j] !== '\r') j += 1;
+      if (j === c.length) break; // no terminator in the rest of this chunk
+      lineFragments.push(c.slice(pos, j));
+      const line = lineFragments.length === 1 ? lineFragments[0]! : lineFragments.join('');
+      lineFragments = [];
+      lineFragmentsLen = 0;
+      const ev = feedLine(line, st);
+      if (ev) yield ev;
+      if (c[j] === '\r') {
+        if (j === c.length - 1) {
+          skipLeadingLF = true; // defer the CRLF check to the next chunk
+          pos = c.length;
+        } else {
+          pos = c[j + 1] === '\n' ? j + 2 : j + 1;
         }
-        dataLines = [];
-        dataBytes = 0;
-        eventType = '';
-        continue;
+      } else {
+        pos = j + 1;
       }
-      if (line[0] === ':') continue; // comment
-      const colon = line.indexOf(':');
-      const field = colon === -1 ? line : line.slice(0, colon);
-      let value = colon === -1 ? '' : line.slice(colon + 1);
-      if (value[0] === ' ') value = value.slice(1);
-      if (field === 'event') eventType = value;
-      else if (field === 'data') {
-        dataLines.push(value);
-        dataBytes += value.length;
-      }
-      // `id` and `retry` are intentionally ignored — the registry does not use
-      // Last-Event-ID resume; the cursor lives in the JSON payload.
+    }
+    if (pos < c.length) {
+      const tail = c.slice(pos);
+      lineFragments.push(tail);
+      lineFragmentsLen += tail.length;
     }
     // Fail closed if a single un-dispatched event grows past the cap, whether
-    // from an unterminated buffer or an unbounded run of data lines.
-    if (buffer.length + dataBytes > maxFrameBytes) {
+    // from an unterminated line or an unbounded run of data lines.
+    if (lineFragmentsLen + st.dataBytes > maxFrameBytes) {
       throw new FeedStreamParseError(`registry feed stream event exceeded ${maxFrameBytes} bytes without dispatching`);
     }
   }
@@ -259,6 +293,21 @@ function toFeedStreamMessage(evt: SseEvent): FeedStreamMessage | null {
 // ====== Connection ======
 
 const ERROR_BODY_LIMIT_BYTES = 64 * 1024;
+const ERROR_MESSAGE_MAX_CHARS = 256;
+
+/**
+ * Escape control characters and bound the length of a registry-supplied string
+ * before it is embedded in an Error message or logged. Registry/proxy text is
+ * untrusted input — left raw it is a log-injection / terminal-spoofing vector
+ * (and the repo treats registry strings as untrusted everywhere else). Mirrors
+ * the JSON client's `preview()`.
+ */
+export function sanitizeStreamText(text: string, maxChars = ERROR_MESSAGE_MAX_CHARS): string {
+  // Match C0 controls (\u0000-\u001f) and DEL (\u007f); built from a string so
+  // the source never carries raw control bytes.
+  const CONTROL = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
+  return text.slice(0, maxChars).replace(CONTROL, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
 
 function buildStreamUrl(baseUrl: string, query?: FeedStreamQuery): string {
   const params = new URLSearchParams();
@@ -276,12 +325,13 @@ async function readErrorMessage(res: Response): Promise<string | undefined> {
     const trimmed = text.slice(0, ERROR_BODY_LIMIT_BYTES);
     try {
       const body = JSON.parse(trimmed) as { message?: unknown; error?: unknown };
-      if (typeof body.message === 'string') return body.message;
-      if (typeof body.error === 'string') return body.error;
+      if (typeof body.message === 'string') return sanitizeStreamText(body.message);
+      if (typeof body.error === 'string') return sanitizeStreamText(body.error);
     } catch {
       /* not JSON */
     }
-    return trimmed.trim() || undefined;
+    const tail = trimmed.trim();
+    return tail ? sanitizeStreamText(tail) : undefined;
   } catch {
     return undefined;
   }

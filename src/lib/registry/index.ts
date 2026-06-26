@@ -207,6 +207,8 @@ export type {
 export {
   openFeedStream,
   parseSseStream,
+  sanitizeStreamText,
+  DEFAULT_MAX_SSE_FRAME_BYTES,
   FeedStreamError,
   FeedStreamUnsupportedError,
   FeedStreamCursorExpiredError,

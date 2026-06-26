@@ -260,6 +260,25 @@ describe('parseSseStream', () => {
     );
   });
 
+  test('reassembles a large single-data-line frame delivered in many tiny chunks', async () => {
+    // Guards the O(n) fragment path: a big page sent as one `data:` line split
+    // into 1-byte chunks must parse to exactly one event without re-flattening.
+    const payload = JSON.stringify({ events: [], cursor: 'c', has_more: false, blob: 'z'.repeat(50000) });
+    const frame = `event: feed\ndata: ${payload}\n\n`;
+    const enc = new TextEncoder();
+    const bytes = enc.encode(frame);
+    const stream = new ReadableStream({
+      start(ctrl) {
+        for (let i = 0; i < bytes.length; i++) ctrl.enqueue(bytes.slice(i, i + 1));
+        ctrl.close();
+      },
+    });
+    const events = await collect(parseSseStream(stream));
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].event, 'feed');
+    assert.strictEqual(events[0].data, payload);
+  });
+
   test('fails closed when an un-dispatched event exceeds maxFrameBytes (no terminator)', async () => {
     // A hostile stream that never emits a blank line must not buffer unbounded.
     const huge = 'event: feed\ndata: ' + 'x'.repeat(5000);

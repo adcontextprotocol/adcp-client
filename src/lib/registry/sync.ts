@@ -10,7 +10,12 @@ import type {
   FeedFreshness,
 } from './types.generated';
 import type { FeedStreamQuery } from './feed-stream';
-import { FeedStreamCursorExpiredError, FeedStreamUnsupportedError, FeedStreamHttpError } from './feed-stream';
+import {
+  FeedStreamCursorExpiredError,
+  FeedStreamUnsupportedError,
+  FeedStreamHttpError,
+  sanitizeStreamText,
+} from './feed-stream';
 import type { CursorStore } from './cursor-store';
 import { InMemoryCursorStore } from './cursor-store';
 
@@ -46,7 +51,11 @@ export interface RegistrySyncConfig {
   types?: string;
   /** Max events requested per feed page (polling and SSE). Default: 1000. */
   feedPageLimit?: number;
-  /** Server-side caught-up interval hint for the SSE stream (5–60s, default 15). */
+  /**
+   * Server-side caught-up interval hint for the SSE stream, in **seconds** (5–60,
+   * default 15) — maps to the `poll_interval_seconds` query param. Note the unit:
+   * `pollIntervalMs` and `streamIdleTimeoutMs` are milliseconds.
+   */
   streamPollIntervalSeconds?: number;
   /**
    * Client-side idle watchdog: reconnect the stream if no feed page or heartbeat
@@ -123,21 +132,38 @@ export interface AgentFilter {
 /**
  * In-memory replica of the AdCP registry.
  *
- * Bootstraps from the agent search endpoint, then polls the event feed
- * to maintain up-to-date indexes for zero-latency lookups.
+ * Bootstraps from the agent search endpoint, then tails the change feed —
+ * Server-Sent Events by default (`transport: 'auto'`), falling back to polling
+ * `/api/registry/feed` when streaming is unavailable — to keep its indexes
+ * current for zero-latency lookups.
+ *
+ * **Staleness:** lookups (`getAgent`, `isAuthorized`, the authorization getters)
+ * return the last synced state. After a transient failure the engine keeps
+ * reconnecting/polling, but a fatal error (e.g. `401`) leaves `state === 'error'`
+ * while the indexes still hold their last values. For decisions where staleness
+ * is unsafe (e.g. authorization enforcement), gate on `state` and
+ * `getLagSeconds()` / `getFreshness()` rather than trusting a lookup blindly.
+ * Index size is bounded only by registry trust — a replica mirrors the whole
+ * registry, so an untrusted/compromised feed could grow memory without limit.
  *
  * @example
  * ```ts
  * const client = new RegistryClient({ apiKey: 'sk_...' });
- * const sync = new RegistrySync({ client });
- * await sync.start();
+ * const sync = new RegistrySync({ client }); // transport: 'auto' (SSE, polling fallback)
  *
  * // Zero-latency lookups
+ * sync.on('event', ({ event }) => console.log('registry change:', event.event_type));
+ *
+ * // Lag monitoring for the SSE feed
+ * sync.on('transport', ({ transport }) => console.log('feed transport:', transport));
+ * sync.on('freshness', ({ freshness }) => {
+ *   if ((freshness.lag_seconds ?? 0) > 300) console.warn('registry feed lag > 5m');
+ * });
+ *
+ * await sync.start();
  * const agent = sync.getAgent('https://ads.example.com');
  * const authorized = sync.isAuthorized('https://ads.example.com', 'publisher.com');
  * const ctv = sync.findAgents({ channels: ['ctv'], markets: ['US'] });
- *
- * sync.on('event', ({ event }) => console.log('registry change:', event.event_type));
  * sync.stop();
  * ```
  */
@@ -308,6 +334,11 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
    * Check if an agent has any authorization for a publisher domain.
    * Does not evaluate property_id scoping, time bounds, or effective dates.
    * For scoped checks, use getAuthorizationsForDomain() and inspect entries directly.
+   *
+   * Returns the last synced state — see the class-level staleness note. For
+   * enforcement, confirm `state === 'syncing'` and an acceptable `getLagSeconds()`
+   * before trusting an allow decision, so a stalled feed can't serve a stale
+   * authorization after a missed revocation.
    */
   isAuthorized(agentUrl: string, domain: string): boolean {
     const entries = this.authByDomain.get(domain);
@@ -335,7 +366,11 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return this.activeTransport;
   }
 
-  /** Latest feed freshness metadata, or null if the registry has not reported it. */
+  /**
+   * Latest feed freshness metadata, or null if the registry has not reported it
+   * yet (e.g. before the first feed page/heartbeat lands). For push updates,
+   * prefer the `freshness` event over polling this right after `start()`.
+   */
   getFreshness(): FeedFreshness | null {
     return this.lastFreshness;
   }
@@ -371,7 +406,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       }
 
       // Get initial feed cursor and apply any events
-      await this.drainFeed();
+      await this.drainFeed(gen);
 
       // A stop()/reset() landed mid-bootstrap: do not flip to 'syncing' or emit.
       if (gen !== this.generation) return;
@@ -431,7 +466,14 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
       if (feed.cursor_expired) {
         // Cursor aged out of retention: drop state and re-bootstrap, then resume.
-        await this.rebootstrap(gen);
+        try {
+          await this.rebootstrap(gen);
+        } catch {
+          // bootstrap() already emitted 'error' and parked state in 'error'.
+          // Restore 'syncing' so pollLoop reschedules and retries (mirrors the
+          // stream path, which also keeps trying after a failed rebootstrap).
+          if (gen === this.generation && this._state === 'error') this.setState('syncing');
+        }
         return;
       }
 
@@ -447,7 +489,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         this.cursor = feed.cursor;
       }
 
-      hasMore = feed.has_more && this.cursor != null;
+      hasMore = feed.has_more && feed.cursor != null;
     }
 
     await this.persistCursor();
@@ -460,25 +502,31 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   /**
    * Drain all available feed pages. Used during bootstrap (does not emit 'event' per event).
    */
-  private async drainFeed(): Promise<void> {
+  private async drainFeed(gen: number): Promise<void> {
     let hasMore = true;
+    let recoveredFromExpiry = false;
     while (hasMore) {
       const feed: FeedResponse = await this.client.getFeed(this.feedQuery());
       if (feed.cursor_expired) {
-        // Stored cursor aged out of retention: drop it and resume from the start
-        // of the retention window on the next request.
+        // Stored cursor aged out of retention: drop it and retry once from the
+        // start of the window. A second expiry (now cursor-less) means a
+        // misbehaving server — stop draining rather than hot-looping.
         this.cursor = null;
         await this.cursorStore.clearCursor();
+        if (recoveredFromExpiry) break;
+        recoveredFromExpiry = true;
         continue;
       }
       for (const event of feed.events) {
         this.applyEvent(event);
       }
       this.observeFreshness(feed.freshness);
-      this.cursor = feed.cursor;
-      hasMore = feed.has_more && this.cursor != null;
+      if (feed.cursor) this.cursor = feed.cursor;
+      hasMore = feed.has_more && feed.cursor != null;
     }
-    await this.persistCursor();
+    // A stop()/reset() during the drain bumps the generation — don't persist a
+    // cursor a later start() would read back.
+    if (gen === this.generation) await this.persistCursor();
   }
 
   // ====== Private: Streaming ======
@@ -602,9 +650,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (msg.error.error === 'cursor_expired') {
           return 'rebootstrap';
         }
-        const error = new Error(
-          `registry feed stream error: ${msg.error.error}${msg.error.message ? ` (${msg.error.message})` : ''}`
-        );
+        // Registry-supplied strings are untrusted: escape before logging/emitting.
+        const code = sanitizeStreamText(msg.error.error);
+        const detail = msg.error.message ? ` (${sanitizeStreamText(msg.error.message)})` : '';
+        const error = new Error(`registry feed stream error: ${code}${detail}`);
         this.emit('error', { error });
         this.errorHandler?.(error);
         return 'reconnect';
