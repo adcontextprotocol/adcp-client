@@ -22,6 +22,8 @@ import {
   type CanonicalFormatParams,
   type EffectiveTaskState,
   type GetProductsResponse,
+  type ManagerRevalidationRequest,
+  type ManagerRevalidationResponse,
   type Placement,
   type ProductFormatDeclaration,
   type ResolvedTaskState,
@@ -129,6 +131,13 @@ const generatedMissingScope = ensureGetProductsCacheScope({
 } satisfies Omit<GetProductsResponse, 'cache_scope'>);
 const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache_scope;
 
+const managerRevalidationRequest: ManagerRevalidationRequest = { manager_domain: 'cafemedia.com' };
+const managerRevalidationResponse: ManagerRevalidationResponse = {
+  message: 'Manager re-validation enqueued',
+  manager_domain: managerRevalidationRequest.manager_domain,
+  publishers_enqueued: 1,
+};
+
 const acceptsRootPlacement = (_placement: Placement) => {};
 const acceptsTypesPlacement = (_placement: TypesPlacement) => {};
 
@@ -146,6 +155,7 @@ void resolvedTaskState;
 void required;
 void generatedScope;
 void generatedInjectedScope;
+void managerRevalidationResponse;
 void acceptsRootPlacement;
 void acceptsTypesPlacement;
 `,

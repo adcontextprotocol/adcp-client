@@ -126,6 +126,17 @@ describe('parseManagerDomain', () => {
 });
 
 describe('validateAdAgents — discovery_method', () => {
+  test('rejects invalid maxBodyBytes values before fetching', async () => {
+    await assert.rejects(
+      () => validateAdAgents('example.com', { maxBodyBytes: Infinity }),
+      /maxBodyBytes must be an integer between 1 and 2097152/
+    );
+    await assert.rejects(
+      () => validateAdAgents('example.com', { maxBodyBytes: 2 * 1024 * 1024 + 1 }),
+      /maxBodyBytes must be an integer between 1 and 2097152/
+    );
+  });
+
   test("direct path: publisher hosts its own adagents.json → discovery_method 'direct'", async () => {
     const server = await startRoutedServer({
       '/.well-known/adagents.json': { body: adAgentsJson() },
@@ -187,6 +198,56 @@ describe('validateAdAgents — discovery_method', () => {
       assert.strictEqual(result.discovery_method, 'ads_txt_managerdomain');
       assert.strictEqual(result.manager_domain, manager.host);
       assert.ok(result.adagents?.authorized_agents?.length);
+    } finally {
+      await Promise.all([publisher.close(), manager.close()]);
+    }
+  });
+
+  test('managerdomain fallback honors custom maxBodyBytes for large adagents.json', async () => {
+    const largeAdagents = JSON.stringify({
+      $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
+      authorized_agents: [{ url: 'https://agent.example.com/mcp', authorized_for: 'Programmatic sales' }],
+      properties: [
+        {
+          property_type: 'website',
+          name: 'example.com',
+          identifiers: [{ type: 'domain', value: 'example.com' }],
+        },
+      ],
+      padding: 'x'.repeat(270 * 1024),
+    });
+    const manager = await startRoutedServer({
+      '/.well-known/adagents.json': { body: largeAdagents },
+    });
+    const publisher = await startRoutedServer({
+      '/ads.txt': {
+        body: `MANAGERDOMAIN=${manager.host}\n`,
+        contentType: 'text/plain',
+      },
+    });
+    try {
+      const defaultResult = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(defaultResult.valid, false);
+      assert.strictEqual(defaultResult.discovery_method, 'ads_txt_managerdomain');
+      assert.ok(
+        defaultResult.errors.some(e => e.includes('Response body exceeded 262144 bytes')),
+        `expected default body cap failure, got: ${JSON.stringify(defaultResult.errors)}`
+      );
+
+      const raisedCapResult = await validateAdAgents(publisher.host, {
+        maxBodyBytes: largeAdagents.length + 1024,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(
+        raisedCapResult.valid,
+        true,
+        `expected raised maxBodyBytes to pass, got errors=${JSON.stringify(raisedCapResult.errors)}`
+      );
+      assert.strictEqual(raisedCapResult.discovery_method, 'ads_txt_managerdomain');
+      assert.strictEqual(raisedCapResult.manager_domain, manager.host);
+      assert.ok(raisedCapResult.adagents?.authorized_agents?.length);
     } finally {
       await Promise.all([publisher.close(), manager.close()]);
     }
