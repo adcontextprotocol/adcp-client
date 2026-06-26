@@ -1355,17 +1355,25 @@ export {
 export {
   augmentProductWithFormatOptions,
   withFormatOptions,
+  toCanonicalOnlyProduct,
+  toCanonicalOnlyResponse,
   packageRefsForCapabilities,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
   legacyFormatIdsForCapability,
+  canonicalDeclarationFromBareId,
+  resolveCanonicalFormatKind,
   CapabilityIdsLookupError,
+  type BareFormatIdResolveOptions,
+  type CanonicalOnlyProduct,
   type CapabilityIdsLookupErrorCode,
   type PackageFormatRefs,
   type ProjectionDiagnostic,
   type V1FormatId,
   type V1Product,
+  type V2AugmentedProduct,
   type V2Product,
+  type V2ProductFormatDeclaration,
 } from './v2/projection';
 
 // ====== ACTIVATION KEY BUILDERS ======
