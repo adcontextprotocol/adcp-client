@@ -25,13 +25,14 @@ describe('createComplyController — list_scenarios', () => {
   it('advertises seed scenarios when seed adapters are configured', async () => {
     const controller = createComplyController({
       seed: {
+        account: () => {},
         buyer_agent: () => {},
         product: () => {},
       },
     });
     const result = await controller.handleRaw({ scenario: 'list_scenarios' });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual([...result.scenarios].sort(), ['seed_buyer_agent', 'seed_product']);
+    assert.deepStrictEqual([...result.scenarios].sort(), ['seed_account', 'seed_buyer_agent', 'seed_product']);
   });
 
   it('advertises force_create_media_buy_arm and force_task_completion when registered', async () => {
@@ -373,6 +374,30 @@ describe('createComplyController — seed idempotency', () => {
     assert.ok(persisted.has('p1'));
   });
 
+  it('routes seed.account to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      seed: {
+        account: params => {
+          captured = params;
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'seed_account',
+      params: {
+        account_id: 'acct-1',
+        fixture: { name: 'Sandbox account', status: 'active' },
+      },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.message, 'Fixture seeded');
+    assert.deepStrictEqual(captured, {
+      account_id: 'acct-1',
+      fixture: { name: 'Sandbox account', status: 'active' },
+    });
+  });
+
   it('does not let nested fixture.agent_url override seed.buyer_agent params', async () => {
     const seen = [];
     const controller = createComplyController({
@@ -512,13 +537,21 @@ describe('createComplyController — seed idempotency', () => {
   });
 
   it('returns INVALID_PARAMS when a seed is missing its required id', async () => {
-    const controller = createComplyController({ seed: { product: () => {} } });
-    const result = await controller.handleRaw({
+    const productController = createComplyController({ seed: { product: () => {} } });
+    const result = await productController.handleRaw({
       scenario: 'seed_product',
       params: { fixture: { delivery_type: 'guaranteed' } },
     });
     assert.strictEqual(result.error, 'INVALID_PARAMS');
     assert.match(result.error_detail, /product_id/);
+
+    const accountController = createComplyController({ seed: { account: () => {} } });
+    const accountResult = await accountController.handleRaw({
+      scenario: 'seed_account',
+      params: { fixture: { status: 'active' } },
+    });
+    assert.strictEqual(accountResult.error, 'INVALID_PARAMS');
+    assert.match(accountResult.error_detail, /account_id/);
   });
 
   it('returns UNKNOWN_SCENARIO when a seed adapter is not registered', async () => {
