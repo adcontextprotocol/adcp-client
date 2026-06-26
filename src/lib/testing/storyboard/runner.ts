@@ -44,6 +44,7 @@ import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
+  getSchemaDefaultByPath,
   getSchemaValidatorByRef,
   resolveBundleKey,
   schemaAllowsTopLevelField,
@@ -265,9 +266,44 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
   let current: unknown = raw;
   for (const key of keys) {
     if (current === null || typeof current !== 'object') return undefined;
+    if (!Object.prototype.hasOwnProperty.call(current, key)) return undefined;
     current = (current as Record<string, unknown>)[key];
   }
   return current;
+}
+
+const GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF = 'protocol/get-adcp-capabilities-response.json';
+
+function resolveCapabilityPathForGate(
+  raw: unknown,
+  predicate: RequiresCapabilityPredicate,
+  adcpVersion?: string
+): unknown {
+  const actual = resolveCapabilityPath(raw, predicate.path);
+  if (actual !== undefined) return actual;
+  // `present:` is an absence-detection matcher — an absent field IS the
+  // load-bearing signal. Materializing a schema default would make a defaulted
+  // field never read as absent, silently flipping the gate (e.g. a signals
+  // seller that omits `signals.discovery_modes`, default `["brief"]`, would run
+  // a `present: true`-gated scenario that should skip). Defaults are resolved
+  // only for the value matchers (`equals` / `contains`), where the default's
+  // VALUE is what the gate tests.
+  if ('present' in predicate) return undefined;
+  if (!schemaDefaultShouldApply(raw, predicate.path)) return undefined;
+  return getSchemaDefaultByPath(GET_ADCP_CAPABILITIES_RESPONSE_SCHEMA_REF, predicate.path, adcpVersion);
+}
+
+function schemaDefaultShouldApply(raw: unknown, dottedPath: string): boolean {
+  const keys = dottedPath.split('.');
+  if (keys.length <= 1) return raw !== null && typeof raw === 'object';
+
+  let current: unknown = raw;
+  for (const key of keys.slice(0, -1)) {
+    if (current === null || typeof current !== 'object') return false;
+    if (!Object.prototype.hasOwnProperty.call(current, key)) return false;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current !== null && typeof current === 'object';
 }
 
 /**
@@ -279,8 +315,8 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
  *
  * - `equals: V` — scalar equality. `actual` must be declared and must equal
- *   `V`. Absent fields (`undefined`) skip because the agent has not opted
- *   into the capability or capability variant this storyboard tests.
+ *   `V`. Absent fields (`undefined`) skip unless the capabilities schema
+ *   declares a default that the gate materialized before predicate evaluation.
  *
  * - `present: B` — presence is the load-bearing signal. `present: true`
  *   skips when the field is absent (treats `undefined` and `null` as absent).
@@ -290,12 +326,15 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  *   non-conformant for object-typed capabilities (`"type": "object"` rejects
  *   null in JSON Schema), but is coalesced with absent here in the spirit of
  *   Postel — agents that misdeclare a not-supported capability as `null`
- *   get the same not_applicable skip as agents that omit the field.
+ *   get the same not_applicable skip as agents that omit the field. Schema
+ *   defaults are deliberately NOT materialized for this matcher: presence is
+ *   the signal, so a default would defeat the gate (see
+ *   `resolveCapabilityPathForGate`).
  *
  * - `contains: V` — array-membership. `actual` must be an array that
  *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
- *   and absent fields all skip — absence means the agent hasn't opted into
- *   the array variant this storyboard tests.
+ *   and absent fields all skip unless the capabilities schema declares a
+ *   default that the gate materialized before predicate evaluation.
  *
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
@@ -348,11 +387,12 @@ export function evaluateCapabilityPredicate(predicate: RequiresCapabilityPredica
 function evaluateRequiresCapabilityGate(
   predicate: RequiresCapabilityPredicate,
   profile: AgentProfile | undefined,
-  agentTools?: readonly string[]
+  agentTools?: readonly string[],
+  adcpVersion?: string
 ): string | null {
   const rawCaps = profile?.raw_capabilities;
   if (rawCaps !== undefined) {
-    const actual = resolveCapabilityPath(rawCaps, predicate.path);
+    const actual = resolveCapabilityPathForGate(rawCaps, predicate, adcpVersion);
     return evaluateCapabilityPredicate(predicate, actual);
   }
   const tools = agentTools ?? profile?.tools;
@@ -365,12 +405,13 @@ function evaluateRequiresCapabilityGate(
 function collectPhaseCapabilitySkipDetails(
   storyboard: Storyboard,
   profile: AgentProfile | undefined,
-  agentTools?: readonly string[]
+  agentTools?: readonly string[],
+  adcpVersion?: string
 ): Map<string, string> {
   const skipDetails = new Map<string, string>();
   for (const phase of storyboard.phases) {
     if (!phase.requires_capability) continue;
-    const unmetDetail = evaluateRequiresCapabilityGate(phase.requires_capability, profile, agentTools);
+    const unmetDetail = evaluateRequiresCapabilityGate(phase.requires_capability, profile, agentTools, adcpVersion);
     if (unmetDetail !== null) {
       skipDetails.set(phase.id, unmetDetail);
     }
@@ -2145,7 +2186,12 @@ async function executeStoryboardPass(
   // tests (e.g. `adcp.idempotency.supported: false`), skip the whole storyboard
   // rather than producing a cascade of misleading per-phase failures.
   if (storyboard.requires_capability) {
-    const unmetDetail = evaluateRequiresCapabilityGate(storyboard.requires_capability, profile, options.agentTools);
+    const unmetDetail = evaluateRequiresCapabilityGate(
+      storyboard.requires_capability,
+      profile,
+      options.agentTools,
+      options.adcpVersion
+    );
     if (unmetDetail !== null) {
       if (!callerOwnsClients) await closeConnections(options.protocol);
       return {
@@ -2325,7 +2371,12 @@ async function executeStoryboardPass(
   // an implementor reading the report can't tell "nothing tested" from
   // "everything passed".
   const hasExecutableSteps = storyboard.phases.some(p => p.steps.length > 0);
-  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, profile, options.agentTools);
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(
+    storyboard,
+    profile,
+    options.agentTools,
+    options.adcpVersion
+  );
   const skipControllerSeedingForPhaseGates = allExecutablePhasesCapabilitySkipped(
     storyboard,
     phaseCapabilitySkipDetails
@@ -3301,7 +3352,12 @@ async function runMultiPass(
       ...(options.agentTools ? {} : { agentTools: normalizeAgentToolNames(preSeedProfile.tools) }),
     };
   }
-  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(storyboard, preSeedProfile, options.agentTools);
+  const phaseCapabilitySkipDetails = collectPhaseCapabilitySkipDetails(
+    storyboard,
+    preSeedProfile,
+    options.agentTools,
+    options.adcpVersion
+  );
   const preSeededResult = allExecutablePhasesCapabilitySkipped(storyboard, phaseCapabilitySkipDetails)
     ? null
     : await runControllerSeeding(preSeedClients[0]!, storyboard, options, preSeedContext);
