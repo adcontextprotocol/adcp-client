@@ -589,9 +589,7 @@ describe('handleTestControllerRequest', () => {
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.message, 'Fixture seeded');
       assert.strictEqual(result.previous_state, undefined);
-      assert.deepStrictEqual(calls, [
-        { accountId: 'acct-1', fixture: { name: 'Sandbox account', status: 'active' } },
-      ]);
+      assert.deepStrictEqual(calls, [{ accountId: 'acct-1', fixture: { name: 'Sandbox account', status: 'active' } }]);
     });
 
     it('returns INVALID_PARAMS without account_id', async () => {
