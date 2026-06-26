@@ -1031,6 +1031,7 @@ async function runStoryboardBody(
   if (!options.agents && agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
   }
+
   const isMultiInstance = agentUrls.length > 1;
   if (isMultiInstance && options._client) {
     throw new Error(
@@ -1056,6 +1057,19 @@ async function runStoryboardBody(
     }
     return runMultiPass(agentUrls, storyboard, options);
   }
+
+  const allRequires = resolveStoryboardRequires(storyboard, options);
+  if (allRequires.length) {
+    const unmet = checkRequires(allRequires, storyboard, options, options._profile);
+    if (unmet) {
+      const resultAgentUrls = options.agents ? Object.values(options.agents).map(e => e.url) : agentUrls;
+      return {
+        ...buildRequirementUnmetResult(resultAgentUrls, storyboard, unmet.requirement, unmet.detail),
+        notices: collectCapabilityNotices(storyboard, options._profile?.raw_capabilities),
+      };
+    }
+  }
+
   if (options.agents) {
     // Project the agents map's URLs into the legacy `agentUrls` array so
     // downstream signatures (per-step `agent_url:` records, etc.) keep
@@ -1277,6 +1291,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
   request_signer: 'not_applicable',
+  multi_agent: 'requirement_unmet',
 };
 
 function isKnownRequirement(requirement: string): requirement is RequirementName {
@@ -1447,9 +1462,16 @@ function normalizeAgentToolNames(tools: unknown): string[] | undefined {
  *     threaded through), the gate is a no-op — the caller accepted
  *     responsibility for capability compatibility by reusing an external
  *     client. Spec: adcp-client#1702.
+ *   - `multi_agent` — `options.agents` is set and the storyboard's
+ *     declared route keys (`default_agent` and step-level `agent:` overrides)
+ *     resolve to at least two distinct entries in that map. Raw
+ *     `options.agents` cardinality is not enough; the requirement describes
+ *     the topology this storyboard actually routes through.
+ *     Spec: adcp-client#2281.
  */
 function checkRequires(
   requires: readonly string[],
+  storyboard: Storyboard,
   options: StoryboardRunOptions,
   profile?: AgentProfile
 ): { requirement: string; detail: string } | null {
@@ -1529,9 +1551,47 @@ function checkRequires(
             'register the test keypair before the 4.0 cut to avoid a hard compliance failure then.',
         };
       }
+      case 'multi_agent': {
+        const routeKeys = collectMultiAgentRequirementRouteKeys(storyboard, options);
+        if (routeKeys.length >= 2) break;
+        const availableKeys = options.agents ? Object.keys(options.agents) : [];
+        const routed = routeKeys.length ? routeKeys.join(', ') : '(none)';
+        const available = availableKeys.length ? availableKeys.join(', ') : '(none)';
+        return {
+          requirement,
+          detail:
+            "Storyboard requires 'multi_agent'; configure `agents` and route this storyboard " +
+            'to at least two distinct agent keys via `default_agent` and/or step-level `agent:` overrides. ' +
+            `Resolved route keys: [${routed}]. Available agents: [${available}].`,
+        };
+      }
     }
   }
   return null;
+}
+
+function collectMultiAgentRequirementRouteKeys(storyboard: Storyboard, options: StoryboardRunOptions): string[] {
+  const agents = options.agents;
+  if (!agents) return [];
+
+  const routeKeys = new Set<string>();
+  if (options.default_agent !== undefined && options.default_agent in agents) {
+    routeKeys.add(options.default_agent);
+  }
+  for (const phase of storyboard.phases ?? []) {
+    for (const step of phase.steps ?? []) {
+      if (step.agent !== undefined && step.agent in agents) {
+        routeKeys.add(step.agent);
+      }
+    }
+  }
+  return [...routeKeys];
+}
+
+function resolveStoryboardRequires(storyboard: Storyboard, options: StoryboardRunOptions): string[] {
+  const declared = storyboard.requires ?? [];
+  const implicit = detectImplicitRequires(storyboard, options);
+  return [...declared, ...implicit.filter(r => !declared.includes(r))];
 }
 
 /**
@@ -2053,11 +2113,9 @@ async function executeStoryboardPass(
   // collected again from the fully-fetched profile at result-build time.
   const preflightNotices = collectCapabilityNotices(storyboard, options._profile?.raw_capabilities);
 
-  const declared = storyboard.requires ?? [];
-  const implicit = detectImplicitRequires(storyboard, options);
-  const allRequires = [...declared, ...implicit.filter(r => !declared.includes(r))];
+  const allRequires = resolveStoryboardRequires(storyboard, options);
   if (allRequires.length) {
-    const unmet = checkRequires(allRequires, options, profile);
+    const unmet = checkRequires(allRequires, storyboard, options, profile);
     if (unmet) {
       if (!callerOwnsClients) await closeConnections(options.protocol);
       return {

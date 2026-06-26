@@ -136,6 +136,74 @@ describe('Storyboard.requires gate (#1626)', () => {
     assert.ok(!phaseIds.includes('requirement_unmet'), 'real_wire never blocks');
   });
 
+  test('requires: [multi_agent] skips without options.agents', async () => {
+    const sb = buildStoryboard({ requires: ['multi_agent'] });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'multi_agent');
+    assert.match(step.skip.detail, /at least two distinct agent keys/);
+    assert.match(step.skip.detail, /Available agents: \[\(none\)\]/);
+  });
+
+  test('requires: [multi_agent] passes with two distinct declared route keys', async () => {
+    const sb = buildStoryboard({
+      requires: ['multi_agent'],
+      phases: [
+        {
+          id: 'p1',
+          title: 'Phase 1',
+          steps: [{ id: 'step1', title: 'A routed read', task: 'get_products', agent: 'signals' }],
+        },
+      ],
+    });
+    const result = await runStoryboard('', sb, {
+      allow_http: true,
+      agents: {
+        sales: { url: 'http://127.0.0.1:1/sales/mcp' },
+        signals: { url: 'http://127.0.0.1:1/signals/mcp' },
+      },
+      default_agent: 'sales',
+    });
+
+    const phaseIds = result.phases.map(p => p.phase_id);
+    assert.ok(!phaseIds.includes('requirement_unmet'), 'two distinct route keys satisfy multi_agent');
+  });
+
+  test('requires: [multi_agent] stays unmet when routes resolve to one distinct key', async () => {
+    const sb = buildStoryboard({
+      requires: ['multi_agent'],
+      phases: [
+        {
+          id: 'p1',
+          title: 'Phase 1',
+          steps: [{ id: 'step1', title: 'A routed read', task: 'get_products', agent: 'sales' }],
+        },
+      ],
+    });
+    const result = await runStoryboard('', sb, {
+      allow_http: true,
+      agents: {
+        sales: { url: 'http://127.0.0.1:1/sales/mcp' },
+        signals: { url: 'http://127.0.0.1:1/signals/mcp' },
+      },
+      default_agent: 'sales',
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'multi_agent');
+    assert.match(step.skip.detail, /Resolved route keys: \[sales\]/);
+    assert.match(step.skip.detail, /Available agents: \[sales, signals\]/);
+  });
+
   test('multiple requires: first unmet wins', async () => {
     // Both controller and seeded_state are unmet; the gate reports the
     // first one in the array order, not a synthesized aggregate.
@@ -149,8 +217,34 @@ describe('Storyboard.requires gate (#1626)', () => {
     assert.equal(step.skip.requirement, 'controller', 'first unmet requirement is reported');
   });
 
+  test('mixed requires: multi_agent passes through to controller gate', async () => {
+    const sb = buildStoryboard({
+      requires: ['multi_agent', 'controller'],
+      phases: [
+        {
+          id: 'p1',
+          title: 'Phase 1',
+          steps: [{ id: 'step1', title: 'A routed read', task: 'get_products', agent: 'signals' }],
+        },
+      ],
+    });
+    const result = await runStoryboard('', sb, {
+      allow_http: true,
+      agentTools: profileWithoutController.tools,
+      agents: {
+        sales: { url: 'http://127.0.0.1:1/sales/mcp' },
+        signals: { url: 'http://127.0.0.1:1/signals/mcp' },
+      },
+      default_agent: 'sales',
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skip_reason, 'missing_test_controller');
+    assert.equal(step.skip.requirement, 'controller');
+  });
+
   test('unknown requires values load and skip with requirement_unmet at runtime', async () => {
-    const sb = buildStoryboard({ requires: ['multi_agent'] });
+    const sb = buildStoryboard({ requires: ['future_runtime'] });
     const result = await runStoryboard('http://fake-local-99999', sb, {
       _profile: profileWithoutController,
       agentTools: profileWithoutController.tools,
@@ -164,8 +258,8 @@ describe('Storyboard.requires gate (#1626)', () => {
     assert.equal(step.skipped, true);
     assert.equal(step.skip_reason, 'requirement_unmet');
     assert.equal(step.skip.reason, 'requirement_unmet');
-    assert.equal(step.skip.requirement, 'multi_agent');
-    assert.match(step.skip.detail, /unknown runtime requirement 'multi_agent'/);
+    assert.equal(step.skip.requirement, 'future_runtime');
+    assert.match(step.skip.detail, /unknown runtime requirement 'future_runtime'/);
   });
 });
 

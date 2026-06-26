@@ -95,6 +95,12 @@ export interface Storyboard {
    *     ("Agents that do not advertise support are not tested against
    *     this storyboard — absence of advertisement is not a failure").
    *     Spec: adcp-client#1702.
+   *   - `multi_agent` — the run must be configured with
+   *     `StoryboardRunOptions.agents`, and the storyboard's authored
+   *     route keys (`default_agent` plus any step-level `agent:` overrides)
+   *     must resolve to at least two distinct entries in that agents map.
+   *     This checks the routed topology the storyboard actually declares,
+   *     not the raw number of available agents. Spec: adcp-client#2281.
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
@@ -104,7 +110,7 @@ export interface Storyboard {
    * at runtime with `skip_reason: 'requirement_unmet'` and the authored name
    * on `RunnerSkipResult.requirement`.
    *
-   * Spec: adcp-client#1626. The schema may be proposed upstream to
+   * Spec: adcp-client#1626, adcp-client#2281. The schema may be proposed upstream to
    * `adcontextprotocol/adcp` once it has bedded in across SDK
    * storyboards.
    */
@@ -1848,9 +1854,15 @@ export interface RunnerSelectionResult {
  * surface change; coordinate with the upstream spec proposal before
  * extending.
  *
- * Spec: adcp-client#1626.
+ * Spec: adcp-client#1626, adcp-client#2281.
  */
-export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver' | 'request_signer';
+export type RequirementName =
+  | 'controller'
+  | 'seeded_state'
+  | 'real_wire'
+  | 'webhook_receiver'
+  | 'request_signer'
+  | 'multi_agent';
 
 /**
  * Enumeration of every requirement this SDK knows how to satisfy. The loader
@@ -1865,6 +1877,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'real_wire',
   'webhook_receiver',
   'request_signer',
+  'multi_agent',
 ] as const satisfies readonly RequirementName[]);
 
 /**
