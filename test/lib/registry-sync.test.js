@@ -53,6 +53,34 @@ const AGENT_2 = {
 
 const EMPTY_FEED = { events: [], cursor: 'cursor-001', has_more: false };
 
+const BRAND_CHAIN = [
+  {
+    canonical_id: 'wpp-spain.com',
+    canonical_domain: 'wpp-spain.com',
+    brand_name: 'WPP Spain',
+    keller_type: 'sub_brand',
+    parent_brand: 'brand_wpp',
+    house_domain: 'omnicom.com',
+    source: 'brand_json',
+  },
+  {
+    canonical_id: 'wpp.com',
+    canonical_domain: 'wpp.com',
+    brand_name: 'WPP',
+    keller_type: 'sub_brand',
+    parent_brand: 'brand_omnicom',
+    house_domain: 'omnicom.com',
+    source: 'brand_json',
+  },
+  {
+    canonical_id: 'omnicom.com',
+    canonical_domain: 'omnicom.com',
+    brand_name: 'Omnicom',
+    keller_type: 'master',
+    source: 'brand_json',
+  },
+];
+
 function makeSearchResponse(results, { has_more = false, cursor = null } = {}) {
   return { results, has_more, cursor };
 }
@@ -488,6 +516,127 @@ describe('RegistrySync', () => {
 
       assert.strictEqual(syncInstance.getStats().authorizations, 0);
     });
+
+    test('brand.hierarchy_updated indexes ordered ancestor domains and resolved chain', async () => {
+      const hierarchyEvent = makeEvent('brand.hierarchy_updated', 'WPP-Spain.com', {
+        canonical_domain: 'wpp-spain.com',
+        chain: BRAND_CHAIN,
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([hierarchyEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.deepStrictEqual(syncInstance.getAncestors('wpp-spain.com'), ['wpp-spain.com', 'wpp.com', 'omnicom.com']);
+      assert.deepStrictEqual(syncInstance.getAncestors('WPP-Spain.com'), ['wpp-spain.com', 'wpp.com', 'omnicom.com']);
+      assert.strictEqual(syncInstance.getBrandHierarchy('wpp-spain.com')[1].brand_name, 'WPP');
+      assert.strictEqual(syncInstance.getStats().brandHierarchies, 1);
+
+      const hierarchy = syncInstance.getBrandHierarchy('wpp-spain.com');
+      hierarchy[0].brand_name = 'Mutated';
+      assert.strictEqual(syncInstance.getBrandHierarchy('wpp-spain.com')[0].brand_name, 'WPP Spain');
+    });
+
+    test('brand.hierarchy_updated accepts compact domain-only chains', async () => {
+      const hierarchyEvent = makeEvent('brand.hierarchy_updated', 'wpp-spain.com', {
+        domains: ['wpp-spain.com', 'wpp.com', 'omnicom.com'],
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([hierarchyEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.deepStrictEqual(syncInstance.getAncestors('wpp-spain.com'), ['wpp-spain.com', 'wpp.com', 'omnicom.com']);
+      assert.deepStrictEqual(syncInstance.getBrandHierarchy('wpp-spain.com'), []);
+    });
+
+    test('brand.deleted removes hierarchy entries', async () => {
+      const hierarchyEvent = makeEvent('brand.hierarchy_updated', 'wpp-spain.com', {
+        chain: BRAND_CHAIN,
+      });
+      const deleteEvent = makeEvent('brand.deleted', 'wpp-spain.com', {
+        canonical_domain: 'wpp-spain.com',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(
+            JSON.stringify(makeFeedResponse([hierarchyEvent, deleteEvent], { cursor: 'cursor-002' })),
+            {
+              status: 200,
+            }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.deepStrictEqual(syncInstance.getAncestors('wpp-spain.com'), []);
+      assert.deepStrictEqual(syncInstance.getBrandHierarchy('wpp-spain.com'), []);
+    });
+
+    test('brand.deleted with only internal entity id removes all hierarchy aliases', async () => {
+      const hierarchyEvent = makeEvent('brand.hierarchy_updated', 'brand-row-1', {
+        canonical_domain: 'wpp-spain.com',
+        chain: BRAND_CHAIN,
+      });
+      const deleteEvent = makeEvent('brand.deleted', 'brand-row-1', {});
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(
+            JSON.stringify(makeFeedResponse([hierarchyEvent, deleteEvent], { cursor: 'cursor-002' })),
+            { status: 200 }
+          );
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.deepStrictEqual(syncInstance.getAncestors('brand-row-1'), []);
+      assert.deepStrictEqual(syncInstance.getAncestors('wpp-spain.com'), []);
+      assert.deepStrictEqual(syncInstance.getBrandHierarchy('wpp-spain.com'), []);
+    });
   });
 
   // ============ Lifecycle ============
@@ -584,6 +733,32 @@ describe('RegistrySync', () => {
       sync.stop();
 
       assert.strictEqual(sync.getStats().agents, 0);
+    });
+
+    test('disabled brand hierarchy index skips hierarchy events', async () => {
+      const hierarchyEvent = makeEvent('brand.hierarchy_updated', 'wpp-spain.com', {
+        chain: BRAND_CHAIN,
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([hierarchyEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const sync = new RegistrySync({ client, indexes: { brandHierarchies: false } });
+      await sync.start();
+      sync.stop();
+
+      assert.deepStrictEqual(sync.getAncestors('wpp-spain.com'), []);
+      assert.strictEqual(sync.getStats().brandHierarchies, 0);
     });
   });
 
