@@ -247,6 +247,28 @@ export interface BareFormatIdResolveOptions {
    * catalog and resolves to `null`.
    */
   agentUrl?: string;
+
+  /**
+   * Asset-type disambiguator for an under-specified bare id. The AAO
+   * catalog names per-asset-type variants `<base>_<suffix>` (e.g.
+   * `display_300x250` → `display_300x250_image` / `_html` / `_generative`).
+   * A size-only bare id like `display_300x250` is genuinely ambiguous and
+   * resolves to `null` on its own; pass the asset type you already hold
+   * (an adopter's `format_type`) and the resolver retries the disambiguated
+   * catalog variant `<id>_<suffix>`.
+   *
+   * The vocabulary is the catalog **suffix**, not the canonical
+   * `format_kind` — `_image` and `_generative` both resolve to kind
+   * `image`, so a kind hint couldn't tell them apart. Accepts the suffixes
+   * `image` / `html` / `generative` / `js` directly, plus the canonical-kind
+   * aliases `html5` → `html` and `display_tag` → `js`.
+   *
+   * Only consulted when the bare id does NOT resolve on its own (a real
+   * catalog id is authoritative). Still fails closed: if `<id>_<suffix>`
+   * is not a catalog entry, returns `null` — the hint narrows, it never
+   * fabricates.
+   */
+  assetTypeHint?: string;
 }
 
 /**
@@ -276,9 +298,17 @@ export interface BareFormatIdResolveOptions {
  * shape to match on, and a catalog entry lacking a `canonical:` fails
  * closed before the structural step is reached.
  *
- * The returned declaration carries `v1_format_ref: [{ agent_url, id }]`,
- * so adopters lift a bare id to a structured ref in one step (the
- * pre-projection step the migration docs encourage).
+ * For an under-specified bare id, pass `assetTypeHint` (the asset type you
+ * already hold) and the resolver retries the disambiguated catalog variant
+ * `<id>_<suffix>` — so the SDK owns the `_image` / `_html` suffix
+ * convention instead of every adopter re-deriving it. The hint is
+ * consulted only when the bare id doesn't resolve on its own, and still
+ * fails closed when the disambiguated id isn't a catalog entry.
+ *
+ * The returned declaration carries `v1_format_ref: [{ agent_url, id }]`
+ * (the resolved id — the disambiguated `<id>_<suffix>` when a hint
+ * applied), so adopters lift a bare id to a structured ref in one step
+ * (the pre-projection step the migration docs encourage).
  *
  * Like the rest of the projection layer, this requires the bundled AAO
  * catalog + canonical-mapping registry; it throws (rather than returning
@@ -294,9 +324,42 @@ export function canonicalDeclarationFromBareId(
   options?: BareFormatIdResolveOptions
 ): V2ProductFormatDeclaration | null {
   if (!id) return null;
-  const fid: V1FormatId = { agent_url: options?.agentUrl ?? AAO_CANONICAL_AGENT_URL, id };
-  const { decl } = projectFormatId(fid, `<bare:${id}>`, `bareFormatId(${id})`);
-  return decl ?? null;
+  const agentUrl = options?.agentUrl ?? AAO_CANONICAL_AGENT_URL;
+
+  // A real catalog id is authoritative — resolve it directly first.
+  const direct = projectFormatId({ agent_url: agentUrl, id }, `<bare:${id}>`, `bareFormatId(${id})`).decl;
+  if (direct) return direct;
+
+  // Under-specified bare id + an asset-type hint: retry the disambiguated
+  // catalog variant `<id>_<suffix>`. Fails closed if that isn't a catalog
+  // entry either — the hint narrows, it never fabricates.
+  const suffix = options?.assetTypeHint ? normalizeAssetTypeSuffix(options.assetTypeHint) : '';
+  if (suffix) {
+    const disambiguated = `${id}_${suffix}`;
+    const hinted = projectFormatId(
+      { agent_url: agentUrl, id: disambiguated },
+      `<bare:${disambiguated}>`,
+      `bareFormatId(${disambiguated})`
+    ).decl;
+    if (hinted) return hinted;
+  }
+
+  return null;
+}
+
+/**
+ * Map an `assetTypeHint` to the AAO catalog's `<base>_<suffix>` suffix.
+ * The catalog suffixes are `image` / `html` / `generative` / `js`; the two
+ * canonical-kind names that differ from their suffix (`html5`, `display_tag`)
+ * are aliased. Any other value is passed through lowercased so a future
+ * suffix resolves without a code change — an unknown suffix simply misses
+ * the catalog and the caller fails closed.
+ */
+function normalizeAssetTypeSuffix(hint: string): string {
+  const h = hint.trim().toLowerCase();
+  if (h === 'html5') return 'html';
+  if (h === 'display_tag') return 'js';
+  return h;
 }
 
 /**
@@ -307,7 +370,7 @@ export function canonicalDeclarationFromBareId(
  *
  * Thin projection of {@link canonicalDeclarationFromBareId} down to the
  * `format_kind`; see it for the resolution order, fail-closed semantics,
- * and the `agentUrl` default.
+ * the `agentUrl` default, and the `assetTypeHint` disambiguator.
  */
 export function resolveCanonicalFormatKind(
   id: string,

@@ -84,6 +84,30 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     // registry → null.
     assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }), null);
   });
+
+  test('assetTypeHint disambiguates an under-specified bare id to its catalog variant', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'image' }), 'image');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'html' }), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'generative' }), 'image');
+    // Size-less base id disambiguates too.
+    assert.strictEqual(resolveCanonicalFormatKind('display', { assetTypeHint: 'js' }), 'display_tag');
+  });
+
+  test('assetTypeHint accepts canonical-kind aliases (html5 → html, display_tag → js)', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'html5' }), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display', { assetTypeHint: 'display_tag' }), 'display_tag');
+  });
+
+  test('assetTypeHint still fails closed when the disambiguated id is not a catalog entry', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'nope' }), null);
+    assert.strictEqual(resolveCanonicalFormatKind('totally_made_up', { assetTypeHint: 'image' }), null);
+  });
+
+  test('a directly-resolvable id wins over a contradicting assetTypeHint', () => {
+    // display_300x250_image is a real catalog id (image); a stray html hint
+    // must not override the authoritative direct match.
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { assetTypeHint: 'html' }), 'image');
+  });
 });
 
 describe('canonicalDeclarationFromBareId', { skip: SKIP_REASON }, () => {
@@ -114,6 +138,15 @@ describe('canonicalDeclarationFromBareId', { skip: SKIP_REASON }, () => {
     assert.strictEqual(decl.format_kind, 'image');
     assert.strictEqual(decl.params.asset_source, 'agent_synthesized');
     assert.ok(Array.isArray(decl.params.slots));
+  });
+
+  test('assetTypeHint resolves an under-specified id and the v1_format_ref carries the DISAMBIGUATED id', () => {
+    const decl = canonicalDeclarationFromBareId('display_300x250', { assetTypeHint: 'generative' });
+    assert.ok(decl);
+    assert.strictEqual(decl.format_kind, 'image');
+    assert.strictEqual(decl.params.asset_source, 'agent_synthesized');
+    // The ref points at the real catalog entry, not the under-specified base id.
+    assert.deepStrictEqual(decl.v1_format_ref, [{ agent_url: AAO_AGENT_URL, id: 'display_300x250_generative' }]);
   });
 
   test('returns null for an unknown id', () => {
