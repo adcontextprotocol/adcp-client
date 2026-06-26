@@ -405,13 +405,14 @@ Both fail closed — they return `null`, never a guess, for an unknown id, an
 under-specified id (`display_300x250`, which the catalog only carries as
 `_image` / `_html` / `_generative` variants), or an id from a non-AAO catalog.
 
-If you hold the asset type (e.g. a `format_type` field), pass `assetTypeHint`
+If you hold the asset type (e.g. a `format_type` field), pass `assetType`
 to disambiguate an under-specified id — the resolver retries the catalog
 variant `<id>_<suffix>` instead of you re-deriving the suffix:
 
 ```ts
-resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'image' }); // 'image'
-resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'html' }); // 'html5'
+resolveCanonicalFormatKind('display_300x250', { assetType: 'image' }); // 'image'
+resolveCanonicalFormatKind('display_300x250', { assetType: 'html' }); // 'html5'
+resolveCanonicalFormatKind('display', { assetType: 'javascript' }); // 'display_tag'
 // canonical-kind aliases work too: 'html5' → '_html', 'display_tag' → '_js'.
 // Still fails closed if <id>_<suffix> isn't a catalog entry.
 ```

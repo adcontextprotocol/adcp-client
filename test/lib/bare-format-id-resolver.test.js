@@ -85,28 +85,33 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }), null);
   });
 
-  test('assetTypeHint disambiguates an under-specified bare id to its catalog variant', () => {
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'image' }), 'image');
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'html' }), 'html5');
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'generative' }), 'image');
+  test('assetType disambiguates an under-specified bare id to its catalog variant', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetType: 'image' }), 'image');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetType: 'html' }), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetType: 'generative' }), 'image');
     // Size-less base id disambiguates too.
-    assert.strictEqual(resolveCanonicalFormatKind('display', { assetTypeHint: 'js' }), 'display_tag');
+    assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'js' }), 'display_tag');
   });
 
-  test('assetTypeHint accepts canonical-kind aliases (html5 → html, display_tag → js)', () => {
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'html5' }), 'html5');
-    assert.strictEqual(resolveCanonicalFormatKind('display', { assetTypeHint: 'display_tag' }), 'display_tag');
+  test('assetType accepts catalog and canonical-kind aliases (javascript → js, html5 → html, display_tag → js)', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'javascript' }), 'display_tag');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetType: 'html5' }), 'html5');
+    assert.strictEqual(resolveCanonicalFormatKind('display', { assetType: 'display_tag' }), 'display_tag');
   });
 
-  test('assetTypeHint still fails closed when the disambiguated id is not a catalog entry', () => {
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'nope' }), null);
-    assert.strictEqual(resolveCanonicalFormatKind('totally_made_up', { assetTypeHint: 'image' }), null);
+  test('assetType still fails closed when the disambiguated id is not a catalog entry', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetType: 'nope' }), null);
+    assert.strictEqual(resolveCanonicalFormatKind('totally_made_up', { assetType: 'image' }), null);
   });
 
-  test('a directly-resolvable id wins over a contradicting assetTypeHint', () => {
+  test('a directly-resolvable id wins over a contradicting assetType', () => {
     // display_300x250_image is a real catalog id (image); a stray html hint
     // must not override the authoritative direct match.
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { assetTypeHint: 'html' }), 'image');
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { assetType: 'html' }), 'image');
+  });
+
+  test('assetTypeHint remains a backwards-compatible alias', () => {
+    assert.strictEqual(resolveCanonicalFormatKind('display_300x250', { assetTypeHint: 'image' }), 'image');
   });
 });
 
@@ -140,8 +145,8 @@ describe('canonicalDeclarationFromBareId', { skip: SKIP_REASON }, () => {
     assert.ok(Array.isArray(decl.params.slots));
   });
 
-  test('assetTypeHint resolves an under-specified id and the v1_format_ref carries the DISAMBIGUATED id', () => {
-    const decl = canonicalDeclarationFromBareId('display_300x250', { assetTypeHint: 'generative' });
+  test('assetType resolves an under-specified id and the v1_format_ref carries the DISAMBIGUATED id', () => {
+    const decl = canonicalDeclarationFromBareId('display_300x250', { assetType: 'generative' });
     assert.ok(decl);
     assert.strictEqual(decl.format_kind, 'image');
     assert.strictEqual(decl.params.asset_source, 'agent_synthesized');

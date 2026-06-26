@@ -257,16 +257,22 @@ export interface BareFormatIdResolveOptions {
    * (an adopter's `format_type`) and the resolver retries the disambiguated
    * catalog variant `<id>_<suffix>`.
    *
-   * The vocabulary is the catalog **suffix**, not the canonical
-   * `format_kind` — `_image` and `_generative` both resolve to kind
-   * `image`, so a kind hint couldn't tell them apart. Accepts the suffixes
-   * `image` / `html` / `generative` / `js` directly, plus the canonical-kind
-   * aliases `html5` → `html` and `display_tag` → `js`.
+   * The vocabulary is the catalog asset type where it differs from the
+   * variant suffix (`javascript` → `_js`), otherwise the suffix itself
+   * (`image`, `html`, `generative`, `js`). Canonical-kind aliases are also
+   * accepted (`html5` → `html`, `display_tag` → `js`) for callers already
+   * holding a kind-like local value.
    *
    * Only consulted when the bare id does NOT resolve on its own (a real
    * catalog id is authoritative). Still fails closed: if `<id>_<suffix>`
    * is not a catalog entry, returns `null` — the hint narrows, it never
    * fabricates.
+   */
+  assetType?: string;
+
+  /**
+   * @deprecated Use `assetType`. Kept as a backwards-compatible alias for
+   * callers who adopted the initial helper surface before issue #2289.
    */
   assetTypeHint?: string;
 }
@@ -298,8 +304,9 @@ export interface BareFormatIdResolveOptions {
  * shape to match on, and a catalog entry lacking a `canonical:` fails
  * closed before the structural step is reached.
  *
- * For an under-specified bare id, pass `assetTypeHint` (the asset type you
- * already hold) and the resolver retries the disambiguated catalog variant
+ * For an under-specified bare id, pass `assetType` (the asset type you
+ * already hold, such as an adopter's `format_type`) and the resolver retries
+ * the disambiguated catalog variant
  * `<id>_<suffix>` — so the SDK owns the `_image` / `_html` suffix
  * convention instead of every adopter re-deriving it. The hint is
  * consulted only when the bare id doesn't resolve on its own, and still
@@ -333,7 +340,8 @@ export function canonicalDeclarationFromBareId(
   // Under-specified bare id + an asset-type hint: retry the disambiguated
   // catalog variant `<id>_<suffix>`. Fails closed if that isn't a catalog
   // entry either — the hint narrows, it never fabricates.
-  const suffix = options?.assetTypeHint ? normalizeAssetTypeSuffix(options.assetTypeHint) : '';
+  const assetType = options?.assetType ?? options?.assetTypeHint;
+  const suffix = assetType ? normalizeAssetTypeSuffix(assetType) : '';
   if (suffix) {
     const disambiguated = `${id}_${suffix}`;
     const hinted = projectFormatId(
@@ -348,16 +356,17 @@ export function canonicalDeclarationFromBareId(
 }
 
 /**
- * Map an `assetTypeHint` to the AAO catalog's `<base>_<suffix>` suffix.
- * The catalog suffixes are `image` / `html` / `generative` / `js`; the two
- * canonical-kind names that differ from their suffix (`html5`, `display_tag`)
- * are aliased. Any other value is passed through lowercased so a future
- * suffix resolves without a code change — an unknown suffix simply misses
- * the catalog and the caller fails closed.
+ * Map an `assetType` to the AAO catalog's `<base>_<suffix>` suffix.
+ * Catalog asset type `javascript` and canonical-kind names that differ from
+ * their suffix (`html5`, `display_tag`) are aliased. Any other value is passed
+ * through lowercased so a future asset type or suffix resolves without a code
+ * change — an unknown value simply misses the catalog and the caller fails
+ * closed.
  */
 function normalizeAssetTypeSuffix(hint: string): string {
   const h = hint.trim().toLowerCase();
   if (h === 'html5') return 'html';
+  if (h === 'javascript') return 'js';
   if (h === 'display_tag') return 'js';
   return h;
 }
@@ -370,7 +379,7 @@ function normalizeAssetTypeSuffix(hint: string): string {
  *
  * Thin projection of {@link canonicalDeclarationFromBareId} down to the
  * `format_kind`; see it for the resolution order, fail-closed semantics,
- * the `agentUrl` default, and the `assetTypeHint` disambiguator.
+ * the `agentUrl` default, and the `assetType` disambiguator.
  */
 export function resolveCanonicalFormatKind(
   id: string,
