@@ -302,9 +302,15 @@ const WEBHOOK_TASK_STATUSES = new Set<string>([
   'unknown',
 ]);
 
+// Top-level fields that every MCP webhook envelope must carry, regardless of
+// negotiated AdCP version. `operation_id` is intentionally NOT here: it became
+// a required webhook field in AdCP 3.1, but 3.0 senders are spec-compliant
+// without it. The receiver can't reliably know the sender's negotiated version
+// from the POST body alone, so requiring `operation_id` here broke 3.0
+// interop. When absent we fall back to the routing-context operationId (see
+// normalizeWebhookPayload), so its omission is non-fatal for dispatch.
 const MCP_WEBHOOK_REQUIRED_FIELDS = [
   'idempotency_key',
-  'operation_id',
   'task_id',
   'task_type',
   'status',
