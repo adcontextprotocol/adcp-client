@@ -12,6 +12,7 @@ const assert = require('node:assert');
 const {
   resolveAgentProperties,
   listAgentPropertyMap,
+  getAllProperties,
   canonicalizeAgentUrl,
 } = require('../../dist/lib/discovery/resolve-agent-properties.js');
 
@@ -29,6 +30,7 @@ function makeProperty(id, name, tags) {
 describe('canonicalizeAgentUrl', () => {
   test('lowercases scheme and host', () => {
     assert.strictEqual(canonicalizeAgentUrl('HTTPS://Example.COM/mcp'), 'https://example.com/mcp');
+    assert.strictEqual(canonicalizeAgentUrl('http://Example.COM/mcp'), 'http://example.com/mcp');
   });
 
   test('strips default port (443 for https, 80 for http)', () => {
@@ -48,6 +50,11 @@ describe('canonicalizeAgentUrl', () => {
 
   test('strips fragment', () => {
     assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp#foo'), 'https://example.com/mcp');
+  });
+
+  test('preserves trailing slash in the public canonical URL', () => {
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/mcp/'), 'https://example.com/mcp/');
+    assert.strictEqual(canonicalizeAgentUrl('https://example.com/'), 'https://example.com/');
   });
 
   test('rejects userinfo', () => {
@@ -89,6 +96,54 @@ describe('resolveAgentProperties — authorization_type: property_ids', () => {
   test('canonical-URL match: trailing port-443 still matches', () => {
     const scope = resolveAgentProperties(adAgents, 'https://agent-news.example:443/mcp');
     assert.strictEqual(scope.properties.length, 1);
+  });
+
+  test('canonical-URL match: scheme differences do not match', () => {
+    const file = {
+      ...adAgents,
+      authorized_agents: [{ ...adAgents.authorized_agents[0], url: 'http://agent-news.example/mcp' }],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
+    assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'agent_not_listed');
+  });
+
+  test('canonical-URL match: trailing slash differences do not match', () => {
+    const file = {
+      ...adAgents,
+      authorized_agents: [{ ...adAgents.authorized_agents[0], url: 'https://agent-news.example/mcp/' }],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
+    assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'agent_not_listed');
+  });
+
+  test('listAgentPropertyMap keeps public canonical URL keys', () => {
+    const result = listAgentPropertyMap(adAgents);
+    assert.ok(result.byAgent.has('https://agent-news.example/mcp'));
+  });
+
+  test('external URL lookup fails closed when canonical-equivalent entries are ambiguous', () => {
+    const file = {
+      properties: [makeProperty('home', 'home.example'), makeProperty('news', 'news.example')],
+      authorized_agents: [
+        {
+          url: 'https://agent-news.example/mcp',
+          authorized_for: 'home',
+          authorization_type: 'property_ids',
+          property_ids: ['home'],
+        },
+        {
+          url: 'https://agent-news.example:443/mcp',
+          authorized_for: 'news',
+          authorization_type: 'property_ids',
+          property_ids: ['news'],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent-news.example/mcp');
+    assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'ambiguous_agent_url');
   });
 
   test('returns no_match when none of the property_ids resolve', () => {
@@ -156,6 +211,83 @@ describe('resolveAgentProperties — authorization_type: inline_properties', () 
     assert.deepStrictEqual(scope.properties.map(p => p.property_id).sort(), ['inline_a', 'inline_b']);
     // Top-level `main` is NOT included — inline overrides top-level.
     assert.ok(!scope.properties.some(p => p.property_id === 'main'));
+  });
+
+  test('filters revoked inline properties', () => {
+    const file = {
+      revoked_publisher_domains: ['a.example'],
+      authorized_agents: [
+        {
+          url: 'https://agent.example/mcp',
+          authorized_for: 'inline test',
+          authorization_type: 'inline_properties',
+          properties: [
+            { ...makeProperty('inline_a', 'a.example'), publisher_domain: 'a.example' },
+            { ...makeProperty('inline_b', 'b.example'), publisher_domain: 'b.example' },
+          ],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://agent.example/mcp');
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['inline_b']
+    );
+  });
+});
+
+describe('resolveAgentProperties — legacy bare inline properties[]', () => {
+  test('treats an entry without authorization_type but with properties[] as inline_properties', () => {
+    const file = {
+      properties: [makeProperty('top', 'top.example')],
+      authorized_agents: [
+        {
+          url: 'https://legacy.example/mcp',
+          authorized_for: 'legacy inline',
+          properties: [makeProperty('inline_a', 'a.example'), makeProperty('inline_b', 'b.example')],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://legacy.example/mcp');
+    assert.deepStrictEqual(scope.properties.map(p => p.property_id).sort(), ['inline_a', 'inline_b']);
+    assert.strictEqual(scope.unresolvable, undefined);
+  });
+
+  test('applies revoked_publisher_domains to legacy bare inline properties', () => {
+    const file = {
+      revoked_publisher_domains: ['a.example'],
+      authorized_agents: [
+        {
+          url: 'https://legacy.example/mcp',
+          authorized_for: 'legacy inline',
+          properties: [
+            { ...makeProperty('inline_a', 'a.example'), publisher_domain: 'a.example' },
+            { ...makeProperty('inline_b', 'b.example'), publisher_domain: 'b.example' },
+          ],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://legacy.example/mcp');
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['inline_b']
+    );
+  });
+
+  test('schema-declared files do not enable legacy bare inline compatibility', () => {
+    const file = {
+      $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
+      authorized_agents: [
+        {
+          url: 'https://legacy.example/mcp',
+          authorized_for: 'legacy inline',
+          properties: [makeProperty('inline_a', 'a.example')],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://legacy.example/mcp');
+    assert.strictEqual(scope.properties.length, 0);
+    assert.strictEqual(scope.unresolvable, 'missing_authorization_type');
   });
 });
 
@@ -376,6 +508,60 @@ describe('resolveAgentProperties — fail-closed behavior (#1721 spec parity wit
     }
   });
 
+  test('revoked top-level publisher domains are filtered from property_ids and property_tags scopes', () => {
+    const file = {
+      revoked_publisher_domains: [{ publisher_domain: 'a.example', revoked_at: '2026-01-01T00:00:00Z' }],
+      properties: [
+        { ...makeProperty('revoked', 'a.example', ['news']), publisher_domain: 'a.example' },
+        { ...makeProperty('kept', 'b.example', ['news']), publisher_domain: 'b.example' },
+      ],
+      authorized_agents: [
+        {
+          url: 'https://ids.example/mcp',
+          authorized_for: 'ids',
+          authorization_type: 'property_ids',
+          property_ids: ['revoked', 'kept'],
+        },
+        {
+          url: 'https://tags.example/mcp',
+          authorized_for: 'tags',
+          authorization_type: 'property_tags',
+          property_tags: ['news'],
+        },
+      ],
+    };
+    const idsScope = resolveAgentProperties(file, 'https://ids.example/mcp');
+    const tagsScope = resolveAgentProperties(file, 'https://tags.example/mcp');
+    assert.deepStrictEqual(
+      idsScope.properties.map(p => p.property_id),
+      ['kept']
+    );
+    assert.deepStrictEqual(
+      tagsScope.properties.map(p => p.property_id),
+      ['kept']
+    );
+  });
+
+  test('revoked publisher domains also match domain identifiers when publisher_domain is absent', () => {
+    const file = {
+      revoked_publisher_domains: [{ publisher_domain: 'a.example', revoked_at: '2026-01-01T00:00:00Z' }],
+      properties: [makeProperty('revoked', 'a.example'), makeProperty('kept', 'b.example')],
+      authorized_agents: [
+        {
+          url: 'https://ids.example/mcp',
+          authorized_for: 'ids',
+          authorization_type: 'property_ids',
+          property_ids: ['revoked', 'kept'],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://ids.example/mcp');
+    assert.deepStrictEqual(
+      scope.properties.map(p => p.property_id),
+      ['kept']
+    );
+  });
+
   test('unknown authorization_type → unresolvable: unknown_authorization_type', () => {
     const file = {
       properties: [makeProperty('main', 'main.example')],
@@ -442,5 +628,108 @@ describe('listAgentPropertyMap', () => {
     assert.strictEqual(result.unresolved.length, 2);
     assert.ok(result.unresolved.some(u => u.reason === 'missing_authorization_type'));
     assert.ok(result.unresolved.some(u => u.reason === 'signals_only'));
+  });
+});
+
+describe('getAllProperties', () => {
+  test(
+    'is exported from the root SDK entry point',
+    { skip: Number(process.versions.node.split('.')[0]) < 20 ? 'root CJS entry requires Node 20+ dev stack' : false },
+    () => {
+      const { getAllProperties: rootGetAllProperties } = require('../../dist/lib/index.js');
+      assert.strictEqual(rootGetAllProperties, getAllProperties);
+    }
+  );
+
+  test('sums per-agent resolved properties instead of returning the top-level catalog length', () => {
+    const file = {
+      properties: [
+        makeProperty('p1', 'one.example'),
+        makeProperty('p2', 'two.example'),
+        makeProperty('p3', 'three.example'),
+      ],
+      authorized_agents: [
+        {
+          url: 'https://agent.example/mcp',
+          authorized_for: 'subset',
+          authorization_type: 'property_ids',
+          property_ids: ['p1', 'p2'],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      getAllProperties(file).map(p => p.property_id),
+      ['p1', 'p2']
+    );
+  });
+
+  test('preserves duplicate properties across multiple agent scopes', () => {
+    const file = {
+      properties: [makeProperty('p1', 'one.example')],
+      authorized_agents: [
+        {
+          url: 'https://agent-a.example/mcp',
+          authorized_for: 'one',
+          authorization_type: 'property_ids',
+          property_ids: ['p1'],
+        },
+        {
+          url: 'https://agent-b.example/mcp',
+          authorized_for: 'one',
+          authorization_type: 'property_ids',
+          property_ids: ['p1'],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      getAllProperties(file).map(p => p.property_id),
+      ['p1', 'p1']
+    );
+  });
+
+  test('falls back to top-level properties when no agent resolves locally, filtering revoked domains', () => {
+    const file = {
+      revoked_publisher_domains: [{ publisher_domain: 'revoked.example', revoked_at: '2026-01-01T00:00:00Z' }],
+      properties: [
+        { ...makeProperty('revoked', 'revoked.example'), publisher_domain: 'revoked.example' },
+        { ...makeProperty('kept', 'kept.example'), publisher_domain: 'kept.example' },
+      ],
+      authorized_agents: [
+        {
+          url: 'https://signals.example/mcp',
+          authorized_for: 'signals',
+          authorization_type: 'signal_ids',
+          signal_ids: ['s1'],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      getAllProperties(file).map(p => p.property_id),
+      ['kept']
+    );
+  });
+
+  test('resolves canonical-equivalent duplicate entries independently', () => {
+    const file = {
+      properties: [makeProperty('p1', 'one.example'), makeProperty('p2', 'two.example')],
+      authorized_agents: [
+        {
+          url: 'https://agent.example/mcp',
+          authorized_for: 'first',
+          authorization_type: 'property_ids',
+          property_ids: ['p1'],
+        },
+        {
+          url: 'https://agent.example:443/mcp',
+          authorized_for: 'second',
+          authorization_type: 'property_ids',
+          property_ids: ['p2'],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      getAllProperties(file).map(p => p.property_id),
+      ['p1', 'p2']
+    );
   });
 });

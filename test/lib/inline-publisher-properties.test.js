@@ -157,6 +157,17 @@ describe('resolveInlinePublisherProperties — revocation', () => {
     const result = resolveInlinePublisherProperties(file, [{ selection_type: 'all', publisher_domain: 'a.example' }]);
     assert.strictEqual(result.revoked_selectors.length, 1);
   });
+
+  test('schema-valid revocation objects are honored', () => {
+    const file = {
+      ...adAgents,
+      revoked_publisher_domains: [{ publisher_domain: 'a.example', revoked_at: '2026-01-01T00:00:00Z' }],
+    };
+    const result = resolveInlinePublisherProperties(file, [{ selection_type: 'all', publisher_domain: 'a.example' }]);
+    assert.strictEqual(result.inline_properties.length, 0);
+    assert.strictEqual(result.unresolved_selectors.length, 0);
+    assert.strictEqual(result.revoked_selectors.length, 1);
+  });
 });
 
 describe('resolveInlinePublisherProperties — input defensiveness', () => {
