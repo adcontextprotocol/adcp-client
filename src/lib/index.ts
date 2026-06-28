@@ -211,6 +211,7 @@ export {
 export {
   resolveAgentProperties,
   listAgentPropertyMap,
+  getAllProperties,
   canonicalizeAgentUrl,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
