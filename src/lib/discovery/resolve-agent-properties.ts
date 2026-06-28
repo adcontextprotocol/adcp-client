@@ -18,11 +18,11 @@
  *     for the caller to resolve against other publishers' adagents.json
  *   - `signal_ids` / `signal_tags` → signals agents; no property output
  *
- * Mirrors the Python SDK's `_resolve_agent_properties` (adcp-client-python).
- * Fails closed: entries without `authorization_type` or with a missing
- * selector return zero properties, except the Python-compatible legacy
- * bare-inline shape above. The pre-fix TS behavior of attributing every
- * property to every listed agent is gone.
+ * Mirrors the Python SDK's `_resolve_agent_properties` for schema-less
+ * legacy bare-inline entries while keeping schema-declared files strict.
+ * Missing selectors and bare entries without their own inline `properties[]`
+ * return zero properties. The pre-fix TS behavior of attributing every
+ * top-level property to every listed agent is gone.
  */
 import type {
   AdAgentsJson,
@@ -428,6 +428,8 @@ function revokedDomainSet(input: unknown): Set<string> {
   if (!Array.isArray(input)) return new Set();
   const out = new Set<string>();
   for (const item of input) {
+    // `revoked_at` and `reason` are metadata; presence in this list is the
+    // revocation signal.
     const domain =
       typeof item === 'string'
         ? item
