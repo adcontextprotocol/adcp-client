@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
-Align TypeScript adagents property resolution with Python-compatible legacy inline entries, schema-valid revocation filtering, ambiguous URL fail-closed behavior, and add `getAllProperties`.
+Refine TypeScript adagents property resolution for legacy inline entries, schema-valid revocation filtering, ambiguous URL fail-closed behavior, and add `getAllProperties`.

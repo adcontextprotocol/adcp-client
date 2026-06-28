@@ -129,7 +129,8 @@ function parseAgentUrl(raw: string): URL | null {
  * Resolve `agentUrl`'s authorization scope against an `adagents.json`
  * file. The lookup uses canonicalized URL comparison — two URLs
  * differing only in host case, default port, percent-encoding of
- * unreserved chars, or fragment are the same agent.
+ * unreserved chars, or fragment are the same agent. Scheme and trailing
+ * slash differences remain distinct.
  *
  * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
@@ -307,6 +308,11 @@ function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: Authorized
  * absent from the result. Legacy bare-inline entries with `properties[]`
  * are included. `publisher_properties` cross-references are reported
  * separately so the caller can resolve them against other publishers' files.
+ *
+ * The returned map is keyed by public canonical URL; if a file contains
+ * canonical-equivalent entries, the later entry wins in this non-authoritative
+ * inventory view. Use `resolveAgentProperties` for an authorization decision
+ * for a specific agent URL because it fails closed on ambiguous matches.
  */
 export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   byAgent: Map<string, Property[]>;
@@ -356,18 +362,21 @@ export function listAgentPropertyMap(adAgents: AdAgentsJson): {
 }
 
 /**
- * Python-compatible total local property helper for `adagents.json`.
+ * Non-authoritative total local property helper for `adagents.json`.
  *
  * This concatenates each authorized agent's locally resolved property scope
  * (`property_ids`, `property_tags`, `inline_properties`, legacy bare inline,
  * and inline-resolved `publisher_properties`). It intentionally preserves
- * duplicate property objects across multiple agents because the Python helper
- * is a sum of per-agent scopes, not a unique publisher catalog.
+ * duplicate property objects across multiple agents because it is a sum of
+ * per-agent scopes, not a unique publisher catalog.
  *
  * If no agent scope resolves to local properties, it falls back to the file's
  * top-level `properties[]`. In both paths, properties whose
  * `publisher_domain` is listed in `revoked_publisher_domains[]` are filtered
  * out.
+ *
+ * Do not use this helper for authorization. It resolves each entry independently
+ * for inventory aggregation and does not fail closed on canonical URL ambiguity.
  */
 export function getAllProperties(adAgents: AdAgentsJson): Property[] {
   const out: Property[] = [];
@@ -410,7 +419,7 @@ function filterRevokedProperties(properties: unknown, revokedDomainsInput: unkno
   if (revokedDomains.size === 0) return properties as Property[];
   return (properties as Property[]).filter(p => {
     const domains = propertyPublisherDomains(p);
-    if (domains.length === 0) return false;
+    if (domains.length === 0) return true;
     return domains.every(domain => !revokedDomains.has(domain.toLowerCase()));
   });
 }

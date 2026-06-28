@@ -27,6 +27,17 @@ function makeProperty(id, name, tags) {
   return out;
 }
 
+function makeAppProperty(id, bundle, tags) {
+  const out = {
+    property_id: id,
+    property_type: 'mobile_app',
+    name: bundle,
+    identifiers: [{ type: 'ios_bundle', value: bundle }],
+  };
+  if (tags) out.tags = tags;
+  return out;
+}
+
 describe('canonicalizeAgentUrl', () => {
   test('lowercases scheme and host', () => {
     assert.strictEqual(canonicalizeAgentUrl('HTTPS://Example.COM/mcp'), 'https://example.com/mcp');
@@ -465,7 +476,7 @@ describe('resolveAgentProperties — authorization_type: signal_ids / signal_tag
   });
 });
 
-describe('resolveAgentProperties — fail-closed behavior (#1721 spec parity with Python SDK)', () => {
+describe('resolveAgentProperties — fail-closed and revocation behavior (#1721)', () => {
   test('agent not in authorized_agents → unresolvable: agent_not_listed', () => {
     const file = {
       properties: [makeProperty('main', 'main.example')],
@@ -485,8 +496,8 @@ describe('resolveAgentProperties — fail-closed behavior (#1721 spec parity wit
 
   test('missing authorization_type → unresolvable: missing_authorization_type (issue example)', () => {
     // The Wonderstruck/Interchange production case from #1721:
-    // both agents listed, neither has authorization_type. Python SDK
-    // resolves to 0 properties. TS SDK (post-fix) must agree.
+    // both agents listed, neither has authorization_type. Schema-declared
+    // agent scopes must not inherit every top-level property.
     const file = {
       properties: [
         {
@@ -559,6 +570,45 @@ describe('resolveAgentProperties — fail-closed behavior (#1721 spec parity wit
     assert.deepStrictEqual(
       scope.properties.map(p => p.property_id),
       ['kept']
+    );
+  });
+
+  test('domainless app properties survive unrelated revoked publisher domains', () => {
+    const file = {
+      revoked_publisher_domains: [{ publisher_domain: 'a.example', revoked_at: '2026-01-01T00:00:00Z' }],
+      properties: [makeAppProperty('app', 'com.example.publisher', ['apps'])],
+      authorized_agents: [
+        {
+          url: 'https://ids.example/mcp',
+          authorized_for: 'ids',
+          authorization_type: 'property_ids',
+          property_ids: ['app'],
+        },
+        {
+          url: 'https://tags.example/mcp',
+          authorized_for: 'tags',
+          authorization_type: 'property_tags',
+          property_tags: ['apps'],
+        },
+        {
+          url: 'https://inline.example/mcp',
+          authorized_for: 'inline',
+          authorization_type: 'inline_properties',
+          properties: [makeAppProperty('inline_app', 'com.example.inline')],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      resolveAgentProperties(file, 'https://ids.example/mcp').properties.map(p => p.property_id),
+      ['app']
+    );
+    assert.deepStrictEqual(
+      resolveAgentProperties(file, 'https://tags.example/mcp').properties.map(p => p.property_id),
+      ['app']
+    );
+    assert.deepStrictEqual(
+      resolveAgentProperties(file, 'https://inline.example/mcp').properties.map(p => p.property_id),
+      ['inline_app']
     );
   });
 
@@ -706,6 +756,25 @@ describe('getAllProperties', () => {
     assert.deepStrictEqual(
       getAllProperties(file).map(p => p.property_id),
       ['kept']
+    );
+  });
+
+  test('fallback keeps domainless app properties when unrelated domains are revoked', () => {
+    const file = {
+      revoked_publisher_domains: [{ publisher_domain: 'revoked.example', revoked_at: '2026-01-01T00:00:00Z' }],
+      properties: [makeAppProperty('app', 'com.example.publisher')],
+      authorized_agents: [
+        {
+          url: 'https://signals.example/mcp',
+          authorized_for: 'signals',
+          authorization_type: 'signal_ids',
+          signal_ids: ['s1'],
+        },
+      ],
+    };
+    assert.deepStrictEqual(
+      getAllProperties(file).map(p => p.property_id),
+      ['app']
     );
   });
 
