@@ -2299,17 +2299,24 @@ async function executeStoryboardPass(
     if (phaseStatefulCascades.has(phase.id)) {
       return { tripped: true, trigger: phaseStatefulCascades.get(phase.id) ?? null };
     }
-    // Branch-set peers are mutually-exclusive `any_of` ALTERNATIVES, not a
-    // stateful dependency chain: a conformant seller satisfies exactly one
+    // Branch-set peers under `any_of` are mutually-exclusive ALTERNATIVES, not
+    // a stateful dependency chain: a conformant seller satisfies exactly one
     // peer, so the non-taken peer(s) fail by design (storyboard-schema.yaml,
     // "Per-step grading in any_of branch patterns"). A peer's expected
     // failure must NOT cascade-skip a sibling peer — doing so suppresses the
     // only viable contribution and fails the any_of gate even though the
     // seller behaved conformantly. Exclude same-branch-set peers from this
     // phase's cascade dependencies. (adcontextprotocol/adcp-client#2305)
-    const ownBranchSet = branchSetsByPhaseId.get(phase.id)?.id;
+    //
+    // Scoped to `any_of` deliberately: `BranchSetSpec.semantics` is typed
+    // `string` to leave room for future semantics (e.g. `all_of`/`one_of`)
+    // where peers legitimately DO depend on each other and must keep
+    // cascading. `all_of` is rejected at load time today, so this is
+    // forward-compat hardening rather than live behavior.
+    const ownSpec = branchSetsByPhaseId.get(phase.id);
+    const ownAnyOfBranchSet = ownSpec?.semantics === 'any_of' ? ownSpec.id : undefined;
     for (const depId of effectiveDependsOn(phase, prior)) {
-      if (ownBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownBranchSet) {
+      if (ownAnyOfBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownAnyOfBranchSet) {
         continue;
       }
       if (phaseStatefulCascades.has(depId)) {
