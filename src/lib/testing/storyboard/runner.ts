@@ -2282,6 +2282,11 @@ async function executeStoryboardPass(
   // the storyboard. Phases push their own id at end-of-phase.
   const priorPhaseIds: string[] = [];
 
+  // Phase → branch-set membership, resolved once up front so the stateful
+  // cascade (and the post-loop branch-set re-grade) can consult it. Phases
+  // outside any branch set are absent from the map.
+  const branchSetsByPhaseId = resolveBranchSets(storyboard);
+
   // Helpers for per-phase cascade state.
   const effectiveDependsOn = (phase: { depends_on?: string[] }, prior: readonly string[]): readonly string[] =>
     phase.depends_on ?? prior;
@@ -2294,7 +2299,19 @@ async function executeStoryboardPass(
     if (phaseStatefulCascades.has(phase.id)) {
       return { tripped: true, trigger: phaseStatefulCascades.get(phase.id) ?? null };
     }
+    // Branch-set peers are mutually-exclusive `any_of` ALTERNATIVES, not a
+    // stateful dependency chain: a conformant seller satisfies exactly one
+    // peer, so the non-taken peer(s) fail by design (storyboard-schema.yaml,
+    // "Per-step grading in any_of branch patterns"). A peer's expected
+    // failure must NOT cascade-skip a sibling peer — doing so suppresses the
+    // only viable contribution and fails the any_of gate even though the
+    // seller behaved conformantly. Exclude same-branch-set peers from this
+    // phase's cascade dependencies. (adcontextprotocol/adcp-client#2305)
+    const ownBranchSet = branchSetsByPhaseId.get(phase.id)?.id;
     for (const depId of effectiveDependsOn(phase, prior)) {
+      if (ownBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownBranchSet) {
+        continue;
+      }
       if (phaseStatefulCascades.has(depId)) {
         return { tripped: true, trigger: phaseStatefulCascades.get(depId) ?? null };
       }
@@ -3170,8 +3187,9 @@ async function executeStoryboardPass(
   // contribution status isn't knowable inside the per-phase loop. Runs
   // before storyboard-scoped assertions so `onEnd` hooks see the finalized
   // per-step grades (a moot peer's "failure" should not trip a cross-step
-  // invariant).
-  const branchSetsByPhaseId = resolveBranchSets(storyboard);
+  // invariant). `branchSetsByPhaseId` was resolved before the phase loop so
+  // the stateful cascade could consult it (branch-set peers don't cascade
+  // onto each other); reuse it here.
   const branchSetDelta = applyBranchSetGrading(
     storyboard.phases,
     phaseResults,

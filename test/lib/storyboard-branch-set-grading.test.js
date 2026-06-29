@@ -697,4 +697,87 @@ phases:
       server.close();
     }
   });
+
+  it('stateful branch-set peers do not cascade-skip each other — the passing peer contributes even when a sibling peer failed first', async () => {
+    // Regression for the stateful-peer cascade bug
+    // (adcontextprotocol/adcp-client#2305). Mirrors
+    // media_buy_seller/refine_finalize_exclusivity for a seller that rejects
+    // atomic multi-finalize: the atomic-success peer (declared FIRST, stateful)
+    // fails by design, and the MULTI_FINALIZE_UNSUPPORTED peer (declared
+    // SECOND, stateful) passes and must contribute. Before the fix, the failing
+    // sibling's stateful-cascade trip skipped the passing peer with
+    // `prerequisite_failed`, so the any_of gate saw no contribution and failed —
+    // even though the seller behaved conformantly. Branch-set peers are
+    // mutually-exclusive `any_of` alternatives, not a stateful dependency chain.
+    const { server, url } = await startStub(500, {});
+    try {
+      const peer = (id, stepId, expectedStatus) => ({
+        id,
+        title: id,
+        optional: true,
+        branch_set: { id: 'handled', semantics: 'any_of' },
+        steps: [
+          {
+            id: stepId,
+            title: stepId,
+            task: 'list_creatives',
+            auth: 'none',
+            expect_error: true,
+            stateful: true, // the real branch peers are stateful — this is the gap
+            contributes_to: 'handled',
+            validations: [{ check: 'http_status', value: expectedStatus, description: '' }],
+          },
+        ],
+      });
+      const storyboard = {
+        id: 'stateful_branch_peers_sb',
+        version: '1.0.0',
+        title: 'Stateful branch-set peers',
+        category: 'test',
+        summary: '',
+        narrative: '',
+        agent: { interaction_model: '*', capabilities: [] },
+        caller: { role: 'buyer_agent' },
+        phases: [
+          peer('atomic_path', 'atomic', 200), // fails vs 500 stub — sibling not taken
+          peer('unsupported_path', 'unsupported', 500), // passes vs 500 stub — must contribute
+          {
+            id: 'gate',
+            title: 'gate',
+            steps: [
+              {
+                id: 'assert',
+                title: 'assert',
+                task: 'assert_contribution',
+                validations: [{ check: 'any_of', allowed_values: ['handled'], description: '' }],
+              },
+            ],
+          },
+        ],
+      };
+      const result = await runStoryboard(url, storyboard, runOpts);
+      const atomic = result.phases[0].steps[0];
+      const unsupported = result.phases[1].steps[0];
+      const gate = result.phases[2].steps[0];
+
+      // The passing peer must RUN (not be cascade-skipped by the failing
+      // sibling) and contribute the branch-set flag.
+      assert.notStrictEqual(
+        unsupported.skipped,
+        true,
+        'passing peer must not be cascade-skipped by its failing sibling peer'
+      );
+      assert.strictEqual(unsupported.passed, true, 'passing peer contributes the branch-set flag');
+
+      // The failing peer is forgiven as moot (a peer took the flag), NOT left
+      // as a raw prerequisite_failed/failure.
+      assert.strictEqual(atomic.skipped, true);
+      assert.strictEqual(atomic.skip_reason, 'peer_branch_taken');
+
+      assert.strictEqual(gate.passed, true, 'any_of gate passes — a peer contributed');
+      assert.strictEqual(result.overall_passed, true);
+    } finally {
+      server.close();
+    }
+  });
 });
