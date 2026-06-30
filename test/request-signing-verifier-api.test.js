@@ -377,6 +377,28 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     );
   });
 
+  it('unsigned sync_accounts request with notification_configs authentication rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify({
+            accounts: [
+              {
+                account_id: 'acct_001',
+                notification_configs: [
+                  {
+                    url: 'https://buyer.example/account-notifications',
+                    authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+                  },
+                ],
+              },
+            ],
+          })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
   it('unsigned request beyond the traversal budget rejects', async () => {
     await assert.rejects(
       () =>

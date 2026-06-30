@@ -1,18 +1,10 @@
 export const WEBHOOK_AUTH_TRAVERSAL_DEPTH = 64;
 
-const WEBHOOK_AUTH_CONFIG_KEYS = new Set([
-  'push_notification_config',
-  'pushNotificationConfig',
-  'reporting_webhook',
-  'reportingWebhook',
-  'artifact_webhook',
-  'artifactWebhook',
-  'revocation_webhook',
-  'revocationWebhook',
-]);
-
 /**
- * Scan a parsed JSON value for a non-empty webhook authentication object.
+ * Scan a parsed JSON value for a non-empty authentication object. The false
+ * positive cost is over-signing; the false negative cost is an unsigned
+ * webhook-credential registration.
+ *
  * Inspection-budget exhaustion fails closed by returning true.
  */
 export function containsWebhookAuthentication(value: unknown, depthRemaining = WEBHOOK_AUTH_TRAVERSAL_DEPTH): boolean {
@@ -23,19 +15,16 @@ export function containsWebhookAuthentication(value: unknown, depthRemaining = W
   }
 
   const obj = value as Record<string, unknown>;
-  for (const key of WEBHOOK_AUTH_CONFIG_KEYS) {
-    if (hasNonEmptyWebhookAuthentication(obj[key])) return true;
-  }
+  if (hasNonEmptyAuthenticationObject(obj.authentication)) return true;
 
   for (const [key, nested] of Object.entries(obj)) {
-    if (WEBHOOK_AUTH_CONFIG_KEYS.has(key)) continue;
+    if (key === 'authentication') continue;
     if (containsWebhookAuthentication(nested, depthRemaining - 1)) return true;
   }
   return false;
 }
 
-function hasNonEmptyWebhookAuthentication(value: unknown): boolean {
+function hasNonEmptyAuthenticationObject(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const auth = (value as Record<string, unknown>).authentication;
-  return !!auth && typeof auth === 'object' && !Array.isArray(auth) && Object.keys(auth).length > 0;
+  return Object.keys(value).length > 0;
 }

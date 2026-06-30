@@ -451,6 +451,42 @@ describe('createAgentSignedFetch preset', () => {
     assert.ok(headers.get('signature-input'), 'artifact webhook auth payload should be signed');
   });
 
+  it('signs account notification config authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'sync_accounts',
+          arguments: {
+            accounts: [
+              {
+                account_id: 'acct_001',
+                notification_configs: [
+                  {
+                    url: 'https://buyer.example.com/adcp/account-notifications',
+                    authentication: {
+                      schemes: ['HMAC-SHA256'],
+                      credentials: 'placeholder_secret_min_32_characters_required',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'account notification config auth payload should be signed');
+  });
+
   it('signs when webhook authentication is beyond the traversal budget', async () => {
     const cache = new CapabilityCache();
     const { captured, upstream } = makeCapturingUpstream();

@@ -84,12 +84,14 @@ async function startMcpStub(initialCapability) {
       plan_id: z.string().optional(),
       push_notification_config: z.any().optional(),
       reporting_webhook: z.any().optional(),
+      accounts: z.any().optional(),
       adcp_major_version: z.number().optional(),
       adcp_version: z.string().optional(),
     };
 
     mcp.registerTool('create_media_buy', { inputSchema: passthroughSchema }, echoAs('create_media_buy'));
     mcp.registerTool('another_op', { inputSchema: passthroughSchema }, echoAs('another_op'));
+    mcp.registerTool('sync_accounts', { inputSchema: passthroughSchema }, echoAs('sync_accounts'));
     mcp.registerTool('unsigned_op', { inputSchema: {} }, echoAs('unsigned_op'));
 
     return mcp;
@@ -271,6 +273,46 @@ test('reporting webhook authentication payload is signed even when the operation
     assert.ok(call, 'create_media_buy reached the stub');
     assert.match(call.headers['signature-input'] || '', /^sig1=/, 'reporting webhook auth payload forced signing');
     assert.deepStrictEqual(call.args.reporting_webhook?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('account notification config authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(agentFor(stub.url), 'sync_accounts', {
+      accounts: [
+        {
+          account_id: 'acct_001',
+          notification_configs: [
+            {
+              url: 'https://buyer.example.com/adcp/account-notifications',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'sync_accounts')[0];
+    assert.ok(call, 'sync_accounts reached the stub');
+    assert.match(
+      call.headers['signature-input'] || '',
+      /^sig1=/,
+      'account notification config auth payload forced signing'
+    );
+    assert.deepStrictEqual(call.args.accounts?.[0]?.notification_configs?.[0]?.authentication, {
       schemes: ['HMAC-SHA256'],
       credentials: 'placeholder_secret_min_32_characters_required',
     });
