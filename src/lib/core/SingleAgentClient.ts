@@ -3801,13 +3801,7 @@ export class SingleAgentClient {
         // executor then hits ProtocolClient.callTool which reads _inProcessMcpClient directly,
         // so the sentinel adcp-in-process:// URI never reaches validateAgentUrl.
         const agent = await this.ensureEndpointDiscovered(options);
-        const result = await this.executor.executeTask<any>(
-          agent,
-          'get_adcp_capabilities',
-          {},
-          undefined,
-          options
-        );
+        const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined, options);
         throwIfAborted(options?.signal);
         const requestTimeoutMs = resolveRequestTimeoutMs(
           options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs

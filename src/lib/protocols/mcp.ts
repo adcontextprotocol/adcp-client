@@ -18,7 +18,12 @@ import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
-import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs, resolveRequestTimeoutMs, withAbortSignal } from './abort';
+import {
+  isAbortOrTimeoutError,
+  resolveClientRequestTimeoutMs,
+  resolveRequestTimeoutMs,
+  withAbortSignal,
+} from './abort';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -847,14 +852,10 @@ async function callMCPToolImpl(
     debugLogs,
     toolName,
     client =>
-      client.callTool(
-        { name: toolName, arguments: args },
-        undefined,
-        {
-          ...(requestOptions?.signal && { signal: requestOptions.signal }),
-          ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
-        }
-      ) as Promise<CallToolResponse>,
+      client.callTool({ name: toolName, arguments: args }, undefined, {
+        ...(requestOptions?.signal && { signal: requestOptions.signal }),
+        ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
+      }) as Promise<CallToolResponse>,
     transportFetch,
     requestOptions
   );

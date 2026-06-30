@@ -250,14 +250,9 @@ describe('read-path cancellation and timeout', () => {
 
     await assert.rejects(
       () =>
-        connectMCPWithFallback(
-          new URL('http://example.test/mcp'),
-          {},
-          debugLogs,
-          'timeout-test',
-          transportFetch,
-          { requestTimeoutMs: 25 }
-        ),
+        connectMCPWithFallback(new URL('http://example.test/mcp'), {}, debugLogs, 'timeout-test', transportFetch, {
+          requestTimeoutMs: 25,
+        }),
       err => {
         assert.ok(err?.name === 'TimeoutError' || err?.code === -32001);
         return true;

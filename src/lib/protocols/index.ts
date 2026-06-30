@@ -525,7 +525,9 @@ export class ProtocolClient {
                     {
                       ...(signingContext && { signingContext }),
                       ...(signal && { signal }),
-                      ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+                      ...(transport?.requestTimeoutMs !== undefined && {
+                        requestTimeoutMs: transport.requestTimeoutMs,
+                      }),
                     }
                   );
                 } catch (err) {

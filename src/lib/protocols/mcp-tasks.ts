@@ -310,7 +310,11 @@ async function callToolOnClient(
       message: `MCP Tasks: Server does not support tasks, using standard callTool for ${toolName}`,
       timestamp: new Date().toISOString(),
     });
-    const response = (await client.callTool({ name: toolName, arguments: args }, undefined, requestOptions)) as CallToolResponse;
+    const response = (await client.callTool(
+      { name: toolName, arguments: args },
+      undefined,
+      requestOptions
+    )) as CallToolResponse;
 
     debugLogs.push({
       type: response?.isError ? 'error' : 'success',
@@ -386,7 +390,11 @@ async function callToolOnClient(
           // and return it as a proper isError response for downstream unwrapping.
           if (capturedTaskId) {
             try {
-              const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId, undefined, requestOptions);
+              const taskResult = await client.experimental.tasks.getTaskResult(
+                capturedTaskId,
+                undefined,
+                requestOptions
+              );
               const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
               if (content) {
                 return {
@@ -439,7 +447,11 @@ async function callToolOnClient(
         message: `MCP Tasks: Server returned synchronous response for ${toolName}, falling back to callTool`,
         timestamp: new Date().toISOString(),
       });
-      return (await client.callTool({ name: toolName, arguments: args }, undefined, requestOptions)) as CallToolResponse;
+      return (await client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        requestOptions
+      )) as CallToolResponse;
     }
     throw error;
   }
