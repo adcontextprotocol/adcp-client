@@ -3895,8 +3895,7 @@ export class SingleAgentClient {
             `threw — treating as v3 (synthetic) since the agent has the v3-only discovery tool. ` +
             `This client routes to v3 adapters, but calls reading capability details ` +
             `(idempotency TTL, supported_versions, feature flags) will fail until the agent ` +
-            `operator fixes the capabilities endpoint.`,
-          { errorType: error instanceof Error ? error.name : typeof error }
+            `operator fixes the capabilities endpoint.`
         );
       }
 
