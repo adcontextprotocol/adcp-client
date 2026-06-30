@@ -20,6 +20,7 @@ import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
+import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } from './abort';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
 if (!A2AClient) {
@@ -35,6 +36,8 @@ interface A2ACallContext {
   customHeaders?: Record<string, string>;
   debugLogs: DebugLogEntry[];
   got401Ref: { value: boolean };
+  signal?: AbortSignal;
+  requestTimeoutMs?: number;
 }
 
 const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
@@ -238,10 +241,14 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
 async function getOrCreateA2AClient(
   agentUrl: string,
   authToken: string | undefined,
-  customAuthHeader?: string
+  customAuthHeader?: string,
+  bypassCache = false
 ): Promise<InstanceType<typeof A2AClient>> {
   const signingContext = signingContextStorage.getStore();
   const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customAuthHeader);
+  if (bypassCache) {
+    return createA2AClient(agentUrl, authToken);
+  }
   const cached = a2aClientCache.get(cacheKey);
   if (cached) return cached;
 
@@ -309,7 +316,7 @@ function buildFetchImpl(authToken: string | undefined) {
   // agent has request-signing configured, we wrap it with the AdCP signing
   // fetch so the signature covers the exact bytes we're about to send (auth
   // headers included, since the signer re-reads the final header record).
-  const baseFetch = async (url: string | URL | Request, options?: RequestInit) => {
+  const baseFetch = async (url: string | URL | Request, options?: RequestInit): Promise<Response> => {
     const context = callContextStorage.getStore();
 
     const existingHeaders: Record<string, string> = {};
@@ -332,6 +339,9 @@ function buildFetchImpl(authToken: string | undefined) {
     const urlString = typeof url === 'string' ? url : url.toString();
     const isDiscoveryRequest = isAgentCardPath(urlString);
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
+    const requestTimeoutMs = isDiscoveryRequest
+      ? resolveRequestTimeoutMs(context?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS)
+      : undefined;
 
     // Merge: existing < trace < custom < auth (auth always wins)
     const headers: Record<string, string> = {
@@ -357,7 +367,9 @@ function buildFetchImpl(authToken: string | undefined) {
       ),
     });
 
-    const response = await networkFetch(url as any, { ...options, headers });
+    const response = await withAbortSignal<Response>([context?.signal, options?.signal], requestTimeoutMs, signal =>
+      networkFetch(url as any, { ...options, headers, signal })
+    );
 
     if (response.status === 401 && context) {
       context.got401Ref.value = true;
@@ -437,7 +449,9 @@ export async function callA2ATool(
   pushNotificationConfig?: PushNotificationConfig,
   customHeaders?: Record<string, string>,
   signingContext?: AgentSigningContext,
-  session?: A2ASessionIds
+  session?: A2ASessionIds,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -450,6 +464,8 @@ export async function callA2ATool(
         customHeaders,
         debugLogs,
         got401Ref: { value: false },
+        signal,
+        requestTimeoutMs,
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
@@ -485,7 +501,12 @@ async function callA2AToolImpl(
     // the cache key disambiguates by the actual outgoing credential, not
     // just the absent `authToken`.
     const customAuthHeader = extractA2AAuthHeader(context.customHeaders);
-    const client = await getOrCreateA2AClient(agentUrl, authToken, customAuthHeader);
+    const client = await getOrCreateA2AClient(
+      agentUrl,
+      authToken,
+      customAuthHeader,
+      !!context.signal || context.requestTimeoutMs !== undefined
+    );
 
     const requestPayload: {
       message: {

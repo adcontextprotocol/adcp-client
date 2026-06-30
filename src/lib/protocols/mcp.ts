@@ -18,6 +18,7 @@ import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
+import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs, resolveRequestTimeoutMs, withAbortSignal } from './abort';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -219,7 +220,8 @@ async function getOrCreateConnection(
   baseUrl: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[],
-  label: string
+  label: string,
+  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number } = {}
 ): Promise<MCPClient> {
   const cached = getCachedConnection(cacheKey);
   if (cached) return cached;
@@ -227,7 +229,7 @@ async function getOrCreateConnection(
   const pending = pendingConnections.get(cacheKey);
   if (pending) return pending;
 
-  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label)
+  const promise = connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, undefined, requestOptions)
     .then(client => {
       connectionCache.set(cacheKey, client);
       evictLeastRecentlyUsed();
@@ -289,6 +291,8 @@ async function getOrCreateOAuthConnection(
     debugLogs: DebugLogEntry[];
     customHeaders?: Record<string, string>;
     signingContext?: AgentSigningContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
   }
 ): Promise<MCPClient> {
   const cached = getCachedOAuthConnection(cacheKey);
@@ -318,6 +322,8 @@ async function withCachedOAuthConnection<T>(
     debugLogs: DebugLogEntry[];
     customHeaders?: Record<string, string>;
     signingContext?: AgentSigningContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
   },
   label: string,
   fn: (client: MCPClient) => Promise<T>
@@ -328,6 +334,19 @@ async function withCachedOAuthConnection<T>(
     options.signingContext?.cacheKey,
     options.customHeaders
   );
+  if (options.signal || options.requestTimeoutMs !== undefined) {
+    const { client } = await connectMCP(options);
+    try {
+      return await fn(client);
+    } finally {
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   const mcpClient = await getOrCreateOAuthConnection(cacheKey, options);
 
   try {
@@ -394,13 +413,21 @@ export async function withCachedConnection<T>(
   debugLogs: DebugLogEntry[],
   label: string,
   fn: (client: MCPClient) => Promise<T>,
-  transportFetch?: typeof fetch
+  transportFetch?: typeof fetch,
+  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number } = {}
 ): Promise<T> {
   const signingContext = signingContextStorage.getStore();
   const baseUrl = new URL(agentUrl);
 
-  if (transportFetch) {
-    const guardedClient = await connectMCPWithFallback(baseUrl, authHeaders, debugLogs, label, transportFetch);
+  if (transportFetch || requestOptions.signal || requestOptions.requestTimeoutMs !== undefined) {
+    const guardedClient = await connectMCPWithFallback(
+      baseUrl,
+      authHeaders,
+      debugLogs,
+      label,
+      transportFetch,
+      requestOptions
+    );
     try {
       return await fn(guardedClient);
     } finally {
@@ -413,7 +440,7 @@ export async function withCachedConnection<T>(
   }
 
   const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey, authHeaders);
-  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
+  const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label, requestOptions);
 
   try {
     return await fn(mcpClient);
@@ -450,7 +477,14 @@ export async function withCachedConnection<T>(
       /* ignore */
     }
 
-    const retryClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, `${label} (retry)`);
+    const retryClient = await getOrCreateConnection(
+      cacheKey,
+      baseUrl,
+      authHeaders,
+      debugLogs,
+      `${label} (retry)`,
+      requestOptions
+    );
 
     try {
       return await fn(retryClient);
@@ -484,6 +518,10 @@ export interface MCPCallOptions {
   customHeaders?: Record<string, string>;
   /** RFC 9421 signing context — when set, the transport signs outbound ops per seller capability. */
   signingContext?: AgentSigningContext;
+  /** Caller-owned cancellation signal for connect and callTool. */
+  signal?: AbortSignal;
+  /** Optional per-request timeout for connect and callTool. */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -513,7 +551,8 @@ export async function connectMCPWithFallback(
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
   label = 'connection',
-  transportFetch?: typeof fetch
+  transportFetch?: typeof fetch,
+  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number } = {}
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -522,7 +561,7 @@ export async function connectMCPWithFallback(
       'adcp.connection_label': label,
     },
     async () => {
-      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, transportFetch);
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, transportFetch, requestOptions);
     }
   );
 }
@@ -532,14 +571,25 @@ async function connectMCPWithFallbackImpl(
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
   label = 'connection',
-  transportFetch?: typeof fetch
+  transportFetch?: typeof fetch,
+  requestOptions: { signal?: AbortSignal; requestTimeoutMs?: number } = {}
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
   // Wrap order (innermost → outermost): network → size-limit → signing → capture.
   // Size-limit applies to the raw network response so signing/capture see a
   // bounded body (capture clones via `response.clone()`, which would otherwise
   // buffer a hostile reply in memory).
-  const networkFetch = transportFetch ?? ((input, init) => fetch(input as any, init));
+  const requestTimeoutMs = resolveRequestTimeoutMs(requestOptions.requestTimeoutMs);
+  const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(requestOptions.requestTimeoutMs);
+  const mcpRequestOptions = {
+    ...(requestOptions.signal && { signal: requestOptions.signal }),
+    ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
+  };
+  const rawNetworkFetch: typeof fetch = transportFetch ?? ((input, init) => fetch(input as any, init));
+  const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    withAbortSignal<Response>([requestOptions.signal, init?.signal], requestTimeoutMs, signal =>
+      rawNetworkFetch(input, { ...init, signal })
+    );
   const sizeLimited = wrapFetchWithSizeLimit(networkFetch);
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const baseFetch: typeof fetch = signingContext
@@ -563,7 +613,7 @@ async function connectMCPWithFallbackImpl(
       message: `MCP: Attempting StreamableHTTP ${label} to ${url}`,
       timestamp: new Date().toISOString(),
     });
-    await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+    await client.connect(new StreamableHTTPClientTransport(url, transportOptions), mcpRequestOptions);
     failedClient = undefined;
     trackStreamableHTTPUrl(url.toString());
     debugLogs.push({
@@ -592,6 +642,10 @@ async function connectMCPWithFallbackImpl(
       error,
     });
 
+    if (isAbortOrTimeoutError(error)) {
+      throw error;
+    }
+
     // Retry StreamableHTTP once on any transient connect failure — network blips,
     // JSON parse errors on half-buffered responses, and mid-handshake proxy
     // disconnects all surface as generic Error or McpError, not StreamableHTTPError.
@@ -604,7 +658,7 @@ async function connectMCPWithFallbackImpl(
       });
       const retryClient = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
       try {
-        await retryClient.connect(new StreamableHTTPClientTransport(url, transportOptions));
+        await retryClient.connect(new StreamableHTTPClientTransport(url, transportOptions), mcpRequestOptions);
         trackStreamableHTTPUrl(url.toString());
         debugLogs.push({
           type: 'success',
@@ -623,6 +677,9 @@ async function connectMCPWithFallbackImpl(
           message: `MCP: StreamableHTTP retry also failed for ${label}: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
           timestamp: new Date().toISOString(),
         });
+        if (isAbortOrTimeoutError(retryError)) {
+          throw retryError;
+        }
         // Fall through to SSE fallback below
       }
     }
@@ -652,12 +709,22 @@ async function connectMCPWithFallbackImpl(
       timestamp: new Date().toISOString(),
     });
     const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
-    await client.connect(
-      new SSEClientTransport(url, {
-        requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
-        fetch: wrapFetchWithCapture(baseFetch),
-      })
-    );
+    try {
+      await client.connect(
+        new SSEClientTransport(url, {
+          requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
+          fetch: wrapFetchWithCapture(baseFetch),
+        }),
+        mcpRequestOptions
+      );
+    } catch (sseError) {
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+      throw sseError;
+    }
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via SSE transport for ${label}`,
@@ -675,7 +742,8 @@ export async function callMCPTool(
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
   signingContext?: AgentSigningContext,
-  transportFetch?: typeof fetch
+  transportFetch?: typeof fetch,
+  requestOptions?: { signal?: AbortSignal; requestTimeoutMs?: number }
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -685,7 +753,7 @@ export async function callMCPTool(
     },
     async () => {
       return signingContextStorage.run(signingContext, () =>
-        callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, transportFetch)
+        callMCPToolImpl(agentUrl, toolName, args, authToken, debugLogs, customHeaders, transportFetch, requestOptions)
       );
     }
   );
@@ -717,7 +785,8 @@ async function callMCPToolImpl(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  transportFetch?: typeof fetch
+  transportFetch?: typeof fetch,
+  requestOptions?: { signal?: AbortSignal; requestTimeoutMs?: number }
 ): Promise<unknown> {
   // Inject trace context headers for distributed tracing
   const traceHeaders = injectTraceHeaders();
@@ -753,14 +822,24 @@ async function callMCPToolImpl(
     });
   }
 
+  const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestOptions?.requestTimeoutMs);
   const response = await withCachedConnection(
     agentUrl,
     authToken,
     authHeaders,
     debugLogs,
     toolName,
-    client => client.callTool({ name: toolName, arguments: args }) as Promise<CallToolResponse>,
-    transportFetch
+    client =>
+      client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        {
+          ...(requestOptions?.signal && { signal: requestOptions.signal }),
+          ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
+        }
+      ) as Promise<CallToolResponse>,
+    transportFetch,
+    requestOptions
   );
 
   debugLogs.push({
@@ -844,8 +923,19 @@ export async function connectMCP(options: {
   debugLogs?: DebugLogEntry[];
   customHeaders?: Record<string, string>;
   signingContext?: AgentSigningContext;
+  signal?: AbortSignal;
+  requestTimeoutMs?: number;
 }): Promise<MCPConnectionResult> {
-  const { agentUrl, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
+  const {
+    agentUrl,
+    authToken,
+    authProvider,
+    debugLogs = [],
+    customHeaders,
+    signingContext,
+    signal,
+    requestTimeoutMs: configuredRequestTimeoutMs,
+  } = options;
   const baseUrl = new URL(agentUrl);
 
   debugLogs.push({
@@ -911,7 +1001,17 @@ export async function connectMCP(options: {
   // headers the SDK assembled (including any OAuth-issued Authorization) and
   // decides per outbound request whether to sign. Size-limit sits innermost so
   // the response body is bounded before signing/capture observe it.
-  const sizeLimited = wrapFetchWithSizeLimit((input, init) => fetch(input as string | URL, init));
+  const requestTimeoutMs = resolveRequestTimeoutMs(configuredRequestTimeoutMs);
+  const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(configuredRequestTimeoutMs);
+  const requestOptions = {
+    ...(signal && { signal }),
+    ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
+  };
+  const sizeLimited = wrapFetchWithSizeLimit((input, init) =>
+    withAbortSignal<Response>([signal, init?.signal], requestTimeoutMs, linkedSignal =>
+      fetch(input as string | URL, { ...init, signal: linkedSignal })
+    )
+  );
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const signedFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
@@ -925,7 +1025,7 @@ export async function connectMCP(options: {
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);
 
   try {
-    await mcpClient.connect(transport);
+    await mcpClient.connect(transport, requestOptions);
     debugLogs.push({
       type: 'success',
       message: 'MCP: Connected successfully',
@@ -1004,11 +1104,30 @@ export async function connectMCP(options: {
  * @throws UnauthorizedError if OAuth is required (with transport attached)
  */
 export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unknown> {
-  const { agentUrl, toolName, args, authToken, authProvider, debugLogs = [], customHeaders, signingContext } = options;
+  const {
+    agentUrl,
+    toolName,
+    args,
+    authToken,
+    authProvider,
+    debugLogs = [],
+    customHeaders,
+    signingContext,
+    signal,
+    requestTimeoutMs,
+  } = options;
+  const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestTimeoutMs);
+  const requestOptions = {
+    ...(signal && { signal }),
+    ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
+  };
 
   // If no OAuth provider, use the legacy function
   if (!authProvider) {
-    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext);
+    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext, undefined, {
+      signal,
+      requestTimeoutMs,
+    });
   }
 
   const response = await withCachedOAuthConnection(
@@ -1018,6 +1137,8 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       debugLogs,
       customHeaders,
       signingContext,
+      signal,
+      requestTimeoutMs,
     },
     toolName,
     async client => {
@@ -1027,10 +1148,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
         timestamp: new Date().toISOString(),
       });
 
-      const response = await client.callTool({
-        name: toolName,
-        arguments: args,
-      });
+      const response = await client.callTool({ name: toolName, arguments: args }, undefined, requestOptions);
 
       debugLogs.push({
         type: response?.isError ? 'error' : 'success',
