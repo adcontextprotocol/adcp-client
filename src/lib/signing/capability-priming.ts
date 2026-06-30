@@ -3,6 +3,7 @@ import type { AgentSigningContext } from './agent-context';
 import type { CachedCapability } from './capability-cache';
 import { unwrapProtocolResponse } from './protocol-response';
 import type { VerifierCapability } from './types';
+import { isAbortOrTimeoutError } from '../protocols/abort';
 
 /**
  * Op name used to fetch the seller's capability advertisement. The signing
@@ -87,7 +88,10 @@ export async function ensureCapabilityLoaded(
       cache.set(key, entry);
       return entry;
     })
-    .catch(() => {
+    .catch(error => {
+      if (isAbortOrTimeoutError(error)) {
+        throw error;
+      }
       const now = Math.floor(Date.now() / 1000);
       const entry: CachedCapability = {
         requestSigning: undefined,

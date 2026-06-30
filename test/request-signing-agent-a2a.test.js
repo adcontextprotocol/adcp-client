@@ -98,7 +98,7 @@ async function startA2aStub(initialCapability) {
       parsed?.params?.message?.parts?.find(p => p?.kind === 'data' && typeof p?.data?.skill === 'string')?.data
         ?.skill ?? '<unknown>';
 
-    state.rpcCalls.push({ headers: { ...req.headers }, skill, method: parsed.method });
+    state.rpcCalls.push({ headers: { ...req.headers }, skill, method: parsed.method, body: parsed });
 
     const resultPayload =
       skill === 'get_adcp_capabilities'
@@ -231,6 +231,66 @@ test('A2A: ops outside the seller advertisement pass through unsigned', async ()
     const call = stub.state.rpcCalls.filter(r => r.skill === 'another_op')[0];
     assert.ok(call, 'another_op reached the stub');
     assert.strictEqual(call.headers['signature-input'], undefined, 'another_op unsigned on A2A');
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('A2A: webhook authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startA2aStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(
+      agentFor(stub.url),
+      'create_media_buy',
+      { plan_id: 'plan_a2a_webhook_001' },
+      {
+        webhookUrl: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+        webhookSecret: 'placeholder_secret_min_32_characters_required',
+      }
+    );
+    const call = stub.state.rpcCalls.filter(r => r.skill === 'create_media_buy')[0];
+    assert.ok(call, 'create_media_buy reached the stub');
+    assert.match(call.headers['signature-input'] || '', /^sig1=/, 'A2A webhook auth payload forced signing');
+    assert.match(call.headers['signature'] || '', /^sig1=:/, 'Signature header is present');
+    assert.deepStrictEqual(call.body.params.configuration?.pushNotificationConfig?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('A2A: reporting webhook authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startA2aStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(agentFor(stub.url), 'create_media_buy', {
+      plan_id: 'plan_a2a_reporting_001',
+      reporting_webhook: {
+        url: 'https://buyer.example.com/adcp/reporting',
+        authentication: {
+          schemes: ['HMAC-SHA256'],
+          credentials: 'placeholder_secret_min_32_characters_required',
+        },
+      },
+    });
+    const call = stub.state.rpcCalls.filter(r => r.skill === 'create_media_buy')[0];
+    assert.ok(call, 'create_media_buy reached the stub');
+    assert.match(call.headers['signature-input'] || '', /^sig1=/, 'A2A reporting webhook auth forced signing');
+    assert.deepStrictEqual(call.body.params.message.parts[0].data.parameters.reporting_webhook?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
   } finally {
     await cleanup(stub);
   }

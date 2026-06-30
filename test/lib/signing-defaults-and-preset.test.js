@@ -25,6 +25,7 @@ const {
   createAgentSignedFetch,
   createExpressVerifier,
 } = require('../../dist/lib/signing/index.js');
+const { InMemorySigningProvider } = require('../../dist/lib/signing/testing.js');
 
 // ---------------------------------------------------------------------------
 // Key + request helpers
@@ -260,6 +261,30 @@ describe('createAgentSignedFetch preset', () => {
     return { captured, upstream };
   }
 
+  function a2aWebhookBody(pushNotificationConfig) {
+    return JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'message/send',
+      params: {
+        message: {
+          parts: [{ kind: 'data', data: { skill: 'create_media_buy', parameters: {} } }],
+        },
+        configuration: {
+          pushNotificationConfig,
+        },
+      },
+    });
+  }
+
+  function deeplyNested(value, depth) {
+    let out = value;
+    for (let i = 0; i < depth; i += 1) {
+      out = { nested: out };
+    }
+    return out;
+  }
+
   it('returns a FetchLike function', () => {
     const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache: new CapabilityCache() });
     assert.strictEqual(typeof signedFetch, 'function');
@@ -276,6 +301,278 @@ describe('createAgentSignedFetch preset', () => {
     });
     const headers = new Headers(captured.init?.headers);
     assert.strictEqual(headers.get('signature-input'), null, 'cold cache should not sign');
+  });
+
+  it('signs webhook authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            push_notification_config: {
+              url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'webhook auth payload should be signed');
+    assert.ok(headers.get('signature'), 'Signature header should be present');
+  });
+
+  it('signs A2A push notification authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/a2a', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: a2aWebhookBody({
+        url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+        authentication: {
+          schemes: ['HMAC-SHA256'],
+          credentials: 'placeholder_secret_min_32_characters_required',
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'A2A webhook auth payload should be signed');
+    assert.ok(headers.get('signature'), 'Signature header should be present');
+  });
+
+  it('does not sign webhook payloads without authentication when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            push_notification_config: {
+              url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.strictEqual(headers.get('signature-input'), null, 'webhook URL alone should not force signing');
+  });
+
+  it('does not sign A2A push notification payloads without authentication when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/a2a', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: a2aWebhookBody({
+        url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.strictEqual(headers.get('signature-input'), null, 'A2A webhook URL alone should not force signing');
+  });
+
+  it('signs reporting webhook authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            reporting_webhook: {
+              url: 'https://buyer.example.com/adcp/reporting',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'reporting webhook auth payload should be signed');
+  });
+
+  it('signs artifact webhook authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            artifact_webhook: {
+              url: 'https://buyer.example.com/adcp/artifacts',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'artifact webhook auth payload should be signed');
+  });
+
+  it('signs account notification config authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'sync_accounts',
+          arguments: {
+            accounts: [
+              {
+                account_id: 'acct_001',
+                notification_configs: [
+                  {
+                    url: 'https://buyer.example.com/adcp/account-notifications',
+                    authentication: {
+                      schemes: ['HMAC-SHA256'],
+                      credentials: 'placeholder_secret_min_32_characters_required',
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'account notification config auth payload should be signed');
+  });
+
+  it('signs when webhook authentication is beyond the traversal budget', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        deeplyNested(
+          {
+            push_notification_config: {
+              authentication: { schemes: ['HMAC-SHA256'], credentials: 'secret' },
+            },
+          },
+          70
+        )
+      ),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'inspection-depth exhaustion should fail closed by signing');
+  });
+
+  it('signs oversized bodies instead of parsing beyond the inspection budget', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: 'x'.repeat(1_048_577),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'oversized body should fail closed by signing');
+  });
+
+  it('routes webhook authentication signing through provider-backed request signing', async () => {
+    const provider = new InMemorySigningProvider({
+      keyid: 'test-ed25519-2026',
+      algorithm: 'ed25519',
+      privateKey: primaryPrivate,
+    });
+    let signCalls = 0;
+    const countingProvider = {
+      keyid: provider.keyid,
+      algorithm: provider.algorithm,
+      fingerprint: provider.fingerprint,
+      sign: async payload => {
+        signCalls += 1;
+        return provider.sign(payload);
+      },
+    };
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = buildAgentSigningFetch({
+      signing: {
+        kind: 'provider',
+        provider: countingProvider,
+        agent_url: 'https://buyer.example.com',
+      },
+      getCapability: () => undefined,
+      upstream,
+    });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            push_notification_config: {
+              url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.strictEqual(signCalls, 1, 'provider should sign webhook auth payload once');
+    assert.ok(headers.get('signature-input'), 'webhook auth payload should be provider-signed');
+    assert.ok(headers.get('signature'), 'Signature header should be present');
   });
 
   it('signs when the capability cache lists the operation as required_for', async () => {

@@ -973,3 +973,60 @@ export function schemaAllowsTopLevelField(toolName: string, field: string, versi
     return true;
   }
 }
+
+/**
+ * Resolve a JSON Schema `default` value by walking a dot-separated property
+ * path through a schema's nested `properties` maps.
+ *
+ * This intentionally does not instantiate AJV's `useDefaults` mutation mode.
+ * Callers decide when a schema default is semantically meaningful for their
+ * runtime object; this helper only reports what the bundled schema declares.
+ *
+ * Fails closed (`undefined`) when the schema is unavailable, the path is not a
+ * concrete properties path, or the target schema node has no `default`.
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function getSchemaDefaultByPath(schemaRef: string, dottedPath: string, version: string = ADCP_VERSION): unknown {
+  try {
+    const s = ensureInit(version);
+    const normalized = normalizeSchemaRef(schemaRef);
+    if (!normalized) return undefined;
+
+    const cacheKey = `schema-ref::${normalized}`;
+    const file = path.join(s.root, normalized);
+    if (!existsSync(file)) return undefined;
+
+    let schema = s.rawSchemas.get(cacheKey);
+    if (!schema) {
+      schema = loadJson(file) as Record<string, unknown>;
+      s.rawSchemas.set(cacheKey, schema);
+    }
+
+    const node = resolveSchemaPropertyPath(schema, dottedPath);
+    if (!node || !Object.prototype.hasOwnProperty.call(node, 'default')) return undefined;
+    return cloneJsonValue((node as { default: unknown }).default);
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveSchemaPropertyPath(
+  schema: Record<string, unknown>,
+  dottedPath: string
+): Record<string, unknown> | undefined {
+  let current: unknown = schema;
+  for (const key of dottedPath.split('.')) {
+    if (!current || typeof current !== 'object') return undefined;
+    const props = (current as Record<string, unknown>).properties;
+    if (!props || typeof props !== 'object') return undefined;
+    if (!Object.prototype.hasOwnProperty.call(props, key)) return undefined;
+    current = (props as Record<string, unknown>)[key];
+  }
+  return current && typeof current === 'object' ? (current as Record<string, unknown>) : undefined;
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}

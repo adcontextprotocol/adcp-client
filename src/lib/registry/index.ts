@@ -1,5 +1,8 @@
 import type {
   ResolvedBrand,
+  BrandHierarchyResolution,
+  BrandHierarchyBulkResolution,
+  ResolveBrandHierarchyOptions,
   ResolvedProperty,
   PropertyInfo,
   RegistryClientConfig,
@@ -44,6 +47,8 @@ import type {
   AgentSearchResponse,
   CrawlRequest,
   CrawlRequestResponse,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   BrandActivity,
   PropertyActivity,
   PolicySummary,
@@ -73,8 +78,14 @@ import type {
   GetAgentStoryboardStatusBulkResponse,
 } from './types';
 
+import { openFeedStream } from './feed-stream';
+import type { FeedStreamQuery, FeedStreamMessage } from './feed-stream';
+
 export type {
   ResolvedBrand,
+  BrandHierarchyResolution,
+  BrandHierarchyBulkResolution,
+  ResolveBrandHierarchyOptions,
   ResolvedProperty,
   PropertyInfo,
   RegistryClientConfig,
@@ -132,6 +143,8 @@ export type {
   FeedQuery,
   AgentSearchQuery,
   CrawlRequest,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   ListPoliciesQuery,
   ListPoliciesResponse,
   ResolvePolicyQuery,
@@ -192,7 +205,34 @@ export type {
 
 // Re-export RegistrySync
 export { RegistrySync } from './sync';
-export type { RegistrySyncConfig, RegistrySyncState, RegistrySyncEvents, AgentFilter } from './sync';
+export type {
+  RegistrySyncConfig,
+  RegistrySyncState,
+  RegistrySyncTransport,
+  RegistrySyncEvents,
+  AgentFilter,
+} from './sync';
+
+// Re-export the feed SSE transport
+export {
+  openFeedStream,
+  parseSseStream,
+  sanitizeStreamText,
+  DEFAULT_MAX_SSE_FRAME_BYTES,
+  FeedStreamError,
+  FeedStreamUnsupportedError,
+  FeedStreamCursorExpiredError,
+  FeedStreamHttpError,
+  FeedStreamParseError,
+} from './feed-stream';
+export type {
+  FeedStreamQuery,
+  FeedStreamMessage,
+  FeedHeartbeat,
+  FeedStreamErrorData,
+  OpenFeedStreamOptions,
+} from './feed-stream';
+export type { FeedFreshness } from './types.generated';
 
 // Re-export CursorStore
 export { InMemoryCursorStore, FileCursorStore } from './cursor-store';
@@ -208,6 +248,7 @@ const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const ERROR_BODY_PREVIEW_CHARS = 200;
 const MAX_BULK_DOMAINS = 100;
+const MAX_BRAND_HIERARCHY_CACHE_ENTRIES = 1000;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
 const COMMUNITY_MIRROR_PLATFORM_RE = /^[a-z0-9_-]{1,64}$/;
 
@@ -272,6 +313,10 @@ export class RegistryClient {
   private readonly hasCustomMaxBodyBytes: boolean;
   private readonly redirect: 'follow' | 'error';
   private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly brandHierarchyCache = new Map<
+    string,
+    { expiresAt: number; value: BrandHierarchyResolution | null }
+  >();
 
   constructor(config?: RegistryClientConfig) {
     this.baseUrl = (config?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
@@ -316,6 +361,97 @@ export class RegistryClient {
     }
     const data = await this.post(`${this.baseUrl}/api/brands/resolve/bulk`, { domains });
     return data.results;
+  }
+
+  /**
+   * Resolve a domain to its ordered corporate brand hierarchy.
+   *
+   * The returned `chain` is ordered from the resolved brand itself through each
+   * parent to the house brand. A 404 from the registry returns `null`.
+   */
+  async resolveBrandHierarchy(
+    domain: string,
+    options?: ResolveBrandHierarchyOptions
+  ): Promise<BrandHierarchyResolution | null> {
+    const normalizedDomain = this.normalizeBrandHierarchyDomain(domain);
+    const ttlMs = this.resolveBrandHierarchyCacheTtlMs(options);
+    const cacheKey = this.brandHierarchyCacheKey(normalizedDomain);
+    const cached = this.getCachedBrandHierarchy(cacheKey, options, ttlMs);
+    if (cached !== undefined) return cached;
+
+    const params = new URLSearchParams({ domain: normalizedDomain });
+    if (options?.fresh) params.set('fresh', 'true');
+    const value = await this.get<BrandHierarchyResolution | null>(`${this.baseUrl}/api/brands/hierarchy?${params}`, {
+      nullOn404: true,
+    });
+    this.setCachedBrandHierarchy(cacheKey, value, options, ttlMs);
+    return this.cloneBrandHierarchy(value);
+  }
+
+  /**
+   * Resolve up to 100 domains to ordered corporate brand hierarchies.
+   *
+   * Results are keyed by the caller-supplied domain. Unknown domains map to
+   * `null`, matching `lookupBrands()`.
+   */
+  async resolveBrandHierarchies(
+    domains: string[],
+    options?: ResolveBrandHierarchyOptions
+  ): Promise<Record<string, BrandHierarchyResolution | null>> {
+    if (domains.length === 0) return {};
+    if (domains.length > MAX_BULK_DOMAINS) {
+      throw new Error(`Cannot resolve more than ${MAX_BULK_DOMAINS} domains at once (got ${domains.length})`);
+    }
+    const normalizedDomains = domains.map(domain => this.normalizeBrandHierarchyDomain(domain));
+    const ttlMs = this.resolveBrandHierarchyCacheTtlMs(options);
+
+    const results: Record<string, BrandHierarchyResolution | null> = Object.create(null);
+    const unresolved: string[] = [];
+    const unresolvedInputsByKey = new Map<string, string[]>();
+
+    for (let i = 0; i < domains.length; i++) {
+      const domain = domains[i]!;
+      const normalizedDomain = normalizedDomains[i]!;
+      const cacheKey = this.brandHierarchyCacheKey(normalizedDomain);
+      const cached = this.getCachedBrandHierarchy(cacheKey, options, ttlMs);
+      if (cached !== undefined) {
+        results[domain] = cached;
+        continue;
+      }
+      const inputs = unresolvedInputsByKey.get(cacheKey);
+      if (inputs) {
+        inputs.push(domain);
+      } else {
+        unresolved.push(normalizedDomain);
+        unresolvedInputsByKey.set(cacheKey, [domain]);
+      }
+    }
+
+    if (unresolved.length > 0) {
+      const body: { domains: string[]; fresh?: boolean } = { domains: unresolved };
+      if (options?.fresh) body.fresh = true;
+      const data = await this.post<BrandHierarchyBulkResolution>(`${this.baseUrl}/api/brands/hierarchy/bulk`, body);
+      if (!data || typeof data !== 'object' || !data.results || typeof data.results !== 'object') {
+        throw new Error('Registry hierarchy bulk response missing results');
+      }
+      const matchedKeys = new Set<string>();
+      for (const [domain, value] of Object.entries(data.results)) {
+        const cacheKey = this.brandHierarchyCacheKey(domain);
+        const inputs = unresolvedInputsByKey.get(cacheKey);
+        if (!inputs) continue;
+        matchedKeys.add(cacheKey);
+        for (const input of inputs) {
+          results[input] = this.cloneBrandHierarchy(value);
+        }
+        this.setCachedBrandHierarchy(cacheKey, value, options, ttlMs);
+      }
+      for (const [cacheKey, inputs] of unresolvedInputsByKey.entries()) {
+        if (matchedKeys.has(cacheKey)) continue;
+        throw new Error(`Registry hierarchy bulk response missing result for ${inputs[0]}`);
+      }
+    }
+
+    return results;
   }
 
   /** List brands in the registry with optional search and pagination. */
@@ -1005,7 +1141,42 @@ export class RegistryClient {
     if (options?.types) params.set('types', options.types);
     if (options?.limit != null) params.set('limit', String(options.limit));
     const qs = params.toString();
-    return this.get(`${this.baseUrl}/api/registry/feed${qs ? '?' + qs : ''}`);
+    const url = `${this.baseUrl}/api/registry/feed${qs ? '?' + qs : ''}`;
+    const { res, text } = await this.requestText(url, { headers: this.getHeaders() });
+    if (res.status === 410) {
+      // Cursor aged out of the 90-day retention window. Surface as a recoverable
+      // signal so callers re-bootstrap instead of treating it as a hard error.
+      return { events: [], cursor: null, has_more: false, cursor_expired: true };
+    }
+    if (!res.ok) {
+      throw new Error(`Registry request failed (${res.status}): ${this.preview(text)}`);
+    }
+    return this.parseJson(text);
+  }
+
+  /**
+   * Stream the registry change feed over Server-Sent Events
+   * (`GET /api/registry/feed/stream`).
+   *
+   * Yields typed `feed` / `heartbeat` / `error` messages until the stream
+   * closes. The connection is long-lived — no body-size cap or request timeout
+   * applies; pass an `AbortSignal` to close it. Cursor state lives in the `feed`
+   * page payloads: persist `page.cursor` and reconnect with `{ cursor }`.
+   *
+   * Requires authentication. Most consumers should use `RegistrySync` with
+   * `transport: 'auto'`, which layers reconnect, polling fallback, and
+   * cursor-expiry recovery on top of this method.
+   */
+  streamFeed(query?: FeedStreamQuery, init?: { signal?: AbortSignal }): AsyncGenerator<FeedStreamMessage> {
+    if (!this.apiKey) throw new Error('apiKey is required for feed stream access');
+    return openFeedStream({
+      fetchImpl: this.fetchImpl,
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      query,
+      redirect: this.redirect,
+      signal: init?.signal,
+    });
   }
 
   /**
@@ -1044,6 +1215,20 @@ export class RegistryClient {
     if (!domain?.trim()) throw new Error('domain is required');
     if (!this.apiKey) throw new Error('apiKey is required for crawl requests');
     return this.post(`${this.baseUrl}/api/registry/crawl-request`, { domain });
+  }
+
+  /**
+   * Request fan-out re-validation for publishers delegating to a manager domain.
+   * Use after rotating a manager's adagents.json so MANAGERDOMAIN publishers
+   * are queued without waiting for the next routine crawl cycle.
+   *
+   * Requires authentication.
+   */
+  async requestManagerRevalidation(managerDomain: string): Promise<ManagerRevalidationResponse> {
+    if (!managerDomain?.trim()) throw new Error('managerDomain is required');
+    if (!this.apiKey) throw new Error('apiKey is required for manager revalidation requests');
+    const body: ManagerRevalidationRequest = { manager_domain: managerDomain };
+    return this.post(`${this.baseUrl}/api/registry/manager-revalidation-request`, body);
   }
 
   // ====== Policy Management ======
@@ -1211,6 +1396,68 @@ export class RegistryClient {
       throw new Error('platform must match ^[a-z0-9_-]{1,64}$');
     }
     return normalizedPlatform;
+  }
+
+  private brandHierarchyCacheKey(domain: string): string {
+    return domain.trim().toLowerCase();
+  }
+
+  private normalizeBrandHierarchyDomain(domain: string): string {
+    const normalized = domain?.trim();
+    if (!normalized) throw new Error('domain is required');
+    if (normalized.length > 253) throw new Error('domain must be 253 characters or fewer');
+    return normalized;
+  }
+
+  private resolveBrandHierarchyCacheTtlMs(options: ResolveBrandHierarchyOptions | undefined): number | undefined {
+    if (options?.ttlMs == null) return undefined;
+    if (!Number.isFinite(options.ttlMs) || options.ttlMs < 0) {
+      throw new Error('ttlMs must be a finite non-negative number');
+    }
+    return options.ttlMs;
+  }
+
+  private getCachedBrandHierarchy(
+    cacheKey: string,
+    options: ResolveBrandHierarchyOptions | undefined,
+    ttlMs: number | undefined
+  ): BrandHierarchyResolution | null | undefined {
+    if (options?.fresh || ttlMs == null || ttlMs === 0) return undefined;
+    const cached = this.brandHierarchyCache.get(cacheKey);
+    if (!cached) return undefined;
+    if (cached.expiresAt <= Date.now()) {
+      this.brandHierarchyCache.delete(cacheKey);
+      return undefined;
+    }
+    this.brandHierarchyCache.delete(cacheKey);
+    this.brandHierarchyCache.set(cacheKey, cached);
+    return this.cloneBrandHierarchy(cached.value);
+  }
+
+  private setCachedBrandHierarchy(
+    cacheKey: string,
+    value: BrandHierarchyResolution | null,
+    options: ResolveBrandHierarchyOptions | undefined,
+    ttlMs: number | undefined
+  ): void {
+    if (ttlMs == null || ttlMs === 0) {
+      if (options?.fresh) this.brandHierarchyCache.delete(cacheKey);
+      return;
+    }
+    this.brandHierarchyCache.delete(cacheKey);
+    this.brandHierarchyCache.set(cacheKey, {
+      expiresAt: Date.now() + ttlMs,
+      value: this.cloneBrandHierarchy(value),
+    });
+    while (this.brandHierarchyCache.size > MAX_BRAND_HIERARCHY_CACHE_ENTRIES) {
+      const oldest = this.brandHierarchyCache.keys().next().value;
+      if (oldest == null) break;
+      this.brandHierarchyCache.delete(oldest);
+    }
+  }
+
+  private cloneBrandHierarchy(value: BrandHierarchyResolution | null): BrandHierarchyResolution | null {
+    return value == null ? null : { ...value, chain: value.chain.map(brand => ({ ...brand })) };
   }
 
   private resolveCommunityMirrorPublishArgs(

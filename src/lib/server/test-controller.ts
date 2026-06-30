@@ -139,6 +139,7 @@ export type ControllerScenario = ListScenariosSuccess['scenarios'][number];
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
 export type SeedScenario =
+  | 'seed_account'
   | 'seed_product'
   | 'seed_pricing_option'
   | 'seed_creative'
@@ -178,6 +179,7 @@ export const CONTROLLER_SCENARIOS = {
  * advertised via `list_scenarios`.
  */
 export const SEED_SCENARIOS = {
+  SEED_ACCOUNT: 'seed_account',
   SEED_PRODUCT: 'seed_product',
   SEED_PRICING_OPTION: 'seed_pricing_option',
   SEED_CREATIVE: 'seed_creative',
@@ -383,6 +385,9 @@ export interface TestControllerStore {
     spend_percentage: number;
     [key: string]: unknown;
   }): Promise<SimulationSuccess>;
+
+  /** Seed an account fixture. Returns when the fixture is persisted. */
+  seedAccount?(accountId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 
   /** Seed a product fixture. Returns when the fixture is persisted. */
   seedProduct?(productId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
@@ -648,6 +653,7 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceCreativePurge', CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE],
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
+  ['seedAccount', SEED_SCENARIOS.SEED_ACCOUNT],
   ['seedProduct', SEED_SCENARIOS.SEED_PRODUCT],
   ['seedPricingOption', SEED_SCENARIOS.SEED_PRICING_OPTION],
   ['seedCreative', SEED_SCENARIOS.SEED_CREATIVE],
@@ -897,6 +903,20 @@ async function dispatchSeed(
   let missingParam: string | null = null;
 
   switch (scenario) {
+    case SEED_SCENARIOS.SEED_ACCOUNT: {
+      if (!params?.account_id) {
+        missingParam = 'seed_account requires params.account_id';
+        break;
+      }
+      if (!store.seedAccount) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const accountId = params.account_id as string;
+      dispatch = {
+        key: makeSeedCacheKey(`seed_account:${accountId}`, scope),
+        fixture,
+        invoke: () => store.seedAccount!(accountId, fixture),
+      };
+      break;
+    }
     case SEED_SCENARIOS.SEED_PRODUCT: {
       if (!params?.product_id) {
         missingParam = 'seed_product requires params.product_id';
@@ -1354,6 +1374,7 @@ async function handleTestControllerRequestImpl(
         return wrapStoreSuccess(await store.forceCreativePurge(creativeId as string, purgeParams));
       }
 
+      case SEED_SCENARIOS.SEED_ACCOUNT:
       case SEED_SCENARIOS.SEED_PRODUCT:
       case SEED_SCENARIOS.SEED_PRICING_OPTION:
       case SEED_SCENARIOS.SEED_CREATIVE:

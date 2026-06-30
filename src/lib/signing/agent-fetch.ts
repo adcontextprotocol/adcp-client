@@ -13,8 +13,10 @@ import {
 } from './capability-cache';
 import type { ContentDigestPolicy, VerifierCapability } from './types';
 import type { SignerKey } from './signer';
+import { containsWebhookAuthentication } from './webhook-auth-detection';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+const MAX_WEBHOOK_AUTH_INSPECTION_BYTES = 1_048_576;
 
 /**
  * Resolve `globalThis.fetch` at the moment of each outbound request — not at
@@ -106,6 +108,26 @@ export function extractAdcpOperation(body: unknown): string | undefined {
 }
 
 /**
+ * Detect webhook receiver credentials in the outbound JSON-RPC payload. The
+ * verifier rejects unsigned requests carrying these credentials regardless of
+ * the seller's operation-level capability advertisement, so the client must
+ * sign them even while the capability cache is cold or silent for that op.
+ * The scan is bounded; if the body exceeds the inspection budget, sign it.
+ */
+function carriesWebhookAuthentication(body: unknown): boolean {
+  const text = bodyToUtf8(body);
+  if (!text) return false;
+  if (text.length > MAX_WEBHOOK_AUTH_INSPECTION_BYTES) return true;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return containsWebhookAuthentication(parsed);
+}
+
+/**
  * Decide whether an outbound AdCP call should be signed given the seller's
  * advertised capability block and the buyer's override list.
  *
@@ -193,12 +215,13 @@ export interface BuildAgentSigningFetchOptions {
 /**
  * Build a fetch wrapper suitable for injection into MCP/A2A transports. On
  * every outbound request:
- *   1. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
+ *   1. Sign immediately when the payload carries webhook authentication.
+ *   2. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
  *      or A2A message/send). Non-AdCP JSON-RPC methods (e.g., `initialize`)
  *      pass through unsigned.
- *   2. Consult the cached seller capability to decide whether to sign.
- *   3. Resolve the seller's content-digest policy into a per-request toggle.
- *   4. Delegate to `createSigningFetch` with the decision baked in.
+ *   3. Consult the cached seller capability to decide whether to sign.
+ *   4. Resolve the seller's content-digest policy into a per-request toggle.
+ *   5. Delegate to `createSigningFetch` with the decision baked in.
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
@@ -210,6 +233,7 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
+    if (carriesWebhookAuthentication(init?.body)) return true;
     const operation = extractAdcpOperation(init?.body);
     const entry = getCapability();
     return shouldSignOperation(operation, entry?.requestSigning, signing);

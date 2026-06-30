@@ -87,6 +87,16 @@ components:
         - canonical_domain
         - brand_name
         - source
+    BrandHierarchyResolution:
+      type: object
+      properties:
+        chain:
+          type: array
+          description: Ordered corporate brand chain from the resolved brand itself through each parent to the house brand.
+          items:
+            $ref: "#/components/schemas/ResolvedBrand"
+      required:
+        - chain
     LocalizedName:
       type: object
       additionalProperties:
@@ -3399,6 +3409,85 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /api/brands/hierarchy:
+    get:
+      operationId: resolveBrandHierarchy
+      summary: Resolve brand hierarchy
+      description: Resolve a domain to its ordered corporate brand hierarchy, from self through parents to house.
+      tags:
+        - Brand Resolution
+      parameters:
+        - schema:
+            type: string
+            example: acmecorp.com
+          required: true
+          name: domain
+          in: query
+        - schema:
+            type: string
+            enum:
+              - "true"
+              - "false"
+          required: false
+          name: fresh
+          in: query
+      responses:
+        "200":
+          description: Brand hierarchy resolved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrandHierarchyResolution"
+        "404":
+          description: Brand not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/brands/hierarchy/bulk:
+    post:
+      operationId: resolveBrandHierarchies
+      summary: Bulk resolve brand hierarchies
+      description: Resolve up to 100 domains to ordered corporate brand hierarchies in a single request.
+      tags:
+        - Brand Resolution
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domains:
+                  type: array
+                  items:
+                    type: string
+                  maxItems: 100
+                fresh:
+                  type: boolean
+              required:
+                - domains
+      responses:
+        "200":
+          description: Bulk hierarchy resolution results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: "#/components/schemas/BrandHierarchyResolution"
+                        - type: "null"
+                required:
+                  - results
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/brands/brand-json:
     get:
       operationId: getBrandJson
@@ -6496,7 +6585,7 @@ paths:
       operationId: getRegistryFeed
       summary: Registry change feed
       description: |-
-        Poll a cursor-based feed of registry changes. Events are ordered by UUID v7 event_id for monotonic cursor progression. The feed retains events for 90 days.
+        Poll a cursor-based feed of registry changes. Events are ordered by UUID v7 event_id for monotonic cursor progression. The feed retains events for 90 days. The `freshness` object reports when the response was generated, the newest matching event currently visible to the feed, and the resulting feed lag.
 
         Type filtering supports glob patterns: `property.*` matches `property.created`, `property.updated`, etc.
       tags:
@@ -6578,10 +6667,39 @@ paths:
                     description: Pass as cursor in the next request to continue polling
                   has_more:
                     type: boolean
+                  freshness:
+                    type: object
+                    properties:
+                      generated_at:
+                        type: string
+                        format: date-time
+                        description: Server timestamp when this feed page was generated.
+                      latest_event_created_at:
+                        type:
+                          - string
+                          - "null"
+                        format: date-time
+                        description: Newest event creation timestamp currently visible in the feed for the requested type filter. Null when no matching event exists inside retention.
+                      lag_seconds:
+                        type:
+                          - integer
+                          - "null"
+                        minimum: 0
+                        description: Seconds between generated_at and latest_event_created_at. Null when no matching event exists.
+                      retention_days:
+                        type: integer
+                        exclusiveMinimum: 0
+                        description: Number of days the registry retains feed cursors and events.
+                    required:
+                      - generated_at
+                      - latest_event_created_at
+                      - lag_seconds
+                      - retention_days
                 required:
                   - events
                   - cursor
                   - has_more
+                  - freshness
         "400":
           description: Invalid cursor format or type filter
           content:
@@ -6596,6 +6714,87 @@ paths:
                 $ref: "#/components/schemas/Error"
         "410":
           description: Cursor expired (older than 90-day retention window)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum:
+                      - cursor_expired
+                  message:
+                    type: string
+                required:
+                  - error
+                  - message
+  /api/registry/feed/stream:
+    get:
+      operationId: streamRegistryFeed
+      summary: Registry change feed stream
+      description: "Subscribe to registry feed pages over Server-Sent Events. This is a push-friendly transport for the same cursor contract as `/api/registry/feed`: clients still persist `cursor`, apply only feed events, and recover from `cursor_expired` by re-bootstrapping. The stream emits `feed` events containing a full feed page, `heartbeat` events while caught up, and `error` before closing when the cursor expires or the server cannot query the feed."
+      tags:
+        - Change Feed
+      security:
+        - bearerAuth: []
+        - oauth2: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+            description: Resume after this event ID
+          required: false
+          description: Resume after this event ID
+          name: cursor
+          in: query
+        - schema:
+            type: string
+            description: Comma-separated event type filters with glob support (e.g. property.*)
+            example: authorization.*,publisher.adagents_changed
+          required: false
+          description: Comma-separated event type filters with glob support (e.g. property.*)
+          name: types
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            description: Max events per SSE feed page (default 100, max 10,000)
+          required: false
+          description: Max events per SSE feed page (default 100, max 10,000)
+          name: limit
+          in: query
+        - schema:
+            type: integer
+            minimum: 5
+            maximum: 60
+            description: Server-side interval while caught up (default 15 seconds). Backlog pages are sent without waiting.
+          required: false
+          description: Server-side interval while caught up (default 15 seconds). Backlog pages are sent without waiting.
+          name: poll_interval_seconds
+          in: query
+      responses:
+        "200":
+          description: "SSE stream. `event: feed` data validates as a registry feed page."
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events stream. `feed` events carry JSON matching the RegistryFeedPage schema; `heartbeat` events carry `{ generated_at, cursor }`.
+        "400":
+          description: Invalid cursor format, type filter, limit, or poll interval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Initial cursor expired
           content:
             application/json:
               schema:
@@ -8349,7 +8548,7 @@ paths:
                         description: Fresh test session id used for the compliance run. Useful when matching seller-side logs to the refresh.
                       requested_compliance_target:
                         type: string
-                        description: Requested compliance target before alias resolution, e.g. 3.0, 3.1-rc, or 3.1-beta. Present when `ran` is true.
+                        description: Requested compliance target before alias resolution, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta. Present when `ran` is true.
                       adcp_version:
                         type: string
                         description: Concrete AdCP compliance bundle version used for the run, e.g. 3.0.12 or 3.1.0-beta.7. Present when `ran` is true.
@@ -8966,9 +9165,9 @@ paths:
           in: query
         - schema:
             type: string
-            description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+            description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           required: false
-          description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+          description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           name: compliance_target
           in: query
       responses:
@@ -9017,9 +9216,9 @@ paths:
           in: path
         - schema:
             type: string
-            description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+            description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           required: false
-          description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+          description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           name: compliance_target
           in: query
       responses:
@@ -9487,9 +9686,9 @@ paths:
           in: path
         - schema:
             type: string
-            description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+            description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           required: false
-          description: Compliance target to inspect, e.g. 3.0, 3.1-rc, or 3.1-beta
+          description: Compliance target to inspect, e.g. 3.1, 3.0, 3.1-rc, or 3.1-beta
           name: compliance_target
           in: query
       responses:
@@ -10116,7 +10315,7 @@ paths:
 
         - **Already-active conflict**: the org exists and is already claimed by another paying member or a previously joined user. Returns `409` with the existing org id so the caller can switch to a join-request flow (`POST /api/organizations/:orgId/join-requests`) instead of trying to register a duplicate.
 
-        Tier transitions happen via the billing flow only — there is no `membership_tier` field on this endpoint. After org creation, send the user to `POST /api/checkout-session` (or the dashboard `/membership` page) to start a subscription; the Stripe webhook is the sole writer of `organizations.membership_tier`.
+        Tier transitions happen via the billing flow only — there is no `membership_tier` field on this endpoint. After org creation, send the user to `POST /api/checkout-session` (or the `/dashboard/membership` page) to start a subscription; the Stripe webhook is the sole writer of `organizations.membership_tier`.
 
         Rate-limited per user: `15` failed attempts per hour; successful calls do not count against the limit so a legitimate registration is never penalized by earlier validation errors.
       tags:

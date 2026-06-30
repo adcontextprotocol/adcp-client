@@ -650,6 +650,29 @@ Build a registry service that:
 
 Library provides discovery logic - you add persistence layer.
 
+### Brand Hierarchy Resolution
+
+Use `RegistryClient.resolveBrandHierarchy()` when rules need the ordered corporate chain for a brand domain. The chain is ordered from the resolved brand itself to the house brand, so nearest-ancestor matching can scan from left to right.
+
+```ts
+import { RegistryClient, RegistrySync } from '@adcp/sdk';
+
+const registry = new RegistryClient({ apiKey: process.env.ADCP_REGISTRY_API_KEY });
+
+const brand = await registry.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+const domains = brand?.chain.map(node => node.canonical_domain) ?? [];
+
+const both = await registry.resolveBrandHierarchies(['wpp-spain.com', 'operator.example'], { ttlMs: 60_000 });
+
+const sync = new RegistrySync({ client: registry });
+await sync.start();
+const ancestors = sync.getAncestors('wpp-spain.com'); // self -> parents -> house
+```
+
+`ResolvedBrand.parent_brand` is a hierarchy reference, not a portable traversal API. New registry responses use the parent brand's canonical domain when known, but older rows may still carry a portfolio-internal `brand.json` id. Use the hierarchy APIs instead of N+1 walking `parent_brand`.
+
+`RegistrySync` maintains its hierarchy index from registry feed events. On a cold start before a relevant hierarchy event has been applied, call `resolveBrandHierarchy()` for a one-off read and treat `getAncestors()` as the zero-latency mirror once the feed has populated that domain.
+
 ### Community Mirror `adagents.json` Catalogs
 
 Use `buildCommunityMirrorAdagents()` when publishing catalog-only AAO/community mirrors for platforms that have not adopted AdCP or published seller-authorized files yet. The helper emits `authorized_agents: []` and refuses caller-supplied authorization entries, so format and placement metadata cannot be mistaken for a seller authorization claim.

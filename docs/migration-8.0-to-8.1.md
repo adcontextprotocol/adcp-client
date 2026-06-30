@@ -21,6 +21,9 @@
   warning because beta.5 sellers reject `capability_ids`.
 - Treat `PROPOSAL_NOT_FOUND` as correctable. Projection diagnostics now report
   `format_option_id` rather than the beta.3 `capability_id` name.
+- Fully migrated off `format_ids[]`? Use `toCanonicalOnlyProduct` /
+  `toCanonicalOnlyResponse` to drop them — diagnostics flag any ref that
+  didn't project, so dropping legacy never silently loses a format.
 - For webhook receivers, move to RFC 9421 verification and a shared replay
   store before running more than one replica. See
   [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.md).
@@ -332,6 +335,32 @@ Do not put `format_id` on `product_card`. Product cards describe the product UI;
 creative acceptance lives in `format_options[]` and the v1 fallback
 `format_ids[]`.
 
+### Reading canonical-only (dropping the legacy `format_ids[]`)
+
+`withFormatOptions` / `augmentProductWithFormatOptions` are **additive** — they
+add `format_options[]` but preserve `format_ids[]` for back-compat. Once a
+consumer has fully migrated, that preserved `format_ids[]` is a foot-gun: naive
+downstream code keeps reading the stale `{ agent_url, id }` shape and silently
+bypasses the canonical model. `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse`
+are the canonical-only counterparts — `format_options[]` only, `format_ids[]`
+dropped:
+
+```ts
+import { toCanonicalOnlyResponse } from '@adcp/sdk';
+
+const { response, diagnostics } = toCanonicalOnlyResponse(getProductsResponse);
+// response.products[i] has format_options[] and NO format_ids[]
+if (diagnostics.length > 0) logger.warn('Dropped legacy refs that did not project', diagnostics);
+```
+
+Dropping legacy never silently loses a format. Every input `format_id` is either
+represented in `format_options[]` or surfaced in `diagnostics` —
+`FORMAT_PROJECTION_FAILED` on the v1→v2 projection path, or
+`LEGACY_FORMAT_ID_DROPPED_UNMAPPED` when a v2-native product carries a
+`format_ids[]` entry no `format_options[].v1_format_ref` covers. Keep
+`withFormatOptions` while you still read `format_ids[]`; switch to
+`toCanonicalOnly*` when you no longer do.
+
 Buyer/write-side migration:
 
 ```ts
@@ -350,6 +379,47 @@ await agent.createMediaBuy({
   }],
 });
 ```
+
+### Resolving a bare format-id persisted before the `{ agent_url, id }` convention
+
+If you stored bare format-id strings (`display_300x250_image`,
+`video_standard_30s`) before the structured-ref convention and maintain a local
+`inferFormatKindFromFormatId` heuristic, delete it. `resolveCanonicalFormatKind`
+and `canonicalDeclarationFromBareId` resolve a bare id against the same catalog +
+registry the projection uses — one source of truth instead of a heuristic that
+drifts from the canonical registry:
+
+```ts
+import { resolveCanonicalFormatKind, canonicalDeclarationFromBareId } from '@adcp/sdk';
+
+resolveCanonicalFormatKind('display_300x250_image'); // 'image'
+resolveCanonicalFormatKind('video_standard_30s'); // 'video_hosted'
+
+// Lift a bare id to a full v2 declaration carrying v1_format_ref in one step:
+const decl = canonicalDeclarationFromBareId('display_300x250_image');
+// decl.format_kind === 'image'
+// decl.v1_format_ref === [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }]
+```
+
+Both fail closed — they return `null`, never a guess, for an unknown id, an
+under-specified id (`display_300x250`, which the catalog only carries as
+`_image` / `_html` / `_generative` variants), or an id from a non-AAO catalog.
+
+If you hold the asset type (e.g. a `format_type` field), pass `assetType`
+to disambiguate an under-specified id — the resolver retries the catalog
+variant `<id>_<suffix>` instead of you re-deriving the suffix:
+
+```ts
+resolveCanonicalFormatKind('display_300x250', { assetType: 'image' }); // 'image'
+resolveCanonicalFormatKind('display_300x250', { assetType: 'html' }); // 'html5'
+resolveCanonicalFormatKind('display', { assetType: 'javascript' }); // 'display_tag'
+// canonical-kind aliases work too: 'html5' → '_html', 'display_tag' → '_js'.
+// Still fails closed if <id>_<suffix> isn't a catalog entry.
+```
+
+Pass `{ agentUrl }` when the bare id was minted under a different agent's
+catalog. For the structured diagnostic explaining _why_ an id didn't resolve,
+run it through `projectV1ProductToV2` inside a one-format product.
 
 `ListCreativeFormatsPayload` is the canonical alias for the server handler
 payload shape of `list_creative_formats`. `ListCreativeFormatsResponsePayload`
@@ -434,5 +504,7 @@ Full recipe: [Verifying inbound webhooks](./recipes/verifying-inbound-webhooks.m
   `ensureGetProductsCacheScope()` before caching.
 - [ ] Products that support canonical creative formats publish `format_options[]`
   and keep `format_ids[]` only as the v1 fallback.
+- [ ] Fully-migrated readers use `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse`
+  instead of `withFormatOptions`, and surface the diagnostics those return.
 - [ ] Webhook receivers capture raw body bytes and verify before processing.
 - [ ] Multi-replica webhook receivers use Redis/Postgres replay storage.
