@@ -2441,6 +2441,7 @@ function deriveScenariosFromAdapters(
   if (cfg.force?.creative_purge) out.push('force_creative_purge');
   if (cfg.simulate?.delivery) out.push('simulate_delivery');
   if (cfg.simulate?.budget_spend) out.push('simulate_budget_spend');
+  if (cfg.seed?.account) out.push('seed_account');
   if (cfg.seed?.product) out.push('seed_product');
   if (cfg.seed?.pricing_option) out.push('seed_pricing_option');
   if (cfg.seed?.creative) out.push('seed_creative');

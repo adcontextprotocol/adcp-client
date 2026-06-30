@@ -130,7 +130,8 @@ export class GovernanceMiddleware {
      * to the SDK constant — same shape as a no-pin call.
      */
     private adcpVersion?: string,
-    private versionEnvelope?: import('../protocols').VersionEnvelopeMode
+    private versionEnvelope?: import('../protocols').VersionEnvelopeMode,
+    private onTransportActivity?: import('../protocols').TransportActivityHandler
   ) {}
 
   /**
@@ -216,6 +217,7 @@ export class GovernanceMiddleware {
         debugLogs,
         adcpVersion: this.adcpVersion,
         ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
+        onTransportActivity: this.onTransportActivity,
       });
 
       // Unwrap protocol response (MCP text content, structuredContent, A2A artifacts)
@@ -338,6 +340,12 @@ export class GovernanceMiddleware {
           debugLogs,
           adcpVersion: this.adcpVersion,
           ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
+          onTransportActivity: this.onTransportActivity,
+          transportActivityContext: {
+            operationId: checkId,
+            taskId: checkId,
+            idempotencyKey,
+          },
         }
       );
 

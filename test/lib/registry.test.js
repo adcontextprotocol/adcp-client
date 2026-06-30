@@ -20,6 +20,36 @@ const BRAND = {
   source: 'brand_json',
 };
 
+const BRAND_HIERARCHY = {
+  chain: [
+    {
+      canonical_id: 'wpp-spain.com',
+      canonical_domain: 'wpp-spain.com',
+      brand_name: 'WPP Spain',
+      keller_type: 'sub_brand',
+      parent_brand: 'brand_wpp',
+      house_domain: 'omnicom.com',
+      source: 'brand_json',
+    },
+    {
+      canonical_id: 'wpp.com',
+      canonical_domain: 'wpp.com',
+      brand_name: 'WPP',
+      keller_type: 'sub_brand',
+      parent_brand: 'brand_omnicom',
+      house_domain: 'omnicom.com',
+      source: 'brand_json',
+    },
+    {
+      canonical_id: 'omnicom.com',
+      canonical_domain: 'omnicom.com',
+      brand_name: 'Omnicom',
+      keller_type: 'master',
+      source: 'brand_json',
+    },
+  ],
+};
+
 const PROPERTY = {
   publisher_domain: 'nytimes.com',
   source: 'adagents_json',
@@ -179,6 +209,265 @@ describe('RegistryClient', () => {
           return true;
         }
       );
+    });
+  });
+
+  // ============ resolveBrandHierarchy ============
+
+  describe('resolveBrandHierarchy', () => {
+    test('resolves a domain to an ordered brand chain', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(BRAND_HIERARCHY), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchy('wpp-spain.com');
+
+      assert.ok(capturedUrl.includes('/api/brands/hierarchy?'));
+      assert.ok(capturedUrl.includes('domain=wpp-spain.com'));
+      assert.deepStrictEqual(
+        result.chain.map(brand => brand.canonical_domain),
+        ['wpp-spain.com', 'wpp.com', 'omnicom.com']
+      );
+    });
+
+    test('returns null on 404', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Brand not found' }), { status: 404 });
+      });
+
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchy('unknown.com');
+
+      assert.strictEqual(result, null);
+    });
+
+    test('uses client-side ttl cache when requested', async () => {
+      let fetchCount = 0;
+      restore = mockFetch(async () => {
+        fetchCount++;
+        return new Response(JSON.stringify(BRAND_HIERARCHY), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.resolveBrandHierarchy('WPP-Spain.com', { ttlMs: 60_000 });
+      await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+
+      assert.strictEqual(fetchCount, 1);
+    });
+
+    test('cached hierarchy entries cannot be mutated by callers', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify(BRAND_HIERARCHY), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      const first = await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+      first.chain[0].brand_name = 'Mutated';
+      const second = await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+      second.chain[0].brand_name = 'Also Mutated';
+      const third = await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+
+      assert.strictEqual(third.chain[0].brand_name, 'WPP Spain');
+    });
+
+    test('fresh bypasses and refreshes ttl cache', async () => {
+      let fetchCount = 0;
+      restore = mockFetch(async url => {
+        fetchCount++;
+        if (fetchCount === 2) assert.ok(url.includes('fresh=true'));
+        return new Response(JSON.stringify(BRAND_HIERARCHY), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+      await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000, fresh: true });
+
+      assert.strictEqual(fetchCount, 2);
+    });
+
+    test('fresh without ttl clears an existing cache entry', async () => {
+      let fetchCount = 0;
+      restore = mockFetch(async () => {
+        fetchCount++;
+        return new Response(
+          JSON.stringify({
+            chain: [{ ...BRAND_HIERARCHY.chain[0], brand_name: `WPP Spain v${fetchCount}` }],
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+      const fresh = await client.resolveBrandHierarchy('wpp-spain.com', { fresh: true });
+      const next = await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+
+      assert.strictEqual(fresh.chain[0].brand_name, 'WPP Spain v2');
+      assert.strictEqual(next.chain[0].brand_name, 'WPP Spain v3');
+      assert.strictEqual(fetchCount, 3);
+    });
+
+    test('rejects invalid ttl values', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: Infinity }), {
+        message: /ttlMs/,
+      });
+      await assert.rejects(() => client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: -1 }), {
+        message: /ttlMs/,
+      });
+    });
+
+    test('rejects empty domain', async () => {
+      const client = new RegistryClient();
+      await assert.rejects(() => client.resolveBrandHierarchy(''), { message: /domain is required/ });
+    });
+  });
+
+  // ============ resolveBrandHierarchies ============
+
+  describe('resolveBrandHierarchies', () => {
+    test('bulk resolves ordered brand chains', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/brands/hierarchy/bulk'));
+        assert.strictEqual(opts.method, 'POST');
+        const body = JSON.parse(opts.body);
+        assert.deepStrictEqual(body.domains, ['wpp-spain.com', 'unknown.com']);
+        return new Response(
+          JSON.stringify({
+            results: {
+              'wpp-spain.com': BRAND_HIERARCHY,
+              'unknown.com': null,
+            },
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchies(['wpp-spain.com', 'unknown.com']);
+
+      assert.strictEqual(result['wpp-spain.com'].chain[0].canonical_domain, 'wpp-spain.com');
+      assert.strictEqual(result['unknown.com'], null);
+    });
+
+    test('returns empty object for empty array', async () => {
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchies([]);
+
+      assert.deepStrictEqual(result, {});
+    });
+
+    test('rejects more than 100 domains', async () => {
+      const client = new RegistryClient();
+      const domains = Array.from({ length: 101 }, (_, i) => `domain${i}.com`);
+
+      await assert.rejects(
+        () => client.resolveBrandHierarchies(domains),
+        err => {
+          assert.ok(err.message.includes('100'));
+          return true;
+        }
+      );
+    });
+
+    test('uses cached entries and fetches only missing domains', async () => {
+      const posts = [];
+      restore = mockFetch(async (url, opts) => {
+        if (url.includes('/api/brands/hierarchy?')) {
+          return new Response(JSON.stringify(BRAND_HIERARCHY), { status: 200 });
+        }
+        posts.push(JSON.parse(opts.body));
+        return new Response(
+          JSON.stringify({
+            results: {
+              'operator.com': {
+                chain: [
+                  {
+                    canonical_id: 'operator.com',
+                    canonical_domain: 'operator.com',
+                    brand_name: 'Operator',
+                    source: 'brand_json',
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      await client.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
+      const result = await client.resolveBrandHierarchies(['wpp-spain.com', 'operator.com'], { ttlMs: 60_000 });
+
+      assert.deepStrictEqual(posts[0].domains, ['operator.com']);
+      assert.strictEqual(result['wpp-spain.com'].chain[0].canonical_domain, 'wpp-spain.com');
+      assert.strictEqual(result['operator.com'].chain[0].canonical_domain, 'operator.com');
+    });
+
+    test('deduplicates bulk cache misses while preserving caller keys', async () => {
+      const posts = [];
+      restore = mockFetch(async (_url, opts) => {
+        posts.push(JSON.parse(opts.body));
+        return new Response(
+          JSON.stringify({
+            results: {
+              'WPP-Spain.com': BRAND_HIERARCHY,
+            },
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchies(['WPP-Spain.com', 'wpp-spain.com']);
+
+      assert.deepStrictEqual(posts[0].domains, ['WPP-Spain.com']);
+      assert.strictEqual(result['WPP-Spain.com'].chain[0].canonical_domain, 'wpp-spain.com');
+      assert.strictEqual(result['wpp-spain.com'].chain[0].canonical_domain, 'wpp-spain.com');
+    });
+
+    test('throws when bulk response is missing results', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({}), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(() => client.resolveBrandHierarchies(['wpp-spain.com']), { message: /missing results/ });
+    });
+
+    test('throws when bulk response omits a requested domain', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ results: {} }), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await assert.rejects(() => client.resolveBrandHierarchies(['wpp-spain.com']), {
+        message: /missing result for wpp-spain\.com/,
+      });
+    });
+
+    test('ignores unmatched bulk response keys', async () => {
+      restore = mockFetch(async () => {
+        return new Response(
+          JSON.stringify({
+            results: {
+              'wpp-spain.com': BRAND_HIERARCHY,
+              'unrequested.com': BRAND_HIERARCHY,
+            },
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      const result = await client.resolveBrandHierarchies(['wpp-spain.com']);
+
+      assert.strictEqual(result['wpp-spain.com'].chain[0].canonical_domain, 'wpp-spain.com');
+      assert.strictEqual(result['unrequested.com'], undefined);
     });
   });
 
@@ -3008,14 +3297,23 @@ describe('RegistryClient', () => {
     });
 
     test('throws without apiKey', async () => {
-      const client = new RegistryClient();
-      await assert.rejects(
-        () => client.requestCrawl('publisher.example.com'),
-        err => {
-          assert.ok(err.message.includes('apiKey is required'));
-          return true;
-        }
-      );
+      const savedApiKey = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      restore = mockFetch(async () => {
+        throw new Error('unexpected network call');
+      });
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.requestCrawl('publisher.example.com'),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedApiKey;
+      }
     });
 
     test('throws on empty domain', async () => {
@@ -3046,6 +3344,66 @@ describe('RegistryClient', () => {
         () => client.requestCrawl('publisher.example.com'),
         err => {
           assert.ok(err.message.includes('429'));
+          return true;
+        }
+      );
+    });
+  });
+
+  // ============ requestManagerRevalidation ============
+
+  describe('requestManagerRevalidation', () => {
+    test('requests manager fan-out revalidation', async () => {
+      restore = mockFetch(async (url, opts) => {
+        assert.ok(url.includes('/api/registry/manager-revalidation-request'));
+        assert.strictEqual(opts.method, 'POST');
+        const body = JSON.parse(opts.body);
+        assert.strictEqual(body.manager_domain, 'raptive.com');
+        assert.strictEqual(opts.headers.Authorization, 'Bearer test-key');
+        return new Response(
+          JSON.stringify({
+            message: 'Manager re-validation enqueued',
+            manager_domain: 'raptive.com',
+            publishers_enqueued: 42,
+          }),
+          { status: 202 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const result = await client.requestManagerRevalidation('raptive.com');
+
+      assert.strictEqual(result.message, 'Manager re-validation enqueued');
+      assert.strictEqual(result.manager_domain, 'raptive.com');
+      assert.strictEqual(result.publishers_enqueued, 42);
+    });
+
+    test('throws without apiKey', async () => {
+      const savedApiKey = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      restore = mockFetch(async () => {
+        throw new Error('unexpected network call');
+      });
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () => client.requestManagerRevalidation('raptive.com'),
+          err => {
+            assert.ok(err.message.includes('apiKey is required'));
+            return true;
+          }
+        );
+      } finally {
+        if (savedApiKey !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedApiKey;
+      }
+    });
+
+    test('throws on empty managerDomain', async () => {
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      await assert.rejects(
+        () => client.requestManagerRevalidation(''),
+        err => {
+          assert.ok(err.message.includes('managerDomain is required'));
           return true;
         }
       );

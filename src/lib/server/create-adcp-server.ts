@@ -6289,7 +6289,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (ctx !== null && typeof ctx === 'object' && !Array.isArray(ctx)) {
         (data as any).context = ctx;
       }
-      return applyResponseEnhancer(capabilitiesResponse(data));
+      const response = capabilitiesResponse(data);
+      injectVersionIntoResponse(response, servedAdcpVersion);
+      return applyResponseEnhancer(response);
     }) as Parameters<typeof server.registerTool>[2]
   );
   registeredToolNames.add('get_adcp_capabilities');

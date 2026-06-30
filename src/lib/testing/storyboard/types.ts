@@ -95,17 +95,26 @@ export interface Storyboard {
    *     ("Agents that do not advertise support are not tested against
    *     this storyboard — absence of advertisement is not a failure").
    *     Spec: adcp-client#1702.
+   *   - `multi_agent` — the run must be configured with
+   *     `StoryboardRunOptions.agents`, and the storyboard's authored
+   *     route keys (`default_agent` plus any step-level `agent:` overrides)
+   *     must resolve to at least two distinct entries in that agents map.
+   *     This checks the routed topology the storyboard actually declares,
+   *     not the raw number of available agents. Spec: adcp-client#2281.
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
-   * additive opt-in; loader rejects unknown requirement names and an
-   * empty array (`requires: []`) so authoring mistakes fail loud.
+   * additive opt-in; loader rejects malformed values and an empty array
+   * (`requires: []`) so authoring mistakes fail loud. Unknown string
+   * requirements are forward-compatible: they load successfully, then skip
+   * at runtime with `skip_reason: 'requirement_unmet'` and the authored name
+   * on `RunnerSkipResult.requirement`.
    *
-   * Spec: adcp-client#1626. The schema may be proposed upstream to
+   * Spec: adcp-client#1626, adcp-client#2281. The schema may be proposed upstream to
    * `adcontextprotocol/adcp` once it has bedded in across SDK
    * storyboards.
    */
-  requires?: RequirementName[];
+  requires?: string[];
   /**
    * Predicate evaluated against the agent's declared capabilities before any
    * phase runs. When the predicate is false, the runner emits a single
@@ -121,8 +130,9 @@ export interface Storyboard {
    * - `equals: V` — scalar equality. The path's resolved value must be
    *   declared and must equal `V` for the storyboard to run. When the path
    *   resolves to `undefined` (field absent), the storyboard is skipped as
-   *   `capability_unsupported`; omitting a capability means the agent has not
-   *   opted into that behavior or variant.
+   *   `capability_unsupported` unless the `get_adcp_capabilities` response
+   *   schema declares a default for that exact path and the parent capability
+   *   object is present.
    *
    * - `present: true|false` — presence-only matcher for spec capabilities whose
    *   contract is "presence of this object indicates support" (e.g.
@@ -133,17 +143,20 @@ export interface Storyboard {
    *   capability. Unlike `equals`, absence is the load-bearing signal: when
    *   `present: true` and the field is missing, the storyboard is skipped
    *   (not_applicable) rather than run, because the seller's silence is the
-   *   spec-defined opt-out.
+   *   spec-defined opt-out. Schema defaults are NOT materialized for this
+   *   matcher (unlike `equals`/`contains`): a default would make a defaulted
+   *   field never read as absent, defeating the gate.
    *
    * - `contains: V` — array-membership matcher for capabilities whose
    *   declaration shape is an array of allowed values (e.g.
    *   `media_buy.conversion_tracking.supported_targets: ["cost_per",
    *   "per_ad_spend"]`). The value at `path` MUST be an array and MUST include
    *   `V` (strict equality, no coercion). Empty arrays fail; paths resolving
-   *   to undefined or non-array values fail (treated as "capability not
-   *   declared", skip the storyboard as not_applicable). Like `present:`,
-   *   absence is the load-bearing signal — a seller that doesn't advertise
-   *   the array hasn't opted into the variant this storyboard tests.
+   *   to undefined or non-array values fail unless the `get_adcp_capabilities`
+   *   response schema declares a default for that exact path and the parent
+   *   capability object is present. Like `present:`, absence is otherwise the
+   *   load-bearing signal — a seller that doesn't advertise the array hasn't
+   *   opted into the variant this storyboard tests.
    *
    * When `raw_capabilities` is not available and the discovered profile does
    * not expose `get_adcp_capabilities`, `equals` gates are treated as
@@ -284,6 +297,7 @@ export interface StepInvariantsObject {
  * alongside the body the runner forwards into `params.fixture` for the
  * corresponding `seed_*` scenario.
  *
+ *   - `accounts[]`      → `seed_account`         — requires `account_id`
  *   - `products[]`      → `seed_product`         — requires `product_id`
  *   - `pricing_options[]` → `seed_pricing_option` — requires `product_id` + `pricing_option_id`
  *   - `creative_formats[]` → `seed_creative_format` — requires `format_id`
@@ -300,6 +314,7 @@ export interface StepInvariantsObject {
  * authoring mistake is surfaced before any real step runs.
  */
 export interface StoryboardFixtures {
+  accounts?: Array<Record<string, unknown> & { account_id?: string }>;
   products?: Array<Record<string, unknown> & { product_id?: string }>;
   pricing_options?: Array<Record<string, unknown> & { product_id?: string; pricing_option_id?: string }>;
   creative_formats?: Array<Record<string, unknown> & { format_id?: string; fixture?: unknown }>;
@@ -1698,7 +1713,8 @@ export type RunnerSkipReason =
    * didn't pass `--asserts-seeded-state`). Distinct from `missing_tool` /
    * `missing_test_controller` (per-step tool gates) and `unsatisfied_contract`
    * (capability predicate). The `RunnerSkipResult.requirement` field carries
-   * the unmet requirement name. Spec: adcp-client#1626.
+   * the unmet requirement name, including unknown forward-compatible strings.
+   * Spec: adcp-client#1626.
    */
   | 'requirement_unmet'
   /**
@@ -1815,13 +1831,16 @@ export interface RunnerSkipResult {
   reason: RunnerSkipReason;
   detail: string;
   /**
-   * Set when `reason === 'requirement_unmet'` to name the storyboard-level
-   * requirement that was not available on this run. Carries the same value
-   * authored in `Storyboard.requires`. Consumers (skip-cause aggregation,
-   * dashboards) key on this field to group not-applicable scenarios by
-   * cause. Absent for every other skip reason. Spec: adcp-client#1626.
+   * Set on storyboard-level `requires:` skips to name the requirement that was
+   * not available on this run. Most such skips use
+   * `reason === 'requirement_unmet'`; legacy-preserving mappings such as
+   * `controller -> missing_test_controller` also carry this field. Carries the
+   * same value authored in `Storyboard.requires`, including unknown
+   * forward-compatible strings. Consumers (skip-cause aggregation, dashboards)
+   * key on this field to group not-applicable scenarios by cause. Spec:
+   * adcp-client#1626.
    */
-  requirement?: RequirementName;
+  requirement?: string;
 }
 
 export type RunnerSelectionReason =
@@ -1841,15 +1860,21 @@ export interface RunnerSelectionResult {
  * surface change; coordinate with the upstream spec proposal before
  * extending.
  *
- * Spec: adcp-client#1626.
+ * Spec: adcp-client#1626, adcp-client#2281.
  */
-export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver' | 'request_signer';
+export type RequirementName =
+  | 'controller'
+  | 'seeded_state'
+  | 'real_wire'
+  | 'webhook_receiver'
+  | 'request_signer'
+  | 'multi_agent';
 
 /**
- * Closed enumeration of every known requirement. Used by the loader to
- * reject typos in `Storyboard.requires` (`requires: [contoller]` fails
- * load rather than silently dropping coverage) and by the runner to
- * compute available requirements for the gate. Keep in sync with
+ * Enumeration of every requirement this SDK knows how to satisfy. The loader
+ * accepts other non-empty strings for forward compatibility; the runner treats
+ * those as unmet runtime requirements so future source-authored gates degrade
+ * to `requirement_unmet` instead of failing load. Keep in sync with
  * `RequirementName`.
  */
 export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
@@ -1858,6 +1883,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'real_wire',
   'webhook_receiver',
   'request_signer',
+  'multi_agent',
 ] as const satisfies readonly RequirementName[]);
 
 /**

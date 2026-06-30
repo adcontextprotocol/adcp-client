@@ -95,6 +95,14 @@ export interface SeedProductParams {
   fixture: Record<string, unknown>;
 }
 
+/** Params for `seed_account`. `fixture` mirrors the persisted account shape
+ * (name, status, billing/rate-card metadata, authorization, …). Kept
+ * permissive because storyboards declare only the account fields they need. */
+export interface SeedAccountParams {
+  account_id: string;
+  fixture: Record<string, unknown>;
+}
+
 export interface SeedPricingOptionParams {
   product_id: string;
   pricing_option_id: string;
@@ -349,6 +357,7 @@ export interface ComplyControllerConfig {
   /** Seed adapters. Each registered method advertises its scenario as
    * implemented; omitted methods return `UNKNOWN_SCENARIO` when called. */
   seed?: {
+    account?: SeedAdapter<SeedAccountParams>;
     product?: SeedAdapter<SeedProductParams>;
     pricing_option?: SeedAdapter<SeedPricingOptionParams>;
     creative?: SeedAdapter<SeedCreativeParams>;
@@ -506,6 +515,11 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   const store: TestControllerStore = {};
   const { seed, force, simulate, queryUpstreamTraffic, queryProvenanceAuditObservations } = config;
 
+  if (seed?.account) {
+    store.seedAccount = async (accountId, fixture) => {
+      await seed.account!({ account_id: accountId, fixture: fixture ?? {} }, ctx);
+    };
+  }
   if (seed?.product) {
     store.seedProduct = async (productId, fixture) => {
       await seed.product!({ product_id: productId, fixture: fixture ?? {} }, ctx);
@@ -638,6 +652,7 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.creative_purge) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
+  if (config.seed?.account) out.push('seed_account' as unknown as ControllerScenario);
   if (config.seed?.product) out.push('seed_product');
   if (config.seed?.pricing_option) out.push('seed_pricing_option');
   if (config.seed?.creative) out.push('seed_creative');

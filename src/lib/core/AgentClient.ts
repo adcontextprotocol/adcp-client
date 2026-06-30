@@ -837,8 +837,8 @@ export class AgentClient {
    * For v3 servers: calls get_adcp_capabilities tool
    * For v2 servers: builds synthetic capabilities from tool list
    */
-  async getCapabilities(): Promise<AdcpCapabilities> {
-    return this.client.getCapabilities();
+  async getCapabilities(options?: Pick<TaskOptions, 'signal' | 'transport'>): Promise<AdcpCapabilities> {
+    return this.client.getCapabilities(options);
   }
 
   /**
@@ -1344,8 +1344,8 @@ export class AgentClient {
   /**
    * Get agent information including capabilities
    */
-  async getAgentInfo() {
-    return this.client.getAgentInfo();
+  async getAgentInfo(options?: Pick<TaskOptions, 'signal' | 'transport'>) {
+    return this.client.getAgentInfo(options);
   }
 
   /**

@@ -44,6 +44,14 @@ export interface Property {
   publisher_domain?: string;
 }
 
+export type RevokedPublisherDomain =
+  | string
+  | {
+      publisher_domain: string;
+      revoked_at?: string;
+      reason?: string;
+    };
+
 /**
  * Discriminator for the per-agent authorization scope on each
  * `authorized_agents[]` entry. Drives `resolveAgentProperties()` —
@@ -102,7 +110,9 @@ export type CompactPublisherPropertySelector =
  * field — see the spec at `schemas/cache/3.0.11/adagents.json`. Files
  * in the wild sometimes omit them, so both fields are typed as optional
  * here. `resolveAgentProperties()` fails closed (returns no properties)
- * when the discriminator or its selector is missing.
+ * when the discriminator or its selector is missing, except for the legacy
+ * Python-compatible bare-inline shape where an entry omits
+ * `authorization_type` but carries inline `properties[]`.
  */
 export interface AuthorizedAgent {
   url: string;
@@ -210,6 +220,6 @@ export interface AdAgentsJson {
    * part 2) and the SDK's `property-crawler` for the consumer-side
    * cross-check.
    */
-  revoked_publisher_domains?: string[];
+  revoked_publisher_domains?: RevokedPublisherDomain[];
   last_updated?: string;
 }

@@ -310,7 +310,7 @@ export async function getOrDiscoverProfile(
       step: { step: 'Discover agent capabilities', passed: true, duration_ms: 0 },
     };
   }
-  return discoverAgentProfile(client);
+  return discoverAgentProfile(client, options.signal);
 }
 
 /**
@@ -432,7 +432,7 @@ export async function discoverAgentProfile(
   signal?: AbortSignal
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
   const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
-    raceWithSignal(client.getAgentInfo(), signal)
+    raceWithSignal(client.getAgentInfo({ signal }), signal)
   );
 
   const profile: AgentProfile = {
@@ -454,7 +454,7 @@ export async function discoverAgentProfile(
 
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
-      const caps = (await raceWithSignal(client.getAdcpCapabilities({}), signal)) as TaskResult;
+      const caps = (await raceWithSignal(client.getAdcpCapabilities({}, undefined, { signal }), signal)) as TaskResult;
       if (caps?.success && caps?.data) {
         profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);

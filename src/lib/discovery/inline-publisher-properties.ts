@@ -248,8 +248,16 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 function revokedDomainSet(input: unknown): Set<string> {
   if (!Array.isArray(input)) return new Set();
   const out = new Set<string>();
-  for (const d of input) {
-    if (typeof d === 'string' && d.length > 0) out.add(d.toLowerCase());
+  for (const item of input) {
+    const domain =
+      typeof item === 'string'
+        ? item
+        : item &&
+            typeof item === 'object' &&
+            typeof (item as { publisher_domain?: unknown }).publisher_domain === 'string'
+          ? (item as { publisher_domain: string }).publisher_domain
+          : undefined;
+    if (domain && domain.length > 0) out.add(domain.toLowerCase());
   }
   return out;
 }
