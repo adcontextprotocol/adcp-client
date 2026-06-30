@@ -461,6 +461,17 @@ export interface TaskResultMetadata {
     };
     diagnostics: ProductPropertyPolicyDiagnostic[];
   };
+  /**
+   * Buyer-side pricing-options enforcement summary for `get_products`. Present
+   * when the client drops one or more products that arrived without a usable
+   * `pricing_options[]` array (a required, non-empty field in AdCP 3.1).
+   */
+  productPricingPolicy?: {
+    ok: boolean;
+    accepted_count: number;
+    rejected_count: number;
+    rejected_products: Array<{ index: number; product_id?: string }>;
+  };
 }
 
 /** Fields shared across all TaskResult variants. */

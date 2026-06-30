@@ -495,6 +495,25 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      */
     filterInvalidProducts?: boolean;
     /**
+     * Reject products that arrive without a usable `pricing_options[]` array
+     * from completed `get_products` responses (default: true).
+     *
+     * `pricing_options` is a required, non-empty field in AdCP 3.1 — a product
+     * that advertises no pricing model is non-transactable, so the SDK drops it
+     * from the product list before callers and completion handlers see it. This
+     * runs on every completion path (sync, polling, `track`, webhook) and is
+     * independent of the response `validation` mode, so unpriced products are
+     * removed even under `responses: 'warn' | 'off'`. The rejection is recorded
+     * in `result.metadata.productPricingPolicy` and a
+     * `product_missing_pricing_options` debug-log notice.
+     *
+     * Set to `false` to pass products through untouched (e.g. when the caller
+     * deliberately inspects malformed seller responses).
+     *
+     * @default true
+     */
+    rejectProductsWithoutPricingOptions?: boolean;
+    /**
      * Buyer-side property policy applied to completed `get_products`
      * responses before completion handlers and callers receive the product
      * list. A request-level `property_list` is enforced automatically by
@@ -578,6 +597,18 @@ function valueMatchesSchemaType(value: unknown, propSchema: unknown): boolean {
   if (typeof declared === 'string') return declared === valueType;
   if (Array.isArray(declared)) return declared.includes(valueType);
   return false;
+}
+
+function productHasPricingOptions(product: unknown): boolean {
+  if (!product || typeof product !== 'object') return false;
+  const options = (product as { pricing_options?: unknown }).pricing_options;
+  return Array.isArray(options) && options.length > 0;
+}
+
+function productIdForPricingDiagnostics(product: unknown): string | undefined {
+  if (!product || typeof product !== 'object') return undefined;
+  const id = (product as { product_id?: unknown }).product_id;
+  return typeof id === 'string' ? id : undefined;
 }
 
 function propertyListReferenceFromRequest(params: Record<string, unknown>): PropertyListReference | undefined {
@@ -1755,11 +1786,82 @@ export class SingleAgentClient {
     return result;
   }
 
+  /**
+   * Drop products that arrive without a usable `pricing_options[]` array from a
+   * completed `get_products` response. `pricing_options` is required and
+   * non-empty in AdCP 3.1; a product with no pricing model can't be bought, so
+   * the SDK rejects it before callers and completion handlers see the list.
+   *
+   * Controlled by `config.validation.rejectProductsWithoutPricingOptions`
+   * (default `true`) and applied on every completion path via
+   * {@link applyProductPropertyPolicy}, independent of the response validation
+   * mode.
+   */
+  private enforceProductPricingOptions<T>(result: TaskResult<T>, taskType: string): TaskResult<T> {
+    if (taskType !== 'get_products') return result;
+    if (this.config.validation?.rejectProductsWithoutPricingOptions === false) return result;
+    if (!result.success || result.status !== 'completed' || !result.data) return result;
+
+    const response = result.data as unknown as GetProductsResponse;
+    const products = (response as { products?: unknown }).products;
+    if (!Array.isArray(products) || products.length === 0) return result;
+
+    const kept: unknown[] = [];
+    const rejected: Array<{ index: number; product_id?: string }> = [];
+    products.forEach((product, index) => {
+      if (productHasPricingOptions(product)) {
+        kept.push(product);
+        return;
+      }
+      const productId = productIdForPricingDiagnostics(product);
+      rejected.push({ index, ...(productId ? { product_id: productId } : {}) });
+    });
+
+    if (rejected.length === 0) return result;
+
+    const message = `Rejected ${rejected.length} product${rejected.length === 1 ? '' : 's'} without pricing_options`;
+
+    // Mutate in place (like the property-policy filter path) so the
+    // non-enumerable `match` accessor and result identity survive.
+    result.data = { ...(response as unknown as Record<string, unknown>), products: kept } as T;
+    result.metadata = {
+      ...result.metadata,
+      productPricingPolicy: {
+        ok: true,
+        accepted_count: kept.length,
+        rejected_count: rejected.length,
+        rejected_products: rejected,
+      },
+    };
+    result.debug_logs = [
+      ...(result.debug_logs ?? []),
+      {
+        type: 'warning',
+        message,
+        timestamp: new Date().toISOString(),
+        details: {
+          code: 'product_missing_pricing_options',
+          task: taskType,
+          agent_id: this.agent.id,
+          rejected_count: rejected.length,
+          rejected_products: rejected,
+        },
+      },
+    ];
+    return result;
+  }
+
   private async applyProductPropertyPolicy<T>(
     result: TaskResult<T>,
     taskType: string,
     requestParams: Record<string, unknown>
   ): Promise<TaskResult<T>> {
+    // Reject non-transactable products (no pricing_options) before any
+    // property-policy evaluation, regardless of whether a property policy is
+    // configured. This runs on the same completion chokepoint so it covers the
+    // sync, polling, track, and webhook paths uniformly.
+    result = this.enforceProductPricingOptions(result, taskType);
+
     const policyConfig = this.config.validation?.productPropertyPolicy;
     if (policyConfig === false || taskType !== 'get_products') return result;
     if (!result.success || result.status !== 'completed' || !result.data) return result;
@@ -2093,6 +2195,9 @@ export class SingleAgentClient {
       ...(policyResult.error ? { message: policyResult.error } : {}),
       ...(policyResult.metadata.productPropertyPolicy
         ? { productPropertyPolicy: policyResult.metadata.productPropertyPolicy }
+        : {}),
+      ...(policyResult.metadata.productPricingPolicy
+        ? { productPricingPolicy: policyResult.metadata.productPricingPolicy }
         : {}),
     };
 
