@@ -826,10 +826,13 @@ describe('SingleAgentClient Request Validation', () => {
 
 describe('v3 partial-schema field stripping', () => {
   // For v3 agents with a cached inputSchema, the client filters request params to
-  // only the fields declared in the schema. This handles partial v3 implementations
-  // that declare get_adcp_capabilities but omit some v3 fields (brand, buying_mode,
-  // etc.) from their tool schema, causing Pydantic unexpected_keyword_argument errors.
-  test('should strip undeclared fields from get_products for a partial v3 agent', async () => {
+  // only the fields declared in the schema OR canonical for the task in the
+  // resolved AdCP version. This handles partial v3 implementations that declare
+  // get_adcp_capabilities but omit some canonical v3 fields from their tool
+  // schema — canonical fields are preserved (they're valid AdCP), only fields
+  // unknown to BOTH the agent schema AND the canonical request schema (genuine
+  // junk / vendor extensions) are dropped.
+  test('should strip only non-canonical undeclared fields from get_products for a partial v3 agent', async () => {
     const mockMCPAgent = {
       id: 'partial-v3-agent',
       name: 'Partial V3 Agent',
@@ -842,7 +845,9 @@ describe('v3 partial-schema field stripping', () => {
     // AgentClient wraps SingleAgentClient in .client; set state there to bypass network calls
     const inner = agent.client;
 
-    // Simulate: agent is detected as v3 but get_products schema has no 'brand' field
+    // Simulate: agent is detected as v3 but get_products schema omits 'brand'
+    // (a canonical AdCP field). It also receives a genuinely-unknown vendor
+    // field that is canonical to neither the agent nor the spec.
     inner.discoveredEndpoint = mockMCPAgent.agent_uri;
     inner.cachedCapabilities = {
       version: 'v3',
@@ -874,6 +879,7 @@ describe('v3 partial-schema field stripping', () => {
       result = await agent.getProducts({
         brand: { domain: 'fanta.com' },
         brief: 'love chocolate and have 20k to spend',
+        totally_made_up_field: 'junk',
       });
     } catch (err) {
       if (err.message?.includes('Request validation failed')) {
@@ -886,16 +892,28 @@ describe('v3 partial-schema field stripping', () => {
 
     const getProductsCall = capturedCalls.find(c => c.toolName === 'get_products');
     assert.ok(getProductsCall, 'get_products should have been called');
-    assert.strictEqual(
+    // `brand` is a canonical top-level field for get_products in the resolved
+    // AdCP version — it must be preserved even though the partial agent omits
+    // it from its self-declared schema. (Pre-fix this was wrongly stripped.)
+    assert.deepStrictEqual(
       getProductsCall.args.brand,
-      undefined,
-      'brand should be stripped when not declared in agent schema'
+      { domain: 'fanta.com' },
+      'canonical brand should be preserved even when the agent under-declares it'
     );
     assert.ok(getProductsCall.args.brief, 'brief should be preserved');
+    assert.strictEqual(
+      getProductsCall.args.totally_made_up_field,
+      undefined,
+      'a field unknown to both the agent schema and the canonical schema should be stripped'
+    );
     const stripLog = result.debug_logs.find(log => log.details?.code === 'input_schema_field_stripped');
     assert.ok(stripLog, 'stripped fields should be surfaced in structured debug_logs');
     assert.strictEqual(stripLog.details.task, 'get_products');
-    assert.deepStrictEqual(stripLog.details.fields, ['brand']);
+    assert.deepStrictEqual(
+      stripLog.details.fields,
+      ['totally_made_up_field'],
+      'only the genuinely-unknown field should be reported as stripped'
+    );
   });
 
   test('should pass through all fields when v3 agent schema declares them', async () => {
@@ -958,6 +976,147 @@ describe('v3 partial-schema field stripping', () => {
       'brand should be passed through when declared in agent schema'
     );
   });
+
+  // Regression: "Open Ads" (https://api.openads.ai/mcp) production incident.
+  // A 3rd-party AdCP sales agent advertised a PARTIAL tool inputSchema via
+  // tools/list. The old strip path intersected outgoing fields with ONLY the
+  // agent's self-declared schema, so canonical — sometimes REQUIRED — AdCP
+  // request fields were dropped before the request left the client:
+  //   update_media_buy: media_buy_id (REQUIRED) was at risk
+  //   get_media_buy_delivery: media_buy_id / media_buy_ids stripped
+  //   sync_creatives: media_buy_id / creative_ids stripped
+  // This broke media-buy updates and delivery polling against partial-schema
+  // sellers. The fix unions the agent schema with the canonical request schema
+  // (schemaAllowsTopLevelField): canonical fields are preserved, genuine junk
+  // is still stripped.
+  const partialSchemaCases = [
+    {
+      name: 'update_media_buy',
+      toolName: 'update_media_buy',
+      invoke: agent => agent.updateMediaBuy.bind(agent),
+      // Partial schema declares only `revision`, omitting canonical media_buy_id.
+      partialToolSchema: { revision: {} },
+      request: {
+        media_buy_id: 'mb_123',
+        totally_made_up_field: 'junk',
+      },
+      preservedField: 'media_buy_id',
+      preservedValue: 'mb_123',
+      mockResponse: { media_buy_id: 'mb_123', status: 'completed' },
+    },
+    {
+      name: 'get_media_buy_delivery',
+      toolName: 'get_media_buy_delivery',
+      invoke: agent => agent.getMediaBuyDelivery.bind(agent),
+      // Partial schema declares only `status_filter`, omitting media_buy_ids.
+      partialToolSchema: { status_filter: {} },
+      request: {
+        media_buy_ids: ['mb_123', 'mb_456'],
+        totally_made_up_field: 'junk',
+      },
+      preservedField: 'media_buy_ids',
+      preservedValue: ['mb_123', 'mb_456'],
+      mockResponse: { deliveries: [] },
+    },
+    {
+      name: 'sync_creatives',
+      toolName: 'sync_creatives',
+      invoke: agent => agent.syncCreatives.bind(agent),
+      // Partial schema declares only `creatives`, omitting creative_ids.
+      partialToolSchema: { creatives: {} },
+      // sync_creatives has a strict pre-send Zod gate (required account +
+      // creatives), so supply a valid body — the point of the test is the
+      // downstream strip path, not the required-field gate.
+      request: {
+        account: { account_id: 'test-account' },
+        creatives: [
+          {
+            creative_id: 'cr_1',
+            name: 'Test Creative',
+            format_id: { agent_url: 'https://test.example', id: 'format1' },
+            assets: {
+              video: {
+                asset_type: 'video',
+                url: 'https://example.com/video.mp4',
+                width: 1920,
+                height: 1080,
+                duration_ms: 30000,
+              },
+            },
+          },
+        ],
+        creative_ids: ['cr_1', 'cr_2'],
+        totally_made_up_field: 'junk',
+      },
+      preservedField: 'creative_ids',
+      preservedValue: ['cr_1', 'cr_2'],
+      mockResponse: { creatives: [] },
+    },
+  ];
+
+  for (const tc of partialSchemaCases) {
+    test(`Open Ads regression: preserves canonical ${tc.preservedField} but strips junk for partial-schema ${tc.name}`, async () => {
+      const mockMCPAgent = {
+        id: 'open-ads',
+        name: 'Open Ads',
+        agent_uri: 'https://api.openads.ai/mcp',
+        protocol: 'mcp',
+      };
+
+      const client = new AdCPClient([mockMCPAgent]);
+      const agent = client.agent(mockMCPAgent.id);
+      const inner = agent.client;
+
+      inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+      inner.cachedCapabilities = {
+        version: 'v3',
+        majorVersions: [3],
+        protocols: ['media_buy'],
+        features: {
+          inlineCreativeManagement: false,
+          conversionTracking: false,
+          audienceTargeting: false,
+          propertyListFiltering: false,
+          contentStandards: false,
+        },
+        extensions: [],
+        _synthetic: false,
+      };
+      // Partial inputSchema: agent under-declares its tool fields.
+      inner.cachedToolSchemas = new Map([[tc.toolName, tc.partialToolSchema]]);
+
+      const capturedCalls = [];
+      const originalCallTool = ProtocolClient.callTool;
+      ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+        capturedCalls.push({ toolName, args });
+        return tc.mockResponse;
+      };
+
+      try {
+        await tc.invoke(agent)(tc.request);
+      } catch (err) {
+        if (err.message?.includes('Request validation failed')) {
+          throw err;
+        }
+        // Network/protocol errors are expected — there's no real server.
+      } finally {
+        ProtocolClient.callTool = originalCallTool;
+      }
+
+      const call = capturedCalls.find(c => c.toolName === tc.toolName);
+      assert.ok(call, `${tc.toolName} should have been called`);
+      assert.deepStrictEqual(
+        call.args[tc.preservedField],
+        tc.preservedValue,
+        `canonical ${tc.preservedField} must be preserved even though the agent under-declares it`
+      );
+      assert.strictEqual(
+        call.args.totally_made_up_field,
+        undefined,
+        'a field unknown to both the agent schema and the canonical schema should still be stripped'
+      );
+    });
+  }
 });
 
 describe('strict request validation against v2 servers', () => {

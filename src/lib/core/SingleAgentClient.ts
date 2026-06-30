@@ -7,6 +7,7 @@ import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { isAdcpVersionSupported, isPre31AdcpVersion, resolveAdcpVersion } from '../utils/adcp-version-config';
 import { getVersionAdapter, resolveAdapterKey } from '../adapters/version';
+import { schemaAllowsTopLevelField } from '../validation/schema-loader';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -2295,8 +2296,36 @@ export class SingleAgentClient {
       const filtered: Record<string, unknown> = {};
       const schemaStripped: string[] = [];
 
+      // A field is preserved when it's declared by the agent's (possibly
+      // partial) tool schema, OR it's a protocol envelope field, OR it's a
+      // CANONICAL top-level field for this task in the resolved AdCP version.
+      //
+      // The canonical-schema union is the fix for partial-schema sellers
+      // (e.g. "Open Ads", https://api.openads.ai/mcp): such agents
+      // under-declare their `tools/list` inputSchema, so intersecting only
+      // their self-declared fields silently dropped canonical — sometimes
+      // REQUIRED — AdCP request fields (`media_buy_id` on update_media_buy,
+      // `media_buy_ids` on get_media_buy_delivery, `creative_ids` on
+      // sync_creatives) before the request left the client, breaking
+      // media-buy updates and delivery polling. Only fields unknown to BOTH
+      // the agent schema AND the canonical request schema are genuine junk
+      // and get stripped.
+      //
+      // `taskType` is the snake_case tool name (e.g. `update_media_buy`),
+      // which is exactly the `toolName` key `schemaAllowsTopLevelField` looks
+      // up as `${toolName}::request` in the loader's fileIndex. The version
+      // arg is the raw resolved pin (`this.resolvedAdcpVersion`); the loader
+      // resolves the bundle key internally via `ensureInit`/`resolveBundleKey`
+      // (same contract as `TaskExecutor.validateRequest`). The helper FAILS
+      // OPEN (returns true) when no canonical schema is indexed for the tool,
+      // which preserves the field rather than dropping something we can't
+      // authoritatively rule out.
       for (const [key, value] of Object.entries(adapted)) {
-        if (declaredFields.has(key) || envelopeFields.has(key)) {
+        if (
+          declaredFields.has(key) ||
+          envelopeFields.has(key) ||
+          schemaAllowsTopLevelField(taskType, key, this.resolvedAdcpVersion)
+        ) {
           filtered[key] = value;
         } else {
           schemaStripped.push(key);
