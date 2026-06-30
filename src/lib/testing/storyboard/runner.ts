@@ -3823,12 +3823,14 @@ async function executeStep(
     };
   }
 
-  // Account-mode capability gate: sync_accounts is exclusive to implicit mode
-  // (require_operator_auth: false). When the seller declared explicit mode
-  // (require_operator_auth: true), sync_accounts does not apply — grade
-  // not_applicable rather than missing_tool so adopters can distinguish
-  // "your capability declaration says this path isn't yours" from "you forgot
-  // to implement a required tool."
+  // Account-mode capability gate: when the seller declared explicit mode
+  // (require_operator_auth: true) and does not advertise sync_accounts,
+  // sync_accounts does not apply — grade not_applicable rather than
+  // missing_tool so adopters can distinguish "your capability declaration
+  // says this path isn't yours" from "you forgot to implement a required
+  // tool." If the seller explicitly advertises sync_accounts, run it: account
+  // discovery mode and account-level write surfaces such as notification
+  // config registration are orthogonal.
   //
   // list_accounts is NOT gated here: it appears in audience_sync and other
   // storyboard flows regardless of account mode, so it is always applicable.
@@ -3839,7 +3841,8 @@ async function executeStep(
     const rawCaps = options._profile?.raw_capabilities;
     if (rawCaps !== undefined) {
       const requireOperatorAuth = resolveCapabilityPath(rawCaps, 'account.require_operator_auth');
-      if (requireOperatorAuth === true) {
+      const syncAccountsAdvertised = options.agentTools?.includes('sync_accounts') === true;
+      if (requireOperatorAuth === true && !syncAccountsAdvertised) {
         const detail =
           `Agent declared explicit account mode (require_operator_auth: true); ` +
           `sync_accounts is not applicable — list_accounts is the correct tool for this account shape.`;

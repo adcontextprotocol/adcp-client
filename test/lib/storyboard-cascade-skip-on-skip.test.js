@@ -645,7 +645,7 @@ const MATRIX_ROWS = [
         { id: 'account_setup', title: 'account setup', steps: [step('sync', 'sync_accounts')] },
         { id: 'consume', title: 'consume', steps: [step('assert', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -670,7 +670,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('assert', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -698,7 +698,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('audience', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -728,7 +728,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('audience', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -753,7 +753,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('audience', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -781,7 +781,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('audience', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -815,7 +815,7 @@ const MATRIX_ROWS = [
         step('list', '__test_setup', { provides_state_for: 'sync' }),
         step('consumer', '__test_assert'),
       ]),
-      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -845,7 +845,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('consumer', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -878,7 +878,7 @@ const MATRIX_ROWS = [
         },
         { id: 'consume', title: 'consume', steps: [step('consumer', '__test_assert')] },
       ]),
-      advertised: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -906,7 +906,7 @@ const MATRIX_ROWS = [
         step('peer', '__test_setup'),
         step('consumer', '__test_assert'),
       ]),
-      advertised: ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -928,7 +928,7 @@ const MATRIX_ROWS = [
         step('peer', '__test_fail'),
         step('consumer', '__test_assert'),
       ]),
-      advertised: ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'],
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
       profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
     }),
     assert: result => {
@@ -1182,6 +1182,26 @@ const CONTROL_ROWS = [
       const [setupStep, assertStep] = result.phases[0].steps;
       assert.notStrictEqual(setupStep.skipped, true, 'setup ran');
       assert.notStrictEqual(assertStep.skipped, true, 'assertion ran (no cascade)');
+    },
+  },
+  {
+    title: 'explicit account mode still runs sync_accounts when the tool is advertised',
+    issue: 'adcp-client#2303',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        { id: 'account_setup', title: 'account setup', steps: [step('sync', 'sync_accounts')] },
+        { id: 'consume', title: 'consume', steps: [step('assert', '__test_assert')] },
+      ]),
+      advertised: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+      profileExtras: { raw_capabilities: { account: { require_operator_auth: true } } },
+    }),
+    assert: result => {
+      const syncStep = result.phases[0].steps[0];
+      const assertStep = result.phases[1].steps[0];
+      assert.notStrictEqual(syncStep.skipped, true, 'advertised sync_accounts must run');
+      assert.strictEqual(syncStep.passed, true);
+      assert.notStrictEqual(assertStep.skipped, true, 'downstream step runs after sync_accounts succeeds');
+      assert.strictEqual(assertStep.passed, true);
     },
   },
 ];
@@ -1508,16 +1528,16 @@ describe('runStoryboard cascade-skip: sole-stateful-step exemption parity invari
       },
       {
         skip_reason: 'not_applicable',
-        // sync_accounts advertised but profile signals not_applicable via
-        // raw_capabilities → not_applicable
+        // sync_accounts NOT in agentTools and profile signals explicit
+        // account mode via raw_capabilities → not_applicable
         run: () =>
           runStoryboard([agent.url], buildStoryboard(), {
             protocol: 'mcp',
             allow_http: true,
-            agentTools: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+            agentTools: ['__test_assert', 'get_adcp_capabilities'],
             _profile: {
               name: 'fake',
-              tools: [{ name: 'sync_accounts' }, { name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+              tools: [{ name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
               raw_capabilities: { account: { require_operator_auth: true } },
             },
           }),
