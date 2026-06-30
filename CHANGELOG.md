@@ -1,5 +1,15 @@
 # Changelog
 
+## 9.4.0
+
+### Minor Changes
+
+- 38be5ff: Refine TypeScript adagents property resolution for legacy inline entries, schema-valid revocation filtering, ambiguous URL fail-closed behavior, and add `getAllProperties`.
+
+### Patch Changes
+
+- b4c2d44: Sign outbound requests that carry webhook receiver authentication even when seller request-signing capabilities are cold or do not list the operation. The verifier now also rejects unsigned requests with non-empty `authentication` objects in the payload, including task, reporting, artifact, revocation, and account notification webhook configs.
+
 ## 9.3.0
 
 ### Minor Changes
