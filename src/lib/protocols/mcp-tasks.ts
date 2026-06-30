@@ -336,7 +336,6 @@ async function callToolOnClient(
   // Use callToolStream which handles the full task lifecycle
   const stream = client.experimental.tasks.callToolStream({ name: toolName, arguments: args }, undefined, {
     timeout: resolvedRequestTimeoutMs ?? workingTimeout,
-    maxTotalTimeout: workingTimeout,
     resetTimeoutOnProgress: true,
     ...(signal && { signal }),
   });

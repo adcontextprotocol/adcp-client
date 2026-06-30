@@ -242,6 +242,7 @@ describe('read-path cancellation and timeout', () => {
 
   it('passes requestTimeoutMs to MCP Tasks before a task id is captured', async () => {
     let seenTimeout;
+    let seenMaxTotalTimeout;
     const timeoutError = new Error('Request timed out');
     timeoutError.code = -32001;
     const client = {
@@ -251,6 +252,7 @@ describe('read-path cancellation and timeout', () => {
         tasks: {
           callToolStream: (_request, _unused, options) => {
             seenTimeout = options.timeout;
+            seenMaxTotalTimeout = options.maxTotalTimeout;
             return (async function* () {
               throw timeoutError;
             })();
@@ -263,6 +265,7 @@ describe('read-path cancellation and timeout', () => {
       callMCPToolWithClient(client, 'get_products', {}, [], { workingTimeout: 120000, requestTimeoutMs: 25 })
     );
     assert.strictEqual(seenTimeout, 25);
+    assert.strictEqual(seenMaxTotalTimeout, undefined);
   });
 
   it('attaches generated idempotency keys to mutating timeout errors', async () => {
