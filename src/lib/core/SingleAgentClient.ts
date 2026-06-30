@@ -3663,22 +3663,38 @@ export class SingleAgentClient {
       // calls native `fetch` directly and ignores `transport.maxResponseBytes`.
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = this.normalizedAgent.auth_token;
+      const agentHeaders = this.normalizedAgent.headers ?? {};
       const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
-      const fetchImpl = authToken
-        ? async (url: string | URL | Request, requestInit?: RequestInit) => {
-            const headers = {
-              ...(requestInit?.headers as Record<string, string>),
-              Authorization: `Bearer ${authToken}`,
-              'x-adcp-auth': authToken,
-            };
-            return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
-              sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
-            );
+      const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
+        const normalized: Record<string, string> = {};
+        if (!headers) return normalized;
+        if (headers instanceof Headers) {
+          headers.forEach((value, key) => {
+            normalized[key] = value;
+          });
+        } else if (Array.isArray(headers)) {
+          for (const [key, value] of headers) {
+            normalized[key] = value;
           }
-        : (url: string | URL | Request, requestInit?: RequestInit) =>
-            withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
-              sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, signal })
-            );
+        } else {
+          Object.assign(normalized, headers);
+        }
+        return normalized;
+      };
+      const buildHeaders = (requestInit?: RequestInit): Record<string, string> => ({
+        ...normalizeHeaders(requestInit?.headers),
+        ...agentHeaders,
+        ...(authToken && {
+          Authorization: `Bearer ${authToken}`,
+          'x-adcp-auth': authToken,
+        }),
+      });
+      const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
+        const headers = buildHeaders(requestInit);
+        return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
+          sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
+        );
+      };
 
       const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 

@@ -447,6 +447,7 @@ export class ProtocolClient {
                     ...(versionEnvelopeMode !== 'auto' && { versionEnvelope: versionEnvelopeMode }),
                     transport,
                     signal,
+                    ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
                     onTransportActivity,
                     transportActivityContext,
                   })

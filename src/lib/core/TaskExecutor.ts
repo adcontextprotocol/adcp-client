@@ -698,6 +698,14 @@ export class TaskExecutor {
 
       return attachMatch(result);
     } catch (error) {
+      if (isAbortOrTimeoutError(error)) {
+        if (idempotencyKey && error && typeof error === 'object') {
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
+        }
+        throw error;
+      }
+
       // Report failed outcome on error
       if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
         await this.governanceMiddleware.reportOutcome(
@@ -708,13 +716,6 @@ export class TaskExecutor {
           debugLogs,
           governanceResult.governanceContext
         );
-      }
-      if (isAbortOrTimeoutError(error)) {
-        if (idempotencyKey && error && typeof error === 'object') {
-          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
-          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
-        }
-        throw error;
       }
       return attachMatch(this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime));
     }

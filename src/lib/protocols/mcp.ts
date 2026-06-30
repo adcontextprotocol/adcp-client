@@ -77,7 +77,7 @@ function trackStreamableHTTPUrl(url: string): void {
 }
 
 /**
- * Build the connection-cache key for a (URL, credential, signing-context)
+ * Build the connection-cache key for a (URL, credential/header, signing-context)
  * triple.
  *
  * Two credential paths feed this cache. The bearer path supplies `authToken`
@@ -91,11 +91,9 @@ function trackStreamableHTTPUrl(url: string): void {
  * behalf of N principals would silently leak credentials across the
  * connection boundary.
  *
- * Fix: when `authToken` is unset, derive the fingerprint from the
- * `Authorization` header on `authHeaders` (case-insensitive lookup, since
- * header keys vary by call site). The shared `createSha256Prefix` helper
- * keeps both paths byte-equivalent for compatibility with existing cache
- * entries.
+ * Also include non-trace custom headers in the key. Tenant/routing headers can
+ * select a different upstream seller or credential context even when the bearer
+ * token is identical.
  */
 function connectionCacheKey(
   agentUrl: string,
@@ -103,9 +101,13 @@ function connectionCacheKey(
   signingCacheKey?: string,
   authHeaders?: Record<string, string>
 ): string {
+  const parts = [agentUrl];
   const fingerprint = authToken ?? extractAuthHeader(authHeaders);
-  const base = fingerprint ? `${agentUrl}::${cacheDisambiguator(fingerprint)}` : agentUrl;
-  return signingCacheKey ? `${base}::${signingCacheKey}` : base;
+  if (fingerprint) parts.push(cacheDisambiguator(fingerprint));
+  const headersKey = headersCacheDisambiguator(authHeaders);
+  if (headersKey) parts.push(`headers:${headersKey}`);
+  if (signingCacheKey) parts.push(signingCacheKey);
+  return parts.join('::');
 }
 
 /**
@@ -142,6 +144,17 @@ function extractAuthHeader(headers?: Record<string, string>): string | undefined
     if (key.toLowerCase() === 'authorization' && value) return value;
   }
   return undefined;
+}
+
+function headersCacheDisambiguator(headers?: Record<string, string>): string | undefined {
+  const entries = Object.entries(headers ?? {})
+    .filter(([key]) => {
+      const lower = key.toLowerCase();
+      return lower !== 'traceparent' && lower !== 'tracestate' && lower !== 'baggage';
+    })
+    .map(([key, value]) => [key.toLowerCase(), value] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
 }
 
 /** Get a cached connection, refreshing its LRU position. */
@@ -253,11 +266,7 @@ function getOAuthProviderDisambiguator(authProvider: OAuthClientProvider): strin
 }
 
 function customHeadersDisambiguator(customHeaders?: Record<string, string>): string | undefined {
-  const entries = Object.entries(customHeaders ?? {})
-    .filter(([key]) => key.toLowerCase() !== 'authorization')
-    .map(([key, value]) => [key.toLowerCase(), value] as const)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
+  return headersCacheDisambiguator(customHeaders);
 }
 
 function oauthConnectionCacheKey(
@@ -375,6 +384,10 @@ async function withCachedOAuthConnection<T>(
       throw error;
     }
 
+    if (isAbortOrTimeoutError(error)) {
+      throw error;
+    }
+
     oauthConnectionCache.delete(cacheKey);
     try {
       await mcpClient.close();
@@ -466,6 +479,10 @@ export async function withCachedConnection<T>(
         message: `MCP: Authentication issue detected for ${label} - headers may not be reaching server`,
         timestamp: new Date().toISOString(),
       });
+      throw error;
+    }
+
+    if (isAbortOrTimeoutError(error)) {
       throw error;
     }
 

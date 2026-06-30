@@ -9,6 +9,7 @@ const { connectMCPWithFallback } = require('../dist/lib/protocols/mcp');
 const { MAX_TIMER_DELAY_MS, resolveClientRequestTimeoutMs } = require('../dist/lib/protocols/abort');
 const { callMCPToolWithClient } = require('../dist/lib/protocols/mcp-tasks');
 const { getOrDiscoverProfile } = require('../dist/lib/testing/client');
+const { CapabilityCache, ensureCapabilityLoaded } = require('../dist/lib/signing/client');
 
 describe('read-path cancellation and timeout', () => {
   let server;
@@ -60,6 +61,56 @@ describe('read-path cancellation and timeout', () => {
         return true;
       }
     );
+  });
+
+  it('forwards custom headers during A2A getAgentInfo agent-card discovery', async () => {
+    const headerServer = http.createServer((req, res) => {
+      if (req.url === '/.well-known/agent.json' || req.url === '/.well-known/agent-card.json') {
+        if (req.headers['x-adcp-tenant'] !== 'tenant-1') {
+          res.writeHead(403);
+          res.end('missing tenant header');
+          return;
+        }
+        const { port } = headerServer.address();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            protocolVersion: '0.3.0',
+            name: 'tenant-card',
+            description: 'tenant scoped card',
+            url: `http://127.0.0.1:${port}/rpc`,
+            preferredTransport: 'JSONRPC',
+            version: '1.0.0',
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            capabilities: { streaming: false, pushNotifications: false },
+            skills: [{ id: 'get_products', name: 'get_products', description: 'discover', tags: ['adcp'] }],
+          })
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise(resolve => headerServer.listen(0, '127.0.0.1', resolve));
+    const { port } = headerServer.address();
+
+    try {
+      const client = new AgentClient({
+        id: 'tenant-a2a',
+        agent_uri: `http://127.0.0.1:${port}`,
+        protocol: 'a2a',
+        name: 'test',
+        headers: { 'x-adcp-tenant': 'tenant-1' },
+      });
+
+      const info = await client.getAgentInfo();
+      assert.strictEqual(info.name, 'tenant-card');
+      assert.ok(info.tools.some(tool => tool.name === 'get_products'));
+    } finally {
+      await new Promise(resolve => headerServer.close(resolve));
+    }
   });
 
   it('lets callers abort getProducts while it is still in read-path discovery', async () => {
@@ -295,6 +346,33 @@ describe('read-path cancellation and timeout', () => {
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }
+  });
+
+  it('does not negative-cache request-signing capability after timeout', async () => {
+    const cache = new CapabilityCache();
+    const capabilityCacheKey = 'agent::sig=test';
+    const signingContext = {
+      cache,
+      capabilityCacheKey,
+      getCapability: () => cache.get(capabilityCacheKey),
+      invalidate: () => cache.invalidate(capabilityCacheKey),
+    };
+    const timeoutError = new Error('Request timed out');
+    timeoutError.name = 'TimeoutError';
+
+    await assert.rejects(
+      () => ensureCapabilityLoaded({}, signingContext, async () => Promise.reject(timeoutError)),
+      err => err === timeoutError
+    );
+    assert.strictEqual(cache.get(capabilityCacheKey), undefined);
+
+    const recovered = await ensureCapabilityLoaded({}, signingContext, async () => ({
+      request_signing: { required_for: ['create_media_buy'] },
+      adcp: { major_versions: [3] },
+    }));
+
+    assert.deepStrictEqual(recovered.requestSigning, { required_for: ['create_media_buy'] });
+    assert.strictEqual(cache.get(capabilityCacheKey), recovered);
   });
 
   it('forwards getOrDiscoverProfile signal into profile discovery', async () => {
