@@ -13,6 +13,7 @@ import { jwkToPublicKey, verifySignature } from './crypto';
 import type { JwksResolver } from './jwks';
 import type { ReplayStore } from './replay';
 import type { RevocationStore } from './revocation';
+import { containsWebhookAuthentication, WEBHOOK_AUTH_TRAVERSAL_DEPTH } from './webhook-auth-detection';
 import {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -79,9 +80,10 @@ export async function verifyRequestSignature(
         `Protocol method "${requiredProtocolMethod}" requires a signed request`
       );
     }
-    // Payload-driven elevation: any request carrying
-    // `push_notification_config.authentication` MUST be RFC 9421 signed,
-    // regardless of whether the operation appears in `required_for`
+    // Payload-driven elevation: any request carrying webhook receiver
+    // credentials (task, reporting, artifact, or revocation callbacks) MUST
+    // be RFC 9421 signed, regardless of whether the operation appears in
+    // `required_for`
     // (#webhook-security downgrade-resistance). A bearer-only channel
     // would otherwise let an attacker who captured a token register or
     // update webhook credentials and redirect callbacks to a hostile URL.
@@ -89,7 +91,7 @@ export async function verifyRequestSignature(
       throw new RequestSignatureError(
         'request_signature_required',
         0,
-        'Requests carrying push_notification_config.authentication must be RFC 9421 signed'
+        'Requests carrying webhook authentication must be RFC 9421 signed'
       );
     }
     return { status: 'unsigned', verified_at: now };
@@ -497,16 +499,15 @@ const MAX_UNSIGNED_BODY_INSPECTION_BYTES = 1_048_576;
  * AdCP payloads reach depth ~5-8; 64 is generous without leaving room for
  * a pathological `{"a":{"a":{...}}}` to burn the stack.
  */
-const MAX_BODY_TRAVERSAL_DEPTH = 64;
-
 function exceedsUnsignedBodyInspectionCap(body: string | undefined): boolean {
   return typeof body === 'string' && body.length > MAX_UNSIGNED_BODY_INSPECTION_BYTES;
 }
 
 /**
  * Scan a JSON request body for a non-empty
- * `push_notification_config.authentication` object — anywhere in the tree,
- * including inside arrays of pending config updates. Runs only on the
+ * webhook authentication object — anywhere in the tree, including inside
+ * arrays of pending config updates. MCP uses `push_notification_config`;
+ * A2A uses `pushNotificationConfig`. Runs only on the
  * unsigned branch; returning `true` triggers the webhook-security downgrade
  * rejection in {@link verifyRequestSignature}.
  *
@@ -528,32 +529,7 @@ function carriesWebhookAuthentication(request: RequestLike): boolean {
   } catch {
     return false;
   }
-  return containsWebhookAuthentication(parsed, MAX_BODY_TRAVERSAL_DEPTH);
-}
-
-function containsWebhookAuthentication(value: unknown, depthRemaining: number): boolean {
-  if (depthRemaining <= 0) return false;
-  if (value === null || typeof value !== 'object') return false;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      if (containsWebhookAuthentication(item, depthRemaining - 1)) return true;
-    }
-    return false;
-  }
-  const obj = value as Record<string, unknown>;
-  const pnc = obj.push_notification_config;
-  if (pnc && typeof pnc === 'object' && !Array.isArray(pnc)) {
-    const auth = (pnc as Record<string, unknown>).authentication;
-    if (auth && typeof auth === 'object' && !Array.isArray(auth) && Object.keys(auth).length > 0) {
-      return true;
-    }
-  }
-  for (const [key, v] of Object.entries(obj)) {
-    // Already inspected push_notification_config above; don't re-walk it.
-    if (key === 'push_notification_config') continue;
-    if (containsWebhookAuthentication(v, depthRemaining - 1)) return true;
-  }
-  return false;
+  return containsWebhookAuthentication(parsed, WEBHOOK_AUTH_TRAVERSAL_DEPTH);
 }
 
 function validateCoveredComponents(components: string[], capability: VerifierCapability, request: RequestLike): void {
