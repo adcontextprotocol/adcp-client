@@ -228,8 +228,10 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
   // ── Vector 027: webhook-authentication downgrade resistance ─────────
   //
   // The verifier rejects unsigned requests whose JSON body carries a
-  // non-empty `push_notification_config.authentication` anywhere in the
-  // tree, regardless of whether the operation is in `required_for`.
+  // non-empty webhook authentication object anywhere in the tree, regardless
+  // of whether the operation is in `required_for`. MCP carries this as
+  // `push_notification_config.authentication`; A2A carries it as
+  // `pushNotificationConfig.authentication`.
   // These tests lock the surface around the happy-path conformance
   // vector (which only proves the top-level-object case).
 
@@ -248,6 +250,14 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
       { method: 'POST', url: webhookUrl, headers: { 'Content-Type': 'application/json' }, body },
       { ...baseStores(), capability: webhookCapability, now: () => 1_776_520_800, operation: webhookOperation }
     );
+  }
+
+  function deeplyNested(value, depth) {
+    let out = value;
+    for (let i = 0; i < depth; i += 1) {
+      out = { nested: out };
+    }
+    return out;
   }
 
   it('unsigned request with push_notification_config but no authentication returns unsigned', async () => {
@@ -280,6 +290,21 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
     assert.strictEqual(result.status, 'unsigned');
   });
 
+  it('unsigned A2A request with pushNotificationConfig but no authentication returns unsigned', async () => {
+    const result = await verifyUnsigned(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'message/send',
+        params: {
+          configuration: {
+            pushNotificationConfig: { url: 'https://buyer.example/webhook' },
+          },
+        },
+      })
+    );
+    assert.strictEqual(result.status, 'unsigned');
+  });
+
   it('unsigned request with authentication nested inside an array rejects', async () => {
     await assert.rejects(
       () =>
@@ -296,6 +321,76 @@ describe('verifier API v3: operation optional + VerifyResult discriminated union
               },
             ],
           })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('unsigned A2A request with pushNotificationConfig authentication rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'message/send',
+            params: {
+              configuration: {
+                pushNotificationConfig: {
+                  url: 'https://buyer.example/webhook',
+                  authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+                },
+              },
+            },
+          })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('unsigned request with reporting_webhook authentication rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify({
+            reporting_webhook: {
+              url: 'https://buyer.example/reporting',
+              authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+            },
+          })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('unsigned request with artifact_webhook authentication rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify({
+            artifact_webhook: {
+              url: 'https://buyer.example/artifacts',
+              authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+            },
+          })
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
+    );
+  });
+
+  it('unsigned request beyond the traversal budget rejects', async () => {
+    await assert.rejects(
+      () =>
+        verifyUnsigned(
+          JSON.stringify(
+            deeplyNested(
+              {
+                push_notification_config: {
+                  authentication: { scheme: 'HMAC-SHA256', credentials: 'secret' },
+                },
+              },
+              70
+            )
+          )
         ),
       err => err instanceof RequestSignatureError && err.code === 'request_signature_required'
     );
