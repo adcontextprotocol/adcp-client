@@ -9,6 +9,14 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const { bundleSupportsAdcpVersionField, extractVersionUnsupportedDetails } = require('../../dist/lib/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+
+async function callToolRaw(server, toolName, params) {
+  return server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: toolName, arguments: params ?? {} },
+  });
+}
 
 describe('bundleSupportsAdcpVersionField gate', () => {
   test('3.0 stable bundle does not have the field', () => {
@@ -138,5 +146,22 @@ describe('extractVersionUnsupportedDetails', () => {
   test('partial population — supported_versions only', () => {
     const out = extractVersionUnsupportedDetails({ supported_versions: ['3.0'] });
     assert.deepStrictEqual(out, { supported_versions: ['3.0'] });
+  });
+});
+
+describe('createAdcpServer version emission', () => {
+  test('auto-registered get_adcp_capabilities emits adcp_version when pinned to 3.1', async () => {
+    const server = createAdcpServer({
+      name: 'Versioned Seller',
+      version: '1.0.0',
+      adcpVersion: '3.1',
+    });
+
+    const result = await callToolRaw(server, 'get_adcp_capabilities', {});
+    assert.strictEqual(result.structuredContent.adcp_version, '3.1');
+
+    const text = result.content?.find(part => part.type === 'text')?.text;
+    assert.ok(text, 'capabilities response should include a text fallback');
+    assert.match(text, /Agent capabilities/);
   });
 });
