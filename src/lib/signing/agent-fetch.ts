@@ -105,6 +105,49 @@ export function extractAdcpOperation(body: unknown): string | undefined {
   return undefined;
 }
 
+const MAX_WEBHOOK_AUTH_TRAVERSAL_DEPTH = 64;
+
+/**
+ * Detect webhook receiver credentials in the outbound JSON-RPC payload. The
+ * verifier rejects unsigned requests carrying these credentials regardless of
+ * the seller's operation-level capability advertisement, so the client must
+ * sign them even while the capability cache is cold or silent for that op.
+ */
+function carriesWebhookAuthentication(body: unknown): boolean {
+  const text = bodyToUtf8(body);
+  if (!text) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return containsWebhookAuthentication(parsed, MAX_WEBHOOK_AUTH_TRAVERSAL_DEPTH);
+}
+
+function containsWebhookAuthentication(value: unknown, depthRemaining: number): boolean {
+  if (depthRemaining <= 0) return false;
+  if (!value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) {
+    return value.some(item => containsWebhookAuthentication(item, depthRemaining - 1));
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (hasNonEmptyAuthentication(obj.push_notification_config)) return true;
+
+  for (const [key, nested] of Object.entries(obj)) {
+    if (key === 'push_notification_config') continue;
+    if (containsWebhookAuthentication(nested, depthRemaining - 1)) return true;
+  }
+  return false;
+}
+
+function hasNonEmptyAuthentication(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const auth = (value as { authentication?: unknown }).authentication;
+  return !!auth && typeof auth === 'object' && !Array.isArray(auth) && Object.keys(auth).length > 0;
+}
+
 /**
  * Decide whether an outbound AdCP call should be signed given the seller's
  * advertised capability block and the buyer's override list.
@@ -193,12 +236,13 @@ export interface BuildAgentSigningFetchOptions {
 /**
  * Build a fetch wrapper suitable for injection into MCP/A2A transports. On
  * every outbound request:
- *   1. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
+ *   1. Sign immediately when the payload carries webhook authentication.
+ *   2. Extract the AdCP operation name from the JSON-RPC body (MCP tool-call
  *      or A2A message/send). Non-AdCP JSON-RPC methods (e.g., `initialize`)
  *      pass through unsigned.
- *   2. Consult the cached seller capability to decide whether to sign.
- *   3. Resolve the seller's content-digest policy into a per-request toggle.
- *   4. Delegate to `createSigningFetch` with the decision baked in.
+ *   3. Consult the cached seller capability to decide whether to sign.
+ *   4. Resolve the seller's content-digest policy into a per-request toggle.
+ *   5. Delegate to `createSigningFetch` with the decision baked in.
  */
 export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): FetchLike {
   const { signing, getCapability } = options;
@@ -210,6 +254,7 @@ export function buildAgentSigningFetch(options: BuildAgentSigningFetchOptions): 
   const upstream: FetchLike = explicitUpstream ?? ((input, init) => defaultUpstream()(input, init));
 
   const shouldSign = (_url: string, init: RequestInit | undefined): boolean => {
+    if (carriesWebhookAuthentication(init?.body)) return true;
     const operation = extractAdcpOperation(init?.body);
     const entry = getCapability();
     return shouldSignOperation(operation, entry?.requestSigning, signing);

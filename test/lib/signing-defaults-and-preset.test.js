@@ -278,6 +278,61 @@ describe('createAgentSignedFetch preset', () => {
     assert.strictEqual(headers.get('signature-input'), null, 'cold cache should not sign');
   });
 
+  it('signs webhook authentication payloads even when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            push_notification_config: {
+              url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.ok(headers.get('signature-input'), 'webhook auth payload should be signed');
+    assert.ok(headers.get('signature'), 'Signature header should be present');
+  });
+
+  it('does not sign webhook payloads without authentication when the capability cache is cold', async () => {
+    const cache = new CapabilityCache();
+    const { captured, upstream } = makeCapturingUpstream();
+    const signedFetch = createAgentSignedFetch({ signing, sellerAgentUri, cache, upstream });
+    await signedFetch('https://seller.example.com/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            push_notification_config: {
+              url: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+            },
+          },
+        },
+      }),
+    });
+    const headers = new Headers(captured.init?.headers);
+    assert.strictEqual(headers.get('signature-input'), null, 'webhook URL alone should not force signing');
+  });
+
   it('signs when the capability cache lists the operation as required_for', async () => {
     const cache = new CapabilityCache();
     const { buildCapabilityCacheKey } = require('../../dist/lib/signing/index.js');
