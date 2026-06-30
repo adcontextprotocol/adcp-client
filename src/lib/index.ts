@@ -1734,6 +1734,7 @@ export {
   equalUnderHexCasePolicy,
   isUnreservedOnly,
   divergenceOffset,
+  translateUniversalMacros,
 } from './substitution';
 export type {
   ObserverFetchOptions,
@@ -1747,6 +1748,8 @@ export type {
   PolicyResult as SubstitutionPolicyResult,
   SsrfPolicy,
   TrackerUrlRecord,
+  MacroMapping,
+  TranslateResult,
 } from './substitution';
 
 // ====== TEST HELPERS ======

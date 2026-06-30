@@ -242,10 +242,11 @@ function collectAttributes(body: string, tag: string, line: number, out: AttrHit
  *     `&rbrace;`.
  *
  * This is NOT the full HTML5 named-character-reference table (~2200
- * entries). The decoder additionally post-filters: if the value still
- * contains an ampersand followed by a letter after decoding, it is
- * treated as undecodable and the URL is dropped — refusing to classify
- * rather than risking under-extraction.
+ * entries). The decoder additionally post-filters via
+ * `__hasResidualEntity`: if the value still contains a browser-decodable
+ * entity this table missed (a `&name;` with a trailing semicolon, or a
+ * numeric `&#...` reference), it is treated as undecodable and the URL is
+ * dropped — refusing to classify rather than risking under-extraction.
  */
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
@@ -283,12 +284,29 @@ const NAMED_ENTITIES: Record<string, string> = {
 };
 
 /**
- * Detects an ampersand followed by alphanumeric entity-shaped text.
- * After decoding, any remaining occurrence signals an entity the
- * limited table above did not cover — callers should drop the value
- * rather than extract a partially-decoded URL.
+ * Detects an ampersand sequence that a browser would decode but the
+ * limited `NAMED_ENTITIES` table above did not — after decoding, any
+ * match signals browser-visible content that diverges from what we
+ * extracted, so callers drop the value rather than extract a
+ * partially-decoded URL.
+ *
+ * Two branches mirror how browsers decode references:
+ *
+ *   - NAMED (`&name;`): a trailing semicolon is REQUIRED. Browsers only
+ *     decode a fixed legacy set of named references without a semicolon
+ *     (`&amp`, `&lt`, `&gt`, `&quot`, `&copy`, `&nbsp`, `&AElig`, ...),
+ *     and none of those legacy no-semicolon entities are the dangerous
+ *     URL-scheme chars (`:`, `/`, `\`) — those require the semicolon
+ *     (`&colon;`, `&sol;`, `&bsol;`). Demanding a semicolon here means a
+ *     literal query string like `?mb=1&pkg=2` (which a browser renders
+ *     verbatim, decoding nothing) is not mistaken for a smuggled entity,
+ *     while `&someentity;` the table missed still trips the check.
+ *   - NUMERIC (`&#58;` / `&#x3a;`): the semicolon is optional, matching
+ *     the browser's lenient numeric decoding. A `&key=value` query never
+ *     starts a key with `#`, so this branch does not collide with normal
+ *     query strings.
  */
-const RESIDUAL_ENTITY_RE = /&(?:[A-Za-z][A-Za-z0-9]{1,31}|#[xX]?[0-9A-Fa-f]+);?/;
+const RESIDUAL_ENTITY_RE = /&(?:[A-Za-z][A-Za-z0-9]{1,31};|#[xX]?[0-9A-Fa-f]+;?)/;
 
 function decodeHtmlEntities(s: string): string {
   return (

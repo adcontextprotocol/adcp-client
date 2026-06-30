@@ -27,6 +27,8 @@ const {
   extractTrackerUrls,
 } = require('../../dist/lib/index.js');
 
+const { __hasResidualEntity } = require('../../dist/lib/substitution/observer/html-parser.js');
+
 describe('HTML entity smuggling — values with unknown entities are dropped', () => {
   it('decodes known entities like &Tab; so WHATWG URL sees the real scheme (javascript:)', () => {
     // Browsers decode `&Tab;` → `\t` inside attribute values, producing
@@ -74,6 +76,59 @@ describe('HTML entity smuggling — values with unknown entities are dropped', (
     const records = extractTrackerUrls(html);
     assert.equal(records.length, 1);
     assert.equal(records[0].url.protocol, 'javascript:');
+  });
+
+  it('keeps a multi-param tracker URL where & is written as &amp; in the attribute', () => {
+    // `&amp;` decodes to `&`, leaving the literal query separator
+    // `?mb=mb_123&pkg=pkg_456`. A browser renders `&pkg` verbatim (no
+    // entity named `pkg` with a trailing semicolon), so the residual
+    // check must not mistake it for a smuggled entity.
+    const html = `<img src="https://t.example/i?mb=mb_123&amp;pkg=pkg_456">`;
+    const records = extractTrackerUrls(html);
+    assert.equal(records.length, 1, 'legitimate multi-param URL must be kept');
+    assert.equal(records[0].url.searchParams.get('mb'), 'mb_123');
+    assert.equal(records[0].url.searchParams.get('pkg'), 'pkg_456');
+  });
+
+  it('keeps a three-param tracker URL with &amp; separators', () => {
+    const html = `<img src="https://t.example/i?a=1&amp;b=2&amp;cid=999">`;
+    const records = extractTrackerUrls(html);
+    assert.equal(records.length, 1, 'legitimate three-param URL must be kept');
+    assert.equal(records[0].url.searchParams.get('a'), '1');
+    assert.equal(records[0].url.searchParams.get('b'), '2');
+    assert.equal(records[0].url.searchParams.get('cid'), '999');
+  });
+
+  it('drops a numeric-reference scheme-smuggle even without a trailing semicolon (&#58;)', () => {
+    // `&#58` → `:` is decoded by browsers with or without a semicolon.
+    // It is in the decoder's numeric branch, so it decodes to a real
+    // javascript:-scheme URL rather than residual — and is classified.
+    const html = `<a href="javascript&#58alert(0)">click</a>`;
+    const records = extractTrackerUrls(html);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].url.protocol, 'javascript:');
+  });
+});
+
+describe('__hasResidualEntity — semicolon discipline for named vs numeric refs', () => {
+  it('returns false for a literal multi-param query string (no entity)', () => {
+    assert.equal(__hasResidualEntity('a=1&b=2'), false);
+  });
+
+  it('returns false for a no-semicolon entity-shaped token a browser renders literally (&pkg)', () => {
+    assert.equal(__hasResidualEntity('&pkg'), false);
+  });
+
+  it('returns true for a named entity with a trailing semicolon (&colon;)', () => {
+    assert.equal(__hasResidualEntity('&colon;'), true);
+  });
+
+  it('returns true for a numeric reference (&#58;)', () => {
+    assert.equal(__hasResidualEntity('&#58;'), true);
+  });
+
+  it('returns true for a numeric reference without a semicolon (&#58)', () => {
+    assert.equal(__hasResidualEntity('&#58'), true);
   });
 });
 
