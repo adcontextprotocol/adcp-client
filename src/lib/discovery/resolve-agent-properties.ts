@@ -12,15 +12,17 @@
  *   - `property_ids`   → filter top-level `properties[]` by `property_id`
  *   - `property_tags`  → filter top-level `properties[]` by tag intersection
  *   - `inline_properties` → return the agent entry's own `properties[]`
+ *   - legacy bare inline (`properties[]` without `authorization_type`) →
+ *     return the agent entry's own `properties[]`
  *   - `publisher_properties` → cross-publisher; returned as `cross_publisher`
  *     for the caller to resolve against other publishers' adagents.json
  *   - `signal_ids` / `signal_tags` → signals agents; no property output
  *
- * Mirrors the Python SDK's `_resolve_agent_properties` (adcp-client-python).
- * Fails closed: entries without `authorization_type` or with a missing
- * selector return zero properties — matching the Python SDK and the
- * schema's strict-conformance position. The pre-fix TS behavior of
- * attributing every property to every listed agent is gone.
+ * Mirrors the Python SDK's `_resolve_agent_properties` for schema-less
+ * legacy bare-inline entries while keeping schema-declared files strict.
+ * Missing selectors and bare entries without their own inline `properties[]`
+ * return zero properties. The pre-fix TS behavior of attributing every
+ * top-level property to every listed agent is gone.
  */
 import type {
   AdAgentsJson,
@@ -68,6 +70,8 @@ export interface ResolvedAgentScope {
 export type ResolveUnresolvableReason =
   /** The agent URL is not listed in `authorized_agents[]` at all. */
   | 'agent_not_listed'
+  /** More than one entry matches the same canonical agent URL. */
+  | 'ambiguous_agent_url'
   /** Entry exists but has no `authorization_type` discriminator. */
   | 'missing_authorization_type'
   /** Entry has an `authorization_type` we do not recognize. */
@@ -95,6 +99,17 @@ export type ResolveUnresolvableReason =
  * resolver — e.g., TMP `seller_agent_url` validation.
  */
 export function canonicalizeAgentUrl(raw: string): string | null {
+  const parsed = parseAgentUrl(raw);
+  if (!parsed) return null;
+  // `URL.host` already strips default ports and lowercases the hostname.
+  // Use `protocol + host` (NOT `origin`) so the assembled string keeps
+  // the IDN-A-label form Node produces.
+  const path = decodeUnreservedPercentEncoding(parsed.pathname);
+  const query = parsed.search ? decodeUnreservedPercentEncoding(parsed.search) : '';
+  return `${parsed.protocol}//${parsed.host}${path}${query}`;
+}
+
+function parseAgentUrl(raw: string): URL | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   let parsed: URL;
   try {
@@ -107,19 +122,15 @@ export function canonicalizeAgentUrl(raw: string): string | null {
   // Reject non-http(s) schemes — `adagents.json` agent URLs are HTTPS-only
   // in production, but we accept `http://` here so loopback fixtures parse.
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-  // `URL.host` already strips default ports and lowercases the hostname.
-  // Use `protocol + host` (NOT `origin`) so the assembled string keeps
-  // the IDN-A-label form Node produces.
-  const path = decodeUnreservedPercentEncoding(parsed.pathname);
-  const query = parsed.search ? decodeUnreservedPercentEncoding(parsed.search) : '';
-  return `${parsed.protocol}//${parsed.host}${path}${query}`;
+  return parsed;
 }
 
 /**
  * Resolve `agentUrl`'s authorization scope against an `adagents.json`
  * file. The lookup uses canonicalized URL comparison — two URLs
- * differing only in case, default port, percent-encoding of unreserved
- * chars, or fragment are the same agent.
+ * differing only in host case, default port, percent-encoding of
+ * unreserved chars, or fragment are the same agent. Scheme and trailing
+ * slash differences remain distinct.
  *
  * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
@@ -132,18 +143,39 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
   }
 
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
-  const entry = entries.find(e => {
+  const matches = entries.filter(e => {
     if (!e || typeof e.url !== 'string') return false;
     const canon = canonicalizeAgentUrl(e.url);
     return canon !== null && canon === wanted;
   });
+  if (matches.length > 1) {
+    return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'ambiguous_agent_url' };
+  }
 
+  const entry = matches[0];
   if (!entry) {
     return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
 
+  return resolveMatchedAgentProperties(adAgents, entry);
+}
+
+function resolveMatchedAgentProperties(adAgents: AdAgentsJson, entry: AuthorizedAgent): ResolvedAgentScope {
+  const allProperties = filterRevokedProperties(adAgents.properties, adAgents.revoked_publisher_domains);
   const authType = entry.authorization_type as AuthorizationType | undefined;
   if (!authType) {
+    // Python SDK compatibility: legacy files sometimes omit the discriminator
+    // while carrying inline `properties[]` on the agent entry.
+    if (allowsLegacyBareInline(adAgents) && Array.isArray(entry.properties) && entry.properties.length > 0) {
+      const inline = filterRevokedProperties(entry.properties, adAgents.revoked_publisher_domains);
+      return {
+        properties: inline,
+        cross_publisher: [],
+        cross_publisher_expanded: [],
+        matched_entry: entry,
+        ...(inline.length === 0 ? { unresolvable: 'no_match' as const } : {}),
+      };
+    }
     return {
       properties: [],
       cross_publisher: [],
@@ -152,8 +184,6 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
       unresolvable: 'missing_authorization_type',
     };
   }
-
-  const allProperties = Array.isArray(adAgents.properties) ? adAgents.properties : [];
 
   switch (authType) {
     case 'property_ids': {
@@ -211,7 +241,14 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
           unresolvable: 'missing_selector',
         };
       }
-      return { properties: inline, cross_publisher: [], cross_publisher_expanded: [], matched_entry: entry };
+      const matched = filterRevokedProperties(inline, adAgents.revoked_publisher_domains);
+      return {
+        properties: matched,
+        cross_publisher: [],
+        cross_publisher_expanded: [],
+        matched_entry: entry,
+        ...(matched.length === 0 ? { unresolvable: 'no_match' as const } : {}),
+      };
     }
 
     case 'publisher_properties': {
@@ -267,10 +304,15 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
 /**
  * Convenience: list every locally-resolvable (`agent_url` →
  * `Property[]`) pair from an `adagents.json` file. Agents listed with
- * `signal_ids` / `signal_tags` or with no `authorization_type` are
- * absent from the result. `publisher_properties` cross-references are
- * reported separately so the caller can resolve them against other
- * publishers' files.
+ * `signal_ids` / `signal_tags` or with no resolvable property selector are
+ * absent from the result. Legacy bare-inline entries with `properties[]`
+ * are included. `publisher_properties` cross-references are reported
+ * separately so the caller can resolve them against other publishers' files.
+ *
+ * The returned map is keyed by public canonical URL; if a file contains
+ * canonical-equivalent entries, the later entry wins in this non-authoritative
+ * inventory view. Use `resolveAgentProperties` for an authorization decision
+ * for a specific agent URL because it fails closed on ambiguous matches.
  */
 export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   byAgent: Map<string, Property[]>;
@@ -298,7 +340,7 @@ export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
   for (const entry of entries) {
     if (!entry || typeof entry.url !== 'string') continue;
-    const scope = resolveAgentProperties(adAgents, entry.url);
+    const scope = resolveMatchedAgentProperties(adAgents, entry);
     const canon = canonicalizeAgentUrl(entry.url);
     const key = canon ?? entry.url;
     if (scope.properties.length > 0) {
@@ -317,6 +359,34 @@ export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   }
 
   return { byAgent, unresolved, cross_publisher };
+}
+
+/**
+ * Non-authoritative total local property helper for `adagents.json`.
+ *
+ * This concatenates each authorized agent's locally resolved property scope
+ * (`property_ids`, `property_tags`, `inline_properties`, legacy bare inline,
+ * and inline-resolved `publisher_properties`). It intentionally preserves
+ * duplicate property objects across multiple agents because it is a sum of
+ * per-agent scopes, not a unique publisher catalog.
+ *
+ * If no agent scope resolves to local properties, it falls back to the file's
+ * top-level `properties[]`. In both paths, properties whose
+ * `publisher_domain` is listed in `revoked_publisher_domains[]` are filtered
+ * out.
+ *
+ * Do not use this helper for authorization. It resolves each entry independently
+ * for inventory aggregation and does not fail closed on canonical URL ambiguity.
+ */
+export function getAllProperties(adAgents: AdAgentsJson): Property[] {
+  const out: Property[] = [];
+  const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
+  for (const entry of entries) {
+    if (!entry || typeof entry.url !== 'string') continue;
+    const scope = resolveMatchedAgentProperties(adAgents, entry);
+    if (scope.properties.length > 0) out.push(...scope.properties);
+  }
+  return out.length > 0 ? out : filterRevokedProperties(adAgents.properties, adAgents.revoked_publisher_domains);
 }
 
 /**
@@ -341,4 +411,58 @@ function decodeUnreservedPercentEncoding(input: string): string {
       code === 0x7e; // '~'
     return isUnreserved ? String.fromCharCode(code) : match.toUpperCase();
   });
+}
+
+function filterRevokedProperties(properties: unknown, revokedDomainsInput: unknown): Property[] {
+  if (!Array.isArray(properties)) return [];
+  const revokedDomains = revokedDomainSet(revokedDomainsInput);
+  if (revokedDomains.size === 0) return properties as Property[];
+  return (properties as Property[]).filter(p => {
+    const domains = propertyPublisherDomains(p);
+    if (domains.length === 0) return true;
+    return domains.every(domain => !revokedDomains.has(domain.toLowerCase()));
+  });
+}
+
+function revokedDomainSet(input: unknown): Set<string> {
+  if (!Array.isArray(input)) return new Set();
+  const out = new Set<string>();
+  for (const item of input) {
+    // `revoked_at` and `reason` are metadata; presence in this list is the
+    // revocation signal.
+    const domain =
+      typeof item === 'string'
+        ? item
+        : item &&
+            typeof item === 'object' &&
+            typeof (item as { publisher_domain?: unknown }).publisher_domain === 'string'
+          ? (item as { publisher_domain: string }).publisher_domain
+          : undefined;
+    if (domain && domain.length > 0) out.add(domain.toLowerCase());
+  }
+  return out;
+}
+
+function propertyPublisherDomains(property: Property): string[] {
+  const out: string[] = [];
+  if (typeof property.publisher_domain === 'string' && property.publisher_domain.length > 0) {
+    out.push(property.publisher_domain);
+  }
+  if (Array.isArray(property.identifiers)) {
+    for (const id of property.identifiers) {
+      if (
+        id &&
+        (id.type === 'domain' || id.type === 'subdomain') &&
+        typeof id.value === 'string' &&
+        id.value.length > 0
+      ) {
+        out.push(id.value);
+      }
+    }
+  }
+  return out;
+}
+
+function allowsLegacyBareInline(adAgents: AdAgentsJson): boolean {
+  return typeof adAgents.$schema !== 'string' || adAgents.$schema.length === 0;
 }

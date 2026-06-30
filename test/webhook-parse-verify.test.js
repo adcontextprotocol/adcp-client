@@ -48,6 +48,34 @@ describe('verifyAndParseWebhook', () => {
     assert.strictEqual(parsed.result.notification_type, 'scheduled');
   });
 
+  test('accepts AdCP 3.0 envelopes that omit operation_id (backwards compat)', async () => {
+    const client = new SingleAgentClient(agent, {});
+    const { operation_id, ...envelopeWithoutOperationId } = deliveryEnvelope();
+    const parsed = await client.verifyAndParseWebhook({
+      body: JSON.stringify(envelopeWithoutOperationId),
+      taskType: 'media_buy_delivery',
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.protocol, 'mcp');
+    assert.strictEqual(parsed.metadata.taskType, 'media_buy_delivery');
+    assert.strictEqual(parsed.metadata.idempotencyKey, 'whk_test_delivery_0000001');
+    assert.strictEqual(parsed.result.notification_type, 'scheduled');
+  });
+
+  test('falls back to routing-context operationId when the envelope omits operation_id', async () => {
+    const client = new SingleAgentClient(agent, {});
+    const { operation_id, ...envelopeWithoutOperationId } = deliveryEnvelope();
+    const parsed = await client.verifyAndParseWebhook({
+      body: JSON.stringify(envelopeWithoutOperationId),
+      taskType: 'media_buy_delivery',
+      operationId: 'ctx_op_123',
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.metadata.operationId, 'ctx_op_123');
+  });
+
   test('rejects bare delivery result payloads before dispatch', async () => {
     const client = new SingleAgentClient(agent, {});
     const parsed = await client.verifyAndParseWebhook({

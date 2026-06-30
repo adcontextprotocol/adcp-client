@@ -17,6 +17,9 @@ import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { withResponseSizeLimit } from './responseSizeLimit';
+import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
+import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -24,6 +27,18 @@ type CallToolResponse = {
   content?: Array<{ type: string; text?: string }>;
   [key: string]: unknown;
 };
+
+interface MCPTaskProtocolOptions {
+  transport?: { maxResponseBytes?: number };
+  onTransportActivity?: TransportActivityHandler;
+  transportActivityContext?: {
+    agentId: string;
+    operationId?: string;
+    taskId?: string;
+    contextId?: string;
+    idempotencyKey?: string;
+  };
+}
 
 /**
  * Track which MCP clients have had listTools() called.
@@ -37,9 +52,12 @@ const toolsListedClients = new WeakSet<MCPClient>();
  * Ensure tool metadata is cached in the SDK so isToolTask() works.
  * Called once per client connection when tasks are supported.
  */
-async function ensureToolsListed(client: MCPClient): Promise<void> {
+async function ensureToolsListed(client: MCPClient, signal?: AbortSignal, requestTimeoutMs?: number): Promise<void> {
   if (toolsListedClients.has(client)) return;
-  await client.listTools();
+  await client.listTools(undefined, {
+    ...(signal && { signal }),
+    ...(requestTimeoutMs !== undefined && { timeout: requestTimeoutMs }),
+  });
   toolsListedClients.add(client);
 }
 
@@ -168,7 +186,12 @@ export async function callMCPToolWithTasks(
   authToken?: string,
   debugLogs: DebugLogEntry[] = [],
   customHeaders?: Record<string, string>,
-  options?: { workingTimeout?: number; signingContext?: AgentSigningContext }
+  options?: {
+    workingTimeout?: number;
+    signingContext?: AgentSigningContext;
+    signal?: AbortSignal;
+    requestTimeoutMs?: number;
+  }
 ): Promise<unknown> {
   return withSpan(
     'adcp.mcp.call_tool',
@@ -205,8 +228,24 @@ export async function callMCPToolWithTasks(
           });
         }
 
-        return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, toolName, client =>
-          callToolOnClient(client, toolName, args, debugLogs, workingTimeout)
+        return withCachedConnection(
+          agentUrl,
+          authToken,
+          authHeaders,
+          debugLogs,
+          toolName,
+          client =>
+            callToolOnClient(
+              client,
+              toolName,
+              args,
+              debugLogs,
+              workingTimeout,
+              options?.signal,
+              options?.requestTimeoutMs
+            ),
+          undefined,
+          { signal: options?.signal, requestTimeoutMs: options?.requestTimeoutMs }
         );
       })
   );
@@ -228,14 +267,22 @@ export async function callMCPToolWithClient(
   toolName: string,
   args: Record<string, unknown>,
   debugLogs: DebugLogEntry[] = [],
-  options?: { workingTimeout?: number }
+  options?: { workingTimeout?: number; signal?: AbortSignal; requestTimeoutMs?: number }
 ): Promise<unknown> {
   debugLogs.push({
     type: 'info',
     message: `MCP: Calling tool ${toolName} (in-process) with args: ${JSON.stringify(redactArgsForLog(args))}`,
     timestamp: new Date().toISOString(),
   });
-  return callToolOnClient(mcpClient, toolName, args, debugLogs, options?.workingTimeout ?? 120_000);
+  return callToolOnClient(
+    mcpClient,
+    toolName,
+    args,
+    debugLogs,
+    options?.workingTimeout ?? 120_000,
+    options?.signal,
+    options?.requestTimeoutMs
+  );
 }
 
 /**
@@ -248,15 +295,26 @@ async function callToolOnClient(
   toolName: string,
   args: Record<string, unknown>,
   debugLogs: DebugLogEntry[],
-  workingTimeout: number
+  workingTimeout: number,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number
 ): Promise<unknown> {
+  const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestTimeoutMs);
+  const requestOptions = {
+    ...(signal && { signal }),
+    ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
+  };
   if (!serverSupportsTasks(client)) {
     debugLogs.push({
       type: 'info',
       message: `MCP Tasks: Server does not support tasks, using standard callTool for ${toolName}`,
       timestamp: new Date().toISOString(),
     });
-    const response = (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
+    const response = (await client.callTool(
+      { name: toolName, arguments: args },
+      undefined,
+      requestOptions
+    )) as CallToolResponse;
 
     debugLogs.push({
       type: response?.isError ? 'error' : 'success',
@@ -271,7 +329,7 @@ async function callToolOnClient(
   // Ensure tool metadata is cached so the SDK's isToolTask() works correctly.
   // Without this, callToolStream silently skips task creation for tools that
   // declare taskSupport: 'optional' | 'required'.
-  await ensureToolsListed(client);
+  await ensureToolsListed(client, signal, resolvedRequestTimeoutMs);
 
   debugLogs.push({
     type: 'info',
@@ -281,8 +339,9 @@ async function callToolOnClient(
 
   // Use callToolStream which handles the full task lifecycle
   const stream = client.experimental.tasks.callToolStream({ name: toolName, arguments: args }, undefined, {
-    timeout: workingTimeout,
+    timeout: resolvedRequestTimeoutMs ?? workingTimeout,
     resetTimeoutOnProgress: true,
+    ...(signal && { signal }),
   });
 
   let capturedTaskId: string | undefined;
@@ -331,7 +390,11 @@ async function callToolOnClient(
           // and return it as a proper isError response for downstream unwrapping.
           if (capturedTaskId) {
             try {
-              const taskResult = await client.experimental.tasks.getTaskResult(capturedTaskId);
+              const taskResult = await client.experimental.tasks.getTaskResult(
+                capturedTaskId,
+                undefined,
+                requestOptions
+              );
               const content = taskResult?.content as Array<{ type: string; text?: string }> | undefined;
               if (content) {
                 return {
@@ -349,9 +412,12 @@ async function callToolOnClient(
       }
     }
   } catch (error) {
+    if (signal?.aborted && isAbortOrTimeoutError(error)) {
+      throw error;
+    }
     // If we timed out but have a taskId, return a working status
     // so the caller can poll via getMCPTaskStatus/getMCPTaskResult
-    if (capturedTaskId && error instanceof Error && error.message.includes('Timeout')) {
+    if (capturedTaskId && error instanceof Error && /timeout|timed out/i.test(error.message)) {
       debugLogs.push({
         type: 'info',
         message: `MCP Tasks: Timeout for ${toolName}, returning working status with taskId ${capturedTaskId}`,
@@ -366,6 +432,9 @@ async function callToolOnClient(
         },
       };
     }
+    if (isAbortOrTimeoutError(error)) {
+      throw error;
+    }
     // Servers may return a synchronous tool error (e.g. VERSION_UNSUPPORTED)
     // rather than creating a task. The Tasks SDK rejects these with a Zod
     // validation error about a missing `task` field. When no task was
@@ -378,7 +447,11 @@ async function callToolOnClient(
         message: `MCP Tasks: Server returned synchronous response for ${toolName}, falling back to callTool`,
         timestamp: new Date().toISOString(),
       });
-      return (await client.callTool({ name: toolName, arguments: args })) as CallToolResponse;
+      return (await client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        requestOptions
+      )) as CallToolResponse;
     }
     throw error;
   }
@@ -469,19 +542,33 @@ export async function getMCPTaskResult(
 export async function listMCPTasks(
   agentUrl: string,
   authToken?: string,
-  debugLogs: DebugLogEntry[] = []
+  debugLogs: DebugLogEntry[] = [],
+  options: MCPTaskProtocolOptions = {}
 ): Promise<TaskInfo[]> {
   const authHeaders = buildAuthHeaders(authToken);
 
-  return withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, 'tasks/list', async client => {
-    const result = await client.experimental.tasks.listTasks();
-    debugLogs.push({
-      type: 'info',
-      message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
-      timestamp: new Date().toISOString(),
-    });
-    return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
-  });
+  return withResponseSizeLimit(options.transport?.maxResponseBytes, () =>
+    withTransportDiagnostics(
+      {
+        agentId: options.transportActivityContext?.agentId ?? 'unknown-agent',
+        protocol: 'mcp',
+        tool: 'tasks/list',
+        taskType: 'tasks/list',
+        ...options.transportActivityContext,
+        onTransportActivity: options.onTransportActivity,
+      },
+      () =>
+        withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, 'tasks/list', async client => {
+          const result = await client.experimental.tasks.listTasks();
+          debugLogs.push({
+            type: 'info',
+            message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
+            timestamp: new Date().toISOString(),
+          });
+          return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
+        })
+    )
+  );
 }
 
 /**

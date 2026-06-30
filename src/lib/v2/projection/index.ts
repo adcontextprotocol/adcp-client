@@ -1,18 +1,28 @@
 /**
  * v1 ↔ v2 Product projection layer (AdCP 3.1).
  *
- * Three public surfaces:
+ * Public surfaces:
  *
  *   - `projectV1ProductToV2` / `projectV2ProductToV1` — the symmetric
  *     core projections. Read a Product on one side, return a Product
  *     on the other plus structured diagnostics (`source: 'sdk'`,
  *     normative spec codes + SDK-local codes).
  *
+ *   - `resolveCanonicalFormatKind` / `canonicalDeclarationFromBareId` —
+ *     resolve a single bare format-id string (no surrounding Product,
+ *     no `agent_url`) to its canonical `format_kind` or full declaration.
+ *     Registry- and catalog-backed; fails closed to `null`.
+ *
  *   - `withFormatOptions` / `augmentProductWithFormatOptions` —
  *     buyer-side response augmentation. Adds `format_options[]` to a
  *     v1-shaped get_products response so canonical-format-aware buyers
  *     can read the canonical model regardless of the seller's wire
  *     version. Additive — `format_ids[]` is preserved.
+ *
+ *   - `toCanonicalOnlyProduct` / `toCanonicalOnlyResponse` — the
+ *     read-side narrowing for a fully-migrated consumer. Returns
+ *     `format_options[]` with `format_ids[]` dropped, surfacing a
+ *     diagnostic for any ref that couldn't be carried over.
  *
  *   - Catalog + registry primitives (`lookupV1Format`,
  *     `findCatalogEntryByCanonicalAndSize`, registry exports) for
@@ -23,13 +33,20 @@
  * conventions to canonical creative formats.
  */
 
-export { projectV1ProductToV2 } from './v1-to-v2';
-export type { V1ToV2Result } from './v1-to-v2';
+export { projectV1ProductToV2, canonicalDeclarationFromBareId, resolveCanonicalFormatKind } from './v1-to-v2';
+export type { V1ToV2Result, BareFormatIdResolveOptions } from './v1-to-v2';
 
 export { projectV2ProductToV1 } from './v2-to-v1';
 export type { V2ToV1Result } from './v2-to-v1';
 
-export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedProduct } from './augment-response';
+export {
+  augmentProductWithFormatOptions,
+  withFormatOptions,
+  toCanonicalOnlyProduct,
+  toCanonicalOnlyResponse,
+  type V2AugmentedProduct,
+  type CanonicalOnlyProduct,
+} from './augment-response';
 
 export {
   CanonicalFormat,

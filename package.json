@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "9.0.0",
+  "version": "9.5.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -303,7 +303,7 @@
     "test:e2e:local-app": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
-    "version": "changeset version && npm run sync-version",
+    "version": "changeset version && npm install --package-lock-only --ignore-scripts && npm run sync-version",
     "release": "tsx scripts/publish-adcp-release.ts",
     "test:protocol-compliance": "node test/run-protocol-tests.js --only compliance",
     "test:protocol-schema": "node test/run-protocol-tests.js --only schema",

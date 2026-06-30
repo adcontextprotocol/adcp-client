@@ -75,6 +75,8 @@ export type TestScenario =
 export interface TestOptions {
   // Protocol to use for testing (default: 'mcp')
   protocol?: 'mcp' | 'a2a';
+  /** Optional cancellation signal for discovery and storyboard helper calls. */
+  signal?: AbortSignal;
   /**
    * AdCP protocol version the test client should speak. Storyboard runners
    * set this from the compliance cache version instead of relying on the

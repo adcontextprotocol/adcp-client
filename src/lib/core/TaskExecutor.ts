@@ -24,6 +24,7 @@ import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { cancelA2ATask } from '../protocols/a2a';
+import { isAbortOrTimeoutError } from '../protocols/abort';
 import type {
   Message,
   InputRequest,
@@ -311,6 +312,8 @@ export class TaskExecutor {
       filterInvalidProducts?: boolean;
       /** Global activity callback for observability */
       onActivity?: (activity: Activity) => void | Promise<void>;
+      /** Transport-level diagnostics callback for outbound HTTP requests. */
+      onTransportActivity?: import('../protocols').TransportActivityHandler;
       /** Governance configuration for buyer-side campaign governance */
       governance?: GovernanceConfig;
       /**
@@ -342,7 +345,8 @@ export class TaskExecutor {
         config.governance,
         config.onActivity,
         config.adcpVersion,
-        config.versionEnvelope
+        config.versionEnvelope,
+        config.onTransportActivity
       );
     }
     const modes = resolveValidationModes(config.validation);
@@ -602,6 +606,14 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        signal: options.signal,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          operationId: taskId,
+          taskId: options.taskId ?? taskId,
+          contextId: options.contextId,
+          idempotencyKey,
+        },
       });
 
       // Emit protocol_response activity
@@ -686,6 +698,14 @@ export class TaskExecutor {
 
       return attachMatch(result);
     } catch (error) {
+      if (isAbortOrTimeoutError(error)) {
+        if (idempotencyKey && error && typeof error === 'object') {
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
+        }
+        throw error;
+      }
+
       // Report failed outcome on error
       if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
         await this.governanceMiddleware.reportOutcome(
@@ -1340,7 +1360,13 @@ export class TaskExecutor {
     if (agent.protocol === 'mcp') {
       const authToken = getAuthToken(agent);
       try {
-        return await listMCPTasks(agent.agent_uri, authToken);
+        return await listMCPTasks(agent.agent_uri, authToken, undefined, {
+          transport: transport ?? this.config.transport,
+          onTransportActivity: this.config.onTransportActivity,
+          transportActivityContext: {
+            agentId: agent.id,
+          },
+        });
       } catch (err) {
         if (is401Error(err)) throw err;
         // Fall through to tool call if protocol method is not supported
@@ -1356,6 +1382,7 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
+        onTransportActivity: this.config.onTransportActivity,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1380,7 +1407,8 @@ export class TaskExecutor {
   private async getTaskStatusWithRawResponse(
     agent: AgentConfig,
     taskId: string,
-    transport?: import('../protocols').TransportOptions
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
   ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
@@ -1419,6 +1447,11 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
+        signal,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          taskId,
+        },
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1439,9 +1472,10 @@ export class TaskExecutor {
   async getTaskStatus(
     agent: AgentConfig,
     taskId: string,
-    transport?: import('../protocols').TransportOptions
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
   ): Promise<TaskInfo> {
-    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport)).task;
+    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal)).task;
   }
 
   async pollTaskCompletion<T>(
@@ -1511,7 +1545,7 @@ export class TaskExecutor {
       let status: TaskInfo;
       let rawResponse: Record<string, unknown> | undefined;
       try {
-        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport);
+        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal);
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
       } catch (err) {
@@ -1725,6 +1759,13 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        signal: options.signal,
+        onTransportActivity: this.config.onTransportActivity,
+        transportActivityContext: {
+          operationId: taskId,
+          taskId,
+          contextId,
+        },
       }
     );
 

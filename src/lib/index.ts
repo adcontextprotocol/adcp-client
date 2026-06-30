@@ -13,13 +13,34 @@ export {
 export type {
   RegistrySyncConfig,
   RegistrySyncState,
+  RegistrySyncTransport,
   RegistrySyncEvents,
   AgentFilter,
   CursorStore,
   PropertyRegistryConfig,
+  FeedStreamQuery,
+  FeedStreamMessage,
+  FeedHeartbeat,
+  FeedStreamErrorData,
+  OpenFeedStreamOptions,
+  FeedFreshness,
+} from './registry';
+export {
+  openFeedStream,
+  parseSseStream,
+  sanitizeStreamText,
+  DEFAULT_MAX_SSE_FRAME_BYTES,
+  FeedStreamError,
+  FeedStreamUnsupportedError,
+  FeedStreamCursorExpiredError,
+  FeedStreamHttpError,
+  FeedStreamParseError,
 } from './registry';
 export type {
   ResolvedBrand,
+  BrandHierarchyResolution,
+  BrandHierarchyBulkResolution,
+  ResolveBrandHierarchyOptions,
   ResolvedProperty as ResolvedRegistryProperty,
   PropertyInfo,
   RegistryClientConfig,
@@ -72,6 +93,8 @@ export type {
   PublisherPropertySelector,
   CompanySearchResult,
   FindCompanyResult,
+  ManagerRevalidationRequest,
+  ManagerRevalidationResponse,
   ListPoliciesQuery,
   ListPoliciesResponse,
   ResolvePolicyQuery,
@@ -188,6 +211,7 @@ export {
 export {
   resolveAgentProperties,
   listAgentPropertyMap,
+  getAllProperties,
   canonicalizeAgentUrl,
   type ResolvedAgentScope,
   type ResolveUnresolvableReason,
@@ -1169,9 +1193,17 @@ export {
   closeMCPConnections,
   closeOAuthConnections,
   bundleSupportsAdcpVersionField,
+  sanitizeTransportHeaders,
+  sanitizeTransportUrl,
 } from './protocols';
 export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
-export type { CallToolOptions, TransportOptions } from './protocols';
+export type {
+  CallToolOptions,
+  TransportActivity,
+  TransportActivityContext,
+  TransportActivityHandler,
+  TransportOptions,
+} from './protocols';
 
 // ====== WIRE VERSION HELPERS (NAMESPACE) ======
 // Grouped re-exports of the three AdCP `adcp_version` envelope helpers
@@ -1347,17 +1379,25 @@ export {
 export {
   augmentProductWithFormatOptions,
   withFormatOptions,
+  toCanonicalOnlyProduct,
+  toCanonicalOnlyResponse,
   packageRefsForCapabilities,
   legacyFormatIdsFromOptions,
   tryLegacyFormatIdsFromOptions,
   legacyFormatIdsForCapability,
+  canonicalDeclarationFromBareId,
+  resolveCanonicalFormatKind,
   CapabilityIdsLookupError,
+  type BareFormatIdResolveOptions,
+  type CanonicalOnlyProduct,
   type CapabilityIdsLookupErrorCode,
   type PackageFormatRefs,
   type ProjectionDiagnostic,
   type V1FormatId,
   type V1Product,
+  type V2AugmentedProduct,
   type V2Product,
+  type V2ProductFormatDeclaration,
 } from './v2/projection';
 
 // ====== ACTIVATION KEY BUILDERS ======

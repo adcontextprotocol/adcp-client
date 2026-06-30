@@ -23,6 +23,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 
 const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+const { getPropertyIndex, resetPropertyIndex } = require('../../dist/lib/discovery/property-index.js');
 const { LIBRARY_VERSION } = require('../../dist/lib/version.js');
 
 /**
@@ -580,6 +581,64 @@ describe('PropertyCrawler', () => {
         );
       } finally {
         await server.close();
+      }
+    });
+
+    test('crawlAgents honors revocations when raw adagents properties omit publisher_domain', async () => {
+      resetPropertyIndex();
+      class TestCrawler extends PropertyCrawler {
+        async crawlAgent() {
+          return ['publisher.example'];
+        }
+
+        async fetchPublisherProperties() {
+          const rawAdAgents = {
+            revoked_publisher_domains: [{ publisher_domain: 'revoked.example', revoked_at: '2026-01-01T00:00:00Z' }],
+            properties: [
+              {
+                property_id: 'revoked',
+                property_type: 'website',
+                name: 'Revoked Site',
+                identifiers: [{ type: 'domain', value: 'revoked.example' }],
+              },
+              {
+                property_id: 'kept',
+                property_type: 'website',
+                name: 'Kept Site',
+                identifiers: [{ type: 'domain', value: 'kept.example' }],
+              },
+            ],
+            authorized_agents: [
+              {
+                url: 'https://agent.example/mcp',
+                authorized_for: 'test',
+                authorization_type: 'property_ids',
+                property_ids: ['revoked', 'kept'],
+              },
+            ],
+          };
+          return {
+            properties: {
+              'publisher.example': rawAdAgents.properties.map(p => ({ ...p, publisher_domain: 'publisher.example' })),
+            },
+            adAgents: { 'publisher.example': rawAdAgents },
+            warnings: [],
+          };
+        }
+      }
+
+      try {
+        const crawler = new TestCrawler({ logLevel: 'silent' });
+        const result = await crawler.crawlAgents([{ agent_url: 'https://agent.example/mcp' }]);
+        const auth = getPropertyIndex().getAgentAuthorizations('https://agent.example/mcp');
+
+        assert.strictEqual(result.totalProperties, 1);
+        assert.deepStrictEqual(
+          auth.properties.map(p => p.property_id),
+          ['kept']
+        );
+      } finally {
+        resetPropertyIndex();
       }
     });
   });

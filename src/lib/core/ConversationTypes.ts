@@ -146,6 +146,13 @@ export type WebhookUrlTemplate =
 export interface TaskOptions {
   /** Timeout for entire task (ms) */
   timeout?: number;
+  /**
+   * Caller-owned cancellation signal for the read path and in-flight protocol
+   * call. Aborting this signal cancels discovery probes (`getAgentInfo`,
+   * `getCapabilities`, feature/version preflight) and the tool request where
+   * the underlying official protocol client supports it.
+   */
+  signal?: AbortSignal;
   /** Maximum clarification rounds before failing */
   maxClarifications?: number;
   /**

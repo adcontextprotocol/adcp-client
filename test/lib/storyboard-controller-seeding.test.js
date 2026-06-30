@@ -39,6 +39,37 @@ describe('buildSeedCalls', () => {
     assert.strictEqual(calls[1].params.product_id, 'outdoor_video_auction');
   });
 
+  test('accounts → seed_account with account_id lifted into params and rest in fixture', () => {
+    const calls = buildSeedCalls({
+      accounts: [
+        {
+          account_id: 'acct-sandbox-1',
+          fixture: {
+            name: 'Sandbox Advertiser',
+            status: 'active',
+            sandbox: true,
+          },
+        },
+      ],
+    });
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].scenario, 'seed_account');
+    assert.deepStrictEqual(calls[0].params, {
+      account_id: 'acct-sandbox-1',
+      fixture: { name: 'Sandbox Advertiser', status: 'active', sandbox: true },
+    });
+  });
+
+  test('accounts → seed_account supports direct fixture fields for older storyboard snapshots', () => {
+    const calls = buildSeedCalls({
+      accounts: [{ account_id: 'acct-sandbox-1', status: 'active', sandbox: true }],
+    });
+    assert.deepStrictEqual(calls[0].params, {
+      account_id: 'acct-sandbox-1',
+      fixture: { status: 'active', sandbox: true },
+    });
+  });
+
   test('pricing_options → seed_pricing_option with product_id + pricing_option_id lifted', () => {
     const calls = buildSeedCalls({
       pricing_options: [
@@ -126,8 +157,9 @@ describe('buildSeedCalls', () => {
     });
   });
 
-  test('emits ordering: buyer_agents → products → pricing_options → creative_formats → creatives → plans → media_buys', () => {
+  test('emits ordering: accounts → buyer_agents → products → pricing_options → creative_formats → creatives → plans → media_buys', () => {
     const calls = buildSeedCalls({
+      accounts: [{ account_id: 'acct-1' }],
       media_buys: [{ media_buy_id: 'mb-1' }],
       buyer_agents: [{ agent_url: 'https://buyer.example/agent' }],
       products: [{ product_id: 'p-1' }],
@@ -139,6 +171,7 @@ describe('buildSeedCalls', () => {
     assert.deepStrictEqual(
       calls.map(c => c.scenario),
       [
+        'seed_account',
         'seed_buyer_agent',
         'seed_product',
         'seed_pricing_option',
@@ -152,18 +185,20 @@ describe('buildSeedCalls', () => {
 
   test('flags authoring error when a required id field is missing — seed is not issued', () => {
     const calls = buildSeedCalls({
+      accounts: [{ name: 'missing account_id' }],
       buyer_agents: [{ status: 'active' }],
       products: [{ delivery_type: 'non_guaranteed' }],
       pricing_options: [{ product_id: 'p-1' }],
       creative_formats: [{ name: 'missing format_id' }],
       creatives: [{ format_id: 'x' }],
     });
-    assert.strictEqual(calls.length, 5);
-    assert.match(calls[0].authoring_error, /agent_url/);
-    assert.match(calls[1].authoring_error, /product_id/);
-    assert.match(calls[2].authoring_error, /pricing_option_id/);
-    assert.match(calls[3].authoring_error, /format_id/);
-    assert.match(calls[4].authoring_error, /creative_id/);
+    assert.strictEqual(calls.length, 6);
+    assert.match(calls[0].authoring_error, /account_id/);
+    assert.match(calls[1].authoring_error, /agent_url/);
+    assert.match(calls[2].authoring_error, /product_id/);
+    assert.match(calls[3].authoring_error, /pricing_option_id/);
+    assert.match(calls[4].authoring_error, /format_id/);
+    assert.match(calls[5].authoring_error, /creative_id/);
   });
 });
 

@@ -8,8 +8,7 @@
 
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
-import type { RequirementName, Storyboard } from './types';
-import { KNOWN_REQUIREMENTS } from './types';
+import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 
 /**
@@ -221,19 +220,17 @@ function validatePhaseDependsOn(storyboard: Storyboard): void {
 
 /**
  * Authoring-time validation for `Storyboard.requires` (#1626). The field is
- * a closed enumeration over `RequirementName` so typos and stale tags fail
- * loud rather than silently dropping coverage:
+ * an array of non-empty requirement names:
  *
  *   - `requires: []` is rejected — an empty array reads as "no
  *     requirements," which is the same as omitting the field; failing
  *     load forces the author to omit it explicitly.
- *   - Each entry must be a known `RequirementName` (see
- *     `KNOWN_REQUIREMENTS`). Unknown values fail load with the offending
- *     name and the full set of recognised values.
+ *   - Each entry must be a non-empty string.
  *
- * Future SDK versions may grow `KNOWN_REQUIREMENTS`; storyboards built
- * against an older SDK that name a requirement the runner doesn't know
- * about would silently skip every run, so we fail-load instead.
+ * Unknown string values are allowed for forward compatibility. Runners that
+ * don't know how to satisfy a future requirement skip at runtime with
+ * `skip_reason: 'requirement_unmet'` and the authored value in
+ * `skip.requirement`.
  */
 function validateRequires(storyboard: Storyboard): void {
   if (storyboard.requires === undefined) return;
@@ -245,12 +242,10 @@ function validateRequires(storyboard: Storyboard): void {
   if (storyboard.requires.length === 0) {
     throw new Error(`[${storyboard.id}] requires: [] is not allowed — omit the field to use the default ([real_wire])`);
   }
-  for (const name of storyboard.requires) {
-    if (typeof name !== 'string' || !KNOWN_REQUIREMENTS.has(name as RequirementName)) {
-      const known = [...KNOWN_REQUIREMENTS].sort().join(', ');
-      throw new Error(
-        `[${storyboard.id}] requires: unknown requirement '${String(name)}' — recognised values are [${known}]`
-      );
+  for (let i = 0; i < storyboard.requires.length; i++) {
+    const name = storyboard.requires[i];
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error(`[${storyboard.id}] requires[${i}]: entries must be non-empty strings`);
     }
   }
 }

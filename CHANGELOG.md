@@ -1,5 +1,83 @@
 # Changelog
 
+## 9.5.0
+
+### Minor Changes
+
+- 15d469a: Add read-path cancellation and bounded A2A agent-card discovery. `getAgentInfo()`, `getCapabilities()`, and task calls such as `getProducts()` now accept `AbortSignal` through their options, and `transport.requestTimeoutMs` controls the read-path request timeout with a default 60s cap for A2A agent-card fetches.
+
+## 9.4.0
+
+### Minor Changes
+
+- 38be5ff: Refine TypeScript adagents property resolution for legacy inline entries, schema-valid revocation filtering, ambiguous URL fail-closed behavior, and add `getAllProperties`.
+
+### Patch Changes
+
+- b4c2d44: Sign outbound requests that carry webhook receiver authentication even when seller request-signing capabilities are cold or do not list the operation. The verifier now also rejects unsigned requests with non-empty `authentication` objects in the payload, including task, reporting, artifact, revocation, and account notification webhook configs.
+
+## 9.3.0
+
+### Minor Changes
+
+- 931ee0f: Add RegistryClient brand hierarchy resolution APIs and a RegistrySync brand hierarchy index.
+- de2907a: Add the registry feed SSE transport and resilience to `RegistrySync` (adcp#5733).
+
+  `RegistryClient.streamFeed(query, { signal })` opens `GET /api/registry/feed/stream` and yields typed `feed` / `heartbeat` / `error` messages over a fetch-based SSE reader (carries the bearer, runs under Node, bounded per-frame buffer that fails closed on a runaway stream). `RegistryClient.getFeed` now maps a real HTTP 410 to a recoverable `{ cursor_expired: true }` response so the polling path recovers too.
+
+  `RegistrySync` defaults to `transport: 'auto'`: it tails the feed over SSE and falls back to polling `/api/registry/feed` on an unsupported endpoint (404/406), proxy/network failure, or stream parse failure. The persisted cursor advances only on `feed` events (never heartbeats), reconnects resume from the last persisted cursor, a `cursor_expired` error event (or `getFeed` 410) re-bootstraps then resumes, and cursors stay scoped to the configured `types` subscription. Resilience details: `stop()`/`reset()` are honored even mid-bootstrap/rebootstrap (generation-guarded — no stale loop resumes after the caller stops); a failed re-bootstrap keeps reconnecting in `'stream'` mode and counts toward fallback in `'auto'`; repeated `cursor_expired` recovery backs off rather than tight-looping; a permanent `400`/`401` is terminal (no hot reconnect/poll loop); and `feedPageLimit` / `streamPollIntervalSeconds` are range-validated at construction.
+
+  Feed `freshness` metadata (`generated_at`, `latest_event_created_at`, `lag_seconds`, `retention_days`) is exposed via a `freshness` event plus `getFreshness()` / `getLagSeconds()` for lag monitoring. The SDK never fabricates it — `freshness` is surfaced iff the server sent it (the type stays optional to accommodate the synthetic `cursor_expired` marker).
+
+  The SSE parser is O(n) regardless of chunk size (an un-terminated line is held as fragments, joined once on completion — no growing-buffer re-scan), and registry-supplied error strings are escaped (`sanitizeStreamText`) before reaching `Error` messages/logs. `RegistrySync` lookups return last-synced state — `state` and `getLagSeconds()` / `getFreshness()` are the staleness signals to gate enforcement decisions on.
+
+  New `RegistrySync` config: `transport`, `types`, `feedPageLimit`, `streamPollIntervalSeconds`, `streamIdleTimeoutMs`, `streamReconnectMinMs`, `streamReconnectMaxMs`, `maxStreamFailures`. New events: `freshness`, `transport`. New accessors: `getTransport()`, `getFreshness()`, `getLagSeconds()`. New exports: `openFeedStream`, `parseSseStream`, `FeedStreamError` / `FeedStreamUnsupportedError` / `FeedStreamCursorExpiredError` / `FeedStreamHttpError` / `FeedStreamParseError`, and the `FeedStreamQuery` / `FeedStreamMessage` / `FeedHeartbeat` / `FeedStreamErrorData` / `FeedFreshness` / `RegistrySyncTransport` types.
+
+- cbcfd8c: Expose `RegistryClient.requestManagerRevalidation()` and add `maxBodyBytes` to `validateAdAgents()` discovery options.
+
+## 9.2.2
+
+### Patch Changes
+
+- 0ef4dd6: Add `assetType` to `resolveCanonicalFormatKind` and `canonicalDeclarationFromBareId` so under-specified bare format ids can be disambiguated with the asset type adopters already store. `assetTypeHint` remains accepted as a backwards-compatible alias.
+
+## 9.2.1
+
+### Patch Changes
+
+- 26c7053: Support `seed_account` in `comply_test_controller` helpers and storyboard fixture seeding.
+- 6763cf8: Fix webhook receiver rejecting AdCP 3.0 envelopes that omit `operation_id`. `operation_id` became a required webhook field in AdCP 3.1, but `verifyAndParseWebhook` enforced it against all senders, breaking backwards compatibility with spec-compliant 3.0 servers. It is no longer part of the hard-required MCP webhook envelope set; when absent, the receiver falls back to the routing-context `operationId` as before.
+
+## 9.2.0
+
+### Minor Changes
+
+- 7710fc7: Add public bare-format-id → canonical resolvers `resolveCanonicalFormatKind(id, { agentUrl?, assetTypeHint? })` and `canonicalDeclarationFromBareId(id, { agentUrl?, assetTypeHint? })`. Adopters migrating off legacy format storage hold bare id strings (`display_300x250_image`, `video_standard_30s`) persisted before the `{ agent_url, id }` structured-ref convention. These lift a bare id to its v2 canonical `format_kind` (or a full `ProductFormatDeclaration` carrying `v1_format_ref`) using the same registry- and catalog-backed resolution the v1 → v2 product projection uses, replacing hand-rolled `inferFormatKindFromFormatId` heuristics with one source of truth. For an under-specified bare id (`display_300x250`), pass `assetTypeHint` (the asset type you already hold, e.g. a `format_type` field) and the resolver retries the disambiguated catalog variant `<id>_<suffix>` — so the SDK owns the `_image` / `_html` suffix convention. Both fail closed — returning `null`, never a guess — for unknown, under-specified (without a resolving hint), or foreign-catalog ids. Exported from the package root and `@adcp/sdk/v2/projection`; `V2ProductFormatDeclaration` is now also re-exported from the root as the public return type.
+- 7710fc7: Add `toCanonicalOnlyProduct(product)` and `toCanonicalOnlyResponse(response)` — the read-side canonical-only narrowing. Unlike `withFormatOptions` / `augmentProductWithFormatOptions` (additive; they preserve `format_ids[]`), these return `format_options[]` with the legacy `format_ids[]` dropped, so a fully-migrated consumer can't fall back to the stale `{ agent_url, id }` shape and silently bypass the canonical model. Dropping legacy never silently loses a format: every input `format_id` is either represented in `format_options[]` or surfaced as a diagnostic — `FORMAT_PROJECTION_FAILED` on the v1→v2 projection path, or the new SDK-local `LEGACY_FORMAT_ID_DROPPED_UNMAPPED` when a v2-native product carries a `format_ids[]` entry no `format_options[].v1_format_ref` covers. Complements the write-side non-invertibility tracked at adcontextprotocol/adcp#4842 — this is the read-side transparency half. Exported from the package root and `@adcp/sdk/v2/projection` (with the `CanonicalOnlyProduct` type).
+- 3552d59: Add a known storyboard `multi_agent` runtime requirement. Storyboards that already authored this previously unknown requirement now run when `default_agent` plus step-level `agent:` overrides resolve to at least two distinct entries in `options.agents`; otherwise they continue to skip with `requirement_unmet`.
+
+### Patch Changes
+
+- c416c64: Apply get_adcp_capabilities schema defaults when evaluating storyboard `equals`/`contains` requires_capability gates. Presence matchers (`present:`) keep absence as the load-bearing signal and do not materialize defaults.
+
+## 9.1.2
+
+### Patch Changes
+
+- 509ed55: Publish stable SDK releases under the `latest` npm dist-tag by default.
+
+## 9.1.1
+
+### Patch Changes
+
+- b5f3e20: Allow unknown storyboard `requires` values to load and skip at runtime with `requirement_unmet`.
+
+## 9.1.0
+
+### Minor Changes
+
+- 918067d: Add `onTransportActivity` diagnostics for sanitized outbound MCP/A2A transport request, response, and failure events.
+
 ## 9.0.0
 
 ### Major Changes

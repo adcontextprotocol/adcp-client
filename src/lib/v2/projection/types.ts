@@ -242,4 +242,35 @@ export type ProjectionDiagnostic =
           v1_emit_represents_size?: { width?: number; height?: number };
         };
       };
+    })
+  | (ProjectionDiagnosticBase & {
+      /**
+       * SDK-local code: canonical-only projection (`toCanonicalOnlyProduct`
+       * / `toCanonicalOnlyResponse`) dropped a legacy `format_id` that no
+       * `format_options[].v1_format_ref` covers. Emitted only on the
+       * v2-native pass-through path — a seller that sent `format_options[]`
+       * directly but also carried a `format_ids[]` entry with no canonical
+       * representation. Without it, canonical-only mode would silently
+       * discard a format the buyer could still have acted on via the v1
+       * path.
+       *
+       * On the v1 → v2 projection path an unmappable ref is already
+       * surfaced as `FORMAT_PROJECTION_FAILED`; this code covers the gap
+       * the projection path can't see (no projection runs when the seller
+       * is already v2-native).
+       */
+      code: 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED';
+      error: {
+        details: {
+          product_id: string;
+          /**
+           * The full ref that was dropped, including the dimensional
+           * discriminators (`width` / `height` / `duration_ms`) when the
+           * input carried them — so a buyer can tell which variant of a
+           * multi-size/multi-duration family was lost and re-acquire it on
+           * the v1 path. Omitted keys mean the input ref carried no value.
+           */
+          dropped_format_id: { agent_url: string; id: string; width?: number; height?: number; duration_ms?: number };
+        };
+      };
     });

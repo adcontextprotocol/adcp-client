@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
+const { z } = require('zod');
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -73,13 +74,24 @@ async function startMcpStub(initialCapability) {
       };
     });
 
-    const echoAs = name => async () => {
+    const echoAs = name => async args => {
       entry.toolName = name;
+      entry.args = args;
       return { content: [{ type: 'text', text: JSON.stringify({ ok: true }) }] };
     };
 
-    mcp.registerTool('create_media_buy', { inputSchema: {} }, echoAs('create_media_buy'));
-    mcp.registerTool('another_op', { inputSchema: {} }, echoAs('another_op'));
+    const passthroughSchema = {
+      plan_id: z.string().optional(),
+      push_notification_config: z.any().optional(),
+      reporting_webhook: z.any().optional(),
+      accounts: z.any().optional(),
+      adcp_major_version: z.number().optional(),
+      adcp_version: z.string().optional(),
+    };
+
+    mcp.registerTool('create_media_buy', { inputSchema: passthroughSchema }, echoAs('create_media_buy'));
+    mcp.registerTool('another_op', { inputSchema: passthroughSchema }, echoAs('another_op'));
+    mcp.registerTool('sync_accounts', { inputSchema: passthroughSchema }, echoAs('sync_accounts'));
     mcp.registerTool('unsigned_op', { inputSchema: {} }, echoAs('unsigned_op'));
 
     return mcp;
@@ -204,6 +216,106 @@ test('ops outside required_for / supported_for / always_sign pass through unsign
     const calls = stub.state.toolCallHeaders.filter(r => r.toolName === 'unsigned_op');
     assert.strictEqual(calls.length, 1);
     assert.strictEqual(calls[0].headers['signature-input'], undefined);
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('webhook authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(
+      agentFor(stub.url),
+      'create_media_buy',
+      { plan_id: 'plan_webhook_001' },
+      {
+        webhookUrl: 'https://buyer.example.com/adcp/webhook/create_media_buy/op-1',
+        webhookSecret: 'placeholder_secret_min_32_characters_required',
+      }
+    );
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy')[0];
+    assert.ok(call, 'create_media_buy reached the stub');
+    assert.match(call.headers['signature-input'] || '', /^sig1=/, 'webhook auth payload forced signing');
+    assert.match(call.headers['signature'] || '', /^sig1=:/, 'Signature header is present');
+    assert.deepStrictEqual(call.args.push_notification_config?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('reporting webhook authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(agentFor(stub.url), 'create_media_buy', {
+      plan_id: 'plan_reporting_001',
+      reporting_webhook: {
+        url: 'https://buyer.example.com/adcp/reporting',
+        authentication: {
+          schemes: ['HMAC-SHA256'],
+          credentials: 'placeholder_secret_min_32_characters_required',
+        },
+      },
+    });
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'create_media_buy')[0];
+    assert.ok(call, 'create_media_buy reached the stub');
+    assert.match(call.headers['signature-input'] || '', /^sig1=/, 'reporting webhook auth payload forced signing');
+    assert.deepStrictEqual(call.args.reporting_webhook?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
+  } finally {
+    await cleanup(stub);
+  }
+});
+
+test('account notification config authentication payload is signed even when the operation is outside required_for', async () => {
+  await resetGlobalState();
+  const stub = await startMcpStub({
+    supported: true,
+    covers_content_digest: 'either',
+    required_for: [],
+  });
+  try {
+    await ProtocolClient.callTool(agentFor(stub.url), 'sync_accounts', {
+      accounts: [
+        {
+          account_id: 'acct_001',
+          notification_configs: [
+            {
+              url: 'https://buyer.example.com/adcp/account-notifications',
+              authentication: {
+                schemes: ['HMAC-SHA256'],
+                credentials: 'placeholder_secret_min_32_characters_required',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const call = stub.state.toolCallHeaders.filter(r => r.toolName === 'sync_accounts')[0];
+    assert.ok(call, 'sync_accounts reached the stub');
+    assert.match(
+      call.headers['signature-input'] || '',
+      /^sig1=/,
+      'account notification config auth payload forced signing'
+    );
+    assert.deepStrictEqual(call.args.accounts?.[0]?.notification_configs?.[0]?.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'placeholder_secret_min_32_characters_required',
+    });
   } finally {
     await cleanup(stub);
   }

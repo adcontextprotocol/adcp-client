@@ -19,6 +19,8 @@ import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
+import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
+import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } from './abort';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 
 if (!A2AClient) {
@@ -34,6 +36,8 @@ interface A2ACallContext {
   customHeaders?: Record<string, string>;
   debugLogs: DebugLogEntry[];
   got401Ref: { value: boolean };
+  signal?: AbortSignal;
+  requestTimeoutMs?: number;
 }
 
 const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
@@ -60,15 +64,14 @@ const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>
  * credentials share a single cached A2AClient — single-CLI-process safe,
  * multi-tenant SDK consumer not safe.
  *
- * `customAuthHeader` is the case-insensitive `Authorization` value from the
- * per-call `customHeaders`. Extracted by the call site so this helper stays
- * a pure key-builder.
+ * `customHeaders` also feed the key so tenant/routing headers cannot reuse
+ * a card/client discovered for another caller.
  */
 function a2aCacheKey(
   agentUrl: string,
   authToken?: string,
   signingCacheKey?: string,
-  customAuthHeader?: string
+  customHeaders?: Record<string, string>
 ): string {
   // 64-bit Map-key disambiguator — NOT a password hash. The cached client
   // closes over the full credential, so a hypothetical hash collision still
@@ -77,10 +80,12 @@ function a2aCacheKey(
   // key) instead of bare `createHash` so CodeQL's
   // `js/insufficient-password-hash` heuristic doesn't misclassify the
   // dataflow — see the helper docstring for the full rationale.
-  const fingerprint = authToken ?? customAuthHeader;
+  const fingerprint = authToken ?? extractA2AAuthHeader(customHeaders);
   const tokenSuffix = fingerprint ? `::${cacheDisambiguator(fingerprint)}` : '';
+  const headersKey = headersCacheDisambiguator(customHeaders);
+  const headersSuffix = headersKey ? `::headers:${headersKey}` : '';
   const signingSuffix = signingCacheKey ? `::${signingCacheKey}` : '';
-  return `${agentUrl}${tokenSuffix}${signingSuffix}`;
+  return `${agentUrl}${tokenSuffix}${headersSuffix}${signingSuffix}`;
 }
 
 /**
@@ -104,6 +109,37 @@ function extractA2AAuthHeader(headers: Record<string, string> | undefined): stri
     if (key.toLowerCase() === 'authorization' && value) return value;
   }
   return undefined;
+}
+
+function headersCacheDisambiguator(headers?: Record<string, string>): string | undefined {
+  const entries = Object.entries(headers ?? {})
+    .filter(([key]) => {
+      const lower = key.toLowerCase();
+      return lower !== 'traceparent' && lower !== 'tracestate' && lower !== 'baggage';
+    })
+    .map(([key, value]) => [key.toLowerCase(), value] as const)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return entries.length > 0 ? cacheDisambiguator(JSON.stringify(entries)) : undefined;
+}
+
+function redactHeadersForDebug(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.keys(headers).map(key => [key, '***']));
+}
+
+function redactPushNotificationConfigForDebug(
+  config: PushNotificationConfig | undefined
+): PushNotificationConfig | undefined {
+  if (!config) return undefined;
+  return {
+    ...config,
+    ...(config.token && { token: '***' }),
+    ...(config.authentication && {
+      authentication: {
+        ...config.authentication,
+        ...(config.authentication.credentials && { credentials: '***' }),
+      },
+    }),
+  };
 }
 
 /**
@@ -237,10 +273,14 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
 async function getOrCreateA2AClient(
   agentUrl: string,
   authToken: string | undefined,
-  customAuthHeader?: string
+  customHeaders?: Record<string, string>,
+  bypassCache = false
 ): Promise<InstanceType<typeof A2AClient>> {
   const signingContext = signingContextStorage.getStore();
-  const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customAuthHeader);
+  const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customHeaders);
+  if (bypassCache) {
+    return createA2AClient(agentUrl, authToken);
+  }
   const cached = a2aClientCache.get(cacheKey);
   if (cached) return cached;
 
@@ -300,13 +340,15 @@ function buildFetchImpl(authToken: string | undefined) {
 
   // Innermost wrapper: enforce response body size cap from the active
   // `responseSizeLimitStorage` slot. Pass-through when no slot is set.
-  const networkFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as any, init));
+  const networkFetch = wrapFetchWithTransportDiagnostics(
+    wrapFetchWithSizeLimit((input, init) => fetch(input as any, init))
+  );
 
   // Inner fetch handles auth/header injection and 401 detection. If the
   // agent has request-signing configured, we wrap it with the AdCP signing
   // fetch so the signature covers the exact bytes we're about to send (auth
   // headers included, since the signer re-reads the final header record).
-  const baseFetch = async (url: string | URL | Request, options?: RequestInit) => {
+  const baseFetch = async (url: string | URL | Request, options?: RequestInit): Promise<Response> => {
     const context = callContextStorage.getStore();
 
     const existingHeaders: Record<string, string> = {};
@@ -329,6 +371,9 @@ function buildFetchImpl(authToken: string | undefined) {
     const urlString = typeof url === 'string' ? url : url.toString();
     const isDiscoveryRequest = isAgentCardPath(urlString);
     const traceHeaders = isDiscoveryRequest ? {} : injectTraceHeaders();
+    const requestTimeoutMs = isDiscoveryRequest
+      ? resolveRequestTimeoutMs(context?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS)
+      : resolveRequestTimeoutMs(context?.requestTimeoutMs);
 
     // Merge: existing < trace < custom < auth (auth always wins)
     const headers: Record<string, string> = {
@@ -346,15 +391,12 @@ function buildFetchImpl(authToken: string | undefined) {
       message: `A2A: Fetch to ${urlString}`,
       timestamp: new Date().toISOString(),
       hasAuth: !!authToken,
-      headers: Object.fromEntries(
-        Object.entries(headers).map(([k, v]) => {
-          const lower = k.toLowerCase();
-          return lower === 'authorization' || lower === 'x-adcp-auth' ? [k, '***'] : [k, v];
-        })
-      ),
+      headers: redactHeadersForDebug(headers),
     });
 
-    const response = await networkFetch(url as any, { ...options, headers });
+    const response = await withAbortSignal<Response>([context?.signal, options?.signal], requestTimeoutMs, signal =>
+      networkFetch(url as any, { ...options, headers, signal })
+    );
 
     if (response.status === 401 && context) {
       context.got401Ref.value = true;
@@ -434,7 +476,9 @@ export async function callA2ATool(
   pushNotificationConfig?: PushNotificationConfig,
   customHeaders?: Record<string, string>,
   signingContext?: AgentSigningContext,
-  session?: A2ASessionIds
+  session?: A2ASessionIds,
+  signal?: AbortSignal,
+  requestTimeoutMs?: number
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -447,6 +491,8 @@ export async function callA2ATool(
         customHeaders,
         debugLogs,
         got401Ref: { value: false },
+        signal,
+        requestTimeoutMs,
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
@@ -477,12 +523,12 @@ async function callA2AToolImpl(
   session: A2ASessionIds | undefined
 ): Promise<unknown> {
   try {
-    // Pull a non-Bearer `Authorization` value out of the per-call custom
-    // headers if present. The CLI's `--auth-scheme basic` path sets this so
-    // the cache key disambiguates by the actual outgoing credential, not
-    // just the absent `authToken`.
-    const customAuthHeader = extractA2AAuthHeader(context.customHeaders);
-    const client = await getOrCreateA2AClient(agentUrl, authToken, customAuthHeader);
+    const client = await getOrCreateA2AClient(
+      agentUrl,
+      authToken,
+      context.customHeaders,
+      !!context.signal || context.requestTimeoutMs !== undefined
+    );
 
     const requestPayload: {
       message: {
@@ -521,21 +567,25 @@ async function callA2AToolImpl(
 
     const payloadSize = JSON.stringify(requestPayload).length;
     const redactedParameters = redactIdempotencyKeyInArgs(parameters);
-    const redactedPayload =
-      redactedParameters === parameters
-        ? requestPayload
-        : {
-            ...requestPayload,
-            message: {
-              ...requestPayload.message,
-              parts: [
-                {
-                  kind: 'data',
-                  data: { skill: toolName, parameters: redactedParameters },
-                },
-              ],
-            },
-          };
+    const redactedPayload = {
+      ...requestPayload,
+      message: {
+        ...requestPayload.message,
+        parts: [
+          {
+            kind: 'data',
+            data: { skill: toolName, parameters: redactedParameters },
+          },
+        ],
+      },
+      ...(requestPayload.configuration && {
+        configuration: {
+          pushNotificationConfig: redactPushNotificationConfigForDebug(
+            requestPayload.configuration.pushNotificationConfig
+          )!,
+        },
+      }),
+    };
     debugLogs.push({
       type: 'info',
       message: `A2A: Calling skill ${toolName} with parameters: ${JSON.stringify(
@@ -586,8 +636,7 @@ async function callA2AToolImpl(
       // case) rather than authToken, the cache key must reflect that or we
       // evict the wrong entry.
       const signingContext = signingContextStorage.getStore();
-      const customAuthHeader = extractA2AAuthHeader(context.customHeaders);
-      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customAuthHeader));
+      a2aClientCache.delete(a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, context.customHeaders));
 
       debugLogs.push({
         type: 'error',
