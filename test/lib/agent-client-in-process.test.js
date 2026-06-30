@@ -55,7 +55,9 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
                 id: 'prod-1',
                 name: 'Display',
                 channels: ['display'],
-                pricing_options: [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
+                pricing_options: [
+                  { pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 },
+                ],
               },
             ],
           },

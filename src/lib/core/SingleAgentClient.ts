@@ -1780,9 +1780,7 @@ export class SingleAgentClient {
 
     if (rejected.length === 0) return result;
 
-    const message = `Rejected ${rejected.length} product${
-      rejected.length === 1 ? '' : 's'
-    } without pricing_options`;
+    const message = `Rejected ${rejected.length} product${rejected.length === 1 ? '' : 's'} without pricing_options`;
 
     // Mutate in place (like the property-policy filter path) so the
     // non-enumerable `match` accessor and result identity survive.

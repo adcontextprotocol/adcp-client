@@ -67,10 +67,7 @@ function stubGetProducts(products) {
 describe('client rejects products without pricing_options', () => {
   test('drops products with no pricing_options by default before caller and handler', async () => {
     const handlerCalls = [];
-    stubGetProducts([
-      makeProduct('priced'),
-      makeProduct('unpriced', { pricing_options: undefined }),
-    ]);
+    stubGetProducts([makeProduct('priced'), makeProduct('unpriced', { pricing_options: undefined })]);
 
     const agent = makeClient({
       handlers: { onGetProductsStatusChange: response => handlerCalls.push(response) },
