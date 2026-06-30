@@ -1,5 +1,33 @@
 # Changelog
 
+## 9.6.0
+
+### Minor Changes
+
+- e5d1dfb: Reject products without pricing options from `get_products` responses
+
+  `pricing_options` is a required, non-empty field in AdCP 3.1 — a product that
+  advertises no pricing model is non-transactable. The client now drops such
+  products from completed `get_products` responses before callers and completion
+  handlers see them, on every completion path (sync, polling, `track`, webhook)
+  and independent of the response `validation` mode. The rejection is recorded in
+  `result.metadata.productPricingPolicy` and surfaced as a
+  `product_missing_pricing_options` debug-log notice.
+
+  This is on by default. Set `validation.rejectProductsWithoutPricingOptions: false`
+  to pass unpriced products through untouched (e.g. when deliberately inspecting
+  malformed seller responses).
+
+- 033f7ce: Add `translateUniversalMacros` seller helper and fix a `SubstitutionObserver` parser false-positive.
+  - `translateUniversalMacros(input_pixel_url, mapping)`: a producer helper that translates universal macros in a pixel URL's query-parameter values. `native` mappings are inserted raw (ad-server tokens); `value` mappings are RFC-3986 percent-encoded via the shared encoder; parameters whose universal macros are unmapped are dropped (recorded in `dropped_params` / `unmapped_macros`); already-minted parameters are left untouched. Dropped consent/privacy macros are surfaced separately in `dropped_consent_macros` so a forgotten-mapping drop isn't lost among benign drops. The result also reports `suspect_native_values` — macros whose `value` entry looks like a native ad-server token (`%%…%%`, `{{…}}`, `${…}`, `[UPPER_SNAKE]`) and was likely mapped to the wrong arm. Macros in key position are not translated.
+  - Fix the `SubstitutionObserver` HTML parser's residual-entity check so it no longer drops legitimate multi-parameter tracker URLs (the named-entity branch now requires a trailing semicolon, matching browser decoding), while preserving the scheme-smuggling defense.
+
+### Patch Changes
+
+- f87444b: Storyboard runner: branch-set `any_of` peers no longer cascade-skip each other. When peer phases are `stateful: true`, an earlier peer's by-design failure was tripping the stateful cascade and skipping a later sibling peer with `prerequisite_failed` before it ran — so the only viable contribution never landed and the `any_of` gate returned `[]` (e.g. `media_buy_seller/refine_finalize_exclusivity` for a seller that rejects atomic multi-finalize). `cascadeForPhase` now excludes same-branch-set `any_of` peers from a phase's cascade dependencies; within-phase and cross-phase non-peer cascade behavior are unchanged.
+- 8dbd695: Emit `adcp_version` from the auto-registered `get_adcp_capabilities` server handler.
+- fab95f8: Run storyboard `sync_accounts` steps for explicit-account sellers that advertise the tool.
+
 ## 9.5.0
 
 ### Minor Changes
