@@ -24,6 +24,7 @@ import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { cancelA2ATask } from '../protocols/a2a';
+import { isAbortOrTimeoutError } from '../protocols/abort';
 import type {
   Message,
   InputRequest,
@@ -605,6 +606,7 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        signal: options.signal,
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           operationId: taskId,
@@ -696,6 +698,14 @@ export class TaskExecutor {
 
       return attachMatch(result);
     } catch (error) {
+      if (isAbortOrTimeoutError(error)) {
+        if (idempotencyKey && error && typeof error === 'object') {
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
+          (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
+        }
+        throw error;
+      }
+
       // Report failed outcome on error
       if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
         await this.governanceMiddleware.reportOutcome(
@@ -1397,7 +1407,8 @@ export class TaskExecutor {
   private async getTaskStatusWithRawResponse(
     agent: AgentConfig,
     taskId: string,
-    transport?: import('../protocols').TransportOptions
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
   ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
@@ -1436,6 +1447,7 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: transport ?? this.config.transport,
+        signal,
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           taskId,
@@ -1460,9 +1472,10 @@ export class TaskExecutor {
   async getTaskStatus(
     agent: AgentConfig,
     taskId: string,
-    transport?: import('../protocols').TransportOptions
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
   ): Promise<TaskInfo> {
-    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport)).task;
+    return (await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal)).task;
   }
 
   async pollTaskCompletion<T>(
@@ -1532,7 +1545,7 @@ export class TaskExecutor {
       let status: TaskInfo;
       let rawResponse: Record<string, unknown> | undefined;
       try {
-        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport);
+        const pollResult = await this.getTaskStatusWithRawResponse(agent, taskId, transport, signal);
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
       } catch (err) {
@@ -1746,6 +1759,7 @@ export class TaskExecutor {
         ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
         ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
         transport: options.transport ?? this.config.transport,
+        signal: options.signal,
         onTransportActivity: this.config.onTransportActivity,
         transportActivityContext: {
           operationId: taskId,

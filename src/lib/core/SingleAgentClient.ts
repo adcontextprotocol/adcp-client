@@ -88,6 +88,7 @@ import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { attachMatch } from './match';
 import { createMCPAuthHeaders } from '../auth';
+import { isAbortOrTimeoutError } from '../protocols/abort';
 import {
   AuthenticationRequiredError,
   ConfigurationError,
@@ -123,6 +124,14 @@ import {
   stripTransportSuffix,
 } from '../utils/a2a-discovery';
 import * as crypto from 'crypto';
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  createTimeoutError,
+  resolveClientRequestTimeoutMs,
+  resolveRequestTimeoutMs,
+  throwIfAborted,
+  withAbortSignal,
+} from '../protocols/abort';
 
 // v3.0 compatibility utilities
 import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
@@ -136,6 +145,7 @@ import {
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
 } from '../utils/capabilities';
+
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { resolveWebhookUrl, selectWebhookTemplate } from './webhook-url';
@@ -150,6 +160,8 @@ import {
   type ProductPropertyPolicyValidationResult,
 } from '../media-buy/property-policy';
 import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
+
+type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
 
 /**
  * Error class for v3 feature compatibility issues
@@ -503,7 +515,9 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    *
    * Set `maxResponseBytes` when crawling untrusted agents (registries,
    * federated discovery layers) to prevent a hostile vendor from buffering
-   * a large reply before any application-layer schema validation runs.
+   * a large reply before any application-layer schema validation runs. Set
+   * `requestTimeoutMs` to override the default 60s cap on A2A agent-card
+   * discovery; use `0` to disable the SDK-imposed discovery timeout.
    */
   transport?: import('../protocols').TransportOptions;
 }
@@ -713,7 +727,8 @@ export class SingleAgentClient {
    * Returns the agent config with the discovered endpoint.
    * Also computes the canonical base URL by stripping /mcp suffix.
    */
-  private async ensureEndpointDiscovered(): Promise<AgentConfig> {
+  private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
+    throwIfAborted(options?.signal);
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
 
     if (!needsDiscovery) {
@@ -733,7 +748,7 @@ export class SingleAgentClient {
     }
 
     // Perform discovery
-    this.discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri);
+    this.discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri, options);
 
     // Compute canonical base URL by stripping /mcp suffix
     this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
@@ -751,7 +766,8 @@ export class SingleAgentClient {
    * Fetches the agent card and extracts the canonical URL.
    * Returns the agent config with the canonical URL.
    */
-  private async ensureCanonicalUrlResolved(): Promise<AgentConfig> {
+  private async ensureCanonicalUrlResolved(options?: ReadRequestOptions): Promise<AgentConfig> {
+    throwIfAborted(options?.signal);
     const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
 
     if (!needsCanonicalUrl) {
@@ -767,7 +783,7 @@ export class SingleAgentClient {
     }
 
     // Fetch agent card to get canonical URL
-    const canonicalUrl = await this.fetchA2ACanonicalUrl(this.normalizedAgent.agent_uri);
+    const canonicalUrl = await this.fetchA2ACanonicalUrl(this.normalizedAgent.agent_uri, options);
     this.canonicalBaseUrl = canonicalUrl;
 
     return {
@@ -783,7 +799,7 @@ export class SingleAgentClient {
    * - If the agent card fetch returns 401, throw AuthenticationRequiredError
    * - Check for OAuth metadata to provide helpful guidance
    */
-  private async fetchA2ACanonicalUrl(agentUri: string): Promise<string> {
+  private async fetchA2ACanonicalUrl(agentUri: string, readOptions?: ReadRequestOptions): Promise<string> {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
 
@@ -793,15 +809,17 @@ export class SingleAgentClient {
     // active ALS slot enforces the cap on the wire call. Matches the same
     // pattern in `getAgentInfo` (closed #1799 via PR #1802).
     const { withResponseSizeLimit, wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
-    const maxResponseBytes = this.config.transport?.maxResponseBytes;
+    const transport = readOptions?.transport ?? this.config.transport;
+    const maxResponseBytes = transport?.maxResponseBytes;
+    const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
     const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
 
     const authToken = this.normalizedAgent.auth_token;
     let got401 = false;
 
-    const fetchImpl = async (url: string | URL | Request, options?: RequestInit) => {
+    const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
       const headers: Record<string, string> = {
-        ...(options?.headers as Record<string, string>),
+        ...(requestInit?.headers as Record<string, string>),
         ...this.normalizedAgent.headers,
         ...(authToken && {
           Authorization: `Bearer ${authToken}`,
@@ -809,7 +827,11 @@ export class SingleAgentClient {
         }),
       };
 
-      const response = await sizeLimitedFetch(url as RequestInfo | URL, { ...options, headers });
+      const response = await withAbortSignal<Response>(
+        [readOptions?.signal, requestInit?.signal],
+        requestTimeoutMs,
+        signal => sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
+      );
 
       // Track 401 errors for later handling
       if (response.status === 401) {
@@ -905,7 +927,8 @@ export class SingleAgentClient {
    *
    * Note: This is async and called lazily on first agent interaction
    */
-  private async discoverMCPEndpoint(providedUri: string): Promise<string> {
+  private async discoverMCPEndpoint(providedUri: string, options?: ReadRequestOptions): Promise<string> {
+    throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
 
     const authToken = this.agent.auth_token;
@@ -920,10 +943,16 @@ export class SingleAgentClient {
 
     const testEndpoint = async (url: string): Promise<EndpointTestResult> => {
       try {
-        const client = await connectMCPWithFallback(new URL(url), authHeaders);
+        const client = await connectMCPWithFallback(new URL(url), authHeaders, [], 'endpoint discovery', undefined, {
+          signal: options?.signal,
+          requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
+        });
         await client.close();
         return { success: true };
       } catch (error: unknown) {
+        if (isAbortOrTimeoutError(error)) {
+          throw error;
+        }
         if (is401Error(error)) {
           return { success: false, status: 401, error };
         }
@@ -1586,6 +1615,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    throwIfAborted(options?.signal);
     // Normalize params for backwards compatibility before validation
     let normalizedParams = normalizeRequestParams(taskType, params, {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
@@ -1629,20 +1659,20 @@ export class SingleAgentClient {
     }
 
     // Validate required features before sending request
-    await this.validateTaskFeatures(taskType);
+    await this.validateTaskFeatures(taskType, options);
 
     // Guard mutating calls against pre-v3 sellers when opted in.
     if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
-      await this.requireSupportedMajor(taskType);
+      await this.requireSupportedMajor(taskType, options);
     }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
-    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams);
+    const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams, options);
     if (earlyResult) {
       return attachMatch(earlyResult);
     }
 
-    const agent = await this.ensureEndpointDiscovered();
+    const agent = await this.ensureEndpointDiscovered(options);
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
     // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
@@ -1654,7 +1684,7 @@ export class SingleAgentClient {
     }
 
     // Adapt request for the detected server and AdCP protocol versions.
-    const serverVersion = await this.detectServerVersion();
+    const serverVersion = await this.detectServerVersion(options);
     const inputSchemaStripLogs: any[] = [];
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
@@ -2236,14 +2266,18 @@ export class SingleAgentClient {
    *
    * @returns TaskResult with empty data if v3 features are unsupported, null to proceed normally
    */
-  private async getEarlyResultForUnsupportedFeatures<T>(taskType: string, params: any): Promise<TaskResult<T> | null> {
+  private async getEarlyResultForUnsupportedFeatures<T>(
+    taskType: string,
+    params: any,
+    options?: ReadRequestOptions
+  ): Promise<TaskResult<T> | null> {
     // Only check for tasks that have v3-specific features
     if (taskType !== 'get_products') {
       return null;
     }
 
     // Get capabilities to check what the server supports
-    const capabilities = await this.getCapabilities();
+    const capabilities = await this.getCapabilities(options);
 
     // If server is v3, all features are supported - proceed normally
     if (capabilities.version === 'v3') {
@@ -2703,7 +2737,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
-    const agent = await this.ensureEndpointDiscovered();
+    const agent = await this.ensureEndpointDiscovered(options);
     this.executor.validateRequest('get_adcp_capabilities', params);
     return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
@@ -3036,6 +3070,7 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
+    throwIfAborted(options?.signal);
     const startTime = Date.now();
     try {
       const normalizedParams = normalizeRequestParams(taskName, params, {
@@ -3052,11 +3087,11 @@ export class SingleAgentClient {
         options
       );
 
-      await this.validateTaskFeatures(taskName);
+      await this.validateTaskFeatures(taskName, options);
       if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
-        await this.requireSupportedMajor(taskName);
+        await this.requireSupportedMajor(taskName, options);
       }
-      const agent = await this.ensureEndpointDiscovered();
+      const agent = await this.ensureEndpointDiscovered(options);
 
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
@@ -3068,7 +3103,7 @@ export class SingleAgentClient {
       }
 
       // Adapt request for the detected server and AdCP protocol versions.
-      const serverVersion = await this.detectServerVersion();
+      const serverVersion = await this.detectServerVersion(options);
       const inputSchemaStripLogs: any[] = [];
       const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
         taskName,
@@ -3119,7 +3154,8 @@ export class SingleAgentClient {
         error instanceof AuthenticationRequiredError ||
         error instanceof TaskTimeoutError ||
         error instanceof VersionUnsupportedError ||
-        error instanceof FeatureUnsupportedError
+        error instanceof FeatureUnsupportedError ||
+        isAbortOrTimeoutError(error)
       ) {
         throw error;
       }
@@ -3513,7 +3549,7 @@ export class SingleAgentClient {
    * });
    * ```
    */
-  async getAgentInfo(): Promise<{
+  async getAgentInfo(options?: ReadRequestOptions): Promise<{
     name: string;
     description?: string;
     protocol: 'mcp' | 'a2a';
@@ -3529,12 +3565,22 @@ export class SingleAgentClient {
     // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
     // `withResponseSizeLimit` is a no-op when no cap is configured.
     const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
-    const maxResponseBytes = this.config.transport?.maxResponseBytes;
+    throwIfAborted(options?.signal);
+    const transport = options?.transport ?? this.config.transport;
+    const maxResponseBytes = transport?.maxResponseBytes;
+    const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+    const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(transport?.requestTimeoutMs);
+    const mcpRequestOptions = {
+      ...(options?.signal && { signal: options.signal }),
+      ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
+    };
     if (this.normalizedAgent.protocol === 'mcp') {
       // In-process: use the pre-connected client instead of opening a new HTTP connection
       if (this.normalizedAgent._inProcessMcpClient) {
         const mcpClient = this.normalizedAgent._inProcessMcpClient;
-        const toolsList = await withResponseSizeLimit(maxResponseBytes, () => mcpClient.listTools());
+        const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
+          mcpClient.listTools(undefined, mcpRequestOptions)
+        );
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
           description: tool.description,
@@ -3551,7 +3597,7 @@ export class SingleAgentClient {
       }
 
       // Discover endpoint if needed
-      const agent = await this.ensureEndpointDiscovered();
+      const agent = await this.ensureEndpointDiscovered(options);
 
       // Use the shared connectMCP path so both static bearer AND saved OAuth
       // tokens work. OAuth takes the refresh-capable authProvider branch.
@@ -3561,6 +3607,12 @@ export class SingleAgentClient {
       // SDK doesn't emit a competing `Authorization: Bearer …`.
       const { connectMCP } = await import('../protocols/mcp');
       const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      if (options?.signal) {
+        connectOptions.signal = options.signal;
+      }
+      if (transport?.requestTimeoutMs !== undefined) {
+        connectOptions.requestTimeoutMs = transport.requestTimeoutMs;
+      }
       if (this.normalizedAgent.headers && Object.keys(this.normalizedAgent.headers).length > 0) {
         connectOptions.customHeaders = this.normalizedAgent.headers;
       }
@@ -3575,7 +3627,9 @@ export class SingleAgentClient {
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
-        const toolsList = await withResponseSizeLimit(maxResponseBytes, () => mcpClient.listTools());
+        const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
+          mcpClient.listTools(undefined, mcpRequestOptions)
+        );
 
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
@@ -3609,17 +3663,38 @@ export class SingleAgentClient {
       // calls native `fetch` directly and ignores `transport.maxResponseBytes`.
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = this.normalizedAgent.auth_token;
+      const agentHeaders = this.normalizedAgent.headers ?? {};
       const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
-      const fetchImpl = authToken
-        ? async (url: string | URL | Request, options?: RequestInit) => {
-            const headers = {
-              ...(options?.headers as Record<string, string>),
-              Authorization: `Bearer ${authToken}`,
-              'x-adcp-auth': authToken,
-            };
-            return sizeLimitedFetch(url as RequestInfo | URL, { ...options, headers });
+      const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
+        const normalized: Record<string, string> = {};
+        if (!headers) return normalized;
+        if (headers instanceof Headers) {
+          headers.forEach((value, key) => {
+            normalized[key] = value;
+          });
+        } else if (Array.isArray(headers)) {
+          for (const [key, value] of headers) {
+            normalized[key] = value;
           }
-        : (url: string | URL | Request, options?: RequestInit) => sizeLimitedFetch(url as RequestInfo | URL, options);
+        } else {
+          Object.assign(normalized, headers);
+        }
+        return normalized;
+      };
+      const buildHeaders = (requestInit?: RequestInit): Record<string, string> => ({
+        ...normalizeHeaders(requestInit?.headers),
+        ...agentHeaders,
+        ...(authToken && {
+          Authorization: `Bearer ${authToken}`,
+          'x-adcp-auth': authToken,
+        }),
+      });
+      const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
+        const headers = buildHeaders(requestInit);
+        return withAbortSignal<Response>([options?.signal, requestInit?.signal], requestTimeoutMs, signal =>
+          sizeLimitedFetch(url as RequestInfo | URL, { ...requestInit, headers, signal })
+        );
+      };
 
       const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 
@@ -3692,7 +3767,8 @@ export class SingleAgentClient {
    * }
    * ```
    */
-  async getCapabilities(): Promise<AdcpCapabilities> {
+  async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
+    throwIfAborted(options?.signal);
     // Return cached if available
     if (this.cachedCapabilities) {
       this.maybeWarnV2Sunset(this.cachedCapabilities);
@@ -3700,7 +3776,7 @@ export class SingleAgentClient {
     }
 
     // First get tool list to support both detection methods
-    const agentInfo = await this.getAgentInfo();
+    const agentInfo = await this.getAgentInfo(options);
     const tools: ToolInfo[] = agentInfo.tools.map(t => ({
       name: t.name,
       description: t.description,
@@ -3724,8 +3800,19 @@ export class SingleAgentClient {
         // because normalizeAgentConfig returns early when _inProcessMcpClient is set). The
         // executor then hits ProtocolClient.callTool which reads _inProcessMcpClient directly,
         // so the sentinel adcp-in-process:// URI never reaches validateAgentUrl.
-        const agent = await this.ensureEndpointDiscovered();
-        const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined);
+        const agent = await this.ensureEndpointDiscovered(options);
+        const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined, options);
+        throwIfAborted(options?.signal);
+        const requestTimeoutMs = resolveRequestTimeoutMs(
+          options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs
+        );
+        if (
+          !result.success &&
+          requestTimeoutMs !== undefined &&
+          /\b(requesttimeout|timeout|timed out)\b/i.test(result.error ?? '')
+        ) {
+          throw createTimeoutError(requestTimeoutMs);
+        }
 
         if (result.success && result.data) {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
@@ -3785,7 +3872,7 @@ export class SingleAgentClient {
             `since the agent has the v3-only discovery tool. ` +
             `This client routes to v3 adapters, but calls reading capability details ` +
             `(idempotency TTL, supported_versions, feature flags) will fail until the agent ` +
-            `operator fixes the capabilities endpoint at ${this.agent.agent_uri}.`,
+            `operator fixes the capabilities endpoint.`,
           {
             success: result.success,
             hasError: !!result.error,
@@ -3796,7 +3883,11 @@ export class SingleAgentClient {
         // Re-throw errors that indicate real infrastructure problems —
         // only fall through for tool-execution failures (the agent
         // advertises get_adcp_capabilities but can't actually serve it).
-        if (error instanceof AuthenticationRequiredError || error instanceof TaskTimeoutError) {
+        if (
+          error instanceof AuthenticationRequiredError ||
+          error instanceof TaskTimeoutError ||
+          isAbortOrTimeoutError(error)
+        ) {
           throw error;
         }
         console.warn(
@@ -3804,8 +3895,7 @@ export class SingleAgentClient {
             `threw — treating as v3 (synthetic) since the agent has the v3-only discovery tool. ` +
             `This client routes to v3 adapters, but calls reading capability details ` +
             `(idempotency TTL, supported_versions, feature flags) will fail until the agent ` +
-            `operator fixes the capabilities endpoint at ${this.agent.agent_uri}. ` +
-            `Error: ${error instanceof Error ? error.message : String(error)}`
+            `operator fixes the capabilities endpoint.`
         );
       }
 
@@ -3906,8 +3996,8 @@ export class SingleAgentClient {
    *
    * @returns 'v2' or 'v3' based on server capabilities
    */
-  async detectServerVersion(): Promise<'v2' | 'v3'> {
-    const capabilities = await this.getCapabilities();
+  async detectServerVersion(options?: ReadRequestOptions): Promise<'v2' | 'v3'> {
+    const capabilities = await this.getCapabilities(options);
     return capabilities.version;
   }
 
@@ -4012,13 +4102,17 @@ export class SingleAgentClient {
    *
    * Skipped when validateFeatures is false or the task has no feature requirements.
    */
-  private async validateTaskFeatures(taskName: string): Promise<void> {
+  private async validateTaskFeatures(taskName: string, options?: ReadRequestOptions): Promise<void> {
     if (this.config.validateFeatures === false) return;
 
     const requiredFeatures = TASK_FEATURE_MAP[taskName];
     if (!requiredFeatures || requiredFeatures.length === 0) return;
 
-    await this.require(...requiredFeatures);
+    const capabilities = await this.getCapabilities(options);
+    const missing = requiredFeatures.filter(f => !resolveFeature(capabilities, f));
+    if (missing.length > 0) {
+      throw new FeatureUnsupportedError(missing, listDeclaredFeatures(capabilities), this.agent.agent_uri);
+    }
   }
 
   /**
@@ -4146,9 +4240,9 @@ export class SingleAgentClient {
    *
    * Throws `VersionUnsupportedError` with the specific reason on failure.
    */
-  async requireSupportedMajor(taskType: string = 'request'): Promise<void> {
+  async requireSupportedMajor(taskType: string = 'request', options?: ReadRequestOptions): Promise<void> {
     if (this.isV2Allowed()) return;
-    const capabilities = await this.getCapabilities();
+    const capabilities = await this.getCapabilities(options);
 
     // Synthetic capabilities — no authoritative `get_adcp_capabilities`
     // response, so the version + idempotency-TTL fields couldn't be read.

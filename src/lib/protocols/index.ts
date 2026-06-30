@@ -24,6 +24,7 @@ export async function closeConnections(protocol: 'mcp' | 'a2a' = 'mcp'): Promise
 }
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
 export { callA2ATool } from './a2a';
+export { DEFAULT_REQUEST_TIMEOUT_MS } from './abort';
 export {
   callMCPToolWithTasks,
   getMCPTaskStatus,
@@ -248,6 +249,13 @@ export interface TransportOptions {
    * existing signing / capture wrappers is non-obvious and a footgun.
    */
   maxResponseBytes?: number;
+  /**
+   * Timeout in milliseconds for bounded one-shot transport requests such as
+   * A2A agent-card discovery and MCP read-path probes. Defaults to 60 seconds
+   * for A2A discovery so an unresponsive card endpoint cannot hang forever.
+   * Set to `0` to disable the SDK-imposed discovery timeout.
+   */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -301,6 +309,8 @@ export interface CallToolOptions {
    * matching field on the client constructor's `transport` option.
    */
   transport?: TransportOptions;
+  /** Caller-owned cancellation signal for the in-flight protocol call. */
+  signal?: AbortSignal;
   /** Transport-level diagnostics callback for outbound HTTP requests. */
   onTransportActivity?: TransportActivityHandlerFn;
   /**
@@ -344,6 +354,7 @@ export class ProtocolClient {
       wireAdcpVersion,
       versionEnvelope: versionEnvelopeMode = 'auto',
       transport,
+      signal,
       onTransportActivity,
       transportActivityContext,
     } = options;
@@ -388,7 +399,10 @@ export class ProtocolClient {
               // URL validation, OAuth refresh, and signing — none apply in-process.
               if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
                 const inProcArgs = applyVersionEnvelope(args, versionEnvelope);
-                return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
+                return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs, {
+                  ...(signal && { signal }),
+                  ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+                });
               }
 
               validateAgentUrl(agent.agent_uri);
@@ -431,6 +445,9 @@ export class ProtocolClient {
                     serverVersion,
                     adcpVersion,
                     ...(versionEnvelopeMode !== 'auto' && { versionEnvelope: versionEnvelopeMode }),
+                    transport,
+                    signal,
+                    ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
                     onTransportActivity,
                     transportActivityContext,
                   })
@@ -483,6 +500,8 @@ export class ProtocolClient {
                       debugLogs,
                       customHeaders: agent.headers,
                       signingContext,
+                      signal,
+                      requestTimeoutMs: transport?.requestTimeoutMs,
                     });
                   } catch (err) {
                     // Refresh failed or server rejected the refreshed token — walk the
@@ -503,7 +522,13 @@ export class ProtocolClient {
                     authToken,
                     debugLogs,
                     agent.headers,
-                    signingContext ? { signingContext } : undefined
+                    {
+                      ...(signingContext && { signingContext }),
+                      ...(signal && { signal }),
+                      ...(transport?.requestTimeoutMs !== undefined && {
+                        requestTimeoutMs: transport.requestTimeoutMs,
+                      }),
+                    }
                   );
                 } catch (err) {
                   // Client-credentials agents: on 401, the AS may have rotated
@@ -523,7 +548,13 @@ export class ProtocolClient {
                         retryAuthToken,
                         debugLogs,
                         agent.headers,
-                        signingContext ? { signingContext } : undefined
+                        {
+                          ...(signingContext && { signingContext }),
+                          ...(signal && { signal }),
+                          ...(transport?.requestTimeoutMs !== undefined && {
+                            requestTimeoutMs: transport.requestTimeoutMs,
+                          }),
+                        }
                       );
                     } catch (retryErr) {
                       await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
@@ -545,7 +576,9 @@ export class ProtocolClient {
                     pushNotificationConfig,
                     agent.headers,
                     signingContext,
-                    session
+                    session,
+                    signal,
+                    transport?.requestTimeoutMs
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -567,7 +600,9 @@ export class ProtocolClient {
                         pushNotificationConfig,
                         agent.headers,
                         signingContext,
-                        session
+                        session,
+                        signal,
+                        transport?.requestTimeoutMs
                       );
                     } catch (retryErr) {
                       await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
@@ -646,7 +681,10 @@ export const createMCPClient = (
           applyVersionEnvelope(args, versionEnvelope),
           authToken,
           debugLogs,
-          headers
+          headers,
+          {
+            ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+          }
         )
       ),
   };
@@ -672,7 +710,11 @@ export const createA2AClient = (
           authToken,
           debugLogs,
           undefined,
-          headers
+          headers,
+          undefined,
+          undefined,
+          undefined,
+          transport?.requestTimeoutMs
         )
       ),
   };
