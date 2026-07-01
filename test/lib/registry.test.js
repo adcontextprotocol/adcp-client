@@ -57,9 +57,10 @@ const PROPERTY = {
   properties: [
     {
       id: 'prop_1',
-      type: 'website',
+      property_type: 'website',
       name: 'NYTimes',
       identifiers: [{ type: 'domain', value: 'nytimes.com' }],
+      tags: ['news', 'premium'],
     },
   ],
   verified: true,
@@ -830,6 +831,8 @@ describe('RegistryClient', () => {
       assert.strictEqual(result.publisher_domain, 'nytimes.com');
       assert.strictEqual(result.verified, true);
       assert.strictEqual(result.properties.length, 1);
+      assert.deepStrictEqual(result.properties[0].identifiers, [{ type: 'domain', value: 'nytimes.com' }]);
+      assert.deepStrictEqual(result.properties[0].tags, ['news', 'premium']);
     });
 
     test('returns null on 404', async () => {
@@ -1507,6 +1510,7 @@ describe('RegistryClient', () => {
       assert.strictEqual(capturedOpts.headers['Authorization'], 'Bearer sk_test');
       const body = JSON.parse(capturedOpts.body);
       assert.strictEqual(body.publisher_domain, 'example.com');
+      assert.deepStrictEqual(body.authorized_agents, []);
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.id, 'pr_456');
     });
@@ -1572,6 +1576,85 @@ describe('RegistryClient', () => {
       assert.strictEqual(result.success, true);
     });
 
+    test('forwards property identity identifiers and tags', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: 'pr_identity',
+            revision_number: 7,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const propertyIdentity = {
+        property_type: 'website',
+        name: 'Example Publisher',
+        identifiers: [
+          { type: 'domain', value: 'example.com' },
+          { type: 'ios_bundle', value: 'com.example.news' },
+        ],
+        tags: ['news', 'premium'],
+      };
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.saveProperty({
+        publisher_domain: 'example.com',
+        properties: [propertyIdentity],
+        authorized_agents: [],
+      });
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.deepStrictEqual(body.properties, [{ ...propertyIdentity, type: 'website' }]);
+      assert.strictEqual(result.id, 'pr_identity');
+      assert.strictEqual(result.revision_number, 7);
+    });
+
+    test('normalizes legacy property type alias before sending', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: 'pr_legacy',
+            revision_number: 8,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.saveProperty({
+        publisher_domain: 'legacy.example',
+        properties: [
+          {
+            type: 'mobile_app',
+            name: 'Legacy App',
+            identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+            tags: ['app'],
+          },
+        ],
+      });
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.properties, [
+        {
+          type: 'mobile_app',
+          property_type: 'mobile_app',
+          name: 'Legacy App',
+          identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+          tags: ['app'],
+        },
+      ]);
+    });
+
     test('throws on 401 unauthorized', async () => {
       restore = mockFetch(async () => {
         return new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401 });
@@ -1589,6 +1672,234 @@ describe('RegistryClient', () => {
           return true;
         }
       );
+    });
+
+    test('preserves authoritative-property 409 errors', async () => {
+      restore = mockFetch(async () => {
+        return new Response(JSON.stringify({ error: 'Cannot edit authoritative property' }), { status: 409 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await assert.rejects(
+        () =>
+          client.saveProperty({
+            publisher_domain: 'example.com',
+            properties: [{ property_type: 'website', name: 'Example Publisher' }],
+            authorized_agents: [],
+          }),
+        err => {
+          assert.ok(err.message.includes('409'));
+          assert.ok(err.message.includes('Cannot edit authoritative property'));
+          return true;
+        }
+      );
+    });
+  });
+
+  describe('saveProperties', () => {
+    test('fans out property identity payloads with canonical property_type', async () => {
+      const capturedBodies = [];
+      restore = mockFetch(async (_url, opts) => {
+        capturedBodies.push(JSON.parse(opts.body));
+        const body = capturedBodies[capturedBodies.length - 1];
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: `pr_${body.publisher_domain}`,
+            revision_number: capturedBodies.length,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const requests = [
+        {
+          publisher_domain: 'example.com',
+          authorized_agents: [],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'Example Publisher',
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+              tags: ['news'],
+            },
+          ],
+        },
+        {
+          publisher_domain: 'legacy.example',
+          authorized_agents: [],
+          properties: [
+            {
+              type: 'mobile_app',
+              name: 'Legacy App',
+              identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+              tags: ['app'],
+            },
+          ],
+        },
+      ];
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const results = await client.saveProperties(requests, { concurrency: 1 });
+
+      assert.deepStrictEqual(capturedBodies, [
+        {
+          publisher_domain: 'example.com',
+          authorized_agents: [],
+          properties: [
+            {
+              type: 'website',
+              property_type: 'website',
+              name: 'Example Publisher',
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+              tags: ['news'],
+            },
+          ],
+        },
+        {
+          publisher_domain: 'legacy.example',
+          authorized_agents: [],
+          properties: [
+            {
+              type: 'mobile_app',
+              property_type: 'mobile_app',
+              name: 'Legacy App',
+              identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+              tags: ['app'],
+            },
+          ],
+        },
+      ]);
+      assert.strictEqual(results['example.com'].revision_number, 1);
+      assert.strictEqual(results['legacy.example'].revision_number, 2);
+    });
+  });
+
+  describe('property catalog fact APIs', () => {
+    test('resolves identifiers with provenance and auth', async () => {
+      let capturedUrl, capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            resolved: [
+              {
+                identifier: { type: 'domain', value: 'example.com' },
+                property_rid: 'rid_example',
+                classification: 'property',
+                status: 'existing',
+                source: 'member_assertion',
+              },
+            ],
+            summary: { total: 1, resolved: 1, created: 0, excluded: 0, not_found: 0 },
+            server_timestamp: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.resolveIdentifiers({
+        identifiers: [{ type: 'domain', value: 'example.com' }],
+        provenance: { type: 'member_assertion' },
+      });
+
+      assert.ok(capturedUrl.includes('/api/registry/resolve'));
+      assert.strictEqual(capturedOpts.method, 'POST');
+      assert.strictEqual(capturedOpts.headers['Authorization'], 'Bearer sk_test');
+      assert.deepStrictEqual(JSON.parse(capturedOpts.body), {
+        identifiers: [{ type: 'domain', value: 'example.com' }],
+        provenance: { type: 'member_assertion' },
+      });
+      assert.strictEqual(result.resolved[0].property_rid, 'rid_example');
+    });
+
+    test('allows identifier lookup mode without an apiKey', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            resolved: [],
+            summary: { total: 1, resolved: 0, created: 0, excluded: 0, not_found: 1 },
+            server_timestamp: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      await client.resolveIdentifiers({
+        identifiers: [{ type: 'domain', value: 'missing.example' }],
+        provenance: { type: 'member_assertion' },
+        mode: 'lookup',
+      });
+
+      assert.strictEqual(capturedOpts.headers.Authorization, undefined);
+    });
+
+    test('requires an apiKey for identifier resolve mode', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () =>
+            client.resolveIdentifiers({
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+              provenance: { type: 'member_assertion' },
+            }),
+          /apiKey is required/
+        );
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
+    });
+
+    test('files and fetches catalog disputes', async () => {
+      const calls = [];
+      restore = mockFetch(async (url, opts) => {
+        calls.push({ url, opts });
+        if (opts?.method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              dispute_id: 'disp_123',
+              action_taken: 'queued_for_review',
+              reason: 'queued',
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: 'disp_123',
+            dispute_type: 'identifier_link',
+            subject_type: 'identifier',
+            subject_value: 'example.com',
+            claim: 'This identifier is incorrectly linked.',
+            status: 'queued_for_review',
+            created_at: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const filed = await client.fileCatalogDispute({
+        dispute_type: 'identifier_link',
+        subject_type: 'identifier',
+        subject_value: 'example.com',
+        claim: 'This identifier is incorrectly linked.',
+      });
+      const fetched = await client.getCatalogDispute('disp_123');
+
+      assert.ok(calls[0].url.includes('/api/registry/catalog/disputes'));
+      assert.strictEqual(calls[0].opts.headers['Authorization'], 'Bearer sk_test');
+      assert.strictEqual(filed.dispute_id, 'disp_123');
+      assert.ok(calls[1].url.endsWith('/api/registry/catalog/disputes/disp_123'));
+      assert.strictEqual(fetched.id, 'disp_123');
     });
   });
 
@@ -1837,7 +2148,19 @@ describe('RegistryClient', () => {
 
   describe('listProperties', () => {
     test('lists properties without options', async () => {
-      const responseData = { properties: [PROPERTY], stats: { total: 1 } };
+      const responseData = {
+        properties: [
+          {
+            domain: 'nytimes.com',
+            source: 'hosted',
+            property_count: 1,
+            agent_count: 0,
+            verified: true,
+            properties: PROPERTY.properties,
+          },
+        ],
+        stats: { total: 1 },
+      };
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
@@ -1850,6 +2173,10 @@ describe('RegistryClient', () => {
       assert.ok(capturedUrl.includes('/api/properties/registry'));
       assert.ok(!capturedUrl.includes('?'));
       assert.strictEqual(result.properties.length, 1);
+      assert.deepStrictEqual(result.properties[0].properties[0].identifiers, [
+        { type: 'domain', value: 'nytimes.com' },
+      ]);
+      assert.deepStrictEqual(result.properties[0].properties[0].tags, ['news', 'premium']);
     });
 
     test('passes search, limit, and offset params', async () => {

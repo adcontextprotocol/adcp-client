@@ -11,7 +11,6 @@ export type {
   BrandRegistryItem,
   ResolvedProperty,
   PropertyIdentifier,
-  PropertyRegistryItem,
   ValidationResult,
   RegistryError,
   PublisherPropertySelector,
@@ -57,6 +56,7 @@ export type { paths, operations, components } from './types.generated';
 
 import type {
   ResolvedBrand as GeneratedResolvedBrand,
+  PropertyRegistryItem as GeneratedPropertyRegistryItem,
   operations,
   CommunityMirrorListResponse,
   CommunityMirrorSummary,
@@ -66,6 +66,7 @@ import type {
   CommunityMirrorPublishRequest,
   CommunityMirrorDeleteResponse,
 } from './types.generated';
+import type { PropertyIdentifierType, PropertyType } from '../discovery/types';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
 
 /**
@@ -118,11 +119,94 @@ export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody'
 /** Response from POST /api/brands/save (200) */
 export type SaveBrandResponse = operations['saveBrand']['responses']['200']['content']['application/json'];
 
+type RegistrySavePropertyRequest = NonNullable<
+  operations['saveProperty']['requestBody']
+>['content']['application/json'];
+
+// TODO(#2318): Once the official registry OpenAPI publishes saveProperty
+// identity facts, regenerate the registry types and collapse these hand-written
+// write types onto the generated request shape, or assert they are structurally equal.
+type SavePropertyIdentityBase = {
+  /** Human-readable property name. */
+  name: string;
+  /** Register this property by known identifiers such as domain, bundle id, or app-store id. */
+  identifiers?: { type: PropertyIdentifierType; value: string }[];
+  /** Tags used by downstream `by_tag` property selection. */
+  tags?: string[];
+};
+
+/** Property identity accepted by POST /api/properties/save. */
+export type SavePropertyIdentity = SavePropertyIdentityBase &
+  (
+    | {
+        /** Preferred field name, aligned with adagents.json property declarations. */
+        property_type: PropertyType;
+        /** Current registry wire field; emitted alongside `property_type` while the OpenAPI catches up. */
+        type?: PropertyType | string;
+      }
+    | {
+        /** Current registry wire field; accepts custom/self-hosted registry values for compatibility. */
+        type: PropertyType | string;
+        property_type?: PropertyType;
+      }
+  );
+
+/** Property identity facts returned by registry property read/list APIs. */
+export type RegistryPropertyIdentity = {
+  /** Stable property identifier when the registry has assigned one. */
+  id?: string;
+  /** Preferred field name, aligned with adagents.json property declarations. */
+  property_type?: PropertyType;
+  /** Legacy read/write alias for `property_type`. */
+  type?: PropertyType | string;
+  /** Human-readable property name. */
+  name?: string;
+  /** Known identifiers such as domain, bundle id, or app-store id. */
+  identifiers?: { type: PropertyIdentifierType; value: string }[];
+  /** Tags used by downstream `by_tag` property selection. */
+  tags?: string[];
+};
+
+/** Property registry list item, including identity facts when returned by the registry. */
+export type PropertyRegistryItem = GeneratedPropertyRegistryItem & {
+  properties?: RegistryPropertyIdentity[];
+};
+
 /** Request body for POST /api/properties/save */
-export type SavePropertyRequest = NonNullable<operations['saveProperty']['requestBody']>['content']['application/json'];
+export type SavePropertyRequest = Omit<RegistrySavePropertyRequest, 'authorized_agents' | 'properties'> & {
+  /** Ignored by the registry client; identity-only property saves always write `authorized_agents: []`. */
+  authorized_agents?: [];
+  properties?: SavePropertyIdentity[];
+};
 
 /** Response from POST /api/properties/save (200) */
 export type SavePropertyResponse = operations['saveProperty']['responses']['200']['content']['application/json'];
+
+type RegistryResolveIdentifiersRequest = NonNullable<
+  operations['resolveIdentifiers']['requestBody']
+>['content']['application/json'];
+
+/** Request body for POST /api/registry/resolve. `mode` defaults to `resolve` server-side. */
+export type ResolveIdentifiersRequest = Omit<RegistryResolveIdentifiersRequest, 'mode'> & {
+  mode?: RegistryResolveIdentifiersRequest['mode'];
+};
+
+/** Response from POST /api/registry/resolve (200) */
+export type ResolveIdentifiersResponse =
+  operations['resolveIdentifiers']['responses']['200']['content']['application/json'];
+
+/** Request body for POST /api/registry/catalog/disputes */
+export type FileCatalogDisputeRequest = NonNullable<
+  operations['fileCatalogDispute']['requestBody']
+>['content']['application/json'];
+
+/** Response from POST /api/registry/catalog/disputes (200) */
+export type FileCatalogDisputeResponse =
+  operations['fileCatalogDispute']['responses']['200']['content']['application/json'];
+
+/** Response from GET /api/registry/catalog/disputes/{id} (200) */
+export type GetCatalogDisputeResponse =
+  operations['getCatalogDispute']['responses']['200']['content']['application/json'];
 
 /** Response from POST /api/properties/hosted/{domain}/claim (200) */
 export type ClaimHostedPropertyDomainResponse =

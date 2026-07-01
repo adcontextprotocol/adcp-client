@@ -242,7 +242,7 @@ adcp registry stats
 ### Save operations (requires --auth or ADCP_REGISTRY_API_KEY)
 ```bash
 adcp registry save-brand acme.com "Acme Corp" --auth $KEY
-adcp registry save-property example.com https://agent.com --auth $KEY
+adcp registry save-property example.com '{"properties":[{"property_type":"website","name":"Example","identifiers":[{"type":"domain","value":"example.com"}],"tags":["news"]}]}' --auth $KEY
 ```
 
 ## Agent management
