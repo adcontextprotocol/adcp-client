@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.0
-// Generated at: 2026-06-18T11:23:20.083Z
+// Generated AdCP core types from official schemas v3.1.1
+// Generated at: 2026-07-01T04:18:09.907Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -2392,7 +2392,7 @@ export type MoovAtomPosition = 'start' | 'end';
  */
 export type AudioChannelLayout = 'mono' | 'stereo' | '5.1' | '7.1';
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving. Unlike the hosted `video` asset, a VAST tag carries no `width`/`height`: a VAST response can return multiple renditions of differing dimensions, and the player selects one per device at serve time, so there is no single width/height for the ad. Dimensional, duration, and codec *constraints* for a placement live on the format/requirements layer, not on this asset.
  */
 export type VASTAsset = {
   /**
@@ -2680,7 +2680,7 @@ export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'sus
  */
 export type CreativeIdentifierType = 'ad_id' | 'isci' | 'clearcast_clock' | 'idcrea';
 /**
- * Video asset with URL and technical specifications including audio track properties
+ * A hosted video file delivered directly (e.g., an MP4 you host), with URL and technical specifications including audio track properties. `width` and `height` are required because a hosted video file has intrinsic, native pixel dimensions that are known when the file is created. Tag-delivered video uses the separate `vast` asset, which carries no `width`/`height`: a VAST response resolves geometry per-`MediaFile` at serve time, so there is no single width/height for the ad. Aspect-ratio and size *constraints* (what a placement accepts) belong on the format/requirements layer, not on the asset.
  */
 export interface VideoAsset {
   /**
@@ -2692,12 +2692,12 @@ export interface VideoAsset {
    */
   url: string;
   /**
-   * Width in pixels
+   * Width in pixels — the video file's intrinsic native width. Required: a hosted file always has concrete dimensions. (Tag-delivered video carries no width; see the `vast` asset.)
    * @minimum 1
    */
   width: number;
   /**
-   * Height in pixels
+   * Height in pixels — the video file's intrinsic native height. Required: a hosted file always has concrete dimensions. (Tag-delivered video carries no height; see the `vast` asset.)
    * @minimum 1
    */
   height: number;
@@ -9339,7 +9339,7 @@ export interface InsertionOrder {
   requires_signature: boolean;
 }
 /**
- * Standard cursor-based pagination metadata for list responses
+ * Cursor metadata for paginated get_products responses. In brief/refine mode, continuation pages bound returned products[] for the seller's curated or refined answer; proposals may accompany a page as plan metadata but are not independently counted by this pagination envelope, and pagination does not convert the response into an exhaustive feed contract. In wholesale mode, continuation pages walk the wholesale product feed.
  */
 export interface PaginationResponse {
   /**
@@ -22601,6 +22601,10 @@ export type GetAdCPCapabilitiesResponse = ProtocolEnvelope & {
      */
     supports_proposals?: boolean;
     /**
+     * Conformance declaration that this seller consults a registered governance agent (via sync_governance plus an outbound check_governance call) before committing a media buy, and surfaces GOVERNANCE_DENIED when the governance agent denies. A declaration of true opts the seller into governance-denial grading (media_buy_seller/governance_denied, media_buy_seller/governance_denied_recovery). When false or absent, conformance runners skip those storyboards - a seller that does not implement outbound governance consultation is not expected to produce GOVERNANCE_DENIED. This is independent of baseline sync_governance registration, which remains gradeable on its own.
+     */
+    governance_aware?: boolean;
+    /**
      * Where this seller surfaces dependency-resource impairments (creative suspended/rejected post-approval, audience suspended, catalog item withdrawn, event source insufficient, property depublished) to buyers. Non-exclusive: a seller mirroring impairments on both the buy snapshot AND firing webhooks declares `["snapshot", "webhook"]` (the common case for premium guaranteed sellers). Each value names one surface where buyers can observe an impairment:
      *
      * - **`snapshot`** — seller propagates resource transitions into `media_buy.health` and `media_buy.impairments[]` on the next `get_media_buys` read. The `impairment.coherence` compliance assertion grades this surface; storyboards that exercise it (`media_buy_seller/dependency_impairment`, `media_buy_seller/dependency_impairment_cardinality`) require `"snapshot"` to be declared, else they grade `not_applicable`.
@@ -27848,7 +27852,7 @@ export interface AuthorizationPayload {
   override_reason?: string | null;
 }
 /**
- * Response from GET /api/registry/feed. The events array contains cursor-ordered registry events; cursor is the value to pass on the next poll. See specs/registry-change-feed.md.
+ * Response from GET /api/registry/feed and the `feed` event body from GET /api/registry/feed/stream. The events array contains cursor-ordered registry events; cursor is the value to pass on the next poll or stream reconnect. See specs/registry-change-feed.md.
  */
 export interface RegistryFeedResponse {
   events: RegistryEvent[];
@@ -27861,6 +27865,31 @@ export interface RegistryFeedResponse {
    * True when more events are immediately available after cursor.
    */
   has_more: boolean;
+  /**
+   * Consumer-visible feed freshness metadata for the requested type filter.
+   */
+  freshness: {
+    /**
+     * Server timestamp when this feed page was generated.
+     * @format date-time
+     */
+    generated_at: string;
+    /**
+     * Newest event creation timestamp currently visible in the feed for the requested type filter. Null when no matching event exists inside retention.
+     * @format date-time
+     */
+    latest_event_created_at: string | null;
+    /**
+     * Seconds between generated_at and latest_event_created_at. Null when no matching event exists.
+     * @minimum 0
+     */
+    lag_seconds: number | null;
+    /**
+     * Number of days the registry retains feed cursors and events.
+     * @minimum 1
+     */
+    retention_days: number;
+  };
 }
 
 // core/requirements/asset-requirements.json
@@ -30687,7 +30716,7 @@ export interface AdCPManifest {
     [k: string]:
       | {
           /**
-           * The protocol surface this tool belongs to. Derived from the source directory: media-buy, signals, governance, account, creative, brand, content-standards, property, collection, sponsored-intelligence, protocol, compliance, tmp.
+           * The protocol surface this tool belongs to. Derived from the source directory: media-buy, signals, governance, account, creative, brand, content-standards, property, collection, sponsored-intelligence, protocol, compliance, trusted-match.
            */
           protocol:
             | 'media-buy'
@@ -30702,7 +30731,7 @@ export interface AdCPManifest {
             | 'sponsored-intelligence'
             | 'protocol'
             | 'compliance'
-            | 'tmp'
+            | 'trusted-match'
             | 'a2ui';
           /**
            * True if invoking this tool with identical inputs more than once is unsafe — i.e., the tool changes server-side state. Mutating tools MUST declare an idempotency_key on the request schema (or carry an explicit `naturally idempotent` exemption marker in the schema's description). Read-only tools (verbs `get-`, `list-`, `check-`, `validate-`, `preview-`, `search-`) are safe to retry without an idempotency key.
@@ -31117,6 +31146,645 @@ export interface V1V2CanonicalFormatMappingRegistry {
     notes?: string;
   }[];
 }
+
+
+// trusted-match/available-package.json
+/**
+ * A package available for contextual matching. Synced to providers at media buy creation time — not sent per request. Providers cache this metadata and use it when evaluating context match requests for the placement. The `seller_agent` field binds the package to the originating seller agent; providers MUST use this binding rather than re-deriving seller identity from media_buy_id.
+ */
+export interface AvailablePackage {
+  /**
+   * Unique identifier for the package
+   */
+  package_id: string;
+  /**
+   * Media buy that this package belongs to
+   */
+  media_buy_id: string;
+  seller_agent: SellerAgentReference;
+  /**
+   * Creative format identifiers eligible for this package. Uses the standard AdCP format-id object with agent_url and id for unambiguous format resolution across namespaces.
+   */
+  format_ids?: FormatReferenceStructuredObject[];
+  /**
+   * The buyer's catalogs attached to this package, with selectors (ids, gtins, tags, category, query) scoping which items are in play. References synced catalogs by catalog_id. The provider resolves items from its cached copy.
+   */
+  catalogs?: Catalog[];
+}
+
+// trusted-match/context-match-request.json
+/**
+ * Sent by publisher to router or provider to evaluate packages against contextual signals. The provider uses its synced package set for the placement. MUST NOT contain user identity. The request_id MUST NOT correlate with any identity match request_id. Extension fields (ext, context) are intentionally omitted — extension data in the context path could inadvertently carry or correlate user identity signals.
+ */
+export interface ContextMatchRequest {
+  /**
+   * Optional schema URI for validation. Ignored at runtime.
+   */
+  $schema?: string;
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin. Inlined here (rather than via core/version-envelope.json allOf) so this schema can keep `additionalProperties: false` — the privacy boundary on this endpoint is contract-bearing.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version. Removed in 4.0. Inlined alongside adcp_version to preserve strict-mode on this endpoint.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Message type discriminator for deserialization.
+   */
+  type: 'context_match_request';
+  /**
+   * TMP protocol version. Allows receivers to handle semantic differences across versions.
+   */
+  protocol_version?: string;
+  /**
+   * Unique request identifier. MUST NOT correlate with any identity match request_id.
+   */
+  request_id: string;
+  /**
+   * Property catalog UUID (UUID v7). Globally unique, stable identifier assigned by the property catalog. The primary key for TMP matching and property list targeting.
+   * @format uuid
+   */
+  property_rid: string;
+  property_id?: PropertyID;
+  property_type: PropertyType;
+  /**
+   * Placement identifier from the publisher's placement registry in adagents.json. Identifies where on the property this ad opportunity exists. One placement per request.
+   */
+  placement_id: string;
+  /**
+   * API endpoint URL of the seller agent issuing this request. The provider uses this to resolve the active package set it has synced for this seller; when `package_ids` is omitted, evaluation occurs against that full set. If `seller_agent_url` does not match any seller the provider has synced packages for, the provider MUST return an empty offer set — it MUST NOT fall back to another seller's active set. The value identifies the asking seller, is identical for every user on a given placement, and carries no user identity, so it neither varies the request per user nor weakens the context/identity decorrelation boundary. Compared using the AdCP URL canonicalization rules, not byte-equality — see docs/reference/url-canonicalization. Consistent with `seller_agent_url` on the identity match request, `seller_agent.agent_url` on `AvailablePackage`, and `agent_url` in `adagents.json`.
+   */
+  seller_agent_url: string;
+  artifact?: Artifact;
+  /**
+   * Public content references adjacent to this ad opportunity. Each artifact identifies content via a public identifier the buyer can resolve independently — no private registry sync required.
+   */
+  artifact_refs?: {
+    /**
+     * Identifier type. 'url' for web pages, 'url_hash' for URL-addressable content the publisher prefers not to share directly (buyer matches against pre-crawled index), 'eidr' for film/TV (EIDR DOI), 'gracenote' for music/TV (Gracenote TMS ID), 'isrc' for music recordings (International Standard Recording Code), 'gtin' for products (Global Trade Item Number — UPC, EAN, ISBN-13), 'rss_guid' for podcast episodes (RSS GUID), 'isbn' for books, 'custom' for publisher-defined identifiers.
+     */
+    type: 'url' | 'url_hash' | 'eidr' | 'gracenote' | 'isrc' | 'gtin' | 'rss_guid' | 'isbn' | 'custom';
+    /**
+     * The identifier value. For 'url': the canonical content URL — MUST NOT contain user-specific path segments, query parameters, or fragments; use 'url_hash' when the publisher prefers not to reveal the URL. For 'url_hash': Blake3 hash of the canonicalized URL, base64-encoded (canonicalization: strip scheme, strip www./m./amp. prefixes, lowercase, strip trailing slash, strip query params and fragments). For 'eidr': the EIDR DOI (e.g., '10.5240/xxxx'). For 'gracenote': the Gracenote TMS ID (e.g., 'SH032541890000'). For 'isrc': the ISRC code (e.g., 'USRC17607839'). For 'gtin': the GTIN (e.g., '00012345678905'). For 'rss_guid': the episode GUID from the RSS feed. For 'isbn': the ISBN (e.g., '978-0-123456-78-9'). For 'custom': a publisher-defined identifier.
+     */
+    value: string;
+  }[];
+  /**
+   * Coarse geographic location of the viewer. Publisher controls granularity — country is sufficient for regulatory compliance and volume filtering, region or metro helps with campaign targeting and valuation. Coarsened to prevent user identification: no postcode, no coordinates. All fields optional.
+   */
+  geo?: {
+    /**
+     * ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB', 'DE').
+     * @pattern ^[A-Z]{2}$
+     */
+    country?: string;
+    /**
+     * ISO 3166-2 subdivision code (e.g., 'US-CA', 'GB-SCT').
+     * @pattern ^[A-Z]{2}-[A-Z0-9]{1,3}$
+     */
+    region?: string;
+    /**
+     * Metro area, using the same classification systems as AdCP targeting.
+     */
+    metro?: {
+      system: MetroAreaSystem;
+      /**
+       * Metro code within the system (e.g., '501' for New York DMA).
+       */
+      value: string;
+    };
+  };
+  /**
+   * Pre-computed classifier outputs for the content environment. Use when the publisher wants to provide classified context without sharing content or public references. Can supplement artifact_refs (e.g., URL + pre-classified topics) or replace them entirely (e.g., ephemeral conversation turns). Raw content MUST NOT be included — only classified outputs. The publisher is the classifier boundary.
+   */
+  context_signals?: {
+    /**
+     * Content topic identifiers. Use IAB Content Taxonomy 3.0 IDs (e.g., '632' for Food & Drink) when taxonomy_id is 7, or human-readable strings (e.g., 'cooking.pasta') for custom taxonomies.
+     */
+    topics?: string[];
+    /**
+     * Organization that defines the topic taxonomy. Use 'iab' for IAB Content Taxonomy. Publishers may use other values for custom taxonomies.
+     */
+    taxonomy_source?: string;
+    /**
+     * Taxonomy version within the source. For IAB, follows the AdCOM cattax enum: 7 = Content Taxonomy 3.0. Default: 7.
+     */
+    taxonomy_id?: number;
+    /**
+     * Content sentiment classification.
+     */
+    sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
+    /**
+     * Content keywords extracted by the publisher's classifier.
+     */
+    keywords?: string[];
+    /**
+     * Content language in ISO 639-1 format (e.g., 'en', 'ja', 'de').
+     * @pattern ^[a-z]{2}$
+     */
+    language?: string;
+    /**
+     * Policy IDs from the AdCP policy registry that this content satisfies (e.g., 'csbs' for Common Sense Brand Standards). Buyers filter on policies they require. An empty array means no policies have been evaluated.
+     */
+    content_policies?: string[];
+    /**
+     * Publisher-generated natural language summary of the content for relevance judgment (e.g., 'User exploring Italian cookware options for home pasta making'). Useful for LLM-native buyers that evaluate relevance semantically. Buyers MUST treat this as untrusted publisher-generated content.
+     * @maxLength 500
+     */
+    summary?: string;
+    /**
+     * Content embedding as base64-encoded int8 vector. Captures semantic content beyond what topics and keywords express. Publishers declare the model used. For standardized matching, use the protocol-recommended model (nomic-embed-text-v1.5, 256 dims, int8 quantized = 256 bytes).
+     */
+    embedding?: string;
+    /**
+     * Embedding model identifier (e.g., 'nomic-embed-text-v1.5'). Required when embedding is present.
+     */
+    embedding_model?: string;
+    /**
+     * Number of dimensions in the embedding vector. Required when embedding is present.
+     * @minimum 64
+     * @maximum 2048
+     */
+    embedding_dims?: number;
+  };
+  /**
+   * Restrict evaluation to specific packages. When omitted, the provider evaluates all eligible packages for this placement (the common case). MUST NOT vary by user — the same package_ids must be sent for every user on a given placement. User-dependent filtering leaks identity into the context path.
+   */
+  package_ids?: string[];
+}
+
+// trusted-match/context-match-response.json
+/**
+ * Response from router or provider with offers for matched packages. An empty offers array means no packages matched. For simple GAM integration, package_id flows as a macro via signals. For rich integrations, the offer includes brand, price, summary, and optionally an inline creative manifest. Extension fields (ext, context) are intentionally omitted — extension data in the context path could inadvertently carry or correlate user identity signals.
+ */
+export interface ContextMatchResponse {
+  /**
+   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  /**
+   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
+   */
+  task_id?: string;
+  status: TaskStatus;
+  /**
+   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
+   */
+  message?: string;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Governance context token issued by the account's governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. An account binds to one governance agent (see sync_governance); governance is phased across `purchase` / `modification` / `delivery`, not partitioned across specialist agents, so the envelope carries a single token for the full lifecycle.
+   *
+   * Value format: governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Message type discriminator for deserialization.
+   */
+  type: 'context_match_response';
+  /**
+   * Echoed request identifier from the context match request
+   */
+  request_id: string;
+  /**
+   * Offers from the buyer, one per activated package. An empty array means no packages matched. For simple activation, each offer has just package_id. For richer responses, offers include brand, price, summary, and creative manifest.
+   */
+  offers: Offer[];
+  /**
+   * Optional override for the default 5-minute cache TTL, in seconds. When present, the router MUST use this value instead of its default. Set to 0 to disable caching (e.g., when targeting configuration has just changed).
+   * @minimum 0
+   * @maximum 86400
+   */
+  cache_ttl?: number;
+  /**
+   * Response-level targeting signals for ad server pass-through. In the GAM case, these carry the key-value pairs that trigger line items. Not per-offer — applies to the response as a whole.
+   */
+  signals?: {
+    /**
+     * Contextual segment identifiers
+     */
+    segments?: string[];
+    /**
+     * Key-value pairs for ad server targeting
+     */
+    targeting_kvs?: {
+      /**
+       * Targeting key
+       */
+      key: string;
+      /**
+       * Targeting value
+       */
+      value: string;
+    }[];
+  };
+}
+/**
+ * A buyer's response to a context match request. Generalizes package activation — a simple activation is an offer with just package_id. A rich response includes brand, price, summary, and optionally an inline creative manifest.
+ */
+export interface Offer {
+  /**
+   * Package identifier from the media buy.
+   */
+  package_id: string;
+  seller_agent?: SellerAgentReference;
+  brand?: BrandReference;
+  price?: OfferPrice;
+  /**
+   * Buyer-generated description of the offer, for the publisher to judge relevance. E.g., '50% off Goldenfield mayo — recipe integration'. The publisher (or their AI assistant) uses this to decide whether the offer fits the context.
+   */
+  summary?: string;
+  creative_manifest?: CreativeManifest;
+  /**
+   * Key-value pairs the buyer passes for dynamic creative rendering or attribution tracking. In the GAM case, these flow as macro values. Not tied to user identity — attribution reconciliation happens via delivery reporting or clean room.
+   */
+  macros?: {
+    [k: string]: string | undefined;
+  };
+}
+/**
+ * Price for this offer. Only present when the product supports variable pricing. For fixed-price packages, price is already set on the media buy.
+ */
+export interface OfferPrice {
+  /**
+   * Price amount in the specified currency
+   * @minimum 0
+   */
+  amount: number;
+  /**
+   * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
+   */
+  currency?: string;
+  /**
+   * Pricing model for this offer
+   */
+  model: 'cpm' | 'cpc' | 'cpcv' | 'cpa' | 'flat';
+}
+
+// trusted-match/error.json
+/**
+ * Error response from a TMP provider or router. Returned instead of a normal response when the provider cannot process the request. Distinguishes errors from empty results (an empty offers array is a valid response meaning no matches, not an error).
+ */
+export interface TMPError {
+  /**
+   * Message type discriminator for deserialization.
+   */
+  type: 'error';
+  /**
+   * Echoed request identifier from the original request
+   */
+  request_id: string;
+  /**
+   * Machine-readable error code. `seller_not_authorized` is returned by providers at sync time when an AvailablePackage declares a `seller_agent.agent_url` that is not present in the `authorized_agents` list of the publisher's adagents.json for a property the package claims to serve.
+   */
+  code:
+    | 'invalid_request'
+    | 'unknown_package'
+    | 'seller_not_authorized'
+    | 'rate_limited'
+    | 'timeout'
+    | 'internal_error'
+    | 'provider_unavailable';
+  /**
+   * Human-readable error description for debugging
+   */
+  message?: string;
+}
+
+
+// trusted-match/identity-match-request.json
+/**
+ * Sent by publisher to evaluate user eligibility for packages using an opaque identity token. MUST NOT contain page context. The request_id MUST NOT correlate with any context match request_id. The buyer resolves the active package set for this seller from `seller_agent_url`; if `package_ids` is provided, its composition MUST be independent of the current placement (e.g., all-active or fuzzed; see field description) to prevent set-correlation attacks. Extension fields (ext, context) are intentionally omitted to prevent data leakage across the identity privacy boundary. The optional `attestation` (per identity) and `sealed_credentials` (top-level) fields carry verifiable proof ABOUT the identity — on the identity side of that boundary, not page context — so they are a deliberate, reviewed widening of this otherwise-closed schema, not a leak.
+ */
+export interface IdentityMatchRequest {
+  /**
+   * Optional schema URI for validation. Ignored at runtime.
+   */
+  $schema?: string;
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin. Inlined here (rather than via core/version-envelope.json allOf) so this schema can keep `additionalProperties: false` — the privacy boundary on this endpoint is contract-bearing.
+   * @pattern ^\d+\.\d+(-[a-zA-Z0-9.-]+)?$
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version. Removed in 4.0. Inlined alongside adcp_version to preserve strict-mode on this endpoint.
+   * @minimum 1
+   * @maximum 99
+   */
+  adcp_major_version?: number;
+  /**
+   * Message type discriminator for deserialization.
+   */
+  type: 'identity_match_request';
+  /**
+   * TMP protocol version. Allows receivers to handle semantic differences across versions.
+   */
+  protocol_version?: string;
+  /**
+   * Unique request identifier. MUST NOT correlate with any context match request_id.
+   */
+  request_id: string;
+  /**
+   * API endpoint URL of the seller agent issuing this request. The buyer's identity-match service uses this to resolve the active package set it has registered for this seller; when `package_ids` is omitted, evaluation occurs against that full set. If `seller_agent_url` does not match any seller for which the buyer has registered active packages, the buyer MUST return an empty `eligible_package_ids` set — it MUST NOT fall back to evaluating against another seller's active set. Compared using the AdCP URL canonicalization rules, not byte-equality — see docs/reference/url-canonicalization. Consistent with `seller_agent.agent_url` on `AvailablePackage` and `agent_url` in `adagents.json`.
+   */
+  seller_agent_url: string;
+  /**
+   * Identity tokens for the user, each tagged with its type. Publishers SHOULD include every token they have available — the buyer resolves on whichever graph matches. Entry order is not semantically significant; buyers use their own preference order when multiple entries resolve. Duplicate `(uid_type, user_token)` pairs MUST NOT appear; routers MAY reject or dedupe. `maxItems: 3` matches the TMPX plaintext budget (~120 bytes after HPKE overhead fits three 32-byte tokens); exceeding it forces buyer-side truncation.
+   */
+  identities: {
+    /**
+     * Opaque token from an identity provider (ID5, LiveRamp, UID2) or publisher-generated. Buyer may map to internal identity graph but cannot reverse to PII.
+     */
+    user_token: string;
+    uid_type: UIDType;
+    /**
+     * Optional verifiable proof ABOUT this identity (e.g. World ID proof-of-personhood and/or age). The receiver MUST verify it (see conformance) and MUST treat an absent-or-unverifiable attestation as 'no attestation' — never as an asserted-true claim. Issuer-agnostic: World ID is the first scheme; mDL / VC-style issuers use the same shape. Receivers MUST bound attestation size to prevent DoS.
+     */
+    attestation?: {
+      issuer: BrandReference;
+      /**
+       * Proof scheme and version, e.g. "world_id_v4". Selects how `proof` is verified.
+       */
+      scheme: string;
+      /**
+       * Relying-party id the proof was minted for. The receiver checks this against the relying_party_id's published owner (brand.json `identity_relying_parties[]`) so a forwarded proof cannot be replayed under a different owner.
+       */
+      relying_party_id?: string;
+      /**
+       * Issuer action/scope the proof was bound to (e.g. "humanity-check-for-ads").
+       */
+      action?: string;
+      /**
+       * Claims this attestation establishes. Closed, issuer-agnostic set.
+       */
+      claims: AttestationClaim[];
+      /**
+       * Credential strength (e.g. World ID Orb = biometric unique-human; Device = weaker; Document = passport/NFC).
+       */
+      verification_level?: 'orb' | 'device' | 'document';
+      /**
+       * Hash of the signal the proof commits to. The receiver MUST verify it matches the context the receiver expects (e.g. a buyer-issued nonce or the request_id) and that the attestation is within its freshness window; this, plus nullifier-reuse tracking, is the replay defense.
+       */
+      signal_binding?: string;
+      /**
+       * Scheme-specific verifiable proof material. Opaque to this schema; validated by the scheme's verifier. MUST carry only scheme-defined verification material — never page context or additional user identifiers.
+       */
+      proof: {};
+      /**
+       * Attestation validity horizon. Receivers MUST reject when past.
+       * @format date-time
+       */
+      expires_at?: string;
+    };
+  }[];
+  /**
+   * Privacy consent signals. Buyers in regulated jurisdictions MUST NOT process the user token without consent information.
+   */
+  consent?: {
+    /**
+     * Whether GDPR applies to this request.
+     */
+    gdpr?: boolean;
+    /**
+     * IAB TCF v2.2 consent string. Present when gdpr is true.
+     */
+    tcf_consent?: string;
+    /**
+     * IAB Global Privacy Platform string.
+     */
+    gpp?: string;
+    /**
+     * US Privacy string (CCPA). Deprecated in favor of GPP but still widely used.
+     */
+    us_privacy?: string;
+  };
+  /**
+   * Optional. When omitted, the buyer evaluates eligibility against the full set of active packages it has registered for `seller_agent_url`. When provided, the composition of `package_ids` MUST be statistically independent of the current placement — sending only the page-specific subset would let the buyer correlate Identity Match with Context Match by comparing package sets. Two acceptable modes: (a) **all-active** — include every active package this buyer has at this publisher; (b) **fuzzed** — include a random sample of active packages, optionally padded with synthetic non-existent IDs, drawn from a distribution that does not depend on the current placement. The buyer's silent-drop behavior on unknown IDs (specified below) is what makes synthetic-ID padding safe — they do not affect the response shape and cannot leak registry membership. When both `seller_agent_url` and `package_ids` are present, the buyer evaluates against the intersection of its registered active set and `package_ids`; IDs in `package_ids` that the buyer has not registered for this seller MUST be silently ignored (not surfaced as errors) to avoid leaking registry membership back to the publisher.
+   */
+  package_ids?: string[];
+  /**
+   * ISO 3166-1 alpha-2 country code. Routing directive for the TMP Router — used to select the correct regional provider. The router MUST strip this field before forwarding the request to the buyer agent. Not an identity signal.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
+  /**
+   * Optional HPKE-sealed credentials addressed to specific audiences — the network-as-RP ("issuer-as-RP"/Mechanism B) carrier. Each payload is opaque to the publisher, who relays it untouched; the inner plaintext is an `attestation` (see identities[].attestation) scoped to the audience's relying party. Reuses the TMPX envelope format. Router handling (normative — see docs/trusted-match/specification.mdx): the router forwards each entry only to the provider that owns its `audience_kid` (not broadcast), folds `sealed_credentials` into the per-provider re-signature canonical bytes so an injected/swapped blob breaks the signature, and includes a `sealed_credentials_hash` in the dedup cache key. Receivers decrypt only entries whose `audience_kid` they hold a key for and ignore the rest. Receivers MUST bound count and size to prevent DoS amplification.
+   */
+  sealed_credentials?: {
+    /**
+     * Key id identifying the recipient (network / relying party) whose HPKE private key opens `payload`.
+     * @maxLength 128
+     */
+    audience_kid: string;
+    /**
+     * HPKE-sealed attestation in the TMPX envelope format: `kid.base64url_nopad(ciphertext)` — unpadded base64url per RFC 4648 §5. Opaque pass-through for the publisher.
+     * @maxLength 8192
+     */
+    payload: string;
+  }[];
+}
+
+// trusted-match/identity-match-response.json
+/**
+ * Response indicating which packages the user is eligible for. The serve_window_sec field defines a per-package single-shot fcap: after serving the user one impression on each eligible package, the publisher MUST re-query Identity Match before serving from those packages again. Extension fields (ext, context) are intentionally omitted to prevent data leakage across the identity privacy boundary.
+ */
+export interface IdentityMatchResponse {
+  /**
+   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   */
+  context_id?: string;
+  context?: ContextObject;
+  /**
+   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
+   */
+  task_id?: string;
+  status: TaskStatus;
+  /**
+   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
+   */
+  message?: string;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Governance context token issued by the account's governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. An account binds to one governance agent (see sync_governance); governance is phased across `purchase` / `modification` / `delivery`, not partitioned across specialist agents, so the envelope carries a single token for the full lifecycle.
+   *
+   * Value format: governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Message type discriminator for deserialization.
+   */
+  type: 'identity_match_response';
+  /**
+   * Echoed request identifier from the identity match request
+   */
+  request_id: string;
+  /**
+   * Package IDs the user is eligible for. Packages not listed are ineligible.
+   */
+  eligible_package_ids: string[];
+  /**
+   * Per-package single-shot fcap window, in seconds. After serving the user one impression on each eligible package within this window, the publisher MUST re-query Identity Match before serving from those packages again. This is NOT a router response cache TTL — it is a buyer-asserted serve throttle. Multi-impression frequency caps are handled separately by the buyer's impression tracker, which writes cap-fire events to the IdentityMatch cap-state store at the boundary regardless of this window. Maximum 300 — longer windows reduce IdentityMatch load but coarsen fcap granularity below what most campaigns require.
+   * @minimum 1
+   * @maximum 300
+   */
+  serve_window_sec: number;
+  /**
+   * DEPRECATED in favor of tmpx_providers. Routers MAY continue to populate this field for back-compat with consumers that only know the single-token shape; when both fields are present, tmpx_providers is authoritative. Single HPKE-encrypted exposure token containing the resolved user identity tokens. Wire format: kid.base64url_nopad(ciphertext) — unpadded base64url per RFC 4648 section 5 (no = characters). Publishers MUST treat this value as opaque pass-through data. Removed in 4.0.
+   */
+  tmpx?: string;
+  /**
+   * Provider-emitted: the identity agent's ordered TMPX chunks paired with the macro name each chunk fills. Macro names MUST be drawn from the provider's registered `tmpx_macros` list (provider-registration.json) and appear in the same order — names are part of operational setup, not protocol-synthesized. Capped at 2 chunks in v1; the cap MAY rise without a shape change. Each `value` is an opaque URL-safe wire string the publisher substitutes verbatim into the matching ad-server macro slot — publishers MUST NOT parse, decode, transform, or choose an encoding. The router collects entries from every provider that emits them into `tmpx_providers`, keyed by provider_id; consumers reading the merged response SHOULD consume `tmpx_providers` and ignore `tmpx_macros` at the root.
+   */
+  tmpx_macros?: TmpxMacro[];
+  /**
+   * Router-populated: TMPX macro/value pairs grouped by the originating identity provider's provider_id, so the publisher fires each provider's tokens through that provider's specific ad-server macros (configured per provider in GAM / VAST URL / DOOH play log). Each entry's `macros[]` is a copy of the provider's emitted `tmpx_macros` ordered list. SHAPE CHANGE: was `Map<provider_id, string>` in the experimental surface that shipped in #5689; now `Map<provider_id, {macros: [TmpxMacro]}>` to carry exact macro/value pairs and support multi-chunk TMPX. Sanctioned by the experimental contract (`x-status: experimental` on this schema). Required by router conformance when any identity provider emitted TMPX in this request; collapsing per-provider tokens into a single string loses attribution and breaks per-provider impression accounting. Map keys MUST be valid provider_ids registered for this fan-out. Publishers MUST traffic only the macro names the response advertises; macro names MUST NOT be derived from provider_id at runtime.
+   */
+  tmpx_providers?: {
+    [k: string]:
+      | {
+          /**
+           * Ordered TMPX macro/value pairs for this provider. Names MUST match the provider's registered `tmpx_macros`.
+           */
+          macros: TmpxMacro[];
+        }
+      | undefined;
+  };
+}
+/**
+ * A single ad-server macro slot and the URL-safe value the publisher substitutes into it.
+ */
+export interface TmpxMacro {
+  /**
+   * Macro name as configured in the publisher's ad server (e.g. `PIN_TMPX_1`). MUST appear in the emitting provider's registered `tmpx_macros` list. Provider-namespaced so the publisher can target distinct slots per provider.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Z][A-Z0-9_]*$
+   */
+  name: string;
+  /**
+   * Opaque, URL-safe wire string the publisher substitutes verbatim into the named macro slot. Publishers MUST NOT parse, decode, or transform this value. The protocol fixes the wire format so platforms interoperate; a platform that can carry raw bytes MAY optimize privately but the wire contract remains the URL-safe string.
+   * @minLength 1
+   * @maxLength 1024
+   */
+  value: string;
+}
+
+
+// trusted-match/provider-registration.json
+/**
+ * Declares a TMP provider's endpoint, capabilities, and operational parameters. Used in router configuration (static YAML or dynamic API) and referenced by product-level provider entries. The publisher controls which providers participate in their ad decisioning. Endpoint URLs MUST be validated against SSRF, and dynamic registration endpoints MUST authenticate callers — see docs/trusted-match/specification#provider-registration-security.
+ */
+export type TMPProviderRegistration = (
+  | {
+      context_match: true;
+    }
+  | {
+      identity_match: true;
+    }
+) & {
+  /**
+   * Stable identifier for this provider registration. Used in logs, metrics, cache keys, and as the key in `tmpx_providers` on the identity-match response so the publisher can route each provider's TMPX `macros[]` to that provider's pre-configured ad-server slots (names registered in `tmpx_macros` below — macro names MUST NOT be derived from `provider_id` at runtime). Publishers assign this — it is not the provider's agent_url. Charset is constrained to a safe alphanumeric/underscore set so the value can appear in operational surfaces (logs, metrics, dashboards) without quoting.
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_]+$
+   */
+  provider_id: string;
+  /**
+   * Base URL the router calls. The router appends /context for Context Match and /identity for Identity Match. MUST be HTTPS in production, validated against the canonical reserved IPv4 and IPv6 ranges, with the TCP connection pinned to the validated IP (DNS re-resolution alone is insufficient against rebinding). Publishers comparing two provider registrations for the same `endpoint` MUST canonicalize both per the AdCP URL canonicalization rules; two registrations differing only in case, default port, or path-slash collapsing are the same provider. See docs/trusted-match/specification#provider-registration-security, docs/building/implementation/security#webhook-url-validation-ssrf, and docs/reference/url-canonicalization.
+   */
+  endpoint: string;
+  /**
+   * Provider handles Context Match requests (POST /context).
+   */
+  context_match?: boolean;
+  /**
+   * Provider handles Identity Match requests (POST /identity).
+   */
+  identity_match?: boolean;
+  /**
+   * ISO 3166-1 alpha-2 country codes this provider serves. The router filters Identity Match providers by the request's country field. MUST be present and non-empty when identity_match is true.
+   */
+  countries?: string[];
+  /**
+   * Identity types this provider can resolve. The router selects Identity Match providers whose uid_types overlaps with any uid_type in the request's identities array. MUST be present and non-empty when identity_match is true.
+   */
+  uid_types?: UIDType[];
+  /**
+   * Property RIDs (UUID v7) this provider serves. When present, the router only sends requests from these properties to this provider. When absent, the provider serves all properties.
+   */
+  properties?: string[];
+  /**
+   * Per-provider timeout in milliseconds. The router skips this provider if it does not respond within this budget. Must be less than or equal to the router's overall latency_budget_ms. The router may further reduce this based on adaptive timeout allocation.
+   * @minimum 5
+   * @maximum 5000
+   */
+  timeout_ms?: number;
+  /**
+   * Provider ordering for merge conflict resolution. Lower values have higher priority. When two providers return offers for the same package_id (a configuration error), the router keeps the offer from the higher-priority provider. Also used for adaptive timeout allocation — higher-priority providers receive a larger share of the latency budget.
+   * @minimum 0
+   */
+  priority?: number;
+  /**
+   * Stable, provider-namespaced ad-server macro names this provider's TMPX response fills, ordered. Publishers traffic these exact names in their ad server (GAM key-values, VAST URL macros, DOOH play-log fields); the router places each provider's TMPX chunks into the matching slots on the identity-match response (`tmpx_providers[provider_id].macros[]`). Names MUST be provider-namespaced so publishers can configure distinct macros per provider (e.g. `PIN_TMPX_1`, `PIN_TMPX_2` for one provider; `NOVA_TMPX_1` for another). Ordered so multi-chunk TMPX values (when the opaque token exceeds one macro slot) are placed deterministically. Capped at 2 entries in v1; the cap MAY be raised in a later version without a shape change. A provider that emits TMPX on its identity-match response (populates `tmpx_macros[]` there) MUST also register this list — otherwise the router has no slot names to forward — but the schema cannot enforce this because "emits TMPX" is not a schema-visible predicate. Providers that do not emit TMPX omit this field.
+   */
+  tmpx_macros?: string[];
+  /**
+   * Provider lifecycle status. Active providers receive requests. Inactive providers are skipped entirely. Draining providers stop receiving new requests but in-flight requests complete normally.
+   */
+  status?: 'active' | 'inactive' | 'draining';
+};
 
 export type IndividualAssetSlot =
   | IndividualImageAsset

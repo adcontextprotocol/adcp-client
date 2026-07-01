@@ -1547,18 +1547,29 @@ describe('RegistryClient', () => {
       );
     });
 
-    test('throws without authorized_agents', async () => {
-      const client = new RegistryClient({ apiKey: 'sk_test' });
-      await assert.rejects(
-        () =>
-          client.saveProperty({
-            publisher_domain: 'example.com',
+    test('defaults omitted authorized_agents to an empty array', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: 'pr_456',
           }),
-        err => {
-          assert.ok(err.message.includes('authorized_agents is required'));
-          return true;
-        }
-      );
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.saveProperty({
+        publisher_domain: 'example.com',
+      });
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.strictEqual(body.publisher_domain, 'example.com');
+      assert.deepStrictEqual(body.authorized_agents, []);
+      assert.strictEqual(result.success, true);
     });
 
     test('throws on 401 unauthorized', async () => {
@@ -1578,6 +1589,78 @@ describe('RegistryClient', () => {
           return true;
         }
       );
+    });
+  });
+
+  // ============ hosted property ownership ============
+
+  describe('hosted property ownership', () => {
+    test('claims a hosted property domain with auth header', async () => {
+      let capturedUrl, capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            domain: 'example.com',
+            authoritative_location: 'https://registry.example/adagents.json?adcp_claim=tok',
+            instructions: 'Publish the pointer at your origin.',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.claimHostedPropertyDomain('example.com');
+
+      assert.ok(capturedUrl.includes('/api/properties/hosted/example.com/claim'));
+      assert.strictEqual(capturedOpts.method, 'POST');
+      assert.strictEqual(capturedOpts.headers['Authorization'], 'Bearer sk_test');
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.domain, 'example.com');
+    });
+
+    test('verifies a hosted property origin with auth header', async () => {
+      let capturedUrl, capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            verified: true,
+            reason: 'authoritative_location_pointer',
+            checked_at: '2026-07-01T00:00:00.000Z',
+            bound_org_id: 'org_123',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.verifyHostedPropertyOrigin('example.com');
+
+      assert.ok(capturedUrl.includes('/api/properties/hosted/example.com/verify-origin'));
+      assert.strictEqual(capturedOpts.method, 'POST');
+      assert.strictEqual(capturedOpts.headers['Authorization'], 'Bearer sk_test');
+      assert.strictEqual(result.verified, true);
+      assert.strictEqual(result.bound_org_id, 'org_123');
+    });
+
+    test('hosted property claim and verification require apiKey', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(() => client.claimHostedPropertyDomain('example.com'), {
+          message: /apiKey is required/,
+        });
+        await assert.rejects(() => client.verifyHostedPropertyOrigin('example.com'), {
+          message: /apiKey is required/,
+        });
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
     });
   });
 

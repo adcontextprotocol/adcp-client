@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-06-18
-> Library: @adcp/sdk v9.0.0-beta.31
+> Generated at: 2026-07-01
+> Library: @adcp/sdk v9.6.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1065,10 +1065,10 @@ Flow: `comply_test_controller → create_media_buy`
 Flow: `get_products → create_media_buy → sync_creatives → list_creatives → update_media_buy → list_creatives → create_media_buy → sync_creatives`
 
 **Dependency impairment end-to-end — resource transition propagates to media buy health** — Forces a creative from approved → rejected on a non-terminal media buy, verifies the buy reflects health: impaired with a matching impairments[] entry, and recovers via assignment swap to a different creative (canonical recovery vector — re-approval of the same creative_id is uncommon in production).
-Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
+Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → list_creatives → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
 
 **Dependency impairment cardinality — impairments[] tracks each offline resource independently** — Two creatives on two packages of the same buy. Rejects them sequentially and verifies impairments[] grows 0 → 1 → 2; recovers them sequentially via swap-assignment and verifies impairments[] shrinks 2 → 1 → 0. Pressure-tests the inverse rule under cardinality — a seller emitting any impairment entry rather than the right one fails.
-Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → get_media_buys → comply_test_controller → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
+Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → list_creatives → get_media_buys → comply_test_controller → list_creatives → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
 
 **Seller deduplicates the same event across multiple registered event sources** — Verifies that a seller advertising conversion_tracking.multi_source_event_dedup can register multiple event sources for the same buy and deduplicate inbound events by event_id so the same conversion from a pixel and a CAPI source counts once, not twice. Sibling to media_buy_seller/performance_buy_flow gated on the dedup sub-capability bit: sellers that don't advertise multi-source dedup grade not_applicable.
 Flow: `sync_accounts → get_products → sync_event_sources → create_media_buy → log_event → comply_test_controller → get_media_buy_delivery`
@@ -1177,6 +1177,9 @@ Flow: `get_adcp_capabilities → get_products → sync_governance → create_med
 
 **Media buy via proposal acceptance** — Seller agent that generates curated media plan proposals the buyer can review, refine, and accept.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → list_creative_formats → sync_creatives → get_media_buy_delivery`
+
+**get_products wholesale pagination cursor integrity** — Validates get_products wholesale-mode pagination by walking a seeded product feed from continuation to terminal, while documenting that brief/refine pagination caps returned products in curated results.
+Flow: `get_adcp_capabilities → get_products`
 
 **Wholesale product feed webhook registration** — Validates account-level notification_configs[] registration for agents that advertise product wholesale feed webhook events.
 Flow: `sync_accounts`

@@ -68,31 +68,36 @@ import type {
 } from './types.generated';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
 
-type GeneratedBrandHierarchyResolution =
-  operations['resolveBrandHierarchy']['responses']['200']['content']['application/json'];
-type GeneratedBrandHierarchyBulkResolution =
-  operations['resolveBrandHierarchies']['responses']['200']['content']['application/json'];
-
 /**
  * Brand identity returned by the registry resolver.
  *
  * `parent_brand` is a registry hierarchy reference. New registry responses use
  * the parent brand's canonical domain when the parent has one; older rows may
  * still carry a portfolio-internal brand id from `brand.json#/brands[].id`.
- * Consumers that need ancestry should use `resolveBrandHierarchy()` or
- * `RegistrySync.getAncestors()` rather than walking `parent_brand` directly.
+ * Consumers that need ancestry should use `RegistrySync.getAncestors()` rather
+ * than walking `parent_brand` directly.
  */
 export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
   parent_brand?: string;
 }
 
-/** Ordered corporate brand hierarchy for a domain, from self to house. */
-export interface BrandHierarchyResolution extends Omit<GeneratedBrandHierarchyResolution, 'chain'> {
+/**
+ * Ordered corporate brand hierarchy for a domain, from self to house.
+ *
+ * This is retained for SDK compatibility with older/self-hosted registry
+ * deployments. AdCP 3.1.1 removed the hierarchy endpoints from the public
+ * registry OpenAPI; new ancestry consumers should prefer `RegistrySync`.
+ */
+export interface BrandHierarchyResolution {
   chain: ResolvedBrand[];
 }
 
-/** Bulk ordered corporate brand hierarchy result keyed by the requested domain. */
-export interface BrandHierarchyBulkResolution extends Omit<GeneratedBrandHierarchyBulkResolution, 'results'> {
+/**
+ * Bulk ordered corporate brand hierarchy result keyed by the requested domain.
+ *
+ * Retained for SDK compatibility with older/self-hosted registry deployments.
+ */
+export interface BrandHierarchyBulkResolution {
   results: Record<string, BrandHierarchyResolution | null>;
 }
 
@@ -118,6 +123,14 @@ export type SavePropertyRequest = NonNullable<operations['saveProperty']['reques
 
 /** Response from POST /api/properties/save (200) */
 export type SavePropertyResponse = operations['saveProperty']['responses']['200']['content']['application/json'];
+
+/** Response from POST /api/properties/hosted/{domain}/claim (200) */
+export type ClaimHostedPropertyDomainResponse =
+  operations['claimHostedPropertyDomain']['responses']['200']['content']['application/json'];
+
+/** Response from POST /api/properties/hosted/{domain}/verify-origin (200) */
+export type VerifyHostedPropertyOriginResponse =
+  operations['verifyHostedPropertyOrigin']['responses']['200']['content']['application/json'];
 
 /** Request body for POST /api/adagents/validate */
 export type ValidateAdagentsRequest = NonNullable<

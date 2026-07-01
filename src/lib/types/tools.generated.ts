@@ -1351,7 +1351,7 @@ export interface PushNotificationConfig {
   };
 }
 /**
- * Standard cursor-based pagination parameters for list operations
+ * Cursor-based pagination controls for get_products. Valid in all buying modes. In brief mode, pagination bounds the seller's returned products[] for the curated answer to the brief and is not an exhaustive catalog-enumeration contract. In refine mode, pagination bounds the refined products[] result implied by refine[] and filters; proposals may accompany a page as plan metadata but are not independently counted by this pagination envelope. In wholesale mode, pagination walks the wholesale product feed and may be combined with wholesale feed versioning.
  */
 export interface PaginationRequest {
   /**
@@ -6322,7 +6322,7 @@ export interface InsertionOrder {
   requires_signature: boolean;
 }
 /**
- * Standard cursor-based pagination metadata for list responses
+ * Cursor metadata for paginated get_products responses. In brief/refine mode, continuation pages bound returned products[] for the seller's curated or refined answer; proposals may accompany a page as plan metadata but are not independently counted by this pagination envelope, and pagination does not convert the response into an exhaustive feed contract. In wholesale mode, continuation pages walk the wholesale product feed.
  */
 export interface PaginationResponse {
   /**
@@ -7560,7 +7560,7 @@ export type MoovAtomPosition = 'start' | 'end';
  */
 export type AudioChannelLayout = 'mono' | 'stereo' | '5.1' | '7.1';
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving. Unlike the hosted `video` asset, a VAST tag carries no `width`/`height`: a VAST response can return multiple renditions of differing dimensions, and the player selects one per device at serve time, so there is no single width/height for the ad. Dimensional, duration, and codec *constraints* for a placement live on the format/requirements layer, not on this asset.
  */
 export type VASTAsset = {
   /**
@@ -8553,7 +8553,7 @@ export interface CreativeAssignment {
   placement_ids?: string[];
 }
 /**
- * Video asset with URL and technical specifications including audio track properties
+ * A hosted video file delivered directly (e.g., an MP4 you host), with URL and technical specifications including audio track properties. `width` and `height` are required because a hosted video file has intrinsic, native pixel dimensions that are known when the file is created. Tag-delivered video uses the separate `vast` asset, which carries no `width`/`height`: a VAST response resolves geometry per-`MediaFile` at serve time, so there is no single width/height for the ad. Aspect-ratio and size *constraints* (what a placement accepts) belong on the format/requirements layer, not on the asset.
  */
 export interface VideoAsset {
   /**
@@ -8565,12 +8565,12 @@ export interface VideoAsset {
    */
   url: string;
   /**
-   * Width in pixels
+   * Width in pixels — the video file's intrinsic native width. Required: a hosted file always has concrete dimensions. (Tag-delivered video carries no width; see the `vast` asset.)
    * @minimum 1
    */
   width: number;
   /**
-   * Height in pixels
+   * Height in pixels — the video file's intrinsic native height. Required: a hosted file always has concrete dimensions. (Tag-delivered video carries no height; see the `vast` asset.)
    * @minimum 1
    */
   height: number;
@@ -22649,6 +22649,10 @@ export interface GetAdCPCapabilitiesResponse {
      * Conformance declaration that this seller supports the full proposal lifecycle on get_products: returned proposals are actionable, draft proposals can be finalized with buying_mode: 'refine' + action: 'finalize', and committed proposals can be executed via create_media_buy with proposal_id before expires_at. Buyers SHOULD NOT use this field to decide whether a specific returned proposal is executable; proposal_status is the per-proposal source of truth. A declaration of true opts the seller into proposal-lifecycle grading. When false or absent, conformance runners skip proposal-lifecycle storyboards, but buyers should still honor any proposals the seller actually returns.
      */
     supports_proposals?: boolean;
+    /**
+     * Conformance declaration that this seller consults a registered governance agent (via sync_governance plus an outbound check_governance call) before committing a media buy, and surfaces GOVERNANCE_DENIED when the governance agent denies. A declaration of true opts the seller into governance-denial grading (media_buy_seller/governance_denied, media_buy_seller/governance_denied_recovery). When false or absent, conformance runners skip those storyboards - a seller that does not implement outbound governance consultation is not expected to produce GOVERNANCE_DENIED. This is independent of baseline sync_governance registration, which remains gradeable on its own.
+     */
+    governance_aware?: boolean;
     /**
      * Where this seller surfaces dependency-resource impairments (creative suspended/rejected post-approval, audience suspended, catalog item withdrawn, event source insufficient, property depublished) to buyers. Non-exclusive: a seller mirroring impairments on both the buy snapshot AND firing webhooks declares `["snapshot", "webhook"]` (the common case for premium guaranteed sellers). Each value names one surface where buyers can observe an impairment:
      *
