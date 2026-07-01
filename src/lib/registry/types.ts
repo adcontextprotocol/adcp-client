@@ -123,6 +123,9 @@ type RegistrySavePropertyRequest = NonNullable<
   operations['saveProperty']['requestBody']
 >['content']['application/json'];
 
+// TODO(#2318): Once AAO #5787 is published at /openapi/registry.yaml, regenerate the
+// registry types and collapse these hand-written identity write types onto the
+// generated saveProperty request shape, or assert they are structurally equal.
 type SavePropertyIdentityBase = {
   /** Human-readable property name. */
   name: string;

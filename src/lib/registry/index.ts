@@ -83,6 +83,7 @@ import type {
 
 import { openFeedStream } from './feed-stream';
 import type { FeedStreamQuery, FeedStreamMessage } from './feed-stream';
+import type { PropertyType } from '../discovery/types';
 
 export type {
   ResolvedBrand,
@@ -611,10 +612,7 @@ export class RegistryClient {
   async saveProperty(property: SavePropertyRequest): Promise<SavePropertyResponse> {
     if (!property?.publisher_domain?.trim()) throw new Error('publisher_domain is required');
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
-    const payload: SavePropertyRequest = {
-      ...property,
-      authorized_agents: [],
-    };
+    const payload = this.normalizeSavePropertyRequest(property);
     return this.post(`${this.baseUrl}/api/properties/save`, payload);
   }
 
@@ -1407,6 +1405,29 @@ export class RegistryClient {
       normalized.stats = response.stats as Record<string, unknown>;
     }
     return normalized;
+  }
+
+  private normalizeSavePropertyRequest(property: SavePropertyRequest): SavePropertyRequest {
+    const payload: SavePropertyRequest = {
+      ...property,
+      authorized_agents: [],
+    };
+    if (Array.isArray(property.properties)) {
+      payload.properties = property.properties.map(p => this.normalizeSavePropertyIdentity(p));
+    }
+    return payload;
+  }
+
+  private normalizeSavePropertyIdentity(property: SavePropertyIdentity): SavePropertyIdentity {
+    const normalized = { ...property } as SavePropertyIdentity & {
+      property_type?: PropertyType | string;
+      type?: PropertyType | string;
+    };
+    if (normalized.property_type === undefined && normalized.type !== undefined) {
+      normalized.property_type = normalized.type as PropertyType;
+    }
+    delete normalized.type;
+    return normalized as SavePropertyIdentity;
   }
 
   private toBrandLogoBlob(data: SaveBrandLogoInput['data'], mimeType: string): Blob {

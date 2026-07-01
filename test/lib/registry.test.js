@@ -1615,6 +1615,45 @@ describe('RegistryClient', () => {
       assert.strictEqual(result.revision_number, 7);
     });
 
+    test('normalizes legacy property type alias before sending', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: 'Property saved',
+            id: 'pr_legacy',
+            revision_number: 8,
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      await client.saveProperty({
+        publisher_domain: 'legacy.example',
+        properties: [
+          {
+            type: 'mobile_app',
+            name: 'Legacy App',
+            identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+            tags: ['app'],
+          },
+        ],
+      });
+
+      const body = JSON.parse(capturedOpts.body);
+      assert.deepStrictEqual(body.properties, [
+        {
+          property_type: 'mobile_app',
+          name: 'Legacy App',
+          identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+          tags: ['app'],
+        },
+      ]);
+    });
+
     test('throws on 401 unauthorized', async () => {
       restore = mockFetch(async () => {
         return new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401 });
@@ -1657,7 +1696,7 @@ describe('RegistryClient', () => {
   });
 
   describe('saveProperties', () => {
-    test('fans out property identity payloads unchanged', async () => {
+    test('fans out property identity payloads with canonical property_type', async () => {
       const capturedBodies = [];
       restore = mockFetch(async (_url, opts) => {
         capturedBodies.push(JSON.parse(opts.body));
@@ -1703,7 +1742,21 @@ describe('RegistryClient', () => {
       const client = new RegistryClient({ apiKey: 'sk_test' });
       const results = await client.saveProperties(requests, { concurrency: 1 });
 
-      assert.deepStrictEqual(capturedBodies, requests);
+      assert.deepStrictEqual(capturedBodies, [
+        requests[0],
+        {
+          publisher_domain: 'legacy.example',
+          authorized_agents: [],
+          properties: [
+            {
+              property_type: 'mobile_app',
+              name: 'Legacy App',
+              identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
+              tags: ['app'],
+            },
+          ],
+        },
+      ]);
       assert.strictEqual(results['example.com'].revision_number, 1);
       assert.strictEqual(results['legacy.example'].revision_number, 2);
     });
