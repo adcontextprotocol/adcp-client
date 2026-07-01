@@ -467,6 +467,43 @@ describe('CLI registry command', () => {
       assert.strictEqual(capturedBody.contact.email, 'admin@example.com');
     });
 
+    test('saves a property without an authorized agent URL', async () => {
+      let capturedBody;
+      restoreFetch = mockFetch(async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(JSON.stringify(SAVE_RESULT), { status: 200 });
+      });
+      output = captureOutput();
+
+      const code = await handleRegistryCommand(['save-property', 'example.com', '--auth', 'sk_test']);
+
+      assert.strictEqual(code, 0);
+      assert.strictEqual(capturedBody.publisher_domain, 'example.com');
+      assert.deepStrictEqual(capturedBody.authorized_agents, []);
+    });
+
+    test('saves a property with payload JSON and no authorized agent URL', async () => {
+      let capturedBody;
+      restoreFetch = mockFetch(async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return new Response(JSON.stringify(SAVE_RESULT), { status: 200 });
+      });
+      output = captureOutput();
+
+      const code = await handleRegistryCommand([
+        'save-property',
+        'example.com',
+        '{"contact":{"email":"admin@example.com"}}',
+        '--auth',
+        'sk_test',
+      ]);
+
+      assert.strictEqual(code, 0);
+      assert.strictEqual(capturedBody.publisher_domain, 'example.com');
+      assert.deepStrictEqual(capturedBody.authorized_agents, []);
+      assert.strictEqual(capturedBody.contact.email, 'admin@example.com');
+    });
+
     test('outputs JSON with --json flag', async () => {
       restoreFetch = mockFetch(async () => new Response(JSON.stringify(SAVE_RESULT), { status: 200 }));
       output = captureOutput();
@@ -485,11 +522,11 @@ describe('CLI registry command', () => {
       assert.strictEqual(parsed.id, 'prop_456');
     });
 
-    test('returns exit code 2 when domain or agent URL is missing', async () => {
+    test('returns exit code 2 when domain is missing', async () => {
       output = captureOutput();
-      const code = await handleRegistryCommand(['save-property', 'example.com', '--auth', 'sk_test']);
+      const code = await handleRegistryCommand(['save-property', '--auth', 'sk_test']);
       assert.strictEqual(code, 2);
-      assert.ok(output.stderr.includes('domain and agent URL are required'));
+      assert.ok(output.stderr.includes('domain is required'));
     });
 
     test('returns exit code 1 when no API key is provided', async () => {

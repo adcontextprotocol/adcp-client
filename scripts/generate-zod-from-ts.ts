@@ -414,6 +414,40 @@ function postProcessForPassthrough(content: string): string {
 }
 
 /**
+ * Most AdCP Zod schemas intentionally preserve unknown fields for seller and
+ * platform extensions. Trusted Match request schemas are different: their
+ * JSON Schemas explicitly set `additionalProperties: false` because context
+ * and identity travel on separate privacy-boundary paths. Keep that contract
+ * in the generated Zod exports.
+ */
+function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): string {
+  const strictSchemaExport = (source: string, schemaName: string, nextSchemaName: string): string => {
+    const start = source.indexOf(`export const ${schemaName} = z.object({`);
+    if (start === -1) return source;
+    const end = source.indexOf(`\n\nexport const ${nextSchemaName} = `, start);
+    if (end === -1) {
+      throw new Error(
+        `postProcessTrustedMatchPrivacyBoundaryStrictness: unable to locate schema boundary after ${schemaName}.`
+      );
+    }
+
+    const before = source.slice(0, start);
+    const block = source
+      .slice(start, end)
+      .replace(/\.passthrough\(\)/g, '.strict()')
+      // identities[].attestation.proof intentionally allows scheme-specific
+      // proof material (`additionalProperties: true` in the source schema).
+      .replace(/proof: z\.object\(\{\}\)\.strict\(\)/g, 'proof: z.object({}).passthrough()');
+    const after = source.slice(end);
+    return before + block + after;
+  };
+
+  let result = strictSchemaExport(content, 'ContextMatchRequestSchema', 'OfferPriceSchema');
+  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'TmpxMacroSchema');
+  return result;
+}
+
+/**
  * Replace `z.record(...).and(CONTENT)` with an object-shaped equivalent.
  *
  * TypeScript types like `{ [k: string]: unknown } & { typed_fields }` produce
@@ -1755,6 +1789,11 @@ async function generateZodSchemas() {
     // Agents may return extra/platform-specific fields not in the schema. Without passthrough,
     // Zod strips those fields, causing data loss for consumers who need them.
     zodSchemas = postProcessForPassthrough(zodSchemas);
+
+    // Trusted Match request schemas are closed privacy-boundary contracts.
+    // Unlike ordinary AdCP tool payloads, accepting unknown root/nested fields
+    // can mix context and identity signals across separated paths.
+    zodSchemas = postProcessTrustedMatchPrivacyBoundaryStrictness(zodSchemas);
 
     // Post-process: Collapse marker-only union/object intersections.
     // ProductSchema currently intersects opaque V1/V2 marker records with its real object shape.

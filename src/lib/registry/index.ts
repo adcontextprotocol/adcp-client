@@ -16,6 +16,8 @@ import type {
   UploadBrandLogoResponse,
   SavePropertyRequest,
   SavePropertyResponse,
+  ClaimHostedPropertyDomainResponse,
+  VerifyHostedPropertyOriginResponse,
   BrandRegistryItem,
   PropertyRegistryItem,
   ValidationResult,
@@ -104,6 +106,8 @@ export type {
   UploadBrandLogoResponse,
   SavePropertyRequest,
   SavePropertyResponse,
+  ClaimHostedPropertyDomainResponse,
+  VerifyHostedPropertyOriginResponse,
   BrandRegistryItem,
   PropertyRegistryItem,
   ValidationResult,
@@ -604,9 +608,34 @@ export class RegistryClient {
   /** Save or update a hosted property. Requires authentication. */
   async saveProperty(property: SavePropertyRequest): Promise<SavePropertyResponse> {
     if (!property?.publisher_domain?.trim()) throw new Error('publisher_domain is required');
-    if (!Array.isArray(property?.authorized_agents)) throw new Error('authorized_agents is required');
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
-    return this.post(`${this.baseUrl}/api/properties/save`, property);
+    const payload: SavePropertyRequest = {
+      ...property,
+      authorized_agents: property.authorized_agents ?? [],
+    };
+    return this.post(`${this.baseUrl}/api/properties/save`, payload);
+  }
+
+  /**
+   * Issue a hosted-property domain claim for bind-on-verify.
+   *
+   * The registry returns a claim-specific `authoritative_location` URL for the
+   * publisher to place at its origin `/.well-known/adagents.json`.
+   */
+  async claimHostedPropertyDomain(domain: string): Promise<ClaimHostedPropertyDomainResponse> {
+    if (!domain?.trim()) throw new Error('domain is required');
+    if (!this.apiKey) throw new Error('apiKey is required for hosted property claims');
+    return this.post(`${this.baseUrl}/api/properties/hosted/${encodeURIComponent(domain.trim())}/claim`, undefined);
+  }
+
+  /** Trigger origin verification for an AAO-hosted publisher domain. */
+  async verifyHostedPropertyOrigin(domain: string): Promise<VerifyHostedPropertyOriginResponse> {
+    if (!domain?.trim()) throw new Error('domain is required');
+    if (!this.apiKey) throw new Error('apiKey is required for hosted property verification');
+    return this.post(
+      `${this.baseUrl}/api/properties/hosted/${encodeURIComponent(domain.trim())}/verify-origin`,
+      undefined
+    );
   }
 
   /**

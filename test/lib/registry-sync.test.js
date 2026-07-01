@@ -1157,11 +1157,18 @@ describe('RegistrySync', () => {
       assert.strictEqual(result.publisher_domain, 'new-domain.com');
     });
 
-    test('still rejects missing authorized_agents', () => {
-      const client = new RegistryClient({ apiKey: 'sk_test' });
-      assert.rejects(() => client.saveProperty({ publisher_domain: 'test.com' }), {
-        message: /authorized_agents is required/,
+    test('allows omitted authorized_agents', async () => {
+      restore = mockFetch(async (url, opts) => {
+        if (url.includes('/properties/save')) {
+          const body = JSON.parse(opts.body);
+          return new Response(JSON.stringify({ publisher_domain: body.publisher_domain }), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
       });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.saveProperty({ publisher_domain: 'test.com' });
+      assert.strictEqual(result.publisher_domain, 'test.com');
     });
   });
 

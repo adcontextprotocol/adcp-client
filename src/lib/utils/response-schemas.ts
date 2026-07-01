@@ -73,6 +73,10 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_signals: schemas.GetSignalsResponseSchema,
   activate_signal: schemas.ActivateSignalResponseSchema,
 
+  // Trusted Match
+  context_match: schemas.ContextMatchResponseSchema,
+  identity_match: schemas.IdentityMatchResponseSchema,
+
   // Account & audience
   sync_accounts: schemas.SyncAccountsResponseSchema,
   list_accounts: schemas.ListAccountsResponseSchema,

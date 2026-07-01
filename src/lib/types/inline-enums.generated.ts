@@ -353,6 +353,11 @@ export const ListCreativeFormatsResponse_SourceValues = ["publisher", "aao_mirro
 /** array of | ListCreativesRequest.fields */
 export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format_id", "status", "created_date", "updated_date", "tags", "assignments", "snapshot", "items", "variables", "concept", "pricing_options"] as const;
 
+// ====== OfferPrice ======
+
+/** single | OfferPrice.model */
+export const OfferPrice_ModelValues = ["cpm", "cpc", "cpcv", "cpa", "flat"] as const;
+
 // ====== PackageSignalTargetingGroup ======
 
 /** single | PackageSignalTargetingGroup.operator */
@@ -550,6 +555,11 @@ export const SyncCatalogsAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED",
 
 /** single | SyncCreativesAsyncInputRequired.reason */
 export const SyncCreativesAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "ASSET_CONFIRMATION", "FORMAT_CLARIFICATION"] as const;
+
+// ====== TMPError ======
+
+/** single | TMPError.code */
+export const TMPError_CodeValues = ["invalid_request", "unknown_package", "seller_not_authorized", "rate_limited", "timeout", "internal_error", "provider_unavailable"] as const;
 
 // ====== TransformerParam ======
 

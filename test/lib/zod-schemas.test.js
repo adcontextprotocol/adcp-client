@@ -46,6 +46,55 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('Trusted Match request schemas reject unexpected privacy-boundary fields', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const contextRequest = {
+      type: 'context_match_request',
+      request_id: 'ctx-1',
+      property_rid: '018f33bb-9a82-7cc5-a839-6c9f1e5a4d01',
+      property_type: 'website',
+      placement_id: 'plc_1',
+      seller_agent_url: 'https://seller.example/mcp/',
+    };
+    assert.ok(schemas.ContextMatchRequestSchema.safeParse(contextRequest).success);
+    assert.ok(!schemas.ContextMatchRequestSchema.safeParse({ ...contextRequest, identity: {} }).success);
+    assert.ok(
+      !schemas.ContextMatchRequestSchema.safeParse({
+        ...contextRequest,
+        geo: { country: 'US', unexpected: true },
+      }).success
+    );
+
+    const identityRequest = {
+      type: 'identity_match_request',
+      request_id: 'id-1',
+      seller_agent_url: 'https://seller.example/mcp/',
+      identities: [{ user_token: 'opaque', uid_type: 'uid2' }],
+    };
+    assert.ok(schemas.IdentityMatchRequestSchema.safeParse(identityRequest).success);
+    assert.ok(!schemas.IdentityMatchRequestSchema.safeParse({ ...identityRequest, context: {} }).success);
+
+    const identityWithProof = {
+      ...identityRequest,
+      identities: [
+        {
+          user_token: 'opaque',
+          uid_type: 'uid2',
+          attestation: {
+            issuer: { domain: 'issuer.example' },
+            scheme: 'scheme-1',
+            claims: ['unique_human'],
+            proof: { merkle_root: 'proof-value' },
+          },
+        },
+      ],
+    };
+    assert.ok(schemas.IdentityMatchRequestSchema.safeParse(identityWithProof).success);
+  });
+
   test('generated declarations do not expose record-union object intersections', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');
