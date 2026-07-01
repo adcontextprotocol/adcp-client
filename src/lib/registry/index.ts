@@ -14,6 +14,7 @@ import type {
   SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
+  SavePropertyIdentity,
   SavePropertyRequest,
   SavePropertyResponse,
   ClaimHostedPropertyDomainResponse,
@@ -104,6 +105,7 @@ export type {
   SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
+  SavePropertyIdentity,
   SavePropertyRequest,
   SavePropertyResponse,
   ClaimHostedPropertyDomainResponse,
@@ -611,7 +613,7 @@ export class RegistryClient {
     if (!this.apiKey) throw new Error('apiKey is required for save operations');
     const payload: SavePropertyRequest = {
       ...property,
-      authorized_agents: property.authorized_agents ?? [],
+      authorized_agents: [],
     };
     return this.post(`${this.baseUrl}/api/properties/save`, payload);
   }

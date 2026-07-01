@@ -218,9 +218,9 @@ SAVE COMMANDS (requires --auth):
                                 Save or update a community brand
   save-brand <domain> <name> @manifest.json
                                 Save brand with manifest from file
-  save-property <domain> [agent-url] [payload-json]
+  save-property <domain> [payload-json]
                                 Save or update a hosted property
-  save-property <domain> [agent-url] @property.json
+  save-property <domain> @property.json
                                 Save property with full payload from file
 
 LIST & SEARCH:
@@ -296,7 +296,7 @@ EXAMPLES:
 
   # Save a property
   adcp registry save-property example.com --auth sk_your_key
-  adcp registry save-property example.com https://agent.example.com --auth sk_your_key`);
+  adcp registry save-property example.com '{"properties":[{"property_type":"website","name":"Example","identifiers":[{"type":"domain","value":"example.com"}],"tags":["news"]}]}' --auth sk_your_key`);
 }
 
 /**
@@ -458,15 +458,17 @@ async function handleRegistryCommand(args) {
         const domain = positional[1];
         if (!domain) {
           console.error('Error: domain is required\n');
-          console.error('Usage: adcp registry save-property <domain> [agent-url] [payload-json]\n');
+          console.error('Usage: adcp registry save-property <domain> [payload-json]\n');
           return 2;
         }
-        const maybeAgentUrl = positional[2];
-        const hasAgentUrl = maybeAgentUrl && !maybeAgentUrl.startsWith('{') && !maybeAgentUrl.startsWith('@');
-        const extraArg = hasAgentUrl ? positional[3] : positional[2];
+        const extraArg = positional[2];
+        if (extraArg && !extraArg.startsWith('{') && !extraArg.startsWith('@')) {
+          console.error('Error: save-property no longer accepts an agent URL; pass identity facts as payload JSON\n');
+          console.error('Usage: adcp registry save-property <domain> [payload-json]\n');
+          return 2;
+        }
         const payload = {
           publisher_domain: domain,
-          ...(hasAgentUrl ? { authorized_agents: [{ url: maybeAgentUrl }] } : {}),
           ...(extraArg ? parsePayload(extraArg) : {}),
         };
         const result = await client.saveProperty(payload);

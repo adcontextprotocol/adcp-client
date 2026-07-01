@@ -57,6 +57,7 @@ export type {
   SaveBrandLogoResponse,
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
+  SavePropertyIdentity,
   SavePropertyRequest,
   SavePropertyResponse,
   BrandRegistryItem,
