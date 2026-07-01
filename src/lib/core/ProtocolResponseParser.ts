@@ -44,24 +44,46 @@ function isSafeSessionId(v: unknown): v is string {
 
 /**
  * Extract the AdCP task handle from an A2A wrapped Task result. The
- * handle lives on artifact `metadata.adcp_task_id` (per adcp-client#899).
+ * handle lives on artifact metadata (`adcp_task_id` per adcp-client#899,
+ * with `serverTaskId` accepted as a compatibility alias).
  * Walk artifacts backward so trailing text-only artifacts with metadata still
- * win, while responses with metadata only on the latest DataPart-bearing
- * artifact continue to work.
+ * work when the DataPart does not carry a task id. If both metadata and the
+ * typed DataPart carry task ids and they disagree, prefer the DataPart.
  */
 function extractAdcpTaskIdFromA2aTaskResult(result: any): string | undefined {
   if (result == null || typeof result !== 'object' || Array.isArray(result)) return undefined;
   if (result.kind !== 'task') return undefined;
+
+  const latestDataPart = getLatestA2ADataPartFromTask(result);
+  const taskIdFromDataPart = firstSafeSessionId(latestDataPart?.data?.task_id, latestDataPart?.data?.taskId);
+
+  const resolveMetadataTaskId = (taskId: string | undefined): string | undefined => {
+    if (!taskId) return undefined;
+    return taskIdFromDataPart && taskIdFromDataPart !== taskId ? taskIdFromDataPart : taskId;
+  };
+
   const artifacts = result.artifacts;
-  if (!Array.isArray(artifacts)) return undefined;
-  for (let i = artifacts.length - 1; i >= 0; i -= 1) {
-    const artifact = artifacts[i];
-    if (artifact == null || typeof artifact !== 'object' || Array.isArray(artifact)) continue;
-    const metadata = (artifact as { metadata?: unknown }).metadata;
-    if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) continue;
-    const taskId = firstSafeSessionId((metadata as Record<string, unknown>).adcp_task_id);
+  if (Array.isArray(artifacts)) {
+    for (let i = artifacts.length - 1; i >= 0; i -= 1) {
+      const artifact = artifacts[i];
+      if (artifact == null || typeof artifact !== 'object' || Array.isArray(artifact)) continue;
+      const metadata = (artifact as { metadata?: unknown }).metadata;
+      if (metadata == null || typeof metadata !== 'object' || Array.isArray(metadata)) continue;
+      const m = metadata as Record<string, unknown>;
+      const taskId = resolveMetadataTaskId(firstSafeSessionId(m.adcp_task_id, m.serverTaskId));
+      if (taskId) return taskId;
+    }
+  }
+
+  if (taskIdFromDataPart) return taskIdFromDataPart;
+
+  const resultMetadata = result.metadata;
+  if (resultMetadata != null && typeof resultMetadata === 'object' && !Array.isArray(resultMetadata)) {
+    const m = resultMetadata as Record<string, unknown>;
+    const taskId = resolveMetadataTaskId(firstSafeSessionId(m.adcp_task_id, m.serverTaskId));
     if (taskId) return taskId;
   }
+
   return undefined;
 }
 
@@ -212,6 +234,20 @@ export class ProtocolResponseParser {
     if (isAdcpStatus(response?.result?.status?.state)) {
       return response.result.status.state as ADCPStatus;
     }
+
+    // Raw/in-process MCP wrappers may have a wrapper-level status plus the
+    // actual AdCP task envelope under `data`. The nested task status wins
+    // over the wrapper when it is a real task envelope; domain-status
+    // collisions still fall through because `extractAdcpTaskStatusFromPayload`
+    // rejects domain payloads with non-envelope fields.
+    const hasOfficialPayload =
+      response?.structuredContent !== undefined || response?.content !== undefined || response?.result !== undefined;
+    const data = hasOfficialPayload ? undefined : response?.data;
+    const dataTaskStatus =
+      data != null && typeof data === 'object' && !Array.isArray(data)
+        ? extractAdcpTaskStatusFromPayload(data)
+        : undefined;
+    if (dataTaskStatus) return dataTaskStatus;
 
     // Check top-level status first (A2A and direct responses)
     if (isAdcpStatus(response?.status)) {
@@ -388,7 +424,17 @@ export class ProtocolResponseParser {
       const fromSc = firstSafeSessionId(sc.task_id);
       if (fromSc) return fromSc;
     }
-    return firstSafeSessionId(response.task_id);
+    const fromFlat = firstSafeSessionId(response.task_id);
+    if (fromFlat) return fromFlat;
+
+    const hasOfficialPayload =
+      response.structuredContent !== undefined || response.content !== undefined || response.result !== undefined;
+    const data = hasOfficialPayload ? undefined : response.data;
+    if (data != null && typeof data === 'object' && !Array.isArray(data)) {
+      const fromData = firstSafeSessionId(data.task_id, data.taskId);
+      if (fromData) return fromData;
+    }
+    return undefined;
   }
 
   private parseExpectedType(rawType: unknown): 'string' | 'number' | 'boolean' | 'object' | 'array' | undefined {

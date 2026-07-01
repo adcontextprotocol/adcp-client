@@ -2,7 +2,8 @@
 //
 // For A2A wrapped Task responses (`result.kind === 'task'`), the parser
 // must prefer the AdCP work-layer fields surfaced via the artifact
-// (`artifact.parts[0].data.status`, `artifact.metadata.adcp_task_id`)
+// (`artifact.parts[0].data.status`, `artifact.parts[0].data.task_id`,
+// `artifact.metadata.adcp_task_id`)
 // over the transport-layer fields (`result.status.state`, `result.id`).
 // Per adcp-client#899's two-lifecycle contract:
 //
@@ -225,16 +226,16 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
     assert.strictEqual(parser.getTaskId(response), 'tk_seller');
   });
 
-  test('falls back to transport `result.id` for A2A responses without metadata', () => {
+  test('reads AdCP DataPart `task_id` for A2A responses without metadata', () => {
     const response = a2aWrappedSubmittedResponse();
     delete response.result.artifacts[0].metadata;
-    assert.strictEqual(parser.getTaskId(response), 'a2a-uuid');
+    assert.strictEqual(parser.getTaskId(response), 'tk_X');
   });
 
-  test('falls back when artifact metadata has no `adcp_task_id`', () => {
+  test('reads AdCP DataPart `task_id` when artifact metadata has no task handle', () => {
     const response = a2aWrappedSubmittedResponse();
     response.result.artifacts[0].metadata = { other_extension: 'value' };
-    assert.strictEqual(parser.getTaskId(response), 'a2a-uuid');
+    assert.strictEqual(parser.getTaskId(response), 'tk_X');
   });
 
   test('falls back when artifacts array is empty', () => {
@@ -254,8 +255,9 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
     assert.strictEqual(parser.getTaskId(response), 'tk_latest');
   });
 
-  test('reads adcp_task_id from trailing text-only artifact metadata', () => {
+  test('reads adcp_task_id from trailing text-only artifact metadata when DataPart omits task_id', () => {
     const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_stale' });
+    delete response.result.artifacts[0].parts[0].data.task_id;
     response.result.artifacts.push({
       artifactId: 'art-progress-text',
       metadata: { adcp_task_id: 'tk_latest_text' },
@@ -265,12 +267,44 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
     assert.strictEqual(parser.getTaskId(response), 'tk_latest_text');
   });
 
+  test('reads serverTaskId compatibility alias from artifact metadata', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_data' });
+    delete response.result.artifacts[0].parts[0].data.task_id;
+    response.result.artifacts[0].metadata = { serverTaskId: 'tk_server_meta' };
+    assert.strictEqual(parser.getTaskId(response), 'tk_server_meta');
+  });
+
+  test('prefers DataPart task_id when artifact metadata serverTaskId conflicts', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_data' });
+    response.result.artifacts[0].metadata = { serverTaskId: 'tk_server_meta' };
+    assert.strictEqual(parser.getTaskId(response), 'tk_data');
+  });
+
+  test('prefers DataPart task_id when artifact metadata adcp_task_id conflicts', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_data' });
+    response.result.artifacts[0].metadata = { adcp_task_id: 'tk_meta' };
+    assert.strictEqual(parser.getTaskId(response), 'tk_data');
+  });
+
+  test('ignores generic artifact metadata taskId when DataPart has AdCP task_id', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_data' });
+    response.result.artifacts[0].metadata = { taskId: 'a2a-local-task' };
+    assert.strictEqual(parser.getTaskId(response), 'tk_data');
+  });
+
+  test('reads serverTaskId compatibility alias from A2A result metadata', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_data' });
+    delete response.result.artifacts;
+    response.result.metadata = { serverTaskId: 'tk_result_meta' };
+    assert.strictEqual(parser.getTaskId(response), 'tk_result_meta');
+  });
+
   test('rejects malformed `adcp_task_id` (control chars, overlong) and falls back', () => {
     const response = a2aWrappedSubmittedResponse();
     response.result.artifacts[0].metadata.adcp_task_id = 'tk\x00with-null';
     // Malformed value rejected by `firstSafeSessionId` (control chars
-    // banned). Falls through to `result.id`.
-    assert.strictEqual(parser.getTaskId(response), 'a2a-uuid');
+    // banned). Falls through to the AdCP DataPart handle.
+    assert.strictEqual(parser.getTaskId(response), 'tk_X');
   });
 
   test('does not touch MCP responses', () => {
@@ -281,6 +315,67 @@ describe('ProtocolResponseParser.getTaskId — A2A submitted arm (#973)', () => 
   test('flat AdCP envelope (no result wrapping) reads response.task_id directly', () => {
     const response = { task_id: 'flat-tk-2' };
     assert.strictEqual(parser.getTaskId(response), 'flat-tk-2');
+  });
+
+  test('flat AdCP task_id wins over raw MCP data wrapper task_id', () => {
+    const response = { status: 'submitted', task_id: 'flat-tk-3', data: { task_id: 'mcp-data-tk-shadow' } };
+    assert.strictEqual(parser.getTaskId(response), 'flat-tk-3');
+  });
+
+  test('raw MCP data wrapper reads data.task_id', () => {
+    const response = { status: 'submitted', data: { task_id: 'mcp-data-tk-1' } };
+    assert.strictEqual(parser.getTaskId(response), 'mcp-data-tk-1');
+  });
+
+  test('raw MCP data wrapper exposes data.status as task status', () => {
+    const response = { data: { status: 'submitted', task_id: 'mcp-data-tk-2' } };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
+  });
+
+  test('raw MCP data task status preempts wrapper-level completed status', () => {
+    const response = { status: 'completed', data: { status: 'submitted', task_id: 'mcp-data-tk-3' } };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
+  });
+
+  test('raw MCP data terminal task status preempts wrapper-level completed status', () => {
+    const response = {
+      status: 'completed',
+      data: { status: 'failed', task_id: 'mcp-data-tk-4', errors: [{ code: 'E_BAD', message: 'bad' }] },
+    };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.FAILED);
+  });
+
+  test('raw MCP data domain status does not preempt wrapper-level completed status', () => {
+    const response = {
+      status: 'completed',
+      data: { status: 'canceled', media_buy: { media_buy_id: 'mb_1', status: 'canceled' } },
+    };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+  });
+
+  test('raw MCP data wrapper cannot override official structuredContent status or task_id', () => {
+    const response = {
+      structuredContent: { status: 'completed', task_id: 'mcp-official-tk' },
+      data: { status: 'submitted', task_id: 'mcp-data-tk-5' },
+    };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+    assert.strictEqual(parser.getTaskId(response), 'mcp-official-tk');
+  });
+
+  test('raw MCP data wrapper cannot override official content response', () => {
+    const response = {
+      content: [{ type: 'text', text: 'ok' }],
+      data: { status: 'submitted', task_id: 'mcp-data-tk-6' },
+    };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.COMPLETED);
+    assert.strictEqual(parser.getTaskId(response), undefined);
+  });
+
+  test('raw MCP data wrapper cannot override official A2A result response', () => {
+    const response = a2aWrappedSubmittedResponse({ adcpTaskId: 'tk_a2a_official' });
+    response.data = { status: 'submitted', task_id: 'mcp-data-tk-7' };
+    assert.strictEqual(parser.getStatus(response), ADCP_STATUS.SUBMITTED);
+    assert.strictEqual(parser.getTaskId(response), 'tk_a2a_official');
   });
 });
 
@@ -499,7 +594,7 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
 
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.status, 'submitted');
-    assert.strictEqual(result.submitted.taskId, 'tk_latest_text');
+    assert.strictEqual(result.submitted.taskId, 'tk_submitted');
   });
 
   test('surfaces A2A DataPart adcp_version on result metadata', async () => {
@@ -521,6 +616,43 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.status, 'completed');
     assert.strictEqual(result.metadata.adcpVersion, '3.1-beta.5');
+  });
+
+  test('normalizes A2A metadata.serverTaskId into submitted.taskId', async () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_data' });
+    delete response.result.artifacts[0].parts[0].data.task_id;
+    response.result.artifacts[0].metadata = { serverTaskId: 'tk_server_meta' };
+    ProtocolClient.callTool = mock.fn(async () => response);
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'submitted');
+    assert.strictEqual(result.submitted.taskId, 'tk_server_meta');
+    assert.strictEqual(result.metadata.serverTaskId, 'tk_server_meta');
+  });
+
+  test('normalizes A2A result.metadata.serverTaskId into submitted.taskId', async () => {
+    const response = a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_data' });
+    delete response.result.artifacts[0].metadata;
+    delete response.result.artifacts[0].parts[0].data.task_id;
+    response.result.metadata = { serverTaskId: 'tk_result_meta' };
+    ProtocolClient.callTool = mock.fn(async () => response);
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'submitted');
+    assert.strictEqual(result.submitted.taskId, 'tk_result_meta');
+    assert.strictEqual(result.metadata.serverTaskId, 'tk_result_meta');
   });
 
   test('A2A wrapped tasks/get adcp_version flows through submitted waitForCompletion metadata', async () => {
@@ -551,5 +683,186 @@ describe('TaskExecutor — A2A update_media_buy canceled domain payload (#2009)'
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.status, 'completed');
     assert.strictEqual(result.metadata.adcpVersion, '3.1-beta.5');
+  });
+
+  test('A2A wrapped tasks/get DataPart wins over sibling raw data in waitForCompletion', async () => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+        const response = a2aWrappedCompletedArtifactData({
+          status: 'completed',
+          task_id: 'tk_poll_a2a_official',
+          task_type: 'create_media_buy',
+          result: {
+            media_buy_id: 'mb_poll_a2a_official',
+            media_buy_status: 'pending_creatives',
+            packages: [],
+          },
+        });
+        response.data = {
+          status: 'completed',
+          task_id: 'tk_poll_a2a_raw',
+          task_type: 'create_media_buy',
+          result: {
+            media_buy_id: 'mb_poll_a2a_raw',
+            media_buy_status: 'rejected',
+            packages: [],
+          },
+        };
+        return response;
+      }
+      return a2aWrappedSubmittedResponse({ adcpStatus: 'submitted', adcpTaskId: 'tk_poll_a2a_official' });
+    });
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const submitted = await executor.executeTask(mockAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+    const result = await submitted.submitted.waitForCompletion(10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.metadata.serverTaskId, 'tk_poll_a2a_official');
+    assert.deepStrictEqual(result.data, {
+      media_buy_id: 'mb_poll_a2a_official',
+      media_buy_status: 'pending_creatives',
+      packages: [],
+    });
+  });
+});
+
+describe('TaskExecutor — submitted task handle normalization', () => {
+  const mockMcpAgent = {
+    id: 'test-mcp-seller',
+    name: 'Test MCP Seller',
+    agent_uri: 'https://seller.test/mcp',
+    protocol: 'mcp',
+  };
+  let originalCallTool;
+
+  beforeEach(() => {
+    originalCallTool = ProtocolClient.callTool;
+  });
+
+  afterEach(() => {
+    if (originalCallTool) ProtocolClient.callTool = originalCallTool;
+  });
+
+  test('normalizes raw MCP data.task_id into submitted.taskId', async () => {
+    ProtocolClient.callTool = mock.fn(async () => ({
+      data: {
+        status: 'submitted',
+        task_id: 'mcp_raw_task_1',
+      },
+    }));
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const result = await executor.executeTask(mockMcpAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'submitted');
+    assert.strictEqual(result.submitted.taskId, 'mcp_raw_task_1');
+    assert.strictEqual(result.metadata.serverTaskId, 'mcp_raw_task_1');
+  });
+
+  test('waitForCompletion unwraps raw MCP data-wrapped tasks_get completion', async () => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks_get') {
+        return {
+          data: {
+            status: 'completed',
+            task_id: 'mcp_raw_task_2',
+            task_type: 'create_media_buy',
+            created_at: '2026-07-01T00:00:00Z',
+            updated_at: '2026-07-01T00:00:01Z',
+            result: {
+              media_buy_id: 'mb_raw_task_2',
+              media_buy_status: 'pending_creatives',
+              packages: [],
+            },
+          },
+        };
+      }
+
+      return {
+        data: {
+          status: 'submitted',
+          task_id: 'mcp_raw_task_2',
+        },
+      };
+    });
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const submitted = await executor.executeTask(mockMcpAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+    const result = await submitted.submitted.waitForCompletion(10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.metadata.serverTaskId, 'mcp_raw_task_2');
+    assert.deepStrictEqual(result.data, {
+      media_buy_id: 'mb_raw_task_2',
+      media_buy_status: 'pending_creatives',
+      packages: [],
+    });
+  });
+
+  test('waitForCompletion prefers MCP structuredContent over sibling raw data in tasks_get', async () => {
+    ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+      if (taskName === 'tasks_get') {
+        return {
+          structuredContent: {
+            status: 'completed',
+            task_id: 'mcp_official_task_3',
+            task_type: 'create_media_buy',
+            created_at: '2026-07-01T00:00:00Z',
+            updated_at: '2026-07-01T00:00:01Z',
+            result: {
+              media_buy_id: 'mb_official_task_3',
+              media_buy_status: 'pending_creatives',
+              packages: [],
+            },
+          },
+          data: {
+            status: 'completed',
+            task_id: 'mcp_raw_task_3',
+            task_type: 'create_media_buy',
+            result: {
+              media_buy_id: 'mb_raw_task_3',
+              media_buy_status: 'rejected',
+              packages: [],
+            },
+          },
+        };
+      }
+
+      return {
+        data: {
+          status: 'submitted',
+          task_id: 'mcp_official_task_3',
+        },
+      };
+    });
+
+    const executor = new TaskExecutor({ strictSchemaValidation: false });
+    const submitted = await executor.executeTask(mockMcpAgent, 'create_media_buy', {
+      buyer_ref: 'buyer-ref',
+      packages: [],
+    });
+    const result = await submitted.submitted.waitForCompletion(10);
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.status, 'completed');
+    assert.strictEqual(result.metadata.serverTaskId, 'mcp_official_task_3');
+    assert.deepStrictEqual(result.data, {
+      media_buy_id: 'mb_official_task_3',
+      media_buy_status: 'pending_creatives',
+      packages: [],
+    });
   });
 });
