@@ -430,12 +430,7 @@ describe('CLI registry command', () => {
       });
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'save-property',
-        'example.com',
-        '--auth',
-        'sk_test',
-      ]);
+      const code = await handleRegistryCommand(['save-property', 'example.com', '--auth', 'sk_test']);
 
       assert.strictEqual(code, 0);
       assert.strictEqual(capturedBody.publisher_domain, 'example.com');
@@ -535,13 +530,7 @@ describe('CLI registry command', () => {
       restoreFetch = mockFetch(async () => new Response(JSON.stringify(SAVE_RESULT), { status: 200 }));
       output = captureOutput();
 
-      const code = await handleRegistryCommand([
-        'save-property',
-        'example.com',
-        '--auth',
-        'sk_test',
-        '--json',
-      ]);
+      const code = await handleRegistryCommand(['save-property', 'example.com', '--auth', 'sk_test', '--json']);
 
       assert.strictEqual(code, 0);
       const parsed = JSON.parse(output.stdout);
