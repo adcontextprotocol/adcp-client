@@ -1610,7 +1610,7 @@ describe('RegistryClient', () => {
 
       const body = JSON.parse(capturedOpts.body);
       assert.deepStrictEqual(body.authorized_agents, []);
-      assert.deepStrictEqual(body.properties, [propertyIdentity]);
+      assert.deepStrictEqual(body.properties, [{ ...propertyIdentity, type: 'website' }]);
       assert.strictEqual(result.id, 'pr_identity');
       assert.strictEqual(result.revision_number, 7);
     });
@@ -1646,6 +1646,7 @@ describe('RegistryClient', () => {
       const body = JSON.parse(capturedOpts.body);
       assert.deepStrictEqual(body.properties, [
         {
+          type: 'mobile_app',
           property_type: 'mobile_app',
           name: 'Legacy App',
           identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
@@ -1743,12 +1744,25 @@ describe('RegistryClient', () => {
       const results = await client.saveProperties(requests, { concurrency: 1 });
 
       assert.deepStrictEqual(capturedBodies, [
-        requests[0],
+        {
+          publisher_domain: 'example.com',
+          authorized_agents: [],
+          properties: [
+            {
+              type: 'website',
+              property_type: 'website',
+              name: 'Example Publisher',
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+              tags: ['news'],
+            },
+          ],
+        },
         {
           publisher_domain: 'legacy.example',
           authorized_agents: [],
           properties: [
             {
+              type: 'mobile_app',
               property_type: 'mobile_app',
               name: 'Legacy App',
               identifiers: [{ type: 'android_package', value: 'com.example.legacy' }],
@@ -1759,6 +1773,133 @@ describe('RegistryClient', () => {
       ]);
       assert.strictEqual(results['example.com'].revision_number, 1);
       assert.strictEqual(results['legacy.example'].revision_number, 2);
+    });
+  });
+
+  describe('property catalog fact APIs', () => {
+    test('resolves identifiers with provenance and auth', async () => {
+      let capturedUrl, capturedOpts;
+      restore = mockFetch(async (url, opts) => {
+        capturedUrl = url;
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            resolved: [
+              {
+                identifier: { type: 'domain', value: 'example.com' },
+                property_rid: 'rid_example',
+                classification: 'property',
+                status: 'existing',
+                source: 'member_assertion',
+              },
+            ],
+            summary: { total: 1, resolved: 1, created: 0, excluded: 0, not_found: 0 },
+            server_timestamp: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const result = await client.resolveIdentifiers({
+        identifiers: [{ type: 'domain', value: 'example.com' }],
+        provenance: { type: 'member_assertion' },
+      });
+
+      assert.ok(capturedUrl.includes('/api/registry/resolve'));
+      assert.strictEqual(capturedOpts.method, 'POST');
+      assert.strictEqual(capturedOpts.headers['Authorization'], 'Bearer sk_test');
+      assert.deepStrictEqual(JSON.parse(capturedOpts.body), {
+        identifiers: [{ type: 'domain', value: 'example.com' }],
+        provenance: { type: 'member_assertion' },
+      });
+      assert.strictEqual(result.resolved[0].property_rid, 'rid_example');
+    });
+
+    test('allows identifier lookup mode without an apiKey', async () => {
+      let capturedOpts;
+      restore = mockFetch(async (_url, opts) => {
+        capturedOpts = opts;
+        return new Response(
+          JSON.stringify({
+            resolved: [],
+            summary: { total: 1, resolved: 0, created: 0, excluded: 0, not_found: 1 },
+            server_timestamp: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient();
+      await client.resolveIdentifiers({
+        identifiers: [{ type: 'domain', value: 'missing.example' }],
+        provenance: { type: 'member_assertion' },
+        mode: 'lookup',
+      });
+
+      assert.strictEqual(capturedOpts.headers.Authorization, undefined);
+    });
+
+    test('requires an apiKey for identifier resolve mode', async () => {
+      const savedEnv = process.env.ADCP_REGISTRY_API_KEY;
+      delete process.env.ADCP_REGISTRY_API_KEY;
+      try {
+        const client = new RegistryClient();
+        await assert.rejects(
+          () =>
+            client.resolveIdentifiers({
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+              provenance: { type: 'member_assertion' },
+            }),
+          /apiKey is required/
+        );
+      } finally {
+        if (savedEnv !== undefined) process.env.ADCP_REGISTRY_API_KEY = savedEnv;
+      }
+    });
+
+    test('files and fetches catalog disputes', async () => {
+      const calls = [];
+      restore = mockFetch(async (url, opts) => {
+        calls.push({ url, opts });
+        if (opts?.method === 'POST') {
+          return new Response(
+            JSON.stringify({
+              dispute_id: 'disp_123',
+              action_taken: 'queued_for_review',
+              reason: 'queued',
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            id: 'disp_123',
+            dispute_type: 'identifier_link',
+            subject_type: 'identifier',
+            subject_value: 'example.com',
+            claim: 'This identifier is incorrectly linked.',
+            status: 'queued_for_review',
+            created_at: '2026-07-01T00:00:00Z',
+          }),
+          { status: 200 }
+        );
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const filed = await client.fileCatalogDispute({
+        dispute_type: 'identifier_link',
+        subject_type: 'identifier',
+        subject_value: 'example.com',
+        claim: 'This identifier is incorrectly linked.',
+      });
+      const fetched = await client.getCatalogDispute('disp_123');
+
+      assert.ok(calls[0].url.includes('/api/registry/catalog/disputes'));
+      assert.strictEqual(calls[0].opts.headers['Authorization'], 'Bearer sk_test');
+      assert.strictEqual(filed.dispute_id, 'disp_123');
+      assert.ok(calls[1].url.endsWith('/api/registry/catalog/disputes/disp_123'));
+      assert.strictEqual(fetched.id, 'disp_123');
     });
   });
 

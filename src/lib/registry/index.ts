@@ -15,8 +15,14 @@ import type {
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
   SavePropertyIdentity,
+  RegistryPropertyIdentity,
   SavePropertyRequest,
   SavePropertyResponse,
+  ResolveIdentifiersRequest,
+  ResolveIdentifiersResponse,
+  FileCatalogDisputeRequest,
+  FileCatalogDisputeResponse,
+  GetCatalogDisputeResponse,
   ClaimHostedPropertyDomainResponse,
   VerifyHostedPropertyOriginResponse,
   BrandRegistryItem,
@@ -107,8 +113,14 @@ export type {
   UploadBrandLogoInput,
   UploadBrandLogoResponse,
   SavePropertyIdentity,
+  RegistryPropertyIdentity,
   SavePropertyRequest,
   SavePropertyResponse,
+  ResolveIdentifiersRequest,
+  ResolveIdentifiersResponse,
+  FileCatalogDisputeRequest,
+  FileCatalogDisputeResponse,
+  GetCatalogDisputeResponse,
   ClaimHostedPropertyDomainResponse,
   VerifyHostedPropertyOriginResponse,
   BrandRegistryItem,
@@ -659,6 +671,36 @@ export class RegistryClient {
       }
     }
     return results;
+  }
+
+  /**
+   * Resolve catalog identifiers to stable property_rids.
+   * In default `resolve` mode the registry also records a provenance-backed
+   * contribution; `lookup` mode is read-only.
+   */
+  async resolveIdentifiers(request: ResolveIdentifiersRequest): Promise<ResolveIdentifiersResponse> {
+    if (!request?.identifiers?.length) throw new Error('identifiers are required');
+    if ((request.mode ?? 'resolve') !== 'lookup' && !this.apiKey) {
+      throw new Error('apiKey is required for resolveIdentifiers in resolve mode');
+    }
+    return this.post(`${this.baseUrl}/api/registry/resolve`, request);
+  }
+
+  /** File a catalog fact dispute. Requires authentication. */
+  async fileCatalogDispute(request: FileCatalogDisputeRequest): Promise<FileCatalogDisputeResponse> {
+    if (!request?.subject_type?.trim()) throw new Error('subject_type is required');
+    if (!request?.subject_value?.trim()) throw new Error('subject_value is required');
+    if (!request?.claim?.trim()) throw new Error('claim is required');
+    if (!this.apiKey) throw new Error('apiKey is required for catalog disputes');
+    return this.post(`${this.baseUrl}/api/registry/catalog/disputes`, request);
+  }
+
+  /** Fetch a catalog dispute by id. */
+  async getCatalogDispute(id: string): Promise<GetCatalogDisputeResponse | null> {
+    if (!id?.trim()) throw new Error('id is required');
+    return this.get(`${this.baseUrl}/api/registry/catalog/disputes/${encodeURIComponent(id.trim())}`, {
+      nullOn404: true,
+    });
   }
 
   // ====== Agent Discovery ======
@@ -1426,7 +1468,9 @@ export class RegistryClient {
     if (normalized.property_type === undefined && normalized.type !== undefined) {
       normalized.property_type = normalized.type as PropertyType;
     }
-    delete normalized.type;
+    if (normalized.type === undefined && normalized.property_type !== undefined) {
+      normalized.type = normalized.property_type;
+    }
     return normalized as SavePropertyIdentity;
   }
 

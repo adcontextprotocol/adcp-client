@@ -462,14 +462,29 @@ async function handleRegistryCommand(args) {
           return 2;
         }
         const extraArg = positional[2];
-        if (extraArg && !extraArg.startsWith('{') && !extraArg.startsWith('@')) {
-          console.error('Error: save-property no longer accepts an agent URL; pass identity facts as payload JSON\n');
+        const payloadArg = extraArg?.trim();
+        if (payloadArg && !payloadArg.startsWith('{') && !payloadArg.startsWith('@')) {
+          if (/^https?:\/\//i.test(payloadArg)) {
+            console.error(
+              'Error: save-property no longer accepts an agent URL. Authorization is managed at the publisher origin adagents.json; pass property identity facts as payload JSON when needed.\n'
+            );
+          } else {
+            console.error('Error: expected payload JSON object or @file for save-property\n');
+          }
+          console.error(
+            'Example: adcp registry save-property example.com \'{"properties":[{"property_type":"website","name":"Example","identifiers":[{"type":"domain","value":"example.com"}],"tags":["news"]}]}\' --auth sk_your_key'
+          );
           console.error('Usage: adcp registry save-property <domain> [payload-json]\n');
+          return 2;
+        }
+        const extraPayload = payloadArg ? parsePayload(payloadArg) : {};
+        if (extraPayload == null || typeof extraPayload !== 'object' || Array.isArray(extraPayload)) {
+          console.error('Error: save-property payload must be a JSON object or @file containing a JSON object\n');
           return 2;
         }
         const payload = {
           publisher_domain: domain,
-          ...(extraArg ? parsePayload(extraArg) : {}),
+          ...extraPayload,
         };
         const result = await client.saveProperty(payload);
         if (flags.json) {
