@@ -271,24 +271,26 @@ describe('createWebhookEmitter: pin-and-bind opt-in via fetch override', () => {
     );
   });
 
-  test('emit() with default fetch (no opt-in) still works against loopback (back-compat)', async () => {
-    // Asserts that flipping pin-and-bind from default in v6 is the only
-    // behavior change — until then, omitting `fetch` keeps the legacy
-    // globalThis.fetch path that storyboard tests rely on.
+  test('emit() with the default fetch (no opt-in) is SSRF-guarded and blocks loopback', async () => {
+    // The emitter defaults to createPinAndBindFetch() — omitting `fetch`
+    // is secure-by-default. A loopback URL is refused (terminal), the same
+    // as the explicit opt-in above. Adopters delivering to a loopback
+    // receiver must opt into LOOPBACK_OK_WEBHOOK_SSRF_POLICY explicitly.
     const emitter = createWebhookEmitter({
       signerKey: makeSignerKey(),
       sleep: () => Promise.resolve(),
-      retries: { maxAttempts: 1 },
+      retries: { maxAttempts: 5 }, // SSRF should still cap at 1 — terminal.
     });
-    // We don't actually need a server listening; the assertion is that the
-    // call gets to the connect phase (i.e. wasn't blocked synchronously).
-    // ECONNREFUSED is the expected outcome on a free loopback port.
     const result = await emitter.emit({
       url: 'https://127.0.0.1:9999/webhook',
-      payload: { task: { task_id: 'compat', status: 'completed' } },
-      operation_id: 'op.compat',
+      payload: { task: { task_id: 'default-guarded', status: 'completed' } },
+      operation_id: 'op.default-guarded',
     });
-    assert.strictEqual(result.delivered, false);
-    assert.ok(!result.errors.some(e => /EADCP_SSRF_BLOCKED/.test(e)), 'default fetch must not raise SSRF block today');
+    assert.strictEqual(result.delivered, false, 'default fetch must not deliver to loopback');
+    assert.strictEqual(result.attempts, 1, 'SSRF block must be terminal — no retries');
+    assert.ok(
+      result.errors.some(e => /SSRF|EADCP_SSRF_BLOCKED|hosts_denied|host_literal/i.test(e)),
+      `expected SSRF-shaped error from the default fetch, got: ${JSON.stringify(result.errors)}`
+    );
   });
 });

@@ -25,6 +25,7 @@ import { signWebhook, type SignerKey } from '../signing/signer';
 import { signWebhookAsync } from '../signing/signer-async';
 import type { SigningProvider } from '../signing/provider';
 import type { RequestLike } from '../signing/canonicalize';
+import { createPinAndBindFetch } from './pin-and-bind-fetch';
 import { createHmac, randomUUID } from 'node:crypto';
 
 /**
@@ -140,14 +141,18 @@ export interface WebhookEmitterOptions {
    */
   generateIdempotencyKey?: () => string;
   /**
-   * Override the HTTP client. Defaults to `globalThis.fetch`. Production
-   * deployments SHOULD pass `createPinAndBindFetch()` to defeat DNS-rebinding
-   * attacks against buyer-supplied `push_notification_config.url` values —
-   * see `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense. The default
-   * will become `createPinAndBindFetch()` in v6 (major). Today's default is
-   * `globalThis.fetch` because pin-and-bind blocks loopback http URLs that
-   * the storyboard runner uses for testing webhook flows; flipping the
-   * default would break in-process storyboard runs without a migration.
+   * Override the HTTP client. Defaults to `createPinAndBindFetch()`, which
+   * defeats DNS-rebinding / SSRF attacks against the buyer-supplied
+   * `push_notification_config.url` (https-only; loopback, private, and cloud
+   * metadata ranges denied). See `docs/guides/SIGNING-GUIDE.md` § Webhook
+   * SSRF defense.
+   *
+   * In-process storyboard / test harnesses that deliver to a loopback
+   * `http://127.0.0.1:port` receiver must opt into the relaxed policy
+   * explicitly: `fetch: createPinAndBindFetch({ policy:
+   * LOOPBACK_OK_WEBHOOK_SSRF_POLICY })`. Passing `globalThis.fetch` here
+   * restores the unguarded pre-9.8 behavior — only do so behind your own
+   * URL validation.
    */
   fetch?: typeof fetch;
   /** Default `User-Agent` header. */
@@ -245,7 +250,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
   }
   const store = options.idempotencyKeyStore ?? memoryWebhookKeyStore();
   const generateKey = options.generateIdempotencyKey ?? defaultGenerateIdempotencyKey;
-  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const fetchImpl = options.fetch ?? createPinAndBindFetch();
   const sleep = options.sleep ?? defaultSleep;
 
   return {
