@@ -14,11 +14,21 @@ const assert = require('node:assert');
 const { generateKeyPairSync } = require('node:crypto');
 
 const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+const {
+  createPinAndBindFetch,
+  LOOPBACK_OK_WEBHOOK_SSRF_POLICY,
+} = require('../../dist/lib/server/pin-and-bind-fetch.js');
 const { createWebhookReceiver } = require('../../dist/lib/testing/storyboard/webhook-receiver.js');
 const { verifyWebhookSignature } = require('../../dist/lib/signing/webhook-verifier.js');
 const { StaticJwksResolver } = require('../../dist/lib/signing/jwks.js');
 const { InMemoryReplayStore } = require('../../dist/lib/signing/replay.js');
 const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation.js');
+
+// The emitter defaults to a strict pin-and-bind fetch that denies loopback
+// http. This E2E delivers to an in-process http://127.0.0.1 receiver, so it
+// opts into the loopback-relaxed policy — the same escape hatch the
+// storyboard runner uses. Cloud-metadata / private ranges stay denied.
+const loopbackFetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
 
 function makeSignerKey(kid = 'e2e-webhook-key') {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
@@ -58,7 +68,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     const server = createAdcpServer({
       name: 'e2e-publisher',
       version: '1.0.0',
-      webhooks: { signerKey },
+      webhooks: { signerKey, fetch: loopbackFetch },
       mediaBuy: {
         createMediaBuy: async (params, ctx) => {
           // Business logic: create the media buy, then fire the webhook.
@@ -154,7 +164,7 @@ describe('createAdcpServer + webhook emitter: full-stack publisher E2E', () => {
     const server = createAdcpServer({
       name: 'stability-publisher',
       version: '1.0.0',
-      webhooks: { signerKey },
+      webhooks: { signerKey, fetch: loopbackFetch },
       mediaBuy: {
         createMediaBuy: async (params, ctx) => {
           // Emit twice for the same operation_id — simulates a handler

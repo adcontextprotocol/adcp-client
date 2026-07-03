@@ -165,13 +165,12 @@ const DEFAULT_LOOKUP_ALL: DnsLookupAll = (hostname, options, callback) => {
  * Build a `fetch` that pins outbound connections to the IPs the SSRF policy
  * allows, defeating DNS-rebinding attacks against per-attempt DNS resolution.
  *
- * Pass as the `fetch` argument to `createWebhookEmitter` /
- * `createAdcpServer({ webhooks: { fetch } })` to enable rebinding protection
- * on outbound webhook delivery. Recommended for production. The default
- * `fetch` for `createWebhookEmitter` remains `globalThis.fetch` until v6 —
- * see `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense for the
- * migration plan and {@link LOOPBACK_OK_WEBHOOK_SSRF_POLICY} for storyboard
- * tests that need loopback http delivery.
+ * This is the default `fetch` for `createWebhookEmitter` /
+ * `createAdcpServer({ webhooks })`, so production webhook delivery is
+ * rebinding-protected without extra wiring. Call it explicitly only to
+ * override the policy — e.g. {@link LOOPBACK_OK_WEBHOOK_SSRF_POLICY} for
+ * storyboard tests that deliver to a loopback http receiver. See
+ * `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense.
  *
  * Construct once per emitter and reuse — each call instantiates a fresh
  * `undici.Agent` with its own connection pool.
