@@ -1,4 +1,5 @@
-import { createMediaBuyAdapter, getProductsAdapter } from './brand-fields';
+import { createMediaBuyAdapter } from './brand-fields';
+import { getProductsAdapter } from './get-products';
 import { syncAccountsAdapter } from './sync-accounts';
 import type { VersionAdapter } from '../types';
 
