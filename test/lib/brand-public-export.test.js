@@ -14,16 +14,22 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof sdk.validateBrandAssetMappings, 'function');
     assert.strictEqual(typeof sdk.selectLogoForSlot, 'function');
     assert.strictEqual(typeof sdk.checkLogoSlotCoverage, 'function');
+    assert.strictEqual(typeof sdk.extractBrandWebsiteAliases, 'function');
+    assert.strictEqual(typeof sdk.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof sdk.updateBrandJsonFromMappings, 'function');
 
     assert.strictEqual(typeof brand.applyBrandAssetMappings, 'function');
     assert.strictEqual(typeof brand.validateBrandAssetMappings, 'function');
     assert.strictEqual(typeof brand.selectLogoForSlot, 'function');
     assert.strictEqual(typeof brand.checkLogoSlotCoverage, 'function');
+    assert.strictEqual(typeof brand.extractBrandWebsiteAliases, 'function');
+    assert.strictEqual(typeof brand.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof brand.updateBrandJsonFromMappings, 'function');
 
     assert.strictEqual(sdk.applyBrandAssetMappings, brand.applyBrandAssetMappings);
     assert.strictEqual(sdk.selectLogoForSlot, brand.selectLogoForSlot);
+    assert.strictEqual(sdk.extractBrandWebsiteAliases, brand.extractBrandWebsiteAliases);
+    assert.strictEqual(sdk.extractBrandWebsiteAliasDomains, brand.extractBrandWebsiteAliasDomains);
     assert.deepStrictEqual([...sdk.COMMON_LOGO_SLOTS], [...brand.COMMON_LOGO_SLOTS]);
   });
 
