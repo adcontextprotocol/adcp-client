@@ -46,7 +46,7 @@ jobs:
           npm run sync-schemas
           npm run generate-types
           npm run generate-wellknown-schemas
-          npm run generate-registry-types
+          npm run generate-registry-types -- --sync
 
           if git diff --exit-code src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml package.json; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT

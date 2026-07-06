@@ -46,7 +46,7 @@ jobs:
           npm run generate-types
           npm run generate-types:v2.5
           npm run generate-wellknown-schemas
-          npm run generate-registry-types
+          npm run generate-registry-types -- --sync
 
           if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml 2>/dev/null; then
             echo ""
@@ -59,7 +59,7 @@ jobs:
             echo "  npm run sync-schemas:all"
             echo "  npm run generate-types:all"
             echo "  npm run generate-wellknown-schemas"
-            echo "  npm run generate-registry-types"
+            echo "  npm run generate-registry-types -- --sync"
             echo ""
             echo "Then commit the updated generated files."
             exit 1
