@@ -12,7 +12,8 @@
  * resume in 3.x). Consumers persist `data.cursor` and reconnect with `?cursor=`.
  */
 
-import type { FeedResponse, FeedFreshness } from './types.generated';
+import type { FeedResponse } from './types';
+import type { FeedFreshness } from './types.generated';
 
 /** Query parameters for `GET /api/registry/feed/stream`. */
 export interface FeedStreamQuery {

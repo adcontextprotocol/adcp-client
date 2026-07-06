@@ -4,8 +4,11 @@
  * Spotify Brand → Campaign) are encoded in `metadata`, not in the typed
  * shape. Generic `TCtxMeta` lets platforms type their metadata at the call site.
  *
- * Tenant isolation is enforced at `accounts.resolve()` returning null for
- * cross-scope references, not via a multi-level type.
+ * Tenant scoping is expressed by what `accounts.resolve()` returns, not via
+ * a multi-level type. Note that resolve is NOT an isolation gate by default:
+ * `createTenantStore` resolves the ref the buyer supplies regardless of the
+ * caller unless `refAccess: 'auth-scoped'` is set (or a `resolve-presets`
+ * guard is composed). See `createTenantStore` and `resolve-presets.ts`.
  *
  * Status: Preview / 6.0.
  *

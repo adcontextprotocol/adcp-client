@@ -103,6 +103,53 @@ describe('createTenantStore — resolve', () => {
   });
 });
 
+// ── resolve — refAccess isolation gate ──────────────────────────────────────
+
+describe('createTenantStore — resolve refAccess gate', () => {
+  test("default ('ref-routed') resolves a cross-tenant ref without checking the caller", async () => {
+    const store = buildStore();
+    // Meridian's credential names Pinnacle's operator — ref-routed returns it.
+    const acc = await store.resolve(
+      { brand: { domain: 'acme.example' }, operator: 'pinnacle.example' },
+      ctxWith('buyer@meridian')
+    );
+    assert.equal(acc.id, 't_pinnacle');
+  });
+
+  test("'auth-scoped' blocks a cross-tenant ref (returns null)", async () => {
+    const store = buildStore({ refAccess: 'auth-scoped' });
+    const acc = await store.resolve(
+      { brand: { domain: 'acme.example' }, operator: 'pinnacle.example' },
+      ctxWith('buyer@meridian')
+    );
+    assert.equal(acc, null);
+  });
+
+  test("'auth-scoped' allows a same-tenant ref", async () => {
+    const store = buildStore({ refAccess: 'auth-scoped' });
+    const acc = await store.resolve(
+      { brand: { domain: 'acme.example' }, operator: 'pinnacle.example' },
+      ctxWith('buyer@pinnacle')
+    );
+    assert.equal(acc.id, 't_pinnacle');
+  });
+
+  test("'auth-scoped' fails closed when the auth principal is unresolvable", async () => {
+    const store = buildStore({ refAccess: 'auth-scoped' });
+    const acc = await store.resolve(
+      { brand: { domain: 'acme.example' }, operator: 'pinnacle.example' },
+      ctxWith('not-registered')
+    );
+    assert.equal(acc, null);
+  });
+
+  test("'auth-scoped' still serves Path 2 (no ref) from resolveFromAuth", async () => {
+    const store = buildStore({ refAccess: 'auth-scoped' });
+    const acc = await store.resolve(undefined, ctxWith('buyer@pinnacle'));
+    assert.equal(acc.id, 't_pinnacle');
+  });
+});
+
 // ── upsert (sync_accounts) — tenant-isolation gate ─────────────────────────
 
 describe('createTenantStore — upsert tenant-isolation gate', () => {
