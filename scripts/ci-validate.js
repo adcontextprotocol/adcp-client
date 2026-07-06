@@ -114,7 +114,7 @@ async function validateCI() {
 
   subsection('Sync registry OpenAPI and generate registry types');
   totalTests++;
-  const registryGenerateResult = runCommand('npm run generate-registry-types');
+  const registryGenerateResult = runCommand('npm run generate-registry-types -- --sync');
   if (registryGenerateResult.success) {
     log('✅ Registry type generation completed', 'green');
     passedTests++;
@@ -135,7 +135,7 @@ async function validateCI() {
     passedTests++;
   } else {
     log('❌ Schema or registry OpenAPI changes detected - types are out of sync', 'red');
-    log('   Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types', 'yellow');
+    log('   Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync', 'yellow');
     failures.push('Generated types are out of sync with schemas or registry OpenAPI');
   }
 

@@ -1,15 +1,13 @@
 import { EventEmitter } from 'node:events';
 import type { RegistryClient } from './index';
 import type {
-  CatalogEvent,
   AgentSearchResult,
   AgentCompliance,
   AuthorizationEntry,
   AgentSearchResponse,
-  FeedResponse,
   FeedFreshness,
 } from './types.generated';
-import type { ResolvedBrand } from './types';
+import type { CatalogEvent, FeedResponse, ResolvedBrand } from './types';
 import type { FeedStreamQuery } from './feed-stream';
 import {
   FeedStreamCursorExpiredError,

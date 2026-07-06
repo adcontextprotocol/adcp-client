@@ -26,8 +26,17 @@ export type {
   PolicySummary,
   Policy,
   PolicyHistory,
-  CatalogEvent,
-  FeedResponse,
+  RegistryFeedEvent,
+  AgentEventPayload,
+  PropertyEventPayload,
+  CollectionEventPayload,
+  AuthorizationEventPayload,
+  PublisherEventPayload,
+  BrandEventPayload,
+  CatalogBrowseResponse,
+  CatalogBrowseEntry,
+  CatalogSyncResponse,
+  CatalogSyncEntry,
   AgentInventoryProfile,
   AgentSearchResult,
   AgentSearchResponse,
@@ -55,8 +64,12 @@ export type { paths, operations, components } from './types.generated';
 // Types extracted from inline OpenAPI operation schemas
 
 import type {
+  CatalogEvent as GeneratedCatalogEvent,
+  FeedResponse as GeneratedFeedResponse,
+  FeedFreshness,
   ResolvedBrand as GeneratedResolvedBrand,
   PropertyRegistryItem as GeneratedPropertyRegistryItem,
+  BrandEventPayload,
   operations,
   CommunityMirrorListResponse,
   CommunityMirrorSummary,
@@ -68,6 +81,43 @@ import type {
 } from './types.generated';
 import type { PropertyIdentifierType, PropertyType } from '../discovery/types';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
+
+type RegistryFeedEventBase<TEventType extends string, TPayload> = {
+  event_id: string;
+  event_type: TEventType;
+  entity_type: string;
+  entity_id: string;
+  payload: TPayload;
+  actor: string;
+  created_at: string;
+};
+
+export type RegistryBrandEventType =
+  | 'brand.hierarchy_updated'
+  | 'brand.updated'
+  | 'brand.resolved'
+  | 'brand.removed'
+  | 'brand.deleted';
+
+/** Brand feed events emitted by older/self-hosted registry deployments. */
+export type RegistryBrandEvent = RegistryFeedEventBase<RegistryBrandEventType, BrandEventPayload>;
+
+/** Forward-compatible feed event shape for event types newer than this SDK. */
+export type UnknownRegistryFeedEvent = RegistryFeedEventBase<string, Record<string, unknown>>;
+
+/**
+ * SDK-facing registry feed event.
+ *
+ * The generated `RegistryFeedEvent` export mirrors the current OpenAPI union.
+ * `CatalogEvent` stays intentionally wider because RegistrySync accepts
+ * older/self-hosted brand events and must ignore future event types safely.
+ */
+export type CatalogEvent = GeneratedCatalogEvent | RegistryBrandEvent | UnknownRegistryFeedEvent;
+
+/** Full response from GET /api/registry/feed, using the SDK-facing event union. */
+export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
+  events: CatalogEvent[];
+};
 
 /**
  * Brand identity returned by the registry resolver.
