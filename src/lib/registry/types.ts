@@ -27,12 +27,9 @@ export type {
   Policy,
   PolicyHistory,
   RegistryFeedEvent,
-  AgentEventPayload,
-  PropertyEventPayload,
   CollectionEventPayload,
   AuthorizationEventPayload,
   PublisherEventPayload,
-  BrandEventPayload,
   CatalogBrowseResponse,
   CatalogBrowseEntry,
   CatalogSyncResponse,
@@ -67,8 +64,13 @@ import type {
   CatalogEvent as GeneratedCatalogEvent,
   FeedResponse as GeneratedFeedResponse,
   ResolvedBrand as GeneratedResolvedBrand,
+  ResolvedProperty as GeneratedResolvedProperty,
   PropertyRegistryItem as GeneratedPropertyRegistryItem,
-  BrandEventPayload,
+  AgentEventPayload as GeneratedAgentEventPayload,
+  PropertyEventPayload as GeneratedPropertyEventPayload,
+  BrandEventPayload as GeneratedBrandEventPayload,
+  AgentCompliance as GeneratedAgentCompliance,
+  AgentInventoryProfile as GeneratedAgentInventoryProfile,
   operations,
   CommunityMirrorListResponse,
   CommunityMirrorSummary,
@@ -80,6 +82,22 @@ import type {
 } from './types.generated';
 import type { PropertyIdentifierType, PropertyType } from '../discovery/types';
 import type { MediaChannel, ProductFormatDeclaration } from '../types/tools.generated';
+
+export type AgentEventPayload = Omit<GeneratedAgentEventPayload, 'inventory_profile' | 'compliance_summary'> & {
+  /** On agent.profile_updated: the agent's refreshed inventory profile. */
+  inventory_profile?: GeneratedAgentInventoryProfile;
+  compliance_summary?: GeneratedAgentCompliance;
+};
+
+export type PropertyEventPayload = Omit<GeneratedPropertyEventPayload, 'property'> & {
+  /** Optional full post-change property object when available. */
+  property?: GeneratedResolvedProperty | RegistryPropertyIdentity;
+};
+
+export type BrandEventPayload = Omit<GeneratedBrandEventPayload, 'chain'> & {
+  /** On brand.resolved/hierarchy_updated: the resolved brand chain. */
+  chain?: ResolvedBrand[];
+};
 
 type RegistryFeedEventBase<TEventType extends string, TPayload> = {
   event_id: string;
@@ -272,6 +290,10 @@ export type ValidateAdagentsRequest = NonNullable<
   operations['validateAdagents']['requestBody']
 >['content']['application/json'];
 
+/** Response from POST /api/adagents/validate (200) */
+export type ValidateAdagentsResponse =
+  operations['validateAdagents']['responses']['200']['content']['application/json'];
+
 /** Request body for POST /api/adagents/create */
 type RegistryCreateAdagentsRequest = NonNullable<
   operations['createAdagents']['requestBody']
@@ -441,6 +463,12 @@ export type ExpandProductIdentifiersRequest = NonNullable<
 
 /** Query parameters for GET /api/brands/registry */
 export type ListBrandsOptions = NonNullable<operations['listBrands']['parameters']['query']>;
+
+/** Response from GET /api/brands/registry (200) */
+export type ListBrandsResponse = operations['listBrands']['responses']['200']['content']['application/json'];
+
+/** Response from GET /api/brands/brand-json (200) */
+export type GetBrandJsonResponse = operations['getBrandJson']['responses']['200']['content']['application/json'];
 
 /** Query parameters for GET /api/registry/agents */
 export type ListAgentsQuery = NonNullable<operations['listAgents']['parameters']['query']>;

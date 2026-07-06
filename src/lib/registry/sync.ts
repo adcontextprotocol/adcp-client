@@ -7,7 +7,14 @@ import type {
   AgentSearchResponse,
   FeedFreshness,
 } from './types.generated';
-import type { CatalogEvent, FeedResponse, ResolvedBrand } from './types';
+import type {
+  CatalogEvent,
+  FeedResponse,
+  PropertyEventPayload,
+  PropertyIdentifier,
+  PropertyRegistryItem,
+  ResolvedBrand,
+} from './types';
 import type { FeedStreamQuery } from './feed-stream';
 import {
   FeedStreamCursorExpiredError,
@@ -77,11 +84,15 @@ export interface RegistrySyncConfig {
     agents?: boolean;
     /** Authorization entries (agent→domain mappings). Default: true. */
     authorizations?: boolean;
+    /** Property feed records (property_rid→property and publisher domain→properties). Default: true. */
+    properties?: boolean;
     /** Ordered brand hierarchy chains (self → parents → house). Default: true. */
     brandHierarchies?: boolean;
   };
   /** Optional cursor store for persisting the feed cursor between restarts. */
   cursorStore?: CursorStore;
+  /** Called when RegistrySync intentionally ignores an event family it does not index. */
+  onIgnoredEvent?: (event: CatalogEvent, reason: string) => void;
   /** Called on errors during polling/bootstrap. */
   onError?: (error: Error) => void;
 }
@@ -116,6 +127,8 @@ export interface RegistrySyncEvents {
   freshness: [{ freshness: FeedFreshness }];
   /** Emitted when the active feed transport changes (e.g. stream → polling fallback). */
   transport: [{ transport: RegistrySyncTransport }];
+  /** Emitted when an event is intentionally not indexed by RegistrySync. */
+  ignoredEvent: [{ event: CatalogEvent; reason: string }];
 }
 
 // ====== Agent filter for client-side search ======
@@ -133,15 +146,32 @@ export interface AgentFilter {
   compliance_status?: AgentCompliance['status'][];
 }
 
+export type RegistrySyncProperty = {
+  /** Stable registry property RID. */
+  property_rid: string;
+  /** Publisher domain that owns the property, when supplied by the feed. */
+  publisher_domain?: string;
+  identifiers?: PropertyIdentifier[];
+  classification?: string;
+  source?: PropertyEventPayload['source'];
+  property?: PropertyEventPayload['property'];
+  changed_fields?: string[];
+  last_resolved_at?: string;
+  reactivated_at?: string;
+  reason?: string;
+  evidence?: string;
+  [key: string]: unknown;
+};
+
 // ====== RegistrySync ======
 
 /**
  * In-memory replica of the AdCP registry.
  *
- * Bootstraps from the agent search endpoint, then tails the change feed —
- * Server-Sent Events by default (`transport: 'auto'`), falling back to polling
- * `/api/registry/feed` when streaming is unavailable — to keep its indexes
- * current for zero-latency lookups.
+ * Bootstraps from the agent/property list endpoints, then tails the change
+ * feed — Server-Sent Events by default (`transport: 'auto'`), falling back to
+ * polling `/api/registry/feed` when streaming is unavailable — to keep its
+ * indexes current for zero-latency lookups.
  *
  * **Staleness:** lookups (`getAgent`, `isAuthorized`, the authorization getters)
  * return the last synced state. After a transient failure the engine keeps
@@ -186,7 +216,9 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private readonly maxStreamFailures: number;
   private readonly indexAgents: boolean;
   private readonly indexAuthorizations: boolean;
+  private readonly indexProperties: boolean;
   private readonly indexBrandHierarchies: boolean;
+  private readonly ignoredEventHandler: ((event: CatalogEvent, reason: string) => void) | undefined;
   private readonly errorHandler: ((error: Error) => void) | undefined;
   private readonly cursorStore: CursorStore;
 
@@ -211,6 +243,9 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private agents = new Map<string, AgentSearchResult>();
   private authByDomain = new Map<string, AuthorizationEntry[]>();
   private authByAgent = new Map<string, AuthorizationEntry[]>();
+  private propertiesByRid = new Map<string, RegistrySyncProperty>();
+  private propertyRidsByDomain = new Map<string, Set<string>>();
+  private propertyAliasesByRid = new Map<string, string>();
   private brandAncestorsByDomain = new Map<string, string[]>();
   private brandHierarchyByDomain = new Map<string, ResolvedBrand[]>();
   private brandHierarchyKeysByEntity = new Map<string, Set<string>>();
@@ -242,8 +277,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.maxStreamFailures = config.maxStreamFailures ?? 3;
     this.indexAgents = config.indexes?.agents !== false;
     this.indexAuthorizations = config.indexes?.authorizations !== false;
+    this.indexProperties = config.indexes?.properties !== false;
     this.indexBrandHierarchies = config.indexes?.brandHierarchies !== false;
     this.cursorStore = config.cursorStore ?? new InMemoryCursorStore();
+    this.ignoredEventHandler = config.onIgnoredEvent;
     this.errorHandler = config.onError;
   }
 
@@ -364,6 +401,26 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return entries != null && entries.some(e => e.agent_url === agentUrl);
   }
 
+  // ====== Property Lookups ======
+
+  /** Get a property feed record by property_rid. Merged aliases resolve to their canonical RID. */
+  getProperty(rid: string): RegistrySyncProperty | undefined {
+    const property = this.propertiesByRid.get(this.resolvePropertyRid(rid));
+    return property ? this.cloneProperty(property) : undefined;
+  }
+
+  /** Get all property feed records for a publisher domain. */
+  getPropertiesForDomain(domain: string): RegistrySyncProperty[] {
+    const rids = this.propertyRidsByDomain.get(this.normalizeDomainKey(domain));
+    if (!rids) return [];
+    const properties: RegistrySyncProperty[] = [];
+    for (const rid of rids) {
+      const property = this.propertiesByRid.get(this.resolvePropertyRid(rid));
+      if (property) properties.push(this.cloneProperty(property));
+    }
+    return properties;
+  }
+
   // ====== Brand Hierarchy Lookups ======
 
   /**
@@ -391,12 +448,13 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return this.cursor;
   }
 
-  getStats(): { agents: number; authorizations: number; brandHierarchies: number } {
+  getStats(): { agents: number; authorizations: number; properties: number; brandHierarchies: number } {
     let authCount = 0;
     for (const entries of this.authByDomain.values()) authCount += entries.length;
     return {
       agents: this.agents.size,
       authorizations: authCount,
+      properties: this.propertiesByRid.size,
       brandHierarchies: this.brandHierarchyKeysByEntity.size,
     };
   }
@@ -445,6 +503,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         } while (cursor);
       }
 
+      if (this.indexProperties) {
+        await this.bootstrapProperties();
+      }
+
       // Get initial feed cursor and apply any events
       await this.drainFeed(gen);
 
@@ -474,6 +536,27 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.cursor = null;
     await this.cursorStore.clearCursor();
     await this.bootstrap(gen);
+  }
+
+  private async bootstrapProperties(): Promise<void> {
+    const limit = 200;
+    let offset = 0;
+
+    for (;;) {
+      const response = await this.client.listProperties({ limit, offset });
+      const properties = Array.isArray(response.properties) ? response.properties : [];
+
+      for (const property of properties) {
+        const entry = this.propertyFromRegistryItem(property);
+        if (entry) this.setPropertyEntry(entry, this.propertiesByRid.get(entry.property_rid));
+      }
+
+      if (properties.length === 0 || properties.length < limit) break;
+
+      offset += properties.length;
+      const total = this.totalPropertiesFromStats(response.stats);
+      if (total != null && offset >= total) break;
+    }
   }
 
   // ====== Private: Polling ======
@@ -863,36 +946,28 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   // ====== Private: Event Application ======
 
   private applyEvent(event: CatalogEvent): void {
-    const payload = event.payload as Record<string, unknown>;
+    const payload = this.asRecord(event.payload);
 
     switch (event.event_type) {
       case 'agent.discovered':
       case 'agent.profile_updated': {
         if (!this.indexAgents) break;
         const existing = this.agents.get(event.entity_id);
-        if (existing && payload.inventory_profile) {
+        const inventoryProfile = this.isAgentInventoryProfile(payload.inventory_profile)
+          ? payload.inventory_profile
+          : undefined;
+        if (existing && inventoryProfile) {
           this.agents.set(event.entity_id, {
             ...existing,
-            inventory_profile: payload.inventory_profile as AgentSearchResult['inventory_profile'],
+            inventory_profile: inventoryProfile,
           });
         } else if (!existing) {
           // New agent: use payload data or create stub
           this.agents.set(event.entity_id, {
             url: event.entity_id,
-            name: (payload.name as string) ?? event.entity_id,
-            type: (payload.type as AgentSearchResult['type']) ?? 'unknown',
-            inventory_profile: (payload.inventory_profile as AgentSearchResult['inventory_profile']) ?? {
-              channels: [],
-              property_types: [],
-              markets: [],
-              categories: [],
-              category_taxonomy: 'iab_content_3.0',
-              tags: [],
-              delivery_types: [],
-              property_count: 0,
-              publisher_count: 0,
-              has_tmp: false,
-            },
+            name: typeof payload.name === 'string' ? payload.name : event.entity_id,
+            type: typeof payload.type === 'string' ? payload.type : 'unknown',
+            inventory_profile: inventoryProfile ?? this.emptyInventoryProfile(),
             match: { score: 0, matched_filters: [] },
           });
         }
@@ -907,53 +982,28 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
       case 'authorization.granted': {
         if (!this.indexAuthorizations) break;
-        const entry = payload as unknown as AuthorizationEntry;
-        if (!entry.agent_url || !entry.publisher_domain || !entry.authorization_type) break;
+        if (!this.isAuthorizationPayload(payload)) break;
+        if (typeof payload.authorization_type !== 'string') break;
+        this.upsertAuthorizationEntry(
+          this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true })
+        );
+        break;
+      }
 
-        const domainEntries = this.authByDomain.get(entry.publisher_domain) ?? [];
-        if (
-          !domainEntries.some(e => e.agent_url === entry.agent_url && e.authorization_type === entry.authorization_type)
-        ) {
-          domainEntries.push(entry);
-          this.authByDomain.set(entry.publisher_domain, domainEntries);
-        }
-
-        const agentEntries = this.authByAgent.get(entry.agent_url) ?? [];
-        if (
-          !agentEntries.some(
-            e => e.publisher_domain === entry.publisher_domain && e.authorization_type === entry.authorization_type
-          )
-        ) {
-          agentEntries.push(entry);
-          this.authByAgent.set(entry.agent_url, agentEntries);
-        }
+      case 'authorization.modified': {
+        if (!this.indexAuthorizations) break;
+        if (!this.isAuthorizationPayload(payload)) break;
+        const entry = this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true });
+        if (!entry.id && !entry.authorization_type) break;
+        this.upsertAuthorizationEntry(entry);
         break;
       }
 
       case 'authorization.revoked': {
         if (!this.indexAuthorizations) break;
-        const agentUrl = payload.agent_url as string;
-        const domain = payload.publisher_domain as string;
-        const authType = payload.authorization_type as string | undefined;
-        if (!agentUrl || !domain) break;
-
-        const domainEntries = this.authByDomain.get(domain);
-        if (domainEntries) {
-          const filtered = domainEntries.filter(
-            e => !(e.agent_url === agentUrl && (!authType || e.authorization_type === authType))
-          );
-          if (filtered.length > 0) this.authByDomain.set(domain, filtered);
-          else this.authByDomain.delete(domain);
-        }
-
-        const agentEntries = this.authByAgent.get(agentUrl);
-        if (agentEntries) {
-          const filtered = agentEntries.filter(
-            e => !(e.publisher_domain === domain && (!authType || e.authorization_type === authType))
-          );
-          if (filtered.length > 0) this.authByAgent.set(agentUrl, filtered);
-          else this.authByAgent.delete(agentUrl);
-        }
+        if (!this.isAuthorizationPayload(payload)) break;
+        const entry = this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true });
+        this.removeAuthorizationEntries(entry, { matchByRowId: Boolean(entry.id || !entry.authorization_type) });
         break;
       }
 
@@ -961,16 +1011,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (this.indexAgents) {
           const existing = this.agents.get(event.entity_id);
           const summary = payload.compliance_summary;
-          if (
-            existing &&
-            summary &&
-            typeof summary === 'object' &&
-            'status' in summary &&
-            typeof (summary as Record<string, unknown>).status === 'string'
-          ) {
+          if (existing && this.isAgentCompliance(summary)) {
             this.agents.set(event.entity_id, {
               ...existing,
-              compliance_summary: summary as AgentSearchResult['compliance_summary'],
+              compliance_summary: summary,
             });
           }
         }
@@ -983,6 +1027,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
             ? payload.current_status
             : 'unknown') as AgentCompliance['status'],
         });
+        break;
+      }
+
+      case 'property.created':
+      case 'property.updated':
+      case 'property.reactivated':
+      case 'property.stale': {
+        if (this.indexProperties) this.upsertPropertyEvent(event.entity_id, payload);
+        break;
+      }
+
+      case 'property.merged': {
+        if (this.indexProperties) this.handlePropertyMerge(payload);
         break;
       }
 
@@ -999,8 +1056,22 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         break;
       }
 
-      // Property and publisher events: no-op for v1 (no property index yet)
+      case 'collection.created':
+      case 'collection.updated':
+      case 'collection.merged':
+      case 'collection.removed': {
+        this.ignoreEvent(event, 'collection.* indexing requires typed collection schemas and a reference consumer');
+        break;
+      }
+
+      case 'publisher.adagents_changed':
+      case 'publisher.adagents_discovered': {
+        this.ignoreEvent(event, 'publisher.* indexing requires a reference consumer');
+        break;
+      }
+
       default:
+        this.ignoreEvent(event, 'unknown or unsupported registry feed event type');
         break;
     }
   }
@@ -1011,10 +1082,236 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.agents.clear();
     this.authByDomain.clear();
     this.authByAgent.clear();
+    this.propertiesByRid.clear();
+    this.propertyRidsByDomain.clear();
+    this.propertyAliasesByRid.clear();
     this.brandAncestorsByDomain.clear();
     this.brandHierarchyByDomain.clear();
     this.brandHierarchyKeysByEntity.clear();
     this.brandHierarchyEntityByKey.clear();
+  }
+
+  private ignoreEvent(event: CatalogEvent, reason: string): void {
+    this.ignoredEventHandler?.(event, reason);
+    this.emit('ignoredEvent', { event, reason });
+  }
+
+  private upsertAuthorizationEntry(entry: AuthorizationEntry): void {
+    this.removeAuthorizationEntries(entry, { matchByRowId: Boolean(entry.id) });
+
+    const domainEntries = this.authByDomain.get(entry.publisher_domain) ?? [];
+    domainEntries.push(entry);
+    this.authByDomain.set(entry.publisher_domain, domainEntries);
+
+    const agentEntries = this.authByAgent.get(entry.agent_url) ?? [];
+    agentEntries.push(entry);
+    this.authByAgent.set(entry.agent_url, agentEntries);
+  }
+
+  private authorizationEntryFromEvent(
+    event: CatalogEvent,
+    entry: AuthorizationEntry,
+    options?: { allowEntityIdFallback?: boolean }
+  ): AuthorizationEntry {
+    if (entry.id || !options?.allowEntityIdFallback) return entry;
+    const fallbackId = this.authorizationRowIdFromEntityId(event, entry);
+    return fallbackId ? { ...entry, id: fallbackId } : entry;
+  }
+
+  private authorizationRowIdFromEntityId(event: CatalogEvent, entry: AuthorizationEntry): string | null {
+    const entityId = this.stringValue(event.entity_id);
+    if (!entityId) return null;
+
+    const normalizedEntityId = entityId.toLowerCase();
+    const normalizedAgentUrl = entry.agent_url.toLowerCase();
+    const normalizedDomain = entry.publisher_domain.toLowerCase();
+    if (normalizedEntityId.includes(normalizedAgentUrl) && normalizedEntityId.includes(normalizedDomain)) return null;
+
+    return entityId;
+  }
+
+  private removeAuthorizationEntries(target: AuthorizationEntry, options?: { matchByRowId?: boolean }): void {
+    for (const [domain, entries] of this.authByDomain) {
+      const filtered = entries.filter(entry => !this.authorizationMatches(entry, target, options));
+      if (filtered.length > 0) this.authByDomain.set(domain, filtered);
+      else this.authByDomain.delete(domain);
+    }
+
+    for (const [agentUrl, entries] of this.authByAgent) {
+      const filtered = entries.filter(entry => !this.authorizationMatches(entry, target, options));
+      if (filtered.length > 0) this.authByAgent.set(agentUrl, filtered);
+      else this.authByAgent.delete(agentUrl);
+    }
+  }
+
+  private authorizationMatches(
+    entry: AuthorizationEntry,
+    target: AuthorizationEntry,
+    options?: { matchByRowId?: boolean }
+  ): boolean {
+    if (target.id && options?.matchByRowId) return entry.id === target.id;
+    if (entry.agent_url !== target.agent_url || entry.publisher_domain !== target.publisher_domain) return false;
+    if (target.authorization_type) return entry.authorization_type === target.authorization_type;
+    return true;
+  }
+
+  private upsertPropertyEvent(entityId: string, payload: Record<string, unknown>): void {
+    const rid = this.propertyRidFromPayload(entityId, payload);
+    if (!rid) return;
+    const canonicalRid = this.resolvePropertyRid(rid);
+    const existing = this.propertiesByRid.get(canonicalRid);
+    const next = this.propertyFromPayload(canonicalRid, payload, existing);
+    if (!next) return;
+
+    const bootstrapRid = next.publisher_domain ? this.propertyBootstrapRid(next.publisher_domain) : null;
+    if (!existing && bootstrapRid && bootstrapRid !== canonicalRid && this.propertiesByRid.has(bootstrapRid)) {
+      this.deletePropertyEntry(bootstrapRid);
+    }
+
+    this.setPropertyEntry(next, existing);
+  }
+
+  private handlePropertyMerge(payload: Record<string, unknown>): void {
+    if (typeof payload.alias_rid !== 'string' || typeof payload.canonical_rid !== 'string') return;
+    const aliasRid = this.resolvePropertyRid(payload.alias_rid);
+    const canonicalRid = this.resolvePropertyRid(payload.canonical_rid);
+    if (!aliasRid || !canonicalRid || aliasRid === canonicalRid) return;
+
+    const aliasEntry = this.propertiesByRid.get(aliasRid);
+    const canonicalEntry = this.propertiesByRid.get(canonicalRid);
+    const payloadEntry = this.propertyFromPayload(canonicalRid, payload);
+    this.propertyAliasesByRid.set(payload.alias_rid, canonicalRid);
+    this.propertyAliasesByRid.set(aliasRid, canonicalRid);
+
+    if (!aliasEntry && !canonicalEntry && !payloadEntry) return;
+
+    const merged: RegistrySyncProperty = {
+      ...(aliasEntry ? this.cloneProperty(aliasEntry) : {}),
+      ...(canonicalEntry ? this.cloneProperty(canonicalEntry) : {}),
+      ...(payloadEntry ? this.cloneProperty(payloadEntry) : {}),
+      property_rid: canonicalRid,
+    };
+    if (!merged.publisher_domain) {
+      merged.publisher_domain = canonicalEntry?.publisher_domain ?? aliasEntry?.publisher_domain;
+    }
+
+    const bootstrapRid = merged.publisher_domain ? this.propertyBootstrapRid(merged.publisher_domain) : null;
+    if (bootstrapRid && bootstrapRid !== canonicalRid && bootstrapRid !== aliasRid) {
+      this.deletePropertyEntry(bootstrapRid);
+    }
+    this.deletePropertyEntry(aliasRid);
+    this.setPropertyEntry(merged, canonicalEntry);
+  }
+
+  private propertyFromPayload(
+    rid: string,
+    payload: Record<string, unknown>,
+    existing?: RegistrySyncProperty
+  ): RegistrySyncProperty | null {
+    const publisherDomain = this.propertyDomainFromPayload(payload) ?? existing?.publisher_domain;
+    const next: RegistrySyncProperty = existing ? this.cloneProperty(existing) : { property_rid: rid };
+    let hasPayloadFields = false;
+
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === undefined || key === 'alias_rid' || key === 'canonical_rid') continue;
+      hasPayloadFields = true;
+      next[key] = this.cloneJsonValue(value);
+    }
+    next.property_rid = rid;
+    if (publisherDomain) next.publisher_domain = publisherDomain;
+
+    return hasPayloadFields || publisherDomain || existing ? next : null;
+  }
+
+  private propertyFromRegistryItem(item: PropertyRegistryItem): RegistrySyncProperty | null {
+    const record = this.asRecord(item);
+    const publisherDomain = this.stringValue(record.publisher_domain) ?? this.stringValue(record.domain);
+    const rid =
+      this.stringValue(record.property_rid) ??
+      this.stringValue(record.rid) ??
+      this.stringValue(record.id) ??
+      (publisherDomain ? this.propertyBootstrapRid(publisherDomain) : null);
+    if (!rid) return null;
+
+    const entry: RegistrySyncProperty = { property_rid: rid };
+    for (const [key, value] of Object.entries(record)) {
+      if (value !== undefined) entry[key] = this.cloneJsonValue(value);
+    }
+    entry.property_rid = rid;
+    if (publisherDomain) entry.publisher_domain = publisherDomain;
+    return entry;
+  }
+
+  private setPropertyEntry(entry: RegistrySyncProperty, previous?: RegistrySyncProperty): void {
+    if (previous?.publisher_domain && previous.publisher_domain !== entry.publisher_domain) {
+      this.removePropertyRidFromDomain(entry.property_rid, previous.publisher_domain);
+    }
+    this.propertiesByRid.set(entry.property_rid, this.cloneProperty(entry));
+    if (entry.publisher_domain) {
+      const key = this.normalizeDomainKey(entry.publisher_domain);
+      const rids = this.propertyRidsByDomain.get(key) ?? new Set<string>();
+      rids.add(entry.property_rid);
+      this.propertyRidsByDomain.set(key, rids);
+    }
+  }
+
+  private deletePropertyEntry(rid: string): void {
+    const entry = this.propertiesByRid.get(rid);
+    if (entry?.publisher_domain) this.removePropertyRidFromDomain(rid, entry.publisher_domain);
+    this.propertiesByRid.delete(rid);
+  }
+
+  private removePropertyRidFromDomain(rid: string, domain: string): void {
+    const key = this.normalizeDomainKey(domain);
+    const rids = this.propertyRidsByDomain.get(key);
+    if (!rids) return;
+    rids.delete(rid);
+    if (rids.size === 0) this.propertyRidsByDomain.delete(key);
+  }
+
+  private propertyRidFromPayload(entityId: string, payload: Record<string, unknown>): string | null {
+    if (typeof payload.property_rid === 'string' && payload.property_rid.trim()) return payload.property_rid;
+    if (entityId?.trim()) return entityId;
+    return null;
+  }
+
+  private propertyDomainFromPayload(payload: Record<string, unknown>): string | undefined {
+    if (typeof payload.publisher_domain === 'string' && payload.publisher_domain.trim())
+      return payload.publisher_domain;
+    const property = this.asRecord(payload.property);
+    return typeof property.publisher_domain === 'string' && property.publisher_domain.trim()
+      ? property.publisher_domain
+      : undefined;
+  }
+
+  private propertyBootstrapRid(domain: string): string {
+    return this.normalizeDomainKey(domain);
+  }
+
+  private stringValue(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value : undefined;
+  }
+
+  private totalPropertiesFromStats(stats: Record<string, unknown>): number | null {
+    const candidates = [stats.total, stats.total_properties, stats.properties];
+    for (const candidate of candidates) {
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  private resolvePropertyRid(rid: string): string {
+    let current = rid;
+    const seen = new Set<string>();
+    while (this.propertyAliasesByRid.has(current) && !seen.has(current)) {
+      seen.add(current);
+      current = this.propertyAliasesByRid.get(current)!;
+    }
+    return current;
+  }
+
+  private cloneProperty(property: RegistrySyncProperty): RegistrySyncProperty {
+    return this.cloneJsonValue(property) as RegistrySyncProperty;
   }
 
   private applyBrandHierarchyEvent(entityId: string, payload: Record<string, unknown>): void {
@@ -1090,12 +1387,102 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.brandHierarchyKeysByEntity.delete(entityKey);
   }
 
+  private asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  }
+
+  private emptyInventoryProfile(): AgentSearchResult['inventory_profile'] {
+    return {
+      channels: [],
+      property_types: [],
+      markets: [],
+      categories: [],
+      category_taxonomy: 'iab_content_3.0',
+      tags: [],
+      delivery_types: [],
+      property_count: 0,
+      publisher_count: 0,
+      has_tmp: false,
+    };
+  }
+
+  private isStringArray(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every(item => typeof item === 'string');
+  }
+
+  private isAgentInventoryProfile(value: unknown): value is AgentSearchResult['inventory_profile'] {
+    const profile = this.asRecord(value);
+    return (
+      this.isStringArray(profile.channels) &&
+      this.isStringArray(profile.property_types) &&
+      this.isStringArray(profile.markets) &&
+      this.isStringArray(profile.categories) &&
+      (typeof profile.category_taxonomy === 'string' || profile.category_taxonomy === null) &&
+      this.isStringArray(profile.tags) &&
+      this.isStringArray(profile.delivery_types) &&
+      (profile.format_ids === undefined || this.isStringArray(profile.format_ids)) &&
+      typeof profile.property_count === 'number' &&
+      typeof profile.publisher_count === 'number' &&
+      typeof profile.has_tmp === 'boolean'
+    );
+  }
+
+  private isAuthorizationPayload(value: unknown): value is AuthorizationEntry {
+    const payload = this.asRecord(value);
+    return (
+      (payload.id === undefined || typeof payload.id === 'string') &&
+      typeof payload.agent_url === 'string' &&
+      typeof payload.publisher_domain === 'string' &&
+      (payload.authorization_type === undefined || typeof payload.authorization_type === 'string') &&
+      (payload.property_ids === undefined || this.isStringArray(payload.property_ids)) &&
+      (payload.property_tags === undefined || this.isStringArray(payload.property_tags)) &&
+      (payload.placement_ids === undefined || this.isStringArray(payload.placement_ids)) &&
+      (payload.placement_tags === undefined || this.isStringArray(payload.placement_tags)) &&
+      (payload.countries === undefined || this.isStringArray(payload.countries)) &&
+      (payload.effective_from === undefined || typeof payload.effective_from === 'string') &&
+      (payload.effective_until === undefined || typeof payload.effective_until === 'string') &&
+      (payload.effective_to === undefined || typeof payload.effective_to === 'string')
+    );
+  }
+
+  private isAgentCompliance(value: unknown): value is AgentCompliance {
+    const summary = this.asRecord(value);
+    const statuses = new Set(['passing', 'degraded', 'failing', 'unknown']);
+    const lifecycleStages = new Set(['development', 'testing', 'production', 'deprecated']);
+    return (
+      typeof summary.status === 'string' &&
+      statuses.has(summary.status) &&
+      typeof summary.lifecycle_stage === 'string' &&
+      lifecycleStages.has(summary.lifecycle_stage) &&
+      summary.tracks != null &&
+      typeof summary.tracks === 'object' &&
+      !Array.isArray(summary.tracks) &&
+      typeof summary.streak_days === 'number' &&
+      (typeof summary.last_checked_at === 'string' || summary.last_checked_at === null) &&
+      (typeof summary.headline === 'string' || summary.headline === null)
+    );
+  }
+
+  private isResolvedBrand(value: unknown): value is ResolvedBrand {
+    const brand = this.asRecord(value);
+    return typeof brand.canonical_id === 'string' && typeof brand.canonical_domain === 'string';
+  }
+
+  private cloneJsonValue<T>(value: T): T {
+    if (Array.isArray(value)) return value.map(item => this.cloneJsonValue(item)) as T;
+    if (value && typeof value === 'object') {
+      const copy: Record<string, unknown> = {};
+      for (const [key, nested] of Object.entries(value)) {
+        copy[key] = this.cloneJsonValue(nested);
+      }
+      return copy as T;
+    }
+    return value;
+  }
+
   private extractResolvedBrandChain(value: unknown): ResolvedBrand[] {
     if (!Array.isArray(value)) return [];
-    if (!value.every(item => item && typeof item === 'object' && !Array.isArray(item))) return [];
-    return value.filter(
-      item => typeof (item as { canonical_domain?: unknown }).canonical_domain === 'string'
-    ) as ResolvedBrand[];
+    return value.filter(item => this.isResolvedBrand(item));
   }
 
   private extractDomainChain(value: unknown): string[] | null {
