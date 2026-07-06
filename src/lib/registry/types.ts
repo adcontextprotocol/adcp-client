@@ -66,7 +66,6 @@ export type { paths, operations, components } from './types.generated';
 import type {
   CatalogEvent as GeneratedCatalogEvent,
   FeedResponse as GeneratedFeedResponse,
-  FeedFreshness,
   ResolvedBrand as GeneratedResolvedBrand,
   PropertyRegistryItem as GeneratedPropertyRegistryItem,
   BrandEventPayload,
@@ -111,6 +110,8 @@ export type UnknownRegistryFeedEvent = RegistryFeedEventBase<string, Record<stri
  * The generated `RegistryFeedEvent` export mirrors the current OpenAPI union.
  * `CatalogEvent` stays intentionally wider because RegistrySync accepts
  * older/self-hosted brand events and must ignore future event types safely.
+ * Consumers should keep a default switch arm: the catch-all event type is
+ * intentionally non-exhaustive for forward compatibility.
  */
 export type CatalogEvent = GeneratedCatalogEvent | RegistryBrandEvent | UnknownRegistryFeedEvent;
 

@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Regenerate the bundled AdCP registry OpenAPI spec and generated TypeScript types from the latest hosted registry schema.
