@@ -844,9 +844,42 @@ function validateFieldAbsent(validation: StoryboardValidation, taskResult: TaskR
 
 function valuesMatch(actual: unknown, expected: unknown): boolean {
   if (typeof actual === 'object' && actual !== null) {
-    return JSON.stringify(actual) === JSON.stringify(expected);
+    return deepEqualJsonValue(actual, expected);
   }
   return actual === expected;
+}
+
+/**
+ * JSON deep equality for `field_value`-family checks: object member order is
+ * NOT significant (RFC 8259 section 4), array element order IS, scalars are
+ * strict. Mirrors the sibling implementations in `webhook-receiver.ts` and
+ * `canonical-format-satisfaction.ts`. Previously this was a
+ * `JSON.stringify(a) === JSON.stringify(b)` comparison, which false-negatived
+ * content-equal objects whose members serialize in a different order (e.g. a
+ * format_id `{id, agent_url}` echoed by the agent as `{agent_url, id}`) —
+ * adcp-client#2327.
+ */
+function deepEqualJsonValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== 'object') return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqualJsonValue(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const keysA = Object.keys(a as Record<string, unknown>);
+  const keysB = Object.keys(b as Record<string, unknown>);
+  if (keysA.length !== keysB.length) return false;
+  for (const k of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!deepEqualJsonValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+  }
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
