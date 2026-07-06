@@ -129,11 +129,11 @@ describe('validateAdAgents — discovery_method', () => {
   test('rejects invalid maxBodyBytes values before fetching', async () => {
     await assert.rejects(
       () => validateAdAgents('example.com', { maxBodyBytes: Infinity }),
-      /maxBodyBytes must be an integer between 1 and 2097152/
+      /maxBodyBytes must be an integer between 1 and 10485760/
     );
     await assert.rejects(
-      () => validateAdAgents('example.com', { maxBodyBytes: 2 * 1024 * 1024 + 1 }),
-      /maxBodyBytes must be an integer between 1 and 2097152/
+      () => validateAdAgents('example.com', { maxBodyBytes: 10 * 1024 * 1024 + 1 }),
+      /maxBodyBytes must be an integer between 1 and 10485760/
     );
   });
 
@@ -203,7 +203,7 @@ describe('validateAdAgents — discovery_method', () => {
     }
   });
 
-  test('managerdomain fallback honors custom maxBodyBytes for large adagents.json', async () => {
+  test('managerdomain fallback honors custom maxBodyBytes for network-scale adagents.json', async () => {
     const largeAdagents = JSON.stringify({
       $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
       authorized_agents: [{ url: 'https://agent.example.com/mcp', authorized_for: 'Programmatic sales' }],
@@ -214,7 +214,7 @@ describe('validateAdAgents — discovery_method', () => {
           identifiers: [{ type: 'domain', value: 'example.com' }],
         },
       ],
-      padding: 'x'.repeat(270 * 1024),
+      padding: 'x'.repeat(3_500_000),
     });
     const manager = await startRoutedServer({
       '/.well-known/adagents.json': { body: largeAdagents },
