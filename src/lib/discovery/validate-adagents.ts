@@ -102,7 +102,7 @@ export interface ValidateAdAgentsOptions {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-const MAX_CONFIGURABLE_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_CONFIGURABLE_BODY_BYTES = 10 * 1024 * 1024;
 
 const FETCH_HEADERS = {
   Accept: 'application/json, text/plain, */*',

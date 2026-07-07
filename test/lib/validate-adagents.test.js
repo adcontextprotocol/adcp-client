@@ -55,6 +55,32 @@ function startRoutedServer(routes) {
   });
 }
 
+function startChunkedServer(path, chunks, contentType = 'application/json') {
+  return new Promise(resolve => {
+    const server = http.createServer(async (req, res) => {
+      if (req.url !== path) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': contentType });
+      for (const chunk of chunks) {
+        res.write(chunk);
+        await new Promise(r => setImmediate(r));
+      }
+      res.end();
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        host: `127.0.0.1:${port}`,
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise(r => server.close(() => r())),
+      });
+    });
+  });
+}
+
 function assertRedirectAllowed(originUrl, currentUrl, nextUrl) {
   assert.doesNotThrow(() => validateSameRegistrableDomainRedirect(originUrl, currentUrl, nextUrl));
 }
@@ -129,11 +155,11 @@ describe('validateAdAgents — discovery_method', () => {
   test('rejects invalid maxBodyBytes values before fetching', async () => {
     await assert.rejects(
       () => validateAdAgents('example.com', { maxBodyBytes: Infinity }),
-      /maxBodyBytes must be an integer between 1 and 2097152/
+      /maxBodyBytes must be an integer between 1 and 10485760/
     );
     await assert.rejects(
-      () => validateAdAgents('example.com', { maxBodyBytes: 2 * 1024 * 1024 + 1 }),
-      /maxBodyBytes must be an integer between 1 and 2097152/
+      () => validateAdAgents('example.com', { maxBodyBytes: 10 * 1024 * 1024 + 1 }),
+      /maxBodyBytes must be an integer between 1 and 10485760/
     );
   });
 
@@ -203,7 +229,7 @@ describe('validateAdAgents — discovery_method', () => {
     }
   });
 
-  test('managerdomain fallback honors custom maxBodyBytes for large adagents.json', async () => {
+  test('managerdomain fallback honors 10 MiB opt-in for large network adagents.json', async () => {
     const largeAdagents = JSON.stringify({
       $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
       authorized_agents: [{ url: 'https://agent.example.com/mcp', authorized_for: 'Programmatic sales' }],
@@ -214,8 +240,10 @@ describe('validateAdAgents — discovery_method', () => {
           identifiers: [{ type: 'domain', value: 'example.com' }],
         },
       ],
-      padding: 'x'.repeat(270 * 1024),
+      padding: 'x'.repeat(3 * 1024 * 1024 + 512 * 1024),
     });
+    assert.ok(largeAdagents.length > 3.5 * 1024 * 1024, `fixture too small: ${largeAdagents.length}`);
+
     const manager = await startRoutedServer({
       '/.well-known/adagents.json': { body: largeAdagents },
     });
@@ -237,7 +265,7 @@ describe('validateAdAgents — discovery_method', () => {
       );
 
       const raisedCapResult = await validateAdAgents(publisher.host, {
-        maxBodyBytes: largeAdagents.length + 1024,
+        maxBodyBytes: 10 * 1024 * 1024,
         urlForDomain: (domain, path) => `http://${domain}${path}`,
       });
       assert.strictEqual(
@@ -250,6 +278,69 @@ describe('validateAdAgents — discovery_method', () => {
       assert.ok(raisedCapResult.adagents?.authorized_agents?.length);
     } finally {
       await Promise.all([publisher.close(), manager.close()]);
+    }
+  });
+
+  test('direct path keeps the 256 KiB default but accepts a valid 3.5 MiB adagents.json with explicit opt-in', async () => {
+    const largeAdagents = JSON.stringify({
+      $schema: 'https://adcontextprotocol.org/schemas/v1/adagents.json',
+      authorized_agents: [{ url: 'https://agent.example.com/mcp', authorized_for: 'Programmatic sales' }],
+      properties: [
+        {
+          property_type: 'website',
+          name: 'example.com',
+          identifiers: [{ type: 'domain', value: 'example.com' }],
+        },
+      ],
+      padding: 'x'.repeat(3 * 1024 * 1024 + 512 * 1024),
+    });
+    assert.ok(largeAdagents.length > 3.5 * 1024 * 1024, `fixture too small: ${largeAdagents.length}`);
+
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': { body: largeAdagents },
+    });
+    try {
+      const defaultResult = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(defaultResult.valid, false);
+      assert.strictEqual(defaultResult.discovery_method, 'direct');
+      assert.ok(
+        defaultResult.errors.some(e => e.includes('Response body exceeded 262144 bytes')),
+        `expected default body cap failure, got: ${JSON.stringify(defaultResult.errors)}`
+      );
+
+      const optedInResult = await validateAdAgents(publisher.host, {
+        maxBodyBytes: 10 * 1024 * 1024,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(
+        optedInResult.valid,
+        true,
+        `expected 10 MiB maxBodyBytes to pass, got errors=${JSON.stringify(optedInResult.errors)}`
+      );
+      assert.strictEqual(optedInResult.discovery_method, 'direct');
+      assert.ok(optedInResult.adagents?.authorized_agents?.length);
+    } finally {
+      await publisher.close();
+    }
+  });
+
+  test('direct path rejects chunked responses over the configured maxBodyBytes while streaming', async () => {
+    const publisher = await startChunkedServer('/.well-known/adagents.json', ['{"padding":"', 'x'.repeat(2048), '"}']);
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        maxBodyBytes: 1024,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'direct');
+      assert.ok(
+        result.errors.some(e => e.includes('Response body exceeded 1024 bytes')),
+        `expected streaming body cap failure, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await publisher.close();
     }
   });
 
