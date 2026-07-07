@@ -327,11 +327,7 @@ describe('validateAdAgents — discovery_method', () => {
   });
 
   test('direct path rejects chunked responses over the configured maxBodyBytes while streaming', async () => {
-    const publisher = await startChunkedServer('/.well-known/adagents.json', [
-      '{"padding":"',
-      'x'.repeat(2048),
-      '"}',
-    ]);
+    const publisher = await startChunkedServer('/.well-known/adagents.json', ['{"padding":"', 'x'.repeat(2048), '"}']);
     try {
       const result = await validateAdAgents(publisher.host, {
         maxBodyBytes: 1024,
