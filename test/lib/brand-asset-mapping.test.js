@@ -365,10 +365,35 @@ describe('brand asset mapping helpers', () => {
           },
         ],
       },
-      { brandId: 'spark' }
+      { brandId: 'spark', includeCompatibilityFields: true }
     );
 
     assert.deepStrictEqual(domains, ['spark.example', 'www.spark.example', 'shop.spark.example']);
+  });
+
+  test('does not promote compatibility fields as owned aliases unless explicitly requested', () => {
+    const aliases = extractBrandWebsiteAliases({
+      name: 'Acme',
+      properties: [
+        {
+          type: 'website',
+          identifier: 'brand.example',
+          domain: 'domain-extra.example',
+          url: 'https://url-extra.example/path',
+          identifiers: [{ type: 'domain', value: 'identifier-extra.example' }],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(aliases, [
+      {
+        domain: 'brand.example',
+        source: 'brand_json_property',
+        path: 'properties[0]',
+        brandName: 'Acme',
+        relationship: 'owned',
+      },
+    ]);
   });
 
   test('does not treat delegated, direct, or network website properties as owned aliases', () => {

@@ -156,6 +156,12 @@ export interface BrandWebsiteAlias {
 export interface ExtractBrandWebsiteAliasesOptions {
   /** Restrict extraction to one `brands[]` entry. */
   brandId?: string;
+  /**
+   * Also inspect non-canonical compatibility fields (`domain`, `url`, and
+   * `identifiers[]`). Defaults to false because brand.json property ownership
+   * is attached to the canonical `identifier` field.
+   */
+  includeCompatibilityFields?: boolean;
 }
 
 export const COMMON_LOGO_SLOTS = [
@@ -388,7 +394,9 @@ export function extractBrandWebsiteAliases(
       if (!isRecord(property)) continue;
       if (!isOwnedWebsiteProperty(property)) continue;
 
-      for (const domain of extractWebsitePropertyDomains(property)) {
+      for (const domain of extractWebsitePropertyDomains(property, {
+        includeCompatibilityFields: options?.includeCompatibilityFields === true,
+      })) {
         if (seen.has(domain)) continue;
         seen.add(domain);
         aliases.push({
@@ -571,7 +579,10 @@ function isOwnedWebsiteProperty(property: BrandJsonRecord): boolean {
   return true;
 }
 
-function extractWebsitePropertyDomains(property: BrandJsonRecord): string[] {
+function extractWebsitePropertyDomains(
+  property: BrandJsonRecord,
+  options: { includeCompatibilityFields: boolean }
+): string[] {
   const domains: string[] = [];
   const seen = new Set<string>();
   const add = (value: unknown): void => {
@@ -582,6 +593,9 @@ function extractWebsitePropertyDomains(property: BrandJsonRecord): string[] {
   };
 
   add(property.identifier);
+
+  if (!options.includeCompatibilityFields) return domains;
+
   add(property.domain);
   add(property.url);
 
