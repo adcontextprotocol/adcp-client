@@ -12,15 +12,14 @@ name: AI PR Review (Argus)
 # cannot swallow the verdict: the arbiter posts what the reviewer recorded,
 # and degrades to a COMMENT (never a fabricated approval) when no verdict was written.
 #
-# Reviews are posted as the AAO IPR Bot GitHub App (reused — same App that
-# powers ipr-agreement.yml), so they count toward the "1 review required"
-# branch-protection check the same way a human approval does. If Argus
-# graduates to its own App, swap these secret names accordingly.
+# Reviews are posted as the AAO Secretariat GitHub App, so they count
+# toward the "1 review required" branch-protection check the same way a
+# human approval does.
 #
 # Required secrets:
-#   IPR_APP_ID           — already configured (org-level)
-#   IPR_APP_PRIVATE_KEY  — already configured (org-level)
-#   ANTHROPIC_API_KEY    — already configured
+#   SECRETARIAT_APP_ID          — AAO Secretariat GitHub App ID (org-level)
+#   SECRETARIAT_APP_PRIVATE_KEY — AAO Secretariat App private key PEM (org-level)
+#   ANTHROPIC_API_KEY           — already configured
 #
 # Adapted from adcontextprotocol/adcp's Argus workflow (PR #4816).
 
@@ -38,7 +37,7 @@ on:
 # Bot login that posts Argus reviews. Verifier pins on this so reviews
 # from other bots do not satisfy the "Argus posted" check.
 env:
-  ARGUS_BOT_LOGIN: aao-ipr-bot[bot]
+  ARGUS_BOT_LOGIN: aao-secretariat[bot]
 
 jobs:
   code_review:
@@ -60,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       # ─────────────────────────────────────────────────────────────────────
-      # Mint an installation token from the AAO IPR Bot GitHub App. Reviews
+      # Mint an installation token from the AAO Secretariat GitHub App. Reviews
       # posted with this token appear as the App's bot user and count
       # toward branch-protection's required-approvals check.
       # ─────────────────────────────────────────────────────────────────────
@@ -68,8 +67,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.IPR_APP_ID }}
-          private-key: ${{ secrets.IPR_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.SECRETARIAT_APP_ID }}
+          private-key: ${{ secrets.SECRETARIAT_APP_PRIVATE_KEY }}
 
       # ─────────────────────────────────────────────────────────────────────
       # Workflow-modification gate.
@@ -218,10 +217,22 @@ jobs:
             exit 1
           fi
           PROMPT_BODY="$(git show "${BASE_SHA}:.github/ai-review/expert-adcp-reviewer.md")"
+          # The WG constitution lives in the spec repo, not here. Fetch it from
+          # adcp@main at review time — the PR cannot mutate the rules it is
+          # reviewed under. If the fetch fails, the review runs without it.
+          CONSTITUTION="$(curl -sf https://raw.githubusercontent.com/adcontextprotocol/adcp/main/.agents/wg/constitution.md || true)"
           SENTINEL="ARGUS_$(openssl rand -hex 8)_EOF"
           {
             echo "ARGUS_PROMPT<<${SENTINEL}"
             echo "$PROMPT_BODY"
+            if [ -n "$CONSTITUTION" ]; then
+              echo ''
+              echo '---'
+              echo ''
+              echo '## WG constitution (from adcontextprotocol/adcp@main)'
+              echo ''
+              echo "$CONSTITUTION"
+            fi
             echo ''
             echo '---'
             echo ''
