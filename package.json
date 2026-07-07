@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "10.0.0",
+  "version": "10.0.1",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",

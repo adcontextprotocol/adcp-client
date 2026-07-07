@@ -101,3 +101,49 @@ test('adapters return undefined for unregistered tools at 3.0', () => {
   assert.equal(getVersionAdapter('3.0', 'list_creative_formats'), undefined);
   assert.equal(getVersionAdapter('3.0', 'get_signals'), undefined);
 });
+
+// pricing_currencies is an AdCP 3.1-only filter. 3.0 sellers return
+// UNSUPPORTED_FEATURE (0 products) when they receive it.
+test('get_products: pricing_currencies stripped from filters for 3.0 target', () => {
+  const adapter = getVersionAdapter('3.0', 'get_products');
+  const { params, drift } = adapter.adaptRequest({
+    buying_mode: 'wholesale',
+    filters: { pricing_currencies: ['USD', 'EUR'], min_budget: 1000 },
+  });
+  assert.deepEqual(params.filters, { min_budget: 1000 });
+  assert.equal(drift?.type, 'pre31_pricing_currencies_stripped');
+  assert.deepEqual(drift?.strippedFields, ['filters.pricing_currencies']);
+});
+
+test('get_products: no strip when pricing_currencies absent from filters', () => {
+  const adapter = getVersionAdapter('3.0', 'get_products');
+  const input = { buying_mode: 'wholesale', filters: { min_budget: 1000 } };
+  const { params, drift } = adapter.adaptRequest(input);
+  assert.equal(params, input);
+  assert.equal(drift, undefined);
+});
+
+test('get_products: no strip when filters absent entirely', () => {
+  const adapter = getVersionAdapter('3.0', 'get_products');
+  const input = { buying_mode: 'wholesale', brief: 'Premium placements' };
+  const { params, drift } = adapter.adaptRequest(input);
+  assert.equal(params, input);
+  assert.equal(drift, undefined);
+});
+
+test('get_products: strips both brand_kit_override and pricing_currencies, emits first drift', () => {
+  const adapter = getVersionAdapter('3.0', 'get_products');
+  const { params, drift } = adapter.adaptRequest({
+    brand: { ...brand },
+    filters: { pricing_currencies: ['USD'] },
+    brief: 'Premium placements',
+  });
+  assert.deepEqual(params.brand, {
+    domain: 'goldpeaktea.com',
+    brand_id: 'b',
+    industries: ['cpg'],
+    data_subject_contestation: { email: 'p@goldpeaktea.com' },
+  });
+  assert.deepEqual(params.filters, {});
+  assert.ok(drift);
+});
