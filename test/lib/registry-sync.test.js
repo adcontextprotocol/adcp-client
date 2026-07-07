@@ -608,6 +608,44 @@ describe('RegistrySync', () => {
       );
     });
 
+    test('authorization.modified with unknown id replaces matching idless authorization', async () => {
+      const grantEvent = makeEvent('authorization.granted', 'auth-without-id', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'property_ids',
+        property_ids: ['old-property'],
+      });
+      const modifyEvent = makeEvent('authorization.modified', 'auth-row-1', {
+        id: 'auth-row-1',
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'property_ids',
+        property_ids: ['new-property'],
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent, modifyEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      const domainEntries = syncInstance.getAuthorizationsForDomain('nytimes.com');
+      assert.strictEqual(domainEntries.length, 1);
+      assert.strictEqual(domainEntries[0].id, 'auth-row-1');
+      assert.deepStrictEqual(domainEntries[0].property_ids, ['new-property']);
+    });
+
     test('authorization.revoked removes from both indexes', async () => {
       const grantEvent = makeEvent('authorization.granted', 'auth-1', {
         agent_url: 'https://ads.streamhaus.example.com',
@@ -640,6 +678,110 @@ describe('RegistrySync', () => {
       assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
     });
 
+    test('authorization.revoked with unknown id removes matching idless authorization', async () => {
+      const grantEvent = makeEvent('authorization.granted', 'auth-without-id', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
+      const revokeEvent = makeEvent('authorization.revoked', 'auth-row-1', {
+        id: 'auth-row-1',
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent, revokeEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.ok(!syncInstance.isAuthorized('https://ads.streamhaus.example.com', 'nytimes.com'));
+      assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
+      assert.strictEqual(syncInstance.getAuthorizationsForAgent('https://ads.streamhaus.example.com').length, 0);
+    });
+
+    test('authorization indexes normalize publisher domain casing', async () => {
+      const grantEvent = makeEvent('authorization.granted', 'auth-1', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'NYTimes.com',
+        authorization_type: 'full',
+      });
+      const revokeEvent = makeEvent('authorization.revoked', 'auth-1', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent, revokeEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.ok(!syncInstance.isAuthorized('https://ads.streamhaus.example.com', 'NYTimes.com'));
+      assert.strictEqual(syncInstance.getAuthorizationsForDomain('NYTimes.com').length, 0);
+      assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
+    });
+
+    test('authorization indexes use canonical agent urls', async () => {
+      const grantEvent = makeEvent('authorization.granted', 'auth-1', {
+        agent_url: 'https://ADS.streamhaus.example.com/agent-card',
+        agent_url_canonical: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
+      const revokeEvent = makeEvent('authorization.revoked', 'auth-1', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        agent_url_canonical: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent, revokeEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.ok(!syncInstance.isAuthorized('https://ads.streamhaus.example.com', 'nytimes.com'));
+      assert.strictEqual(syncInstance.getAuthorizationsForAgent('https://ads.streamhaus.example.com').length, 0);
+    });
+
     test('agent.discovered adds to agent index', async () => {
       const discoverEvent = makeEvent('agent.discovered', 'https://new.agent.example.com', {
         name: 'New Agent',
@@ -670,6 +812,11 @@ describe('RegistrySync', () => {
     });
 
     test('agent.removed deletes from agent index', async () => {
+      const authEvent = makeEvent('authorization.granted', 'auth-1', {
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+      });
       const removeEvent = makeEvent('agent.removed', 'https://ads.streamhaus.example.com', {});
 
       restore = mockFetch(async url => {
@@ -677,7 +824,7 @@ describe('RegistrySync', () => {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
         }
         if (url.includes('/registry/feed')) {
-          return new Response(JSON.stringify(makeFeedResponse([removeEvent], { cursor: 'cursor-002' })), {
+          return new Response(JSON.stringify(makeFeedResponse([authEvent, removeEvent], { cursor: 'cursor-002' })), {
             status: 200,
           });
         }
@@ -691,6 +838,9 @@ describe('RegistrySync', () => {
 
       assert.strictEqual(syncInstance.getAgent('https://ads.streamhaus.example.com'), undefined);
       assert.strictEqual(syncInstance.getStats().agents, 0);
+      assert.ok(!syncInstance.isAuthorized('https://ads.streamhaus.example.com', 'nytimes.com'));
+      assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
+      assert.strictEqual(syncInstance.getAuthorizationsForAgent('https://ads.streamhaus.example.com').length, 0);
     });
 
     test('agent.profile_updated updates existing agent', async () => {
@@ -2070,6 +2220,38 @@ describe('RegistrySync', () => {
       assert.ok(agent.compliance_summary);
       assert.strictEqual(agent.compliance_summary.status, 'passing');
       assert.strictEqual(agent.compliance_summary.streak_days, 7);
+    });
+
+    test('accepts opted_out compliance summaries', async () => {
+      const complianceEvent = makeEvent('agent.compliance_changed', AGENT_1.url, {
+        previous_status: 'unknown',
+        current_status: 'opted_out',
+        compliance_summary: {
+          status: 'opted_out',
+        },
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([complianceEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
+        }
+        return new Response('{}', { status: 200 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'test-key' });
+      const sync = new RegistrySync({ client });
+
+      await sync.start();
+      sync.stop();
+
+      const agent = sync.getAgent(AGENT_1.url);
+      assert.strictEqual(agent.compliance_summary.status, 'opted_out');
+      assert.strictEqual(sync.findAgents({ compliance_status: ['opted_out'] }).length, 1);
     });
 
     test('emits compliance_changed event', async () => {

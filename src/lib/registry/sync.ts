@@ -102,6 +102,11 @@ export type RegistrySyncTransport = 'stream' | 'poll';
  *   counts toward `auto` polling fallback.
  */
 type StreamDisposition = 'closed' | 'reconnect' | 'rebootstrap' | 'fallback' | 'fatal' | 'stopped';
+type RegistrySyncComplianceStatus = AgentCompliance['status'] | 'opted_out';
+type AuthorizationRemoveOptions = {
+  matchByRowId?: boolean;
+  fallbackToTupleOnMissingRowId?: boolean;
+};
 
 // ====== Event types ======
 
@@ -113,7 +118,7 @@ export interface RegistrySyncEvents {
   error: [{ error: Error }];
   /** Emitted when an agent's compliance status changes. */
   compliance_changed: [
-    { agentUrl: string; previousStatus: AgentCompliance['status']; currentStatus: AgentCompliance['status'] },
+    { agentUrl: string; previousStatus: RegistrySyncComplianceStatus; currentStatus: RegistrySyncComplianceStatus },
   ];
   stateChange: [{ from: RegistrySyncState; to: RegistrySyncState }];
   /** Emitted whenever a feed page or heartbeat carries freshness metadata, for lag monitoring. */
@@ -136,7 +141,7 @@ export interface AgentFilter {
   delivery_types?: string[];
   has_tmp?: boolean;
   min_properties?: number;
-  compliance_status?: AgentCompliance['status'][];
+  compliance_status?: RegistrySyncComplianceStatus[];
 }
 
 export type RegistrySyncProperty = {
@@ -236,7 +241,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private agents = new Map<string, AgentSearchResult>();
   private authByDomain = new Map<string, AuthorizationEntry[]>();
   private authByAgent = new Map<string, AuthorizationEntry[]>();
-  private authLocationsById = new Map<string, { agent_url: string; publisher_domain: string }>();
+  private authLocationsById = new Map<string, { agentKey: string; domainKey: string }>();
   private propertiesByRid = new Map<string, RegistrySyncProperty>();
   private propertyRidsByDomain = new Map<string, Set<string>>();
   private propertyAliasesByRid = new Map<string, string>();
@@ -361,7 +366,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       if (filter.has_tmp != null && p.has_tmp !== filter.has_tmp) return false;
       if (filter.min_properties != null && p.property_count < filter.min_properties) return false;
       if (filter.compliance_status?.length) {
-        const status = agent.compliance_summary?.status ?? 'unknown';
+        const status = (agent.compliance_summary?.status ?? 'unknown') as RegistrySyncComplianceStatus;
         if (!filter.compliance_status.includes(status)) return false;
       }
       return true;
@@ -372,12 +377,12 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   /** Get all authorizations for a publisher domain. */
   getAuthorizationsForDomain(domain: string): AuthorizationEntry[] {
-    return this.authByDomain.get(domain) ?? [];
+    return this.authByDomain.get(this.authDomainKey(domain)) ?? [];
   }
 
   /** Get all authorizations for an agent. */
   getAuthorizationsForAgent(agentUrl: string): AuthorizationEntry[] {
-    return this.authByAgent.get(agentUrl) ?? [];
+    return this.authByAgent.get(this.authAgentKeyFromUrl(agentUrl)) ?? [];
   }
 
   /**
@@ -391,8 +396,9 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
    * authorization after a missed revocation.
    */
   isAuthorized(agentUrl: string, domain: string): boolean {
-    const entries = this.authByDomain.get(domain);
-    return entries != null && entries.some(e => e.agent_url === agentUrl);
+    const entries = this.authByDomain.get(this.authDomainKey(domain));
+    const agentKey = this.authAgentKeyFromUrl(agentUrl);
+    return entries != null && entries.some(entry => this.authAgentKey(entry) === agentKey);
   }
 
   // ====== Property Lookups ======
@@ -945,7 +951,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
       case 'agent.removed': {
         if (this.indexAgents) this.agents.delete(event.entity_id);
-        if (this.indexAuthorizations) this.authByAgent.delete(event.entity_id);
+        if (this.indexAuthorizations) this.removeAuthorizationsForAgent(event.entity_id);
         break;
       }
 
@@ -962,7 +968,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!this.isAuthorizationPayload(payload)) break;
         const entry = this.authorizationEntryFromEvent(payload);
         if (!entry.id && !entry.authorization_type) break;
-        this.upsertAuthorizationEntry(entry);
+        this.upsertAuthorizationEntry(entry, { fallbackToTupleOnMissingRowId: true });
         break;
       }
 
@@ -970,7 +976,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!this.indexAuthorizations) break;
         if (!this.isAuthorizationPayload(payload)) break;
         const entry = this.authorizationEntryFromEvent(payload);
-        this.removeAuthorizationEntries(entry, { matchByRowId: Boolean(entry.id || !entry.authorization_type) });
+        this.removeAuthorizationEntries(entry, {
+          matchByRowId: Boolean(entry.id || !entry.authorization_type),
+          fallbackToTupleOnMissingRowId: true,
+        });
         break;
       }
 
@@ -989,10 +998,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
           agentUrl: event.entity_id,
           previousStatus: (typeof payload.previous_status === 'string'
             ? payload.previous_status
-            : 'unknown') as AgentCompliance['status'],
+            : 'unknown') as RegistrySyncComplianceStatus,
           currentStatus: (typeof payload.current_status === 'string'
             ? payload.current_status
-            : 'unknown') as AgentCompliance['status'],
+            : 'unknown') as RegistrySyncComplianceStatus,
         });
         break;
       }
@@ -1064,22 +1073,30 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.emit('ignoredEvent', { event, reason });
   }
 
-  private upsertAuthorizationEntry(entry: AuthorizationEntry): void {
+  private upsertAuthorizationEntry(
+    entry: AuthorizationEntry,
+    options?: { fallbackToTupleOnMissingRowId?: boolean }
+  ): void {
     const normalizedEntry = this.normalizeAuthorizationEntry(entry);
-    this.removeAuthorizationEntries(normalizedEntry, { matchByRowId: Boolean(normalizedEntry.id) });
+    this.removeAuthorizationEntries(normalizedEntry, {
+      matchByRowId: Boolean(normalizedEntry.id),
+      fallbackToTupleOnMissingRowId: options?.fallbackToTupleOnMissingRowId,
+    });
 
-    const domainEntries = this.authByDomain.get(normalizedEntry.publisher_domain) ?? [];
+    const domainKey = this.authDomainKey(normalizedEntry.publisher_domain);
+    const domainEntries = this.authByDomain.get(domainKey) ?? [];
     domainEntries.push(normalizedEntry);
-    this.authByDomain.set(normalizedEntry.publisher_domain, domainEntries);
+    this.authByDomain.set(domainKey, domainEntries);
 
-    const agentEntries = this.authByAgent.get(normalizedEntry.agent_url) ?? [];
+    const agentKey = this.authAgentKey(normalizedEntry);
+    const agentEntries = this.authByAgent.get(agentKey) ?? [];
     agentEntries.push(normalizedEntry);
-    this.authByAgent.set(normalizedEntry.agent_url, agentEntries);
+    this.authByAgent.set(agentKey, agentEntries);
 
     if (normalizedEntry.id) {
       this.authLocationsById.set(normalizedEntry.id, {
-        agent_url: normalizedEntry.agent_url,
-        publisher_domain: normalizedEntry.publisher_domain,
+        agentKey,
+        domainKey,
       });
     }
   }
@@ -1093,23 +1110,47 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return this.normalizeAuthorizationEntry(entry);
   }
 
-  private removeAuthorizationEntries(target: AuthorizationEntry, options?: { matchByRowId?: boolean }): void {
-    const domainKeys = new Set<string>([target.publisher_domain]);
-    const agentKeys = new Set<string>([target.agent_url]);
-    if (target.id && options?.matchByRowId) {
-      const existingLocation = this.authLocationsById.get(target.id);
+  private removeAuthorizationsForAgent(agentUrl: string): void {
+    const agentKeys = new Set<string>([this.authAgentKeyFromUrl(agentUrl)]);
+    for (const [key, entries] of this.authByAgent) {
+      if (entries.some(entry => this.authorizationAgentMatches(entry, agentUrl))) agentKeys.add(key);
+    }
+
+    for (const agentKey of agentKeys) {
+      const entries = [...(this.authByAgent.get(agentKey) ?? [])];
+      for (const entry of entries) {
+        this.removeAuthorizationEntries(entry, {
+          matchByRowId: Boolean(entry.id),
+          fallbackToTupleOnMissingRowId: true,
+        });
+      }
+      this.authByAgent.delete(agentKey);
+    }
+  }
+
+  private removeAuthorizationEntries(target: AuthorizationEntry, options?: AuthorizationRemoveOptions): void {
+    const normalizedTarget = this.normalizeAuthorizationEntry(target);
+    const domainKeys = new Set<string>([this.authDomainKey(normalizedTarget.publisher_domain)]);
+    const agentKeys = new Set<string>([this.authAgentKey(normalizedTarget)]);
+    let effectiveOptions = options;
+
+    if (normalizedTarget.id && options?.matchByRowId) {
+      const existingLocation = this.authLocationsById.get(normalizedTarget.id);
+      if (!existingLocation && options.fallbackToTupleOnMissingRowId) {
+        effectiveOptions = { ...options, matchByRowId: false };
+      }
       if (existingLocation) {
-        domainKeys.add(existingLocation.publisher_domain);
-        agentKeys.add(existingLocation.agent_url);
+        domainKeys.add(existingLocation.domainKey);
+        agentKeys.add(existingLocation.agentKey);
       }
     }
 
     for (const domain of domainKeys) {
-      this.removeAuthorizationEntriesFromBucket(this.authByDomain, domain, target, options);
+      this.removeAuthorizationEntriesFromBucket(this.authByDomain, domain, normalizedTarget, effectiveOptions);
     }
 
     for (const agentUrl of agentKeys) {
-      this.removeAuthorizationEntriesFromBucket(this.authByAgent, agentUrl, target, options);
+      this.removeAuthorizationEntriesFromBucket(this.authByAgent, agentUrl, normalizedTarget, effectiveOptions);
     }
   }
 
@@ -1117,7 +1158,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     bucket: Map<string, AuthorizationEntry[]>,
     key: string,
     target: AuthorizationEntry,
-    options?: { matchByRowId?: boolean }
+    options?: AuthorizationRemoveOptions
   ): void {
     const entries = bucket.get(key);
     if (!entries) return;
@@ -1137,12 +1178,45 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private authorizationMatches(
     entry: AuthorizationEntry,
     target: AuthorizationEntry,
-    options?: { matchByRowId?: boolean }
+    options?: AuthorizationRemoveOptions
   ): boolean {
     if (target.id && options?.matchByRowId) return entry.id === target.id;
-    if (entry.agent_url !== target.agent_url || entry.publisher_domain !== target.publisher_domain) return false;
+    if (this.authAgentKey(entry) !== this.authAgentKey(target)) return false;
+    if (this.authDomainKey(entry.publisher_domain) !== this.authDomainKey(target.publisher_domain)) return false;
     if (target.authorization_type) return entry.authorization_type === target.authorization_type;
     return true;
+  }
+
+  private authorizationAgentMatches(entry: AuthorizationEntry, agentUrl: string): boolean {
+    return entry.agent_url === agentUrl || this.authAgentKey(entry) === this.authAgentKeyFromUrl(agentUrl);
+  }
+
+  private authDomainKey(domain: string): string {
+    return this.normalizeDomainKey(domain);
+  }
+
+  private authAgentKey(entry: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>): string {
+    return entry.agent_url_canonical?.trim() || this.authAgentKeyFromUrl(entry.agent_url);
+  }
+
+  private authAgentKeyFromUrl(agentUrl: string): string {
+    const trimmed = agentUrl.trim();
+    const schemeEnd = trimmed.indexOf('://');
+    if (schemeEnd <= 0) return trimmed;
+
+    const authorityStart = schemeEnd + 3;
+    let authorityEnd = trimmed.length;
+    for (const delimiter of ['/', '?', '#'] as const) {
+      const index = trimmed.indexOf(delimiter, authorityStart);
+      if (index >= 0 && index < authorityEnd) authorityEnd = index;
+    }
+    if (authorityEnd === authorityStart) return trimmed;
+
+    return (
+      trimmed.slice(0, authorityStart).toLowerCase() +
+      trimmed.slice(authorityStart, authorityEnd).toLowerCase() +
+      trimmed.slice(authorityEnd)
+    );
   }
 
   private upsertPropertyEvent(payload: Record<string, unknown>): void {
@@ -1398,8 +1472,21 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   private isAgentCompliance(value: unknown): value is AgentCompliance {
     const summary = this.asRecord(value);
-    const statuses = new Set(['passing', 'degraded', 'failing', 'unknown']);
+    const statuses = new Set(['passing', 'degraded', 'failing', 'unknown', 'opted_out']);
     const lifecycleStages = new Set(['development', 'testing', 'production', 'deprecated']);
+    if (summary.status === 'opted_out') {
+      return (
+        (summary.lifecycle_stage === undefined ||
+          (typeof summary.lifecycle_stage === 'string' && lifecycleStages.has(summary.lifecycle_stage))) &&
+        (summary.tracks === undefined ||
+          (summary.tracks != null && typeof summary.tracks === 'object' && !Array.isArray(summary.tracks))) &&
+        (summary.streak_days === undefined || typeof summary.streak_days === 'number') &&
+        (summary.last_checked_at === undefined ||
+          typeof summary.last_checked_at === 'string' ||
+          summary.last_checked_at === null) &&
+        (summary.headline === undefined || typeof summary.headline === 'string' || summary.headline === null)
+      );
+    }
     return (
       typeof summary.status === 'string' &&
       statuses.has(summary.status) &&
