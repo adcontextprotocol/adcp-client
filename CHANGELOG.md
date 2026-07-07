@@ -1,5 +1,21 @@
 # Changelog
 
+## 11.0.0
+
+### Major Changes
+
+- c030b64: Add RegistrySync property feed indexing with synchronous property lookups, tighten registry client response/event payload types, and reflect stricter registry shapes such as string-only inventory `format_ids` plus typed brand/adagents responses.
+
+### Minor Changes
+
+- a1bc683: Add brand.json website alias extraction helpers for owned website properties.
+
+### Patch Changes
+
+- 7813429: Storyboard runner: `field_value` (and its `allowed_values` / envelope variants) now compares object values with JSON deep equality instead of `JSON.stringify` string equality. The stringify comparison was key-order-sensitive, so a content-equal object whose members serialize in a different order false-negatived the check (observed live: `list_formats_integrity` failed "format_id round-trips verbatim" on `{id, agent_url}` echoed as `{agent_url, id}`). Object member order is not significant per RFC 8259; array element order remains strict, matching the sibling `deepEqual` helpers in `webhook-receiver.ts` and `canonical-format-satisfaction.ts`. Fixes #2327.
+- 45f0525: Client: stop injecting a deprecated top-level `packages[].buyer_ref` on `create_media_buy` / `update_media_buy` requests to v3 sellers. The request normalizer previously copied `context.buyer_ref` up to a top-level `buyer_ref` on every call, unconditionally — before the version gate ran. Spec-compliant v3 receivers (which validate strictly against the 3.0 package schema that removed the top-level field) rejected the request with `INVALID_REQUEST: packages.0.buyer_ref: Extra inputs are not permitted`. The promotion has been moved into the v2.5 adapter (`adaptCreateMediaBuyRequestForV2`), which is already gated on `serverVersion !== 'v3'`, so legacy servers still receive the top-level field they expect while v3 sellers see the correct wire shape.
+- 5864201: Allow validateAdAgents callers to opt into adagents.json bodies up to 10 MiB while keeping the default 256 KiB cap.
+
 ## 10.0.1
 
 ### Patch Changes
