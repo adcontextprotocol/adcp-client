@@ -15,9 +15,16 @@ import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
  * Normalize a single package's params for backward compatibility.
  *
  * Handles:
- * - context.buyer_ref → buyer_ref (pre-4.15 servers require top-level buyer_ref)
  * - optimization_goal (scalar) → optimization_goals (array)
  * - catalog (scalar object) → catalogs (array)
+ *
+ * Does NOT copy `context.buyer_ref` up to a top-level `buyer_ref`. The top-level
+ * field was removed from the package schema in AdCP 3.0 and strict v3 receivers
+ * reject it. When a request routes to a v2.5 seller, the v2 adapter in
+ * `creative-adapter.ts` derives `buyer_ref` (from a caller-supplied value,
+ * `context.buyer_ref`, `idempotency_key`, or parent/index) — that adapter is
+ * gated on `serverVersion !== 'v3'`, so the field only lands on the wire for
+ * sellers that still expect it.
  */
 export function normalizePackageParams(pkg: any): any {
   if (!pkg || typeof pkg !== 'object') return pkg;
@@ -50,13 +57,6 @@ export function normalizePackageParams(pkg: any): any {
       normalized.budget,
       'pre-3.0 shape not supported in AdCP 3.0. Use budget as a number instead.'
     );
-  }
-
-  // context.buyer_ref → buyer_ref (backward compat for pre-4.15 AdCP servers)
-  // AdCP 4.15 moved buyer_ref into context, but older servers still require it
-  // at the top level. Copy it back so requests validate on both old and new servers.
-  if (normalized.context?.buyer_ref && !normalized.buyer_ref) {
-    normalized.buyer_ref = normalized.context.buyer_ref;
   }
 
   // optimization_goal (scalar) → optimization_goals (array)
@@ -94,7 +94,7 @@ export function normalizeRequestParams(
     return params;
   }
 
-  let normalized = { ...params };
+  const normalized = { ...params };
 
   // ── idempotency_key auto-generation ──
   // Tasks that mutate state require a caller-supplied idempotency_key per
@@ -164,16 +164,11 @@ export function normalizeRequestParams(
     );
   }
 
-  // ── context.buyer_ref → buyer_ref (create_media_buy, update_media_buy) ──
-  // AdCP 4.15 moved buyer_ref into context, but pre-4.15 servers still require
-  // it at the top level. Copy it back so requests validate on both old and new servers.
-  if (
-    (taskType === 'create_media_buy' || taskType === 'update_media_buy') &&
-    normalized.context?.buyer_ref &&
-    !normalized.buyer_ref
-  ) {
-    normalized.buyer_ref = normalized.context.buyer_ref;
-  }
+  // Top-level `buyer_ref` on create_media_buy / update_media_buy was removed
+  // from the AdCP request schema in 3.0. It is NOT derived from `context.buyer_ref`
+  // here — strict v3 receivers reject it as an unknown field. The v2.5 adapter in
+  // `creative-adapter.ts` performs the derivation for legacy servers only, gated
+  // on `serverVersion !== 'v3'`.
 
   // ── Package normalization (create_media_buy, update_media_buy) ──
   if ((taskType === 'create_media_buy' || taskType === 'update_media_buy') && Array.isArray(normalized.packages)) {

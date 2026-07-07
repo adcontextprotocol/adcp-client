@@ -210,8 +210,10 @@ describe('SingleAgentClient Request Validation', () => {
       const client = new AdCPClient([mockAgent]);
       const agent = client.agent(mockAgent.id);
 
-      // buyer_ref is copied from context.buyer_ref by the normalizer for pre-4.15 servers.
-      // Non-strict parse accepts it without special-case handling.
+      // Callers may still pass a top-level buyer_ref explicitly for legacy servers
+      // that require it — the v2 adapter treats a caller-supplied top-level value
+      // as the highest-priority derivation source. Non-strict parse accepts it
+      // without special-case handling.
       await assert.doesNotReject(async () => {
         try {
           await agent.createMediaBuy({

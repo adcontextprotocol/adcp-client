@@ -589,6 +589,59 @@ describe('Creative Assignment Adapter', () => {
         assert.strictEqual(result.buyer_ref, 'caller-buyer-1');
       });
 
+      test('derives top-level buyer_ref from context.buyer_ref when no top-level buyer_ref is supplied', () => {
+        // v3 callers put their per-request buyer correlation in context.buyer_ref
+        // (the 3.0 request schema removed the top-level field). The v2 adapter
+        // is the only place that promotes it back to the top-level shape v2.5
+        // sellers still expect.
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          context: { buyer_ref: 'ctx-buyer-1' },
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' }],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-aaa',
+        });
+        assert.strictEqual(result.buyer_ref, 'ctx-buyer-1');
+      });
+
+      test('caller-supplied top-level buyer_ref wins over context.buyer_ref', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          buyer_ref: 'caller-buyer-1',
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          context: { buyer_ref: 'ctx-buyer-1' },
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' }],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+        });
+        assert.strictEqual(result.buyer_ref, 'caller-buyer-1');
+      });
+
+      test('per-package context.buyer_ref becomes top-level buyer_ref on the adapted package', () => {
+        // Symmetric to the request-level case above — each package's own
+        // context.buyer_ref promotes to a top-level buyer_ref for v2.5
+        // sellers, without polluting v3 wire payloads (that path is gated
+        // on serverVersion !== 'v3' at the caller).
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [
+            {
+              product_id: 'prod-1',
+              budget: 1000,
+              pricing_option_id: 'po-1',
+              context: { buyer_ref: 'pkg-ctx-1' },
+            },
+          ],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-aaa',
+        });
+        assert.strictEqual(result.packages[0].buyer_ref, 'pkg-ctx-1');
+      });
+
       test('no buyer_ref emitted when neither caller buyer_ref nor idempotency_key is present', () => {
         // v3 pre-send validation should already have rejected this; defensive
         // path for warn-mode where the request still reaches the adapter.
@@ -1919,18 +1972,24 @@ describe('Package Parameter Normalization', () => {
     assert.strictEqual(normalizePackageParams(42), 42);
   });
 
-  test('should copy context.buyer_ref to top-level buyer_ref for pre-4.15 compat', () => {
+  test('should NOT copy context.buyer_ref to top-level buyer_ref (v3 field removed)', () => {
+    // The AdCP 3.0 package schema removed top-level buyer_ref; strict v3
+    // receivers reject it as an unknown field. The v2.5 adapter in
+    // creative-adapter.ts derives it for legacy servers only.
     const result = normalizePackageParams({
       product_id: 'prod-1',
       budget: 5000,
       pricing_option_id: 'po-1',
       context: { buyer_ref: 'br-123' },
     });
-    assert.strictEqual(result.buyer_ref, 'br-123');
+    assert.strictEqual(result.buyer_ref, undefined);
     assert.strictEqual(result.context.buyer_ref, 'br-123');
   });
 
-  test('should not overwrite existing top-level buyer_ref with context.buyer_ref', () => {
+  test('should preserve a caller-supplied top-level buyer_ref (still legal on v2)', () => {
+    // The normalizer must not strip a top-level buyer_ref the caller set
+    // themselves — the field is v2.5-legal and the v2 adapter reads it as
+    // the highest-priority derivation source.
     const result = normalizePackageParams({
       product_id: 'prod-1',
       buyer_ref: 'existing-ref',
@@ -1949,18 +2008,18 @@ describe('Package Parameter Normalization', () => {
 });
 
 describe('Request-level context.buyer_ref → buyer_ref (create_media_buy)', () => {
-  test('should copy context.buyer_ref to top-level buyer_ref for pre-4.15 compat', () => {
+  test('should NOT copy request-level context.buyer_ref to top-level buyer_ref (v3 field removed)', () => {
     resetWarnings();
     const result = normalizeRequestParams('create_media_buy', {
       account: { account_id: 'acc-1' },
       brand: { domain: 'example.com' },
       context: { buyer_ref: 'br-request-123' },
     });
-    assert.strictEqual(result.buyer_ref, 'br-request-123');
+    assert.strictEqual(result.buyer_ref, undefined);
     assert.strictEqual(result.context.buyer_ref, 'br-request-123');
   });
 
-  test('should not overwrite existing top-level buyer_ref with context.buyer_ref', () => {
+  test('should preserve a caller-supplied top-level buyer_ref (legal on v2)', () => {
     resetWarnings();
     const result = normalizeRequestParams('create_media_buy', {
       buyer_ref: 'existing-ref',
@@ -1971,7 +2030,7 @@ describe('Request-level context.buyer_ref → buyer_ref (create_media_buy)', () 
     assert.strictEqual(result.buyer_ref, 'existing-ref');
   });
 
-  test('should not set buyer_ref when context has no buyer_ref', () => {
+  test('should not set buyer_ref when neither top-level nor context supplies one', () => {
     resetWarnings();
     const result = normalizeRequestParams('create_media_buy', {
       account: { account_id: 'acc-1' },
@@ -1981,20 +2040,11 @@ describe('Request-level context.buyer_ref → buyer_ref (create_media_buy)', () 
     assert.strictEqual(result.buyer_ref, undefined);
   });
 
-  test('should copy context.buyer_ref to top-level buyer_ref for update_media_buy', () => {
+  test('should NOT copy context.buyer_ref to top-level buyer_ref for update_media_buy', () => {
     resetWarnings();
     const result = normalizeRequestParams('update_media_buy', {
       media_buy_id: 'mb-1',
       context: { buyer_ref: 'br-update-123' },
-    });
-    assert.strictEqual(result.buyer_ref, 'br-update-123');
-  });
-
-  test('should not apply request-level buyer_ref shim to other task types', () => {
-    resetWarnings();
-    const result = normalizeRequestParams('get_products', {
-      brand: { domain: 'example.com' },
-      context: { buyer_ref: 'br-123' },
     });
     assert.strictEqual(result.buyer_ref, undefined);
   });
