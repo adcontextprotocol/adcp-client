@@ -1,7 +1,7 @@
 import type { RegistryClient } from './index';
 import type { CursorStore } from './cursor-store';
 import type { AgentSearchResult, AuthorizationEntry } from './types.generated';
-import { RegistrySync } from './sync';
+import { RegistrySync, type RegistrySyncProperty } from './sync';
 
 // ====== Configuration ======
 
@@ -46,7 +46,7 @@ export class PropertyRegistry {
       client: config.registryClient,
       pollIntervalMs: config.pollInterval,
       cursorStore: config.cursorStore,
-      indexes: { agents: true, authorizations: true },
+      indexes: { agents: true, authorizations: true, properties: true },
     });
 
     this.sync.on('sync', () => {
@@ -103,13 +103,24 @@ export class PropertyRegistry {
     return agents;
   }
 
+  /** Get a registry property by property_rid. Merged aliases resolve to their canonical RID. */
+  getProperty(rid: string): RegistrySyncProperty | undefined {
+    return this.sync.getProperty(rid);
+  }
+
+  /** Get all registry properties for a publisher domain. */
+  getPropertiesForDomain(domain: string): RegistrySyncProperty[] {
+    return this.sync.getPropertiesForDomain(domain);
+  }
+
   // ====== Stats ======
 
-  getStats(): { agents: number; authorizations: number; lastSync: Date | null } {
+  getStats(): { agents: number; authorizations: number; properties: number; lastSync: Date | null } {
     const syncStats = this.sync.getStats();
     return {
       agents: syncStats.agents,
       authorizations: syncStats.authorizations,
+      properties: syncStats.properties,
       lastSync: this.lastSync,
     };
   }

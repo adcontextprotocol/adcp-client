@@ -32,11 +32,14 @@ import type {
   FederatedPublisher,
   DomainLookupResult,
   ListBrandsOptions,
+  ListBrandsResponse,
+  GetBrandJsonResponse,
   ListOptions,
   ListAgentsOptions,
   ListAgentsResponse,
   ListPublishersResponse,
   ValidateAdagentsRequest,
+  ValidateAdagentsResponse,
   CreateAdagentsRequest,
   CreateAdagentsResponse,
   CommunityMirrorAdagentsConfig,
@@ -130,11 +133,14 @@ export type {
   FederatedPublisher,
   DomainLookupResult,
   ListBrandsOptions,
+  ListBrandsResponse,
+  GetBrandJsonResponse,
   ListOptions,
   ListAgentsOptions,
   ListAgentsResponse,
   ListPublishersResponse,
   ValidateAdagentsRequest,
+  ValidateAdagentsResponse,
   CreateAdagentsRequest,
   CreateAdagentsResponse,
   AdagentsAuthorizedAgent,
@@ -241,6 +247,7 @@ export type {
   RegistrySyncTransport,
   RegistrySyncEvents,
   AgentFilter,
+  RegistrySyncProperty,
 } from './sync';
 
 // Re-export the feed SSE transport
@@ -485,9 +492,7 @@ export class RegistryClient {
   }
 
   /** List brands in the registry with optional search and pagination. */
-  async listBrands(
-    options?: ListBrandsOptions
-  ): Promise<{ brands: BrandRegistryItem[]; stats: Record<string, unknown> }> {
+  async listBrands(options?: ListBrandsOptions): Promise<ListBrandsResponse> {
     const params = this.buildParams(options);
     return this.get(`${this.baseUrl}/api/brands/registry${params}`);
   }
@@ -499,7 +504,7 @@ export class RegistryClient {
    * This returns registry-supplied manifest content. Sanitize strings before
    * using them in LLM prompts, instructions, or other executable context.
    */
-  async getBrandJson(domain: string): Promise<Record<string, unknown> | null> {
+  async getBrandJson(domain: string): Promise<GetBrandJsonResponse | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const url = `${this.baseUrl}/api/brands/brand-json?domain=${encodeURIComponent(domain)}`;
     return this.get(url, { nullOn404: true });
@@ -1004,7 +1009,7 @@ export class RegistryClient {
   // ====== Adagents Tooling ======
 
   /** Validate a domain's adagents.json compliance. */
-  async validateAdagents(domain: string): Promise<Record<string, unknown>> {
+  async validateAdagents(domain: string): Promise<ValidateAdagentsResponse> {
     if (!domain?.trim()) throw new Error('domain is required');
     return this.post(`${this.baseUrl}/api/adagents/validate`, { domain });
   }

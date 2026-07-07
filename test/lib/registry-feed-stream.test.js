@@ -173,6 +173,9 @@ function installMock({ search, poll, onConnect } = {}) {
     if (url.includes('/agents/search')) {
       return (search ?? (() => searchResponse([AGENT])))(url);
     }
+    if (url.includes('/api/properties/registry')) {
+      return jsonResponse({ properties: [], stats: {} });
+    }
     if (url.includes('/registry/feed/stream')) {
       const idx = streamIndex++;
       streamUrls.push(url);
@@ -749,6 +752,7 @@ describe('RegistrySync SSE transport', () => {
     const enc = new TextEncoder();
     const restore = mockFetch(async url => {
       if (url.includes('/agents/search')) return searchResponse([AGENT]);
+      if (url.includes('/api/properties/registry')) return jsonResponse({ properties: [], stats: {} });
       if (url.includes('/registry/feed/stream')) {
         streamCount++;
         const body = new ReadableStream({

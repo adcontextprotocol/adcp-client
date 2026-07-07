@@ -210,10 +210,12 @@ export type FeedResponse = Omit<
 };
 
 /** Raw search result from the searchAgentProfiles operation. */
-export type AgentProfileSearchResult = operations['searchAgentProfiles']['responses']['200']['content']['application/json']['results'][number];
+export type AgentProfileSearchResult =
+  operations['searchAgentProfiles']['responses']['200']['content']['application/json']['results'][number];
 
 /** Full response from GET /api/registry/agents/search (raw operation type). */
-export type AgentProfileSearchResponse = operations['searchAgentProfiles']['responses']['200']['content']['application/json'];
+export type AgentProfileSearchResponse =
+  operations['searchAgentProfiles']['responses']['200']['content']['application/json'];
 
 /** Response from POST /api/registry/crawl-request (202). */
 export type CrawlRequestResponse = operations['requestCrawl']['responses']['202']['content']['application/json'];
@@ -231,7 +233,7 @@ export type AgentInventoryProfile = {
   category_taxonomy: string | null;
   tags: string[];
   delivery_types: string[];
-  format_ids?: unknown[];
+  format_ids?: string[];
   property_count: number;
   publisher_count: number;
   has_tmp: boolean;
@@ -254,13 +256,9 @@ export type AgentSearchResponse = {
   has_more: boolean;
 };
 
-/** An authorization entry used by the sync module. Derived from authorization.granted event payloads. */
-export type AuthorizationEntry = {
-  agent_url: string;
-  publisher_domain: string;
-  authorization_type: string;
-  property_ids?: string[];
-  effective_from?: string;
+/** An authorization entry used by the sync module. Mirrors authorization.* event payloads. */
+export type AuthorizationEntry = components['schemas']['AuthorizationEventPayload'] & {
+  /** Legacy alias still returned by some registry deployments. */
   effective_to?: string;
 };
 `;
