@@ -7,14 +7,7 @@ import type {
   AgentSearchResponse,
   FeedFreshness,
 } from './types.generated';
-import type {
-  CatalogEvent,
-  FeedResponse,
-  PropertyEventPayload,
-  PropertyIdentifier,
-  PropertyRegistryItem,
-  ResolvedBrand,
-} from './types';
+import type { CatalogEvent, FeedResponse, PropertyEventPayload, PropertyIdentifier, ResolvedBrand } from './types';
 import type { FeedStreamQuery } from './feed-stream';
 import {
   FeedStreamCursorExpiredError,
@@ -168,10 +161,10 @@ export type RegistrySyncProperty = {
 /**
  * In-memory replica of the AdCP registry.
  *
- * Bootstraps from the agent/property list endpoints, then tails the change
- * feed — Server-Sent Events by default (`transport: 'auto'`), falling back to
- * polling `/api/registry/feed` when streaming is unavailable — to keep its
- * indexes current for zero-latency lookups.
+ * Bootstraps from the agent search endpoint, then tails the change feed —
+ * Server-Sent Events by default (`transport: 'auto'`), falling back to polling
+ * `/api/registry/feed` when streaming is unavailable — to keep its indexes
+ * current for zero-latency lookups.
  *
  * **Staleness:** lookups (`getAgent`, `isAuthorized`, the authorization getters)
  * return the last synced state. After a transient failure the engine keeps
@@ -243,6 +236,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private agents = new Map<string, AgentSearchResult>();
   private authByDomain = new Map<string, AuthorizationEntry[]>();
   private authByAgent = new Map<string, AuthorizationEntry[]>();
+  private authLocationsById = new Map<string, { agent_url: string; publisher_domain: string }>();
   private propertiesByRid = new Map<string, RegistrySyncProperty>();
   private propertyRidsByDomain = new Map<string, Set<string>>();
   private propertyAliasesByRid = new Map<string, string>();
@@ -503,10 +497,6 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         } while (cursor);
       }
 
-      if (this.indexProperties) {
-        await this.bootstrapProperties();
-      }
-
       // Get initial feed cursor and apply any events
       await this.drainFeed(gen);
 
@@ -536,27 +526,6 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.cursor = null;
     await this.cursorStore.clearCursor();
     await this.bootstrap(gen);
-  }
-
-  private async bootstrapProperties(): Promise<void> {
-    const limit = 200;
-    let offset = 0;
-
-    for (;;) {
-      const response = await this.client.listProperties({ limit, offset });
-      const properties = Array.isArray(response.properties) ? response.properties : [];
-
-      for (const property of properties) {
-        const entry = this.propertyFromRegistryItem(property);
-        if (entry) this.setPropertyEntry(entry, this.propertiesByRid.get(entry.property_rid));
-      }
-
-      if (properties.length === 0 || properties.length < limit) break;
-
-      offset += properties.length;
-      const total = this.totalPropertiesFromStats(response.stats);
-      if (total != null && offset >= total) break;
-    }
   }
 
   // ====== Private: Polling ======
@@ -984,16 +953,14 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
         if (!this.indexAuthorizations) break;
         if (!this.isAuthorizationPayload(payload)) break;
         if (typeof payload.authorization_type !== 'string') break;
-        this.upsertAuthorizationEntry(
-          this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true })
-        );
+        this.upsertAuthorizationEntry(this.authorizationEntryFromEvent(payload));
         break;
       }
 
       case 'authorization.modified': {
         if (!this.indexAuthorizations) break;
         if (!this.isAuthorizationPayload(payload)) break;
-        const entry = this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true });
+        const entry = this.authorizationEntryFromEvent(payload);
         if (!entry.id && !entry.authorization_type) break;
         this.upsertAuthorizationEntry(entry);
         break;
@@ -1002,7 +969,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       case 'authorization.revoked': {
         if (!this.indexAuthorizations) break;
         if (!this.isAuthorizationPayload(payload)) break;
-        const entry = this.authorizationEntryFromEvent(event, payload, { allowEntityIdFallback: true });
+        const entry = this.authorizationEntryFromEvent(payload);
         this.removeAuthorizationEntries(entry, { matchByRowId: Boolean(entry.id || !entry.authorization_type) });
         break;
       }
@@ -1034,7 +1001,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       case 'property.updated':
       case 'property.reactivated':
       case 'property.stale': {
-        if (this.indexProperties) this.upsertPropertyEvent(event.entity_id, payload);
+        if (this.indexProperties) this.upsertPropertyEvent(payload);
         break;
       }
 
@@ -1082,6 +1049,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.agents.clear();
     this.authByDomain.clear();
     this.authByAgent.clear();
+    this.authLocationsById.clear();
     this.propertiesByRid.clear();
     this.propertyRidsByDomain.clear();
     this.propertyAliasesByRid.clear();
@@ -1097,51 +1065,73 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   }
 
   private upsertAuthorizationEntry(entry: AuthorizationEntry): void {
-    this.removeAuthorizationEntries(entry, { matchByRowId: Boolean(entry.id) });
+    const normalizedEntry = this.normalizeAuthorizationEntry(entry);
+    this.removeAuthorizationEntries(normalizedEntry, { matchByRowId: Boolean(normalizedEntry.id) });
 
-    const domainEntries = this.authByDomain.get(entry.publisher_domain) ?? [];
-    domainEntries.push(entry);
-    this.authByDomain.set(entry.publisher_domain, domainEntries);
+    const domainEntries = this.authByDomain.get(normalizedEntry.publisher_domain) ?? [];
+    domainEntries.push(normalizedEntry);
+    this.authByDomain.set(normalizedEntry.publisher_domain, domainEntries);
 
-    const agentEntries = this.authByAgent.get(entry.agent_url) ?? [];
-    agentEntries.push(entry);
-    this.authByAgent.set(entry.agent_url, agentEntries);
+    const agentEntries = this.authByAgent.get(normalizedEntry.agent_url) ?? [];
+    agentEntries.push(normalizedEntry);
+    this.authByAgent.set(normalizedEntry.agent_url, agentEntries);
+
+    if (normalizedEntry.id) {
+      this.authLocationsById.set(normalizedEntry.id, {
+        agent_url: normalizedEntry.agent_url,
+        publisher_domain: normalizedEntry.publisher_domain,
+      });
+    }
   }
 
-  private authorizationEntryFromEvent(
-    event: CatalogEvent,
-    entry: AuthorizationEntry,
-    options?: { allowEntityIdFallback?: boolean }
-  ): AuthorizationEntry {
-    if (entry.id || !options?.allowEntityIdFallback) return entry;
-    const fallbackId = this.authorizationRowIdFromEntityId(event, entry);
-    return fallbackId ? { ...entry, id: fallbackId } : entry;
+  private normalizeAuthorizationEntry(entry: AuthorizationEntry): AuthorizationEntry {
+    if (entry.effective_until || !entry.effective_to) return entry;
+    return { ...entry, effective_until: entry.effective_to };
   }
 
-  private authorizationRowIdFromEntityId(event: CatalogEvent, entry: AuthorizationEntry): string | null {
-    const entityId = this.stringValue(event.entity_id);
-    if (!entityId) return null;
-
-    const normalizedEntityId = entityId.toLowerCase();
-    const normalizedAgentUrl = entry.agent_url.toLowerCase();
-    const normalizedDomain = entry.publisher_domain.toLowerCase();
-    if (normalizedEntityId.includes(normalizedAgentUrl) && normalizedEntityId.includes(normalizedDomain)) return null;
-
-    return entityId;
+  private authorizationEntryFromEvent(entry: AuthorizationEntry): AuthorizationEntry {
+    return this.normalizeAuthorizationEntry(entry);
   }
 
   private removeAuthorizationEntries(target: AuthorizationEntry, options?: { matchByRowId?: boolean }): void {
-    for (const [domain, entries] of this.authByDomain) {
-      const filtered = entries.filter(entry => !this.authorizationMatches(entry, target, options));
-      if (filtered.length > 0) this.authByDomain.set(domain, filtered);
-      else this.authByDomain.delete(domain);
+    const domainKeys = new Set<string>([target.publisher_domain]);
+    const agentKeys = new Set<string>([target.agent_url]);
+    if (target.id && options?.matchByRowId) {
+      const existingLocation = this.authLocationsById.get(target.id);
+      if (existingLocation) {
+        domainKeys.add(existingLocation.publisher_domain);
+        agentKeys.add(existingLocation.agent_url);
+      }
     }
 
-    for (const [agentUrl, entries] of this.authByAgent) {
-      const filtered = entries.filter(entry => !this.authorizationMatches(entry, target, options));
-      if (filtered.length > 0) this.authByAgent.set(agentUrl, filtered);
-      else this.authByAgent.delete(agentUrl);
+    for (const domain of domainKeys) {
+      this.removeAuthorizationEntriesFromBucket(this.authByDomain, domain, target, options);
     }
+
+    for (const agentUrl of agentKeys) {
+      this.removeAuthorizationEntriesFromBucket(this.authByAgent, agentUrl, target, options);
+    }
+  }
+
+  private removeAuthorizationEntriesFromBucket(
+    bucket: Map<string, AuthorizationEntry[]>,
+    key: string,
+    target: AuthorizationEntry,
+    options?: { matchByRowId?: boolean }
+  ): void {
+    const entries = bucket.get(key);
+    if (!entries) return;
+
+    const filtered: AuthorizationEntry[] = [];
+    for (const entry of entries) {
+      if (this.authorizationMatches(entry, target, options)) {
+        if (entry.id) this.authLocationsById.delete(entry.id);
+      } else {
+        filtered.push(entry);
+      }
+    }
+    if (filtered.length > 0) bucket.set(key, filtered);
+    else bucket.delete(key);
   }
 
   private authorizationMatches(
@@ -1155,18 +1145,13 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     return true;
   }
 
-  private upsertPropertyEvent(entityId: string, payload: Record<string, unknown>): void {
-    const rid = this.propertyRidFromPayload(entityId, payload);
+  private upsertPropertyEvent(payload: Record<string, unknown>): void {
+    const rid = this.propertyRidFromPayload(payload);
     if (!rid) return;
     const canonicalRid = this.resolvePropertyRid(rid);
     const existing = this.propertiesByRid.get(canonicalRid);
     const next = this.propertyFromPayload(canonicalRid, payload, existing);
     if (!next) return;
-
-    const bootstrapRid = next.publisher_domain ? this.propertyBootstrapRid(next.publisher_domain) : null;
-    if (!existing && bootstrapRid && bootstrapRid !== canonicalRid && this.propertiesByRid.has(bootstrapRid)) {
-      this.deletePropertyEntry(bootstrapRid);
-    }
 
     this.setPropertyEntry(next, existing);
   }
@@ -1195,10 +1180,6 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       merged.publisher_domain = canonicalEntry?.publisher_domain ?? aliasEntry?.publisher_domain;
     }
 
-    const bootstrapRid = merged.publisher_domain ? this.propertyBootstrapRid(merged.publisher_domain) : null;
-    if (bootstrapRid && bootstrapRid !== canonicalRid && bootstrapRid !== aliasRid) {
-      this.deletePropertyEntry(bootstrapRid);
-    }
     this.deletePropertyEntry(aliasRid);
     this.setPropertyEntry(merged, canonicalEntry);
   }
@@ -1221,25 +1202,6 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     if (publisherDomain) next.publisher_domain = publisherDomain;
 
     return hasPayloadFields || publisherDomain || existing ? next : null;
-  }
-
-  private propertyFromRegistryItem(item: PropertyRegistryItem): RegistrySyncProperty | null {
-    const record = this.asRecord(item);
-    const publisherDomain = this.stringValue(record.publisher_domain) ?? this.stringValue(record.domain);
-    const rid =
-      this.stringValue(record.property_rid) ??
-      this.stringValue(record.rid) ??
-      this.stringValue(record.id) ??
-      (publisherDomain ? this.propertyBootstrapRid(publisherDomain) : null);
-    if (!rid) return null;
-
-    const entry: RegistrySyncProperty = { property_rid: rid };
-    for (const [key, value] of Object.entries(record)) {
-      if (value !== undefined) entry[key] = this.cloneJsonValue(value);
-    }
-    entry.property_rid = rid;
-    if (publisherDomain) entry.publisher_domain = publisherDomain;
-    return entry;
   }
 
   private setPropertyEntry(entry: RegistrySyncProperty, previous?: RegistrySyncProperty): void {
@@ -1269,9 +1231,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     if (rids.size === 0) this.propertyRidsByDomain.delete(key);
   }
 
-  private propertyRidFromPayload(entityId: string, payload: Record<string, unknown>): string | null {
+  private propertyRidFromPayload(payload: Record<string, unknown>): string | null {
     if (typeof payload.property_rid === 'string' && payload.property_rid.trim()) return payload.property_rid;
-    if (entityId?.trim()) return entityId;
+    if (typeof payload.rid === 'string' && payload.rid.trim()) return payload.rid;
+    if (typeof payload.id === 'string' && payload.id.trim()) return payload.id;
     return null;
   }
 
@@ -1284,20 +1247,8 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       : undefined;
   }
 
-  private propertyBootstrapRid(domain: string): string {
-    return this.normalizeDomainKey(domain);
-  }
-
   private stringValue(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value : undefined;
-  }
-
-  private totalPropertiesFromStats(stats: Record<string, unknown>): number | null {
-    const candidates = [stats.total, stats.total_properties, stats.properties];
-    for (const candidate of candidates) {
-      if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
-    }
-    return null;
   }
 
   private resolvePropertyRid(rid: string): string {
@@ -1430,10 +1381,10 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private isAuthorizationPayload(value: unknown): value is AuthorizationEntry {
     const payload = this.asRecord(value);
     return (
-      (payload.id === undefined || typeof payload.id === 'string') &&
-      typeof payload.agent_url === 'string' &&
-      typeof payload.publisher_domain === 'string' &&
-      (payload.authorization_type === undefined || typeof payload.authorization_type === 'string') &&
+      (payload.id === undefined || this.stringValue(payload.id) !== undefined) &&
+      this.stringValue(payload.agent_url) !== undefined &&
+      this.stringValue(payload.publisher_domain) !== undefined &&
+      (payload.authorization_type === undefined || this.stringValue(payload.authorization_type) !== undefined) &&
       (payload.property_ids === undefined || this.isStringArray(payload.property_ids)) &&
       (payload.property_tags === undefined || this.isStringArray(payload.property_tags)) &&
       (payload.placement_ids === undefined || this.isStringArray(payload.placement_ids)) &&

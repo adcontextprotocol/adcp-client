@@ -166,7 +166,7 @@ describe('RegistrySync', () => {
       sync.stop();
     });
 
-    test('loads properties from registry list before tailing an empty feed', async () => {
+    test('does not bootstrap aggregate property registry rows as properties', async () => {
       let propertiesCallCount = 0;
       restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
@@ -205,12 +205,10 @@ describe('RegistrySync', () => {
       sync.stop();
 
       const properties = sync.getPropertiesForDomain('listed.example');
-      assert.strictEqual(propertiesCallCount, 1);
-      assert.strictEqual(properties.length, 1);
-      assert.strictEqual(properties[0].property_rid, 'listed.example');
-      assert.strictEqual(properties[0].publisher_domain, 'Listed.example');
-      assert.strictEqual(properties[0].properties[0].id, 'homepage');
-      assert.strictEqual(sync.getStats().properties, 1);
+      assert.strictEqual(propertiesCallCount, 0);
+      assert.strictEqual(properties.length, 0);
+      assert.strictEqual(sync.getProperty('listed.example'), undefined);
+      assert.strictEqual(sync.getStats().properties, 0);
     });
 
     test('paginates search until has_more is false', async () => {
@@ -494,6 +492,37 @@ describe('RegistrySync', () => {
       assert.strictEqual(agentEntries[0].effective_until, '2026-12-31T00:00:00.000Z');
     });
 
+    test('authorization.granted maps legacy effective_to to effective_until', async () => {
+      const grantEvent = makeEvent('authorization.granted', 'auth-legacy', {
+        id: 'auth-legacy',
+        agent_url: 'https://ads.streamhaus.example.com',
+        publisher_domain: 'nytimes.com',
+        authorization_type: 'full',
+        effective_to: '2026-12-31T00:00:00.000Z',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([grantEvent], { cursor: 'cursor-003' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      const [entry] = syncInstance.getAuthorizationsForDomain('nytimes.com');
+      assert.strictEqual(entry.effective_to, '2026-12-31T00:00:00.000Z');
+      assert.strictEqual(entry.effective_until, '2026-12-31T00:00:00.000Z');
+    });
+
     test('authorization.modified without authorization_type replaces row by id', async () => {
       const grantEvent = makeEvent('authorization.granted', 'auth-1', {
         id: 'auth-row-1',
@@ -532,7 +561,7 @@ describe('RegistrySync', () => {
       assert.deepStrictEqual(domainEntries[0].property_ids, ['new-property']);
     });
 
-    test('authorization.modified uses event entity_id when payload id is absent', async () => {
+    test('authorization.modified without id or authorization_type is ignored', async () => {
       const grantA = makeEvent('authorization.granted', 'auth-row-1', {
         agent_url: 'https://ads.streamhaus.example.com',
         publisher_domain: 'nytimes.com',
@@ -573,8 +602,8 @@ describe('RegistrySync', () => {
       assert.deepStrictEqual(
         domainEntries.map(entry => [entry.id, entry.authorization_type, entry.property_ids]).sort(),
         [
-          ['auth-row-1', 'full', ['property-a']],
-          ['auth-row-2', undefined, ['property-b-updated']],
+          [undefined, 'full', ['property-a']],
+          [undefined, 'scoped', ['property-b']],
         ]
       );
     });
@@ -708,6 +737,44 @@ describe('RegistrySync', () => {
         }
         if (url.includes('/registry/feed')) {
           return new Response(JSON.stringify(makeFeedResponse([badAuth], { cursor: 'cursor-002' })), { status: 200 });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.strictEqual(syncInstance.getStats().authorizations, 0);
+    });
+
+    test('skips authorization.granted with empty identity fields', async () => {
+      const emptyAgent = makeEvent('authorization.granted', 'auth-empty-agent', {
+        agent_url: '',
+        publisher_domain: 'pub.com',
+        authorization_type: 'full',
+      });
+      const emptyDomain = makeEvent('authorization.granted', 'auth-empty-domain', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: ' ',
+        authorization_type: 'full',
+      });
+      const emptyType = makeEvent('authorization.granted', 'auth-empty-type', {
+        agent_url: 'https://ads.example.com',
+        publisher_domain: 'pub.com',
+        authorization_type: '',
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(
+            JSON.stringify(makeFeedResponse([emptyAgent, emptyDomain, emptyType], { cursor: 'cursor-002' })),
+            { status: 200 }
+          );
         }
         return new Response('Not found', { status: 404 });
       });
@@ -870,6 +937,37 @@ describe('RegistrySync', () => {
 
       property.publisher_domain = 'mutated.example';
       assert.strictEqual(syncInstance.getProperty('rid-alpha').publisher_domain, 'ExamplePub.com');
+    });
+
+    test('property.created without explicit registry rid is ignored', async () => {
+      const propertyEvent = makeEvent('property.created', 'examplepub.com', {
+        publisher_domain: 'ExamplePub.com',
+        identifiers: [{ type: 'domain', value: 'examplepub.com' }],
+        classification: 'property',
+        source: 'authoritative',
+        property: PROPERTY_PAYLOAD.property,
+      });
+
+      restore = mockFetch(async url => {
+        if (url.includes('/agents/search')) {
+          return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
+        }
+        if (url.includes('/registry/feed')) {
+          return new Response(JSON.stringify(makeFeedResponse([propertyEvent], { cursor: 'cursor-002' })), {
+            status: 200,
+          });
+        }
+        return new Response('Not found', { status: 404 });
+      });
+
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncInstance = new RegistrySync({ client });
+      await syncInstance.start();
+      syncInstance.stop();
+
+      assert.strictEqual(syncInstance.getProperty('examplepub.com'), undefined);
+      assert.deepStrictEqual(syncInstance.getPropertiesForDomain('examplepub.com'), []);
+      assert.strictEqual(syncInstance.getStats().properties, 0);
     });
 
     test('property.updated merges over existing property by rid', async () => {
@@ -1063,7 +1161,7 @@ describe('RegistrySync', () => {
       assert.strictEqual(syncInstance.getStats().properties, 1);
     });
 
-    test('property.merged removes domain bootstrap placeholder for canonical payload', async () => {
+    test('property.merged does not synthesize a domain-keyed placeholder', async () => {
       const mergeEvent = makeEvent('property.merged', 'rid-alias', {
         alias_rid: 'rid-alias',
         canonical_rid: 'rid-canonical',
@@ -1077,23 +1175,6 @@ describe('RegistrySync', () => {
       restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([])), { status: 200 });
-        }
-        if (url.includes('/api/properties/registry')) {
-          return new Response(
-            JSON.stringify({
-              properties: [
-                {
-                  domain: 'canonical.example',
-                  source: 'adagents_json',
-                  property_count: 1,
-                  agent_count: 0,
-                  verified: true,
-                },
-              ],
-              stats: { total: 1 },
-            }),
-            { status: 200 }
-          );
         }
         if (url.includes('/registry/feed')) {
           return new Response(JSON.stringify(makeFeedResponse([mergeEvent], { cursor: 'cursor-002' })), {
@@ -1610,22 +1691,25 @@ describe('RegistrySync', () => {
       assert.strictEqual(remaining[0].authorization_type, 'full');
     });
 
-    test('revoking by row entity_id preserves same-type rows', async () => {
+    test('revoking by payload id preserves same-type rows', async () => {
       const agentUrl = 'https://ads.example.com';
       const domain = 'pub.com';
       const authA = makeEvent('authorization.granted', 'auth-row-a', {
+        id: 'auth-row-a',
         agent_url: agentUrl,
         publisher_domain: domain,
         authorization_type: 'property_ids',
         property_ids: ['prop_a'],
       });
       const authB = makeEvent('authorization.granted', 'auth-row-b', {
+        id: 'auth-row-b',
         agent_url: agentUrl,
         publisher_domain: domain,
         authorization_type: 'property_ids',
         property_ids: ['prop_b'],
       });
       const revokeA = makeEvent('authorization.revoked', 'auth-row-a', {
+        id: 'auth-row-a',
         agent_url: agentUrl,
         publisher_domain: domain,
         authorization_type: 'property_ids',
