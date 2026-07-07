@@ -4,6 +4,9 @@ import type { GetBrandIdentitySuccess } from '../types/core.generated';
 export type BrandJsonRecord = Record<string, unknown>;
 type ProtocolBrandLogo = NonNullable<GetBrandIdentitySuccess['logos']>[number];
 
+export type BrandWebsiteAliasRelationship = 'owned';
+export type BrandWebsiteAliasSource = 'brand_json_property';
+
 export type BrandLogoOrientation = ProtocolBrandLogo['orientation'];
 export type BrandLogoBackground = ProtocolBrandLogo['background'];
 export type BrandLogoVariant = ProtocolBrandLogo['variant'];
@@ -129,6 +132,36 @@ export interface UpdateBrandJsonFromMappingsOptions {
 export interface UpdateBrandJsonFromMappingsResult extends ApplyBrandAssetMappingsResult {
   saved: boolean;
   saveResponse?: SaveBrandResponse;
+}
+
+export interface BrandWebsiteAlias {
+  /** Normalized hostname/domain claimed by an owned website property. */
+  domain: string;
+  /** Where this alias was derived from. */
+  source: BrandWebsiteAliasSource;
+  /** Manifest path of the source property, e.g. `brands[0].properties[1]`. */
+  path: string;
+  /** Portfolio-local brand id when the alias came from `brands[]`. */
+  brandId?: string;
+  /** Human-readable brand name inferred from `name`, `brand_name`, or `names[]`. */
+  brandName?: string;
+  /** Property display name, when published. */
+  propertyName?: string;
+  /** Whether the source property was marked primary. */
+  primary?: boolean;
+  /** Only owned website properties are surfaced as brand aliases. */
+  relationship: BrandWebsiteAliasRelationship;
+}
+
+export interface ExtractBrandWebsiteAliasesOptions {
+  /** Restrict extraction to one `brands[]` entry. */
+  brandId?: string;
+  /**
+   * Also inspect non-canonical compatibility fields (`domain`, `url`, and
+   * `identifiers[]`). Defaults to false because brand.json property ownership
+   * is attached to the canonical `identifier` field.
+   */
+  includeCompatibilityFields?: boolean;
 }
 
 export const COMMON_LOGO_SLOTS = [
@@ -347,6 +380,49 @@ export async function updateBrandJsonFromMappings(
   return { ...applied, saved: true, saveResponse };
 }
 
+export function extractBrandWebsiteAliases(
+  brandJsonOrBrand: BrandJsonRecord,
+  options?: ExtractBrandWebsiteAliasesOptions
+): BrandWebsiteAlias[] {
+  const aliases: BrandWebsiteAlias[] = [];
+  const seen = new Set<string>();
+
+  for (const brand of iterateBrandRecords(brandJsonOrBrand, options?.brandId)) {
+    const properties = Array.isArray(brand.record.properties) ? brand.record.properties : [];
+    for (let propertyIndex = 0; propertyIndex < properties.length; propertyIndex++) {
+      const property = properties[propertyIndex];
+      if (!isRecord(property)) continue;
+      if (!isOwnedWebsiteProperty(property)) continue;
+
+      for (const domain of extractWebsitePropertyDomains(property, {
+        includeCompatibilityFields: options?.includeCompatibilityFields === true,
+      })) {
+        if (seen.has(domain)) continue;
+        seen.add(domain);
+        aliases.push({
+          domain,
+          source: 'brand_json_property',
+          path: propertyPath(brand.path, propertyIndex),
+          ...(brand.id ? { brandId: brand.id } : {}),
+          ...(brand.name ? { brandName: brand.name } : {}),
+          ...(typeof property.name === 'string' && property.name.trim() ? { propertyName: property.name } : {}),
+          ...(property.primary === true ? { primary: true } : {}),
+          relationship: 'owned',
+        });
+      }
+    }
+  }
+
+  return aliases;
+}
+
+export function extractBrandWebsiteAliasDomains(
+  brandJsonOrBrand: BrandJsonRecord,
+  options?: ExtractBrandWebsiteAliasesOptions
+): string[] {
+  return extractBrandWebsiteAliases(brandJsonOrBrand, options).map(alias => alias.domain);
+}
+
 function indexCandidates(
   candidates: BrandAssetCandidate[],
   errors: BrandAssetMappingIssue[]
@@ -460,6 +536,115 @@ function upsertLogo(brand: BrandJsonRecord, logo: BrandJsonRecord): void {
 function readLogos(brandJsonOrBrand: BrandJsonRecord): BrandJsonRecord[] {
   if (Array.isArray(brandJsonOrBrand.logos)) return brandJsonOrBrand.logos.filter(isRecord);
   return [];
+}
+
+function iterateBrandRecords(
+  root: BrandJsonRecord,
+  brandId?: string
+): Array<{ record: BrandJsonRecord; path: string; id?: string; name?: string }> {
+  if (!Array.isArray(root.brands)) {
+    return [{ record: root, path: '', id: readBrandId(root), name: inferBrandName(root) }];
+  }
+
+  const records: Array<{ record: BrandJsonRecord; path: string; id?: string; name?: string }> = [];
+  for (let brandIndex = 0; brandIndex < root.brands.length; brandIndex++) {
+    const brand = root.brands[brandIndex];
+    if (!isRecord(brand)) continue;
+    if (brandId && !matchesBrandId(brandId)(brand)) continue;
+    records.push({ record: brand, path: `brands[${brandIndex}]`, id: readBrandId(brand), name: inferBrandName(brand) });
+  }
+  return records;
+}
+
+function propertyPath(brandPath: string, propertyIndex: number): string {
+  return brandPath ? `${brandPath}.properties[${propertyIndex}]` : `properties[${propertyIndex}]`;
+}
+
+function readBrandId(brand: BrandJsonRecord): string | undefined {
+  if (typeof brand.id === 'string' && brand.id.trim()) return brand.id;
+  if (typeof brand.brand_id === 'string' && brand.brand_id.trim()) return brand.brand_id;
+  return undefined;
+}
+
+function isOwnedWebsiteProperty(property: BrandJsonRecord): boolean {
+  const propertyType = property.type ?? property.property_type;
+  if (propertyType !== 'website') return false;
+
+  const relationship = property.relationship;
+  if (relationship !== undefined && relationship !== 'owned') return false;
+
+  const delegationType = property.delegation_type;
+  if (delegationType === 'direct' || delegationType === 'delegated' || delegationType === 'ad_network') return false;
+
+  return true;
+}
+
+function extractWebsitePropertyDomains(
+  property: BrandJsonRecord,
+  options: { includeCompatibilityFields: boolean }
+): string[] {
+  const domains: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown): void => {
+    const domain = normalizeWebsiteDomain(value);
+    if (!domain || seen.has(domain)) return;
+    seen.add(domain);
+    domains.push(domain);
+  };
+
+  add(property.identifier);
+
+  if (!options.includeCompatibilityFields) return domains;
+
+  add(property.domain);
+  add(property.url);
+
+  if (Array.isArray(property.identifiers)) {
+    for (const identifier of property.identifiers) {
+      if (!isRecord(identifier)) continue;
+      if (identifier.type !== 'domain' && identifier.type !== 'subdomain') continue;
+      add(identifier.value);
+      add(identifier.identifier);
+      add(identifier.domain);
+      add(identifier.url);
+    }
+  }
+
+  return domains;
+}
+
+function normalizeWebsiteDomain(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let candidate = trimmed;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate) && !candidate.startsWith('//')) {
+    candidate = `https://${candidate}`;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  if (parsed.username || parsed.password) return null;
+
+  const hostname = parsed.hostname.toLowerCase();
+  return isDomainLikeHost(hostname) ? hostname : null;
+}
+
+function isDomainLikeHost(hostname: string): boolean {
+  if (hostname.length === 0 || hostname.length > 253 || !hostname.includes('.')) return false;
+  if (hostname.startsWith('.') || hostname.endsWith('.')) return false;
+
+  const labels = hostname.split('.');
+  return labels.every(label => {
+    return label.length > 0 && label.length <= 63 && /^([a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9])$/.test(label);
+  });
 }
 
 function scoreLogoForSlot(logo: BrandJsonRecord, requestedSlot: string): number | null {

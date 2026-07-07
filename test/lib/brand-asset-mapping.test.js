@@ -4,6 +4,8 @@ const assert = require('node:assert');
 const {
   applyBrandAssetMappings,
   checkLogoSlotCoverage,
+  extractBrandWebsiteAliasDomains,
+  extractBrandWebsiteAliases,
   selectLogoForSlot,
   updateBrandJsonFromMappings,
   validateBrandAssetMappings,
@@ -296,5 +298,128 @@ describe('brand asset mapping helpers', () => {
 
     assert.strictEqual(result.saved, true);
     assert.strictEqual(savedPayload.brand_name, 'Spark');
+  });
+
+  test('extracts owned website aliases from house portfolio properties', () => {
+    const aliases = extractBrandWebsiteAliases({
+      house: { domain: 'loopme.ai', name: 'LoopMe' },
+      brands: [
+        {
+          id: 'loopme',
+          names: [{ en: 'LoopMe' }],
+          properties: [
+            { type: 'website', identifier: 'loopme.ai', primary: true },
+            { type: 'website', identifier: 'https://LOOPME.com/about' },
+            { type: 'mobile_app', identifier: 'com.loopme.app' },
+            { type: 'website', identifier: 'agency.example', relationship: 'delegated' },
+          ],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(aliases, [
+      {
+        domain: 'loopme.ai',
+        source: 'brand_json_property',
+        path: 'brands[0].properties[0]',
+        brandId: 'loopme',
+        brandName: 'LoopMe',
+        primary: true,
+        relationship: 'owned',
+      },
+      {
+        domain: 'loopme.com',
+        source: 'brand_json_property',
+        path: 'brands[0].properties[1]',
+        brandId: 'loopme',
+        brandName: 'LoopMe',
+        relationship: 'owned',
+      },
+    ]);
+  });
+
+  test('extracts website aliases from compatibility property shapes and supports brandId filtering', () => {
+    const domains = extractBrandWebsiteAliasDomains(
+      {
+        house: { domain: 'house.example', name: 'House' },
+        brands: [
+          {
+            id: 'spark',
+            name: 'Spark',
+            properties: [
+              { property_type: 'website', domain: 'Spark.Example' },
+              { property_type: 'website', url: 'https://www.spark.example/path' },
+              {
+                property_type: 'website',
+                identifiers: [
+                  { type: 'domain', value: 'shop.spark.example' },
+                  { type: 'ios_bundle', value: 'com.spark.app' },
+                ],
+              },
+            ],
+          },
+          {
+            id: 'bolt',
+            name: 'Bolt',
+            properties: [{ type: 'website', identifier: 'bolt.example' }],
+          },
+        ],
+      },
+      { brandId: 'spark', includeCompatibilityFields: true }
+    );
+
+    assert.deepStrictEqual(domains, ['spark.example', 'www.spark.example', 'shop.spark.example']);
+  });
+
+  test('does not promote compatibility fields as owned aliases unless explicitly requested', () => {
+    const aliases = extractBrandWebsiteAliases({
+      name: 'Acme',
+      properties: [
+        {
+          type: 'website',
+          identifier: 'brand.example',
+          domain: 'domain-extra.example',
+          url: 'https://url-extra.example/path',
+          identifiers: [{ type: 'domain', value: 'identifier-extra.example' }],
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(aliases, [
+      {
+        domain: 'brand.example',
+        source: 'brand_json_property',
+        path: 'properties[0]',
+        brandName: 'Acme',
+        relationship: 'owned',
+      },
+    ]);
+  });
+
+  test('does not treat delegated, direct, or network website properties as owned aliases', () => {
+    const aliases = extractBrandWebsiteAliases({
+      name: 'Acme',
+      properties: [
+        { type: 'website', identifier: 'owned.example' },
+        { type: 'website', identifier: 'direct.example', relationship: 'direct' },
+        { type: 'website', identifier: 'delegated.example', relationship: 'delegated' },
+        { type: 'website', identifier: 'network.example', relationship: 'ad_network' },
+        { type: 'website', identifier: 'direct-delegation-type.example', delegation_type: 'direct' },
+        { type: 'website', identifier: 'delegation-type.example', delegation_type: 'delegated' },
+        { type: 'website', identifier: 'network-delegation-type.example', delegation_type: 'ad_network' },
+        { type: 'website', identifier: 'ftp://invalid.example' },
+        { type: 'website', identifier: 'localhost' },
+      ],
+    });
+
+    assert.deepStrictEqual(aliases, [
+      {
+        domain: 'owned.example',
+        source: 'brand_json_property',
+        path: 'properties[0]',
+        brandName: 'Acme',
+        relationship: 'owned',
+      },
+    ]);
   });
 });
