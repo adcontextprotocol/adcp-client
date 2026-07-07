@@ -733,7 +733,7 @@ describe('RegistrySync', () => {
       assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
     });
 
-    test('authorization indexes use canonical agent urls', async () => {
+    test('authorization.revoked without canonical removes canonicalized grant', async () => {
       const grantEvent = makeEvent('authorization.granted', 'auth-1', {
         agent_url: 'https://ADS.streamhaus.example.com/agent-card',
         agent_url_canonical: 'https://ads.streamhaus.example.com',
@@ -741,8 +741,7 @@ describe('RegistrySync', () => {
         authorization_type: 'full',
       });
       const revokeEvent = makeEvent('authorization.revoked', 'auth-1', {
-        agent_url: 'https://ads.streamhaus.example.com',
-        agent_url_canonical: 'https://ads.streamhaus.example.com',
+        agent_url: 'https://ads.streamhaus.example.com/agent-card',
         publisher_domain: 'nytimes.com',
         authorization_type: 'full',
       });
@@ -765,7 +764,12 @@ describe('RegistrySync', () => {
       syncInstance.stop();
 
       assert.ok(!syncInstance.isAuthorized('https://ads.streamhaus.example.com', 'nytimes.com'));
+      assert.strictEqual(syncInstance.getAuthorizationsForDomain('nytimes.com').length, 0);
       assert.strictEqual(syncInstance.getAuthorizationsForAgent('https://ads.streamhaus.example.com').length, 0);
+      assert.strictEqual(
+        syncInstance.getAuthorizationsForAgent('https://ads.streamhaus.example.com/agent-card').length,
+        0
+      );
     });
 
     test('agent.discovered adds to agent index', async () => {

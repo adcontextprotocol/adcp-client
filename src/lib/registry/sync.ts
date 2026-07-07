@@ -1089,9 +1089,11 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     this.authByDomain.set(domainKey, domainEntries);
 
     const agentKey = this.authAgentKey(normalizedEntry);
-    const agentEntries = this.authByAgent.get(agentKey) ?? [];
-    agentEntries.push(normalizedEntry);
-    this.authByAgent.set(agentKey, agentEntries);
+    for (const key of this.authAgentKeys(normalizedEntry)) {
+      const agentEntries = this.authByAgent.get(key) ?? [];
+      agentEntries.push(normalizedEntry);
+      this.authByAgent.set(key, agentEntries);
+    }
 
     if (normalizedEntry.id) {
       this.authLocationsById.set(normalizedEntry.id, {
@@ -1111,7 +1113,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   }
 
   private removeAuthorizationsForAgent(agentUrl: string): void {
-    const agentKeys = new Set<string>([this.authAgentKeyFromUrl(agentUrl)]);
+    const agentKeys = this.authAgentKeysForUrl(agentUrl);
     for (const [key, entries] of this.authByAgent) {
       if (entries.some(entry => this.authorizationAgentMatches(entry, agentUrl))) agentKeys.add(key);
     }
@@ -1131,7 +1133,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   private removeAuthorizationEntries(target: AuthorizationEntry, options?: AuthorizationRemoveOptions): void {
     const normalizedTarget = this.normalizeAuthorizationEntry(target);
     const domainKeys = new Set<string>([this.authDomainKey(normalizedTarget.publisher_domain)]);
-    const agentKeys = new Set<string>([this.authAgentKey(normalizedTarget)]);
+    const agentKeys = this.authAgentKeys(normalizedTarget);
     let effectiveOptions = options;
 
     if (normalizedTarget.id && options?.matchByRowId) {
@@ -1142,6 +1144,16 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
       if (existingLocation) {
         domainKeys.add(existingLocation.domainKey);
         agentKeys.add(existingLocation.agentKey);
+      }
+    }
+
+    for (const domain of domainKeys) {
+      const entries = this.authByDomain.get(domain);
+      if (!entries) continue;
+      for (const entry of entries) {
+        if (this.authorizationMatches(entry, normalizedTarget, effectiveOptions)) {
+          for (const key of this.authAgentKeys(entry)) agentKeys.add(key);
+        }
       }
     }
 
@@ -1181,14 +1193,21 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
     options?: AuthorizationRemoveOptions
   ): boolean {
     if (target.id && options?.matchByRowId) return entry.id === target.id;
-    if (this.authAgentKey(entry) !== this.authAgentKey(target)) return false;
+    if (!this.authorizationEntriesShareAgent(entry, target)) return false;
     if (this.authDomainKey(entry.publisher_domain) !== this.authDomainKey(target.publisher_domain)) return false;
     if (target.authorization_type) return entry.authorization_type === target.authorization_type;
     return true;
   }
 
   private authorizationAgentMatches(entry: AuthorizationEntry, agentUrl: string): boolean {
-    return entry.agent_url === agentUrl || this.authAgentKey(entry) === this.authAgentKeyFromUrl(agentUrl);
+    return this.authAgentKeysOverlap(this.authAgentKeys(entry), this.authAgentKeysForUrl(agentUrl));
+  }
+
+  private authorizationEntriesShareAgent(
+    left: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>,
+    right: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>
+  ): boolean {
+    return this.authAgentKeysOverlap(this.authAgentKeys(left), this.authAgentKeys(right));
   }
 
   private authDomainKey(domain: string): string {
@@ -1197,6 +1216,29 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   private authAgentKey(entry: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>): string {
     return entry.agent_url_canonical?.trim() || this.authAgentKeyFromUrl(entry.agent_url);
+  }
+
+  private authAgentKeys(entry: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>): Set<string> {
+    const keys = this.authAgentKeysForUrl(entry.agent_url);
+    if (entry.agent_url_canonical?.trim()) {
+      for (const key of this.authAgentKeysForUrl(entry.agent_url_canonical)) keys.add(key);
+    }
+    return keys;
+  }
+
+  private authAgentKeysForUrl(agentUrl: string): Set<string> {
+    const trimmed = agentUrl.trim();
+    const keys = new Set<string>();
+    if (trimmed) keys.add(trimmed);
+    keys.add(this.authAgentKeyFromUrl(agentUrl));
+    return keys;
+  }
+
+  private authAgentKeysOverlap(left: Set<string>, right: Set<string>): boolean {
+    for (const key of left) {
+      if (right.has(key)) return true;
+    }
+    return false;
   }
 
   private authAgentKeyFromUrl(agentUrl: string): string {
