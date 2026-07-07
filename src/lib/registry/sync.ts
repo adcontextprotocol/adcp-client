@@ -382,7 +382,13 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   /** Get all authorizations for an agent. */
   getAuthorizationsForAgent(agentUrl: string): AuthorizationEntry[] {
-    return this.authByAgent.get(this.authAgentKeyFromUrl(agentUrl)) ?? [];
+    const entries: AuthorizationEntry[] = [];
+    for (const key of this.authAgentKeysForUrl(agentUrl)) {
+      for (const entry of this.authByAgent.get(key) ?? []) {
+        if (!entries.includes(entry)) entries.push(entry);
+      }
+    }
+    return entries;
   }
 
   /**
@@ -397,8 +403,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
    */
   isAuthorized(agentUrl: string, domain: string): boolean {
     const entries = this.authByDomain.get(this.authDomainKey(domain));
-    const agentKey = this.authAgentKeyFromUrl(agentUrl);
-    return entries != null && entries.some(entry => this.authAgentKey(entry) === agentKey);
+    return entries != null && entries.some(entry => this.authorizationAgentMatches(entry, agentUrl));
   }
 
   // ====== Property Lookups ======
@@ -1215,7 +1220,7 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
   }
 
   private authAgentKey(entry: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>): string {
-    return entry.agent_url_canonical?.trim() || this.authAgentKeyFromUrl(entry.agent_url);
+    return this.authAgentKeyFromUrl(entry.agent_url);
   }
 
   private authAgentKeys(entry: Pick<AuthorizationEntry, 'agent_url' | 'agent_url_canonical'>): Set<string> {
@@ -1243,22 +1248,26 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
 
   private authAgentKeyFromUrl(agentUrl: string): string {
     const trimmed = agentUrl.trim();
-    const schemeEnd = trimmed.indexOf('://');
-    if (schemeEnd <= 0) return trimmed;
+    if (!trimmed) return trimmed;
 
-    const authorityStart = schemeEnd + 3;
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.host) return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}`;
+    } catch {
+      // Fall through to best-effort normalization for malformed or scheme-less values.
+    }
+
+    const schemeEnd = trimmed.indexOf('://');
+    const authorityStart = schemeEnd > 0 ? schemeEnd + 3 : 0;
     let authorityEnd = trimmed.length;
     for (const delimiter of ['/', '?', '#'] as const) {
       const index = trimmed.indexOf(delimiter, authorityStart);
       if (index >= 0 && index < authorityEnd) authorityEnd = index;
     }
-    if (authorityEnd === authorityStart) return trimmed;
+    if (authorityEnd === authorityStart) return trimmed.toLowerCase();
 
-    return (
-      trimmed.slice(0, authorityStart).toLowerCase() +
-      trimmed.slice(authorityStart, authorityEnd).toLowerCase() +
-      trimmed.slice(authorityEnd)
-    );
+    const scheme = schemeEnd > 0 ? `${trimmed.slice(0, authorityStart).toLowerCase()}` : '';
+    return `${scheme}${trimmed.slice(authorityStart, authorityEnd).toLowerCase()}`;
   }
 
   private upsertPropertyEvent(payload: Record<string, unknown>): void {
