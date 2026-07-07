@@ -230,14 +230,33 @@ jobs:
         if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true'
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
+        env:
+          # Setting allowed_non_write_users below auto-enables the action's
+          # subprocess env scrub on EVERY run, not just read-only-actor runs.
+          # Per the action's security docs the scrub strips GitHub Actions
+          # secrets from Bash subprocesses — which would break the
+          # `gh pr review` call that is the review's deliverable. This
+          # workflow never executes PR-controlled code (base-SHA checkout,
+          # API-only inspection, tight tool allowlist), so opt out to keep
+          # the posting path working.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0'
         with:
           prompt: ${{ steps.build-prompt.outputs.ARGUS_PROMPT }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
           use_sticky_comment: false
           track_progress: false
+          # The action has its own actor-permission gate (separate from this
+          # job's `if:`) that hard-fails when the triggering actor has only
+          # read access — that gate, not the workflow, is what blocked
+          # contributor PRs. List trusted read-only contributors here.
+          # Deliberately NOT '*': an unknown fork author should still fall
+          # through to the "a human reviewer should take this PR" comment
+          # rather than trigger a review whose approval counts toward branch
+          # protection.
+          allowed_non_write_users: fgranata
           claude_args: |
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*),Bash(gh api repos/*/contents/*),Bash(gh api repos/*/issues/*),Read,Glob,Grep,Task"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*),Bash(gh api repos/*/contents/*),Bash(gh api repos/*/issues/*),Read,Write,Glob,Grep,Task"
             --max-turns 60
             --model claude-opus-4-8
             --effort high
@@ -276,8 +295,50 @@ jobs:
           echo "review_posted=true" >> "$GITHUB_OUTPUT"
           echo "review_state=$STATE" >> "$GITHUB_OUTPUT"
 
+      # ─────────────────────────────────────────────────────────────────────
+      # Fallback: Claude finished but never called `gh pr review` (it
+      # occasionally ends its session early instead of retrying a denied
+      # posting command). Its final output is still a written review — post
+      # it as a COMMENT review so the PR gets the substance without granting
+      # an approval Claude never explicitly issued.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Post fallback review from Claude output
+        id: fallback
+        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true' && steps.ai-review.outcome == 'success' && steps.verify.outputs.review_posted != 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          EXECUTION_FILE: ${{ steps.ai-review.outputs.execution_file }}
+        run: |
+          set -euo pipefail
+          echo "posted=false" >> "$GITHUB_OUTPUT"
+          FILE="${EXECUTION_FILE:-}"
+          if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+            echo "No execution file at '$FILE' — nothing to fall back to."
+            exit 0
+          fi
+          BODY="$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$FILE")"
+          if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
+            echo "Execution result has no final text — nothing to fall back to."
+            exit 0
+          fi
+          # GitHub caps review bodies at 65536 chars; leave room for the preamble.
+          BODY="$(printf '%s' "$BODY" | head -c 60000)"
+          PREAMBLE=$'> [!NOTE]\n> Argus finished its review but failed to post it through the normal path. This is its final output, posted verbatim as a **comment** (not an approval) by the workflow fallback.\n\n'
+          printf '%s%s' "$PREAMBLE" "$BODY" > /tmp/fallback-review-body.md
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+            -X POST \
+            -f event='COMMENT' \
+            -f body="$(cat /tmp/fallback-review-body.md)"
+          # Later writes to GITHUB_OUTPUT override earlier ones.
+          echo "posted=true" >> "$GITHUB_OUTPUT"
+          echo "Posted fallback COMMENT review on PR #$PR_NUMBER"
+
       - name: Comment on PR if Argus review failed
-        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true' && (steps.ai-review.outcome == 'failure' || steps.verify.outputs.review_posted != 'true')
+        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true' && steps.fallback.outputs.posted != 'true' && (steps.ai-review.outcome == 'failure' || steps.verify.outputs.review_posted != 'true')
         uses: actions/github-script@v7
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
