@@ -75,9 +75,13 @@ export interface PackageAdapterContext {
  * Converts creative_assignments to creative_ids (dropping weight and placement_ids).
  * Strips v3-only package fields (optimization_goals, catalogs).
  *
- * When `ctx` is provided and the input has no `buyer_ref`, derives one as
- * `package.idempotency_key || ${ctx.parentBuyerRef}-${ctx.index}` so v2.5
- * package-request validation passes. Caller-supplied `buyer_ref` always wins.
+ * When `ctx` is provided and the input has no `buyer_ref`, derives one from —
+ * in order — `package.context.buyer_ref`, `package.idempotency_key`, or
+ * `${ctx.parentBuyerRef}-${ctx.index}` so v2.5 package-request validation
+ * passes. Caller-supplied top-level `buyer_ref` always wins. The `context.buyer_ref`
+ * fallback exists because v3 callers put their per-package correlation ref in
+ * `context.buyer_ref` (per the 3.0 package schema); this adapter is the only
+ * place that promotes it back to the top-level shape v2.5 sellers still expect.
  */
 export function adaptPackageRequestForV2(pkg: PackageRequestV3, ctx?: PackageAdapterContext): PackageRequestV2 {
   const {
@@ -93,20 +97,27 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3, ctx?: PackageAda
     buyer_ref?: unknown;
   };
 
-  // Derive per-package buyer_ref. Caller-supplied wins; then per-package
-  // idempotency_key; then a stable composition of the parent's buyer_ref
-  // and the package's array index. If none of those are available we
-  // pass through without a buyer_ref and let the v2.5 validator surface
-  // the missing field — better than synthesizing an unstable value that
-  // breaks dedupe on replay.
+  const contextBuyerRef =
+    rest.context && typeof rest.context === 'object' && !Array.isArray(rest.context)
+      ? (rest.context as Record<string, unknown>).buyer_ref
+      : undefined;
+
+  // Derive per-package buyer_ref. Caller-supplied top-level wins; then
+  // context.buyer_ref (the v3 per-package correlation slot); then per-package
+  // idempotency_key; then a stable composition of the parent's buyer_ref and
+  // the package's array index. If none of those are available we pass through
+  // without a buyer_ref and let the v2.5 validator surface the missing field
+  // — better than synthesizing an unstable value that breaks dedupe on replay.
   const derivedBuyerRef =
     typeof callerBuyerRef === 'string' && callerBuyerRef.length > 0
       ? callerBuyerRef
-      : typeof pkgIdempotencyKey === 'string' && pkgIdempotencyKey.length > 0
-        ? pkgIdempotencyKey
-        : ctx?.parentBuyerRef !== undefined && ctx?.index !== undefined
-          ? `${ctx.parentBuyerRef}-${ctx.index}`
-          : undefined;
+      : typeof contextBuyerRef === 'string' && contextBuyerRef.length > 0
+        ? contextBuyerRef
+        : typeof pkgIdempotencyKey === 'string' && pkgIdempotencyKey.length > 0
+          ? pkgIdempotencyKey
+          : ctx?.parentBuyerRef !== undefined && ctx?.index !== undefined
+            ? `${ctx.parentBuyerRef}-${ctx.index}`
+            : undefined;
 
   const baseOut: PackageRequestV2 = rest as PackageRequestV2;
   if (!rest.creative_assignments) {
@@ -125,15 +136,17 @@ export function adaptPackageRequestForV2(pkg: PackageRequestV3, ctx?: PackageAda
 /**
  * Adapt a create_media_buy request for a v2 server.
  * Strips v3-only top-level fields, converts brand → brand_manifest, derives
- * `buyer_ref` (top-level + per-package) from `idempotency_key`, and adapts
- * packages.
+ * `buyer_ref` (top-level + per-package) from `context.buyer_ref` or
+ * `idempotency_key`, and adapts packages.
  *
  * v2.5 requires `buyer_ref` as the buyer's reference for THIS media buy,
- * top-level + per-package. v3 doesn't model `buyer_ref` but `idempotency_key`
- * carries the same client-controlled-unique-identity semantics. Reusing it
- * preserves the idempotency contract sellers depend on for deduping replays:
- * the same v3 request always produces the same v2.5 `buyer_ref`. Caller-
- * supplied `buyer_ref` (if any) always wins.
+ * top-level + per-package. v3 removed the top-level field and moved buyer
+ * correlation into `context.buyer_ref`; `idempotency_key` carries the same
+ * client-controlled-unique-identity semantics. Preferring the caller's
+ * `context.buyer_ref` before falling back to `idempotency_key` preserves the
+ * buyer's stable reference on the wire when they provided one, and still
+ * satisfies v2.5 dedupe on replay when they did not. Caller-supplied
+ * top-level `buyer_ref` (if any) always wins.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
   const {
@@ -148,6 +161,11 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     buyer_ref: callerBuyerRef,
     ...rest
   } = request;
+
+  const contextBuyerRef =
+    rest.context && typeof rest.context === 'object' && !Array.isArray(rest.context)
+      ? (rest.context as Record<string, unknown>).buyer_ref
+      : undefined;
 
   // Proposal mode is v3-only. If packages are also present we can still satisfy the request
   // by dropping proposal_id/total_budget and using the explicit packages.
@@ -173,9 +191,11 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
   const buyer_ref =
     typeof callerBuyerRef === 'string' && callerBuyerRef.length > 0
       ? callerBuyerRef
-      : typeof idempotency_key === 'string' && idempotency_key.length > 0
-        ? idempotency_key
-        : undefined;
+      : typeof contextBuyerRef === 'string' && contextBuyerRef.length > 0
+        ? contextBuyerRef
+        : typeof idempotency_key === 'string' && idempotency_key.length > 0
+          ? idempotency_key
+          : undefined;
 
   return {
     ...rest,
