@@ -415,21 +415,6 @@ describe('RegistrySync', () => {
         authorization_type: 'full',
       });
 
-      let pollCount = 0;
-      restore = mockFetch(async () => {
-        pollCount++;
-        if (pollCount === 1) {
-          return new Response(JSON.stringify(makeFeedResponse([authEvent], { cursor: 'cursor-002' })), { status: 200 });
-        }
-        return new Response(JSON.stringify(EMPTY_FEED), { status: 200 });
-      });
-
-      // Manually trigger a poll by restarting with short interval
-      const client = new RegistryClient({ apiKey: 'sk_test' });
-      const sync2 = new RegistrySync({ client, pollIntervalMs: 10 });
-
-      // We'll apply events directly via internal mechanism by starting fresh
-      // Instead, test the lookup methods after applying auth events during bootstrap
       restore = mockFetch(async url => {
         if (url.includes('/agents/search')) {
           return new Response(JSON.stringify(makeSearchResponse([AGENT_1])), { status: 200 });
@@ -440,7 +425,8 @@ describe('RegistrySync', () => {
         return new Response('Not found', { status: 404 });
       });
 
-      const syncWithAuth = new RegistrySync({ client: new RegistryClient({ apiKey: 'sk_test' }) });
+      const client = new RegistryClient({ apiKey: 'sk_test' });
+      const syncWithAuth = new RegistrySync({ client });
       await syncWithAuth.start();
       syncWithAuth.stop();
 
