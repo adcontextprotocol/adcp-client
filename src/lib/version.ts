@@ -9,7 +9,7 @@ export const LIBRARY_VERSION = '11.0.0';
 /**
  * AdCP specification version this library is built for
  */
-export const ADCP_VERSION = '3.1.1';
+export const ADCP_VERSION = '3.1.2';
 
 /**
  * AdCP major version sent with every request (adcp_major_version field).
@@ -51,6 +51,7 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.1.0',
   '3.1',
   '3.1.1',
+  '3.1.2',
 ] as const;
 
 /**
@@ -68,9 +69,9 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  */
 export const VERSION_INFO = {
   library: '11.0.0',
-  adcp: '3.1.1',
+  adcp: '3.1.2',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-07-07T19:57:47.370Z',
+  generatedAt: '2026-07-08T16:16:07.399Z',
 } as const;
 
 /**
