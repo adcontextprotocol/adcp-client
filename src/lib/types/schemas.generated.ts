@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-07-01T04:47:29.078Z
+// Generated at: 2026-07-08T16:14:21.799Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3456,7 +3456,7 @@ export const DeliveryMetricsSchema = z.object({
     ctr: z.number().min(0).max(1).optional(),
     views: z.number().min(0).optional(),
     completed_views: z.number().min(0).optional(),
-    completion_rate: z.number().min(0).max(1).optional(),
+    completion_rate: z.number().min(0).max(1).optional().nullable(),
     conversions: z.number().min(0).optional(),
     conversion_value: z.number().min(0).optional(),
     roas: z.number().min(0).optional(),
@@ -3488,7 +3488,7 @@ export const DeliveryMetricsSchema = z.object({
         q2_views: z.number().min(0).optional(),
         q3_views: z.number().min(0).optional(),
         q4_views: z.number().min(0).optional()
-    }).passthrough().optional(),
+    }).passthrough().optional().nullable(),
     dooh_metrics: z.object({
         loop_plays: z.number().min(0).optional(),
         screens_used: z.number().min(0).optional(),
@@ -4468,6 +4468,7 @@ export const ActivateSignalRequestSchema = z.object({
     signal_agent_segment_id: z.string(),
     destinations: z.array(DestinationSchema),
     pricing_option_id: z.string().optional(),
+    governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
     account: AccountReferenceSchema.optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     context: ContextObjectSchema.optional(),
@@ -6962,7 +6963,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         roas: z.number().min(0).optional(),
         new_to_brand_rate: z.number().min(0).max(1).optional(),
         cost_per_acquisition: z.number().min(0).optional(),
-        completion_rate: z.number().min(0).max(1).optional(),
+        completion_rate: z.number().min(0).max(1).optional().nullable(),
         reach: z.number().min(0).optional(),
         reach_unit: ReachUnitSchema.optional(),
         frequency: z.number().min(0).optional(),

@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.1
-// Generated at: 2026-07-01T04:18:09.907Z
+// Generated AdCP core types from official schemas v3.1.2
+// Generated at: 2026-07-08T16:13:53.457Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -10437,11 +10437,11 @@ export interface DeliveryMetrics {
    */
   completed_views?: number;
   /**
-   * Completion rate (completed_views/impressions)
+   * Completion rate (completed_views/impressions). Null indicates the metric is not applicable to this package/buy (e.g. completion rate on a non-video buy).
    * @minimum 0
    * @maximum 1
    */
-  completion_rate?: number;
+  completion_rate?: number | null;
   /**
    * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
    * @minimum 0
@@ -10556,7 +10556,7 @@ export interface DeliveryMetrics {
    */
   frequency?: number;
   /**
-   * Audio/video quartile completion data
+   * Audio/video quartile completion data. Null indicates the metric is not applicable to this package/buy (e.g. quartile data on a non-video buy).
    */
   quartile_data?: {
     /**
@@ -10579,7 +10579,7 @@ export interface DeliveryMetrics {
      * @minimum 0
      */
     q4_views?: number;
-  };
+  } | null;
   /**
    * DOOH-specific metrics (only included for DOOH campaigns)
    */
@@ -19104,11 +19104,11 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
      */
     cost_per_acquisition?: number;
     /**
-     * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates)
+     * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates). Null indicates the metric is not applicable to the aggregated buys (e.g. all non-video inventory).
      * @minimum 0
      * @maximum 1
      */
-    completion_rate?: number;
+    completion_rate?: number | null;
     /**
      * Deduplicated reach across all media buys (if the seller can deduplicate across buys; otherwise sum of per-buy reach). Only present when all media buys share the same reach_unit. Omitted when reach units are heterogeneous — use per-buy reach values instead.
      * @minimum 0
@@ -23985,6 +23985,13 @@ export interface ActivateSignalRequest {
    * The pricing option selected from the signal's pricing_options in the get_signals response. Required when the signal has pricing options. Records the buyer's pricing commitment at activation time; pass this same value in report_usage for billing verification.
    */
   pricing_option_id?: string;
+  /**
+   * Opaque governance context returned by check_governance for this signal activation. Required when the account has a registered governance agent; signal agents MUST reject governed activations that omit a valid context.
+   * @minLength 1
+   * @maxLength 4096
+   * @pattern ^[\x20-\x7E]+$
+   */
+  governance_context?: string;
   account?: AccountReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate activations on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
