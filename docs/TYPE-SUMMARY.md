@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-07-01
-> @adcp/sdk v9.6.1
+> Generated at: 2026-07-08
+> @adcp/sdk v11.0.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -1017,6 +1017,7 @@ _Request:_
   idempotency_key: string  // required
   action: 'activate' | 'deactivate'
   pricing_option_id: string
+  governance_context: string
   account: Account Ref
   context: Context
 }

@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-07-01
-> Library: @adcp/sdk v9.6.1
+> Generated at: 2026-07-08
+> Library: @adcp/sdk v11.0.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -630,7 +630,7 @@ Request parameters for activating a signal on a specific platform/account.
 
 **Request:**
 - Required: `signal_agent_segment_id: string`, `destinations: object[]`, `idempotency_key: string`
-- Optional: `action: 'activate' | 'deactivate'`, `pricing_option_id: string`, `account: Account Ref`, `context: Context`
+- Optional: `action: 'activate' | 'deactivate'`, `pricing_option_id: string`, `governance_context: string`, `account: Account Ref`, `context: Context`
 
 **Response (success branch):**
 - Required: `deployments: object[]`
@@ -1217,8 +1217,8 @@ Flow: `comply_test_controller → get_signals → list_tasks → comply_test_con
 **Marketplace signal agent** — Signal agent that resells third-party data provider signals with verifiable provider-published provenance.
 Flow: `get_adcp_capabilities → get_signals → activate_signal`
 
-**Signal agent rejects activation when governance denies** — Verifies that a signal agent propagates GOVERNANCE_DENIED when the buyer's governance plan denies activation.
-Flow: `sync_plans → sync_accounts → sync_governance → get_signals → activate_signal`
+**Signal agent rejects activation without governance approval** — Verifies that a signal agent requires a governance approval context before activating signals on governed accounts.
+Flow: `sync_accounts → sync_governance → get_signals → activate_signal`
 
 **Owned signal agent** — Signal agent serving first-party or proprietary audience data for discovery without external catalog verification.
 Flow: `get_adcp_capabilities → get_signals`
