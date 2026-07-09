@@ -27,7 +27,6 @@ const REPO_ROOT = path.join(__dirname, '..');
 const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
 const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
-const REGISTRY_SPEC_PATH = path.join(REPO_ROOT, 'schemas/registry/registry.yaml');
 
 // Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
 // Accepts any branch or tag ref — the trust gate is upstream `release.yml`'s
@@ -336,8 +335,19 @@ function syncSkillsFromBundle(extractRoot: string): void {
  *
  * Throws on sha256 mismatch or extraction failure. Returns false if the tarball
  * endpoint returns 404 (caller may fall back to per-file schema sync).
+ *
+ * `schemas/cache/<version>/` and `compliance/cache/<version>/` are version-scoped,
+ * so any version can populate them without disturbing another. The protocol
+ * skills (`skills/adcp-*`) and the `latest/` pointer are NOT version-scoped —
+ * they are shared surfaces that track the primary pin. `includeSharedSurfaces`
+ * gates both so a side-bundle sync (an older legacy version, an opt-in beta)
+ * never overwrites the primary pin's skills or repoints its default bundle.
  */
-async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promise<boolean> {
+async function syncFromTarball(
+  version: string,
+  baseUrl = ADCP_BASE_URL,
+  includeSharedSurfaces = true
+): Promise<boolean> {
   const tgzUrl = `${baseUrl}/protocol/${version}.tgz`;
   const shaUrl = `${tgzUrl}.sha256`;
 
@@ -383,8 +393,11 @@ async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promis
     // build-seller-agent/ stay untouched; protocol-canonical ones (the
     // call-adcp-agent buyer skill plus per-protocol skills) are kept aligned
     // with the pinned spec version. Older tarballs (no manifest.contents.skills
-    // array) are silently skipped — the SDK-local copies stay as-is.
-    syncSkillsFromBundle(extractRoot);
+    // array) are silently skipped — the SDK-local copies stay as-is. Skipped
+    // entirely for side-bundle syncs so they keep the primary pin's skills.
+    if (includeSharedSurfaces) {
+      syncSkillsFromBundle(extractRoot);
+    }
 
     // Refs inside the tarball point to /schemas/latest/; rewrite for pinned versions.
     const schemaDest = path.join(SCHEMA_CACHE_DIR, version);
@@ -392,17 +405,21 @@ async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promis
     const semanticVersion: string = indexJson.adcp_version || version;
     normalizeRefsInTree(schemaDest, semanticVersion);
 
-    // Registry spec lives in the same bundle; keep writing to its legacy location
-    // for downstream generators that import from schemas/registry/registry.yaml.
-    const registryInBundle = path.join(extractRoot, 'openapi/registry.yaml');
-    if (existsSync(registryInBundle)) {
-      mkdirSync(path.dirname(REGISTRY_SPEC_PATH), { recursive: true });
-      copyFileSync(registryInBundle, REGISTRY_SPEC_PATH);
-      console.log(`✅ Registry spec extracted → ${REGISTRY_SPEC_PATH}`);
-    }
+    // schemas/registry/registry.yaml is intentionally NOT written here. Although
+    // the protocol tarball ships an openapi/registry.yaml, the registry spec has
+    // its own upstream (agenticadvertising.org) and its own owner,
+    // `generate-registry-types --sync`. That live spec runs ahead of the pinned
+    // protocol bundle, so copying the tarball's copy only downgraded the checked-in
+    // file and left a spurious diff in every working tree after a plain sync.
 
-    updateLatestSymlink(SCHEMA_CACHE_DIR, version);
-    updateLatestSymlink(COMPLIANCE_CACHE_DIR, version);
+    // `latest/` is a shared, non-version-scoped pointer that resolves to the
+    // default bundle — so it tracks the primary pin, not whichever side-bundle
+    // is being synced. Repointing it for a legacy/beta sync would silently make
+    // the SDK validate against an older version by default. Gate it like skills.
+    if (includeSharedSurfaces) {
+      updateLatestSymlink(SCHEMA_CACHE_DIR, version);
+      updateLatestSymlink(COMPLIANCE_CACHE_DIR, version);
+    }
 
     console.log(`📁 Schemas:    ${path.join(SCHEMA_CACHE_DIR, version)}`);
     console.log(`📁 Compliance: ${path.join(COMPLIANCE_CACHE_DIR, version)}`);
@@ -417,7 +434,11 @@ async function syncFromTarball(version: string, baseUrl = ADCP_BASE_URL): Promis
 
 // Per-file schema fallback. Used only if the tarball endpoint is unavailable.
 // Compliance is NOT synced by this path — requires the tarball.
-async function syncSchemasPerFile(version: string, baseUrl = ADCP_BASE_URL): Promise<void> {
+async function syncSchemasPerFile(
+  version: string,
+  baseUrl = ADCP_BASE_URL,
+  includeSharedSurfaces = true
+): Promise<void> {
   const indexUrl = `${baseUrl}/schemas/${version}/index.json`;
   console.log(`📥 Fetching schema index ${indexUrl}`);
   const schemaIndex: SchemaIndex = await fetchJson(indexUrl);
@@ -459,7 +480,10 @@ async function syncSchemasPerFile(version: string, baseUrl = ADCP_BASE_URL): Pro
     missing.forEach(r => attempted.add(r));
   }
 
-  updateLatestSymlink(SCHEMA_CACHE_DIR, version);
+  // Shared `latest/` pointer tracks the primary pin only (see syncFromTarball).
+  if (includeSharedSurfaces) {
+    updateLatestSymlink(SCHEMA_CACHE_DIR, version);
+  }
   console.warn(
     '⚠️  Compliance tree unavailable (per-file fallback only syncs schemas). ' +
       'Storyboard tooling will fail until the tarball endpoint is reachable.'
@@ -529,22 +553,42 @@ function findMissingRefs(cacheDir: string, alreadyAttempted: Set<string>): Set<s
   return missing;
 }
 
-async function sync(version?: string): Promise<void> {
+/**
+ * Sync a protocol bundle into the caches.
+ *
+ * `options.includeSharedSurfaces` controls the non-version-scoped surfaces this
+ * script owns: the protocol skills (`skills/adcp-*`) and the `latest/` pointer.
+ * It defaults to `true` only when syncing the primary pin (the `ADCP_VERSION`
+ * file), so `npm run sync-schemas` refreshes them but a side-bundle sync
+ * (`sync-schemas -- 3.0.12`, the opt-in beta) leaves the primary pin's skills
+ * and its default bundle untouched. This is what stops legacy/beta syncs from
+ * clobbering the checked-in skills or silently repointing `latest/` — callers
+ * no longer need to restore them afterward.
+ */
+async function sync(version?: string, options: { includeSharedSurfaces?: boolean } = {}): Promise<void> {
   const adcpVersion = version || getTargetAdCPVersion();
-  console.log(`🔄 Syncing AdCP @ ${adcpVersion}`);
+  const primaryPin = getTargetAdCPVersion();
+  const includeSharedSurfaces = options.includeSharedSurfaces ?? adcpVersion === primaryPin;
+  console.log(
+    `🔄 Syncing AdCP @ ${adcpVersion}` +
+      (includeSharedSurfaces ? '' : ' (schemas only — skills + latest pointer stay at the primary pin)')
+  );
 
-  async function syncWithBase(baseUrl: string, options: { preferGithubTarballFallback?: boolean } = {}): Promise<void> {
-    const viaTarball = await syncFromTarball(adcpVersion, baseUrl);
-    if (!viaTarball && options.preferGithubTarballFallback === true && process.env.ADCP_GITHUB_FALLBACK !== '0') {
+  async function syncWithBase(
+    baseUrl: string,
+    fallback: { preferGithubTarballFallback?: boolean } = {}
+  ): Promise<void> {
+    const viaTarball = await syncFromTarball(adcpVersion, baseUrl, includeSharedSurfaces);
+    if (!viaTarball && fallback.preferGithubTarballFallback === true && process.env.ADCP_GITHUB_FALLBACK !== '0') {
       console.warn(
         `⚠️  AdCP ${adcpVersion} tarball was not reachable from ${baseUrl}; ` +
           `retrying against GitHub dist before schema-only fallback.`
       );
-      const viaGithubTarball = await syncFromTarball(adcpVersion, GITHUB_DIST_BASE_URL);
+      const viaGithubTarball = await syncFromTarball(adcpVersion, GITHUB_DIST_BASE_URL, includeSharedSurfaces);
       if (viaGithubTarball) return;
     }
     if (!viaTarball) {
-      await syncSchemasPerFile(adcpVersion, baseUrl);
+      await syncSchemasPerFile(adcpVersion, baseUrl, includeSharedSurfaces);
     }
   }
 
