@@ -8,11 +8,7 @@ import { tmpdir } from 'node:os'
 import { parseAaoSecretariatMd } from './aao-secretariat-md.js'
 import { resolveConfig, type ActionInputs } from './resolve-config.js'
 import { evaluateShortCircuit } from './short-circuit.js'
-import {
-  evaluateHighRisk,
-  type ChangeKind,
-  type ChangedFile,
-} from './high-risk.js'
+import { evaluateHighRisk } from './high-risk.js'
 import { evaluateGatedPaths } from './gated-paths.js'
 import {
   computeChangedFiles,
@@ -148,26 +144,6 @@ async function fetchReviewDecision(params: {
   }
 }
 
-function detectChangeKinds(diffNameStatus: string): Map<string, ChangeKind> {
-  const out = new Map<string, ChangeKind>()
-  for (const line of diffNameStatus.split('\n')) {
-    if (!line) continue
-    const [status, ...rest] = line.split('\t')
-    const path = rest[rest.length - 1]
-    if (!path) continue
-    const kind: ChangeKind =
-      status === 'A'
-        ? 'added'
-        : status === 'D'
-          ? 'deleted'
-          : status === 'R'
-            ? 'renamed'
-            : 'modified'
-    out.set(path, kind)
-  }
-  return out
-}
-
 async function main(): Promise<void> {
   const githubToken = core.getInput('github-token', { required: true })
   const inputs: ActionInputs = {
@@ -229,10 +205,16 @@ async function main(): Promise<void> {
     mergeable = true
   }
 
-  const surfaceFiles = await computePrSurfaceFiles({ baseSha, headSha })
+  const surfaceFiles = await computePrSurfaceFiles({
+    octokit,
+    owner,
+    repo,
+    prNumber,
+  })
+  const surfacePaths = surfaceFiles.map((f) => f.path)
 
   let priorReviewedSha: string | null = null
-  let deltaFiles: string[] = surfaceFiles
+  let deltaFiles: string[] = surfacePaths
   let isPureRebase = false
 
   const aaoSecretariatBotLogin = core.getInput('aao-secretariat-bot-login') || 'aao-secretariat[bot]'
@@ -257,6 +239,9 @@ async function main(): Promise<void> {
 
     if (priorReviewedSha && priorReviewedSha !== headSha) {
       const changedSincePrior = await computeChangedFiles({
+        octokit,
+        owner,
+        repo,
         fromSha: priorReviewedSha,
         toSha: headSha,
       })
@@ -264,7 +249,7 @@ async function main(): Promise<void> {
         isPureRebase = changedSincePrior.length === 0
         deltaFiles = intersectChangedFiles({
           changedSincePrior,
-          currentPrSurface: surfaceFiles,
+          currentPrSurface: surfacePaths,
         })
       } else {
         // git diff failed because the prior commit is no longer reachable in
@@ -339,48 +324,36 @@ async function main(): Promise<void> {
     return
   }
 
-  // Resolve change kinds for high-risk evaluation
-  let nameStatusOut = ''
-  try {
-    const { exec } = await import('@actions/exec')
-    await exec('git', ['diff', '--name-status', `${baseSha}...${headSha}`], {
-      listeners: {
-        stdout: (d: Buffer) => {
-          nameStatusOut += d.toString()
-        },
-      },
-      silent: true,
-    })
-  } catch {
-    /* ignored: surface still computed above */
-  }
-  const changeKindMap = detectChangeKinds(nameStatusOut)
-  const filesForHighRisk: ChangedFile[] = surfaceFiles.map((path) => ({
-    path,
-    changeKind: changeKindMap.get(path) ?? 'modified',
-  }))
+  // High-risk / gated-path evaluation runs on the PR surface. Change kinds
+  // come from the pulls.listFiles response already fetched above — no extra
+  // API call and, crucially, no fetch of the PR head.
   const highRisk = evaluateHighRisk({
-    files: filesForHighRisk,
+    files: surfaceFiles,
     globs: config.highRiskPaths,
   })
   const gatedPaths = evaluateGatedPaths({
-    files: filesForHighRisk,
+    files: surfaceFiles,
     globs: config.gatedPaths,
   })
 
-  // Write diff files
+  // Write diff files. Both diffs are pulled from the GitHub API; the PR head
+  // is never fetched or checked out. The full diff is the whole PR; the delta
+  // is the compare (prior review → head) diff, written only when a prior review
+  // established a narrower surface.
   const tempDir = await mkdtemp(join(tmpdir(), 'aao-secretariat-setup-'))
   const fullPath = join(tempDir, 'diff-full.patch')
-  await writeDiffFile({ baseSha, headSha, target: fullPath })
+  await writeDiffFile({ octokit, owner, repo, prNumber, target: fullPath })
   const deltaPath =
-    deltaFiles.length === surfaceFiles.length
-      ? fullPath
-      : await writeDiffFile({
-          baseSha,
-          headSha,
-          files: deltaFiles,
+    priorReviewedSha && deltaFiles.length !== surfacePaths.length
+      ? await writeDiffFile({
+          octokit,
+          owner,
+          repo,
+          fromSha: priorReviewedSha,
+          toSha: headSha,
           target: join(tempDir, 'diff-delta.patch'),
         })
+      : fullPath
 
   // Prior decision marker
   let priorDecision = ''

@@ -3,8 +3,9 @@ name: AI PR Review (AAO-SECRETARIAT)
 # AAO-SECRETARIAT reviews every non-draft, non-dependabot PR. The heavy lifting lives in
 # the forked action tree under .github/aao-secretariat/ (setup → reviewer → arbiter),
 # adapted from Scope3's PR-review action set. This workflow only handles the
-# pull_request_target security posture (base-SHA checkout + head fetch, never
-# executing PR-head code), the review-workflow-modification gate, and invoking
+# pull_request_target security posture (trusted base-SHA checkout only; the PR
+# head is never fetched, checked out, or executed — setup reads head content
+# via the GitHub API), the review-workflow-modification gate, and invoking
 # the composite. Reviews post as the AAO Secretariat App so they count toward the
 # "1 review required" branch-protection check.
 
@@ -27,18 +28,12 @@ jobs:
       id-token: write
     steps:
       # Trusted base-SHA checkout. Never check out or execute PR-head code.
+      # The PR head is never fetched: setup derives the diff/delta and changed
+      # files entirely from the GitHub API.
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
-
-      # Fetch (not check out) the PR head objects so setup's base...head git
-      # diff resolves. Head content is read via gh api at review time; it is
-      # never checked out into the workspace and never executed.
-      - name: Fetch PR head objects
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: git fetch --no-tags origin "${HEAD_SHA}"
 
       - name: Mint App token (for the workflow-mod gate comment)
         id: app-token
