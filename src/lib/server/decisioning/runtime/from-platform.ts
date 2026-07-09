@@ -5502,12 +5502,25 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
       // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
+      //
+      // Wire shape: 3.0 + 3.1 `list-accounts-response` model pagination via a
+      // `pagination` block referencing `core/pagination-response.json`
+      // (`has_more` required, `cursor` present only when `has_more=true`).
+      // Emitting top-level `next_cursor` — the shape shipped before this fix —
+      // was schema-invisible (`additionalProperties: true` on the response) but
+      // silently failed the `pagination_integrity_list_accounts` storyboard's
+      // `field_value pagination.has_more: true` + `field_present pagination.cursor`
+      // assertions for every adopter, regardless of `CursorPage` output.
+      // See adcontextprotocol/adcp#5723 for the reproduction from a 3.1 seller.
       return projectSync(
         () => accounts.list!(filter, resolveCtx),
         page => ({
           status: 'completed' as const,
           accounts: page.items.map(toWireAccount),
-          ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
+          pagination: {
+            has_more: page.nextCursor != null,
+            ...(page.nextCursor != null && { cursor: page.nextCursor }),
+          },
         })
       );
     };
