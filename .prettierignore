@@ -17,3 +17,10 @@ test/fixtures/webhook-signing-vectors/
 # Byte-identical to upstream so projection tests don't drift on local
 # formatting changes.
 test/lib/v2-projection-fixtures/
+
+# AAO-SECRETARIAT v2 code-review system, forked verbatim from scope3data/actions
+# (aao-secretariat-v2/ tree). Files here are fetched byte-for-byte from upstream so
+# the fork stays diffable against its source; prettier would reformat them
+# and mask real upstream drift. See .github/aao-secretariat/README.md for the pinned
+# SHA and fork rationale.
+.github/aao-secretariat/

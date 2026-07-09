@@ -4,3 +4,4 @@ paths-ignore:
   - examples/**
   - scripts/manual-testing/**
   - test/**
+  - .github/aao-secretariat/**
