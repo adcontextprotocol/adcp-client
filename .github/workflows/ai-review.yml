@@ -207,8 +207,8 @@ jobs:
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REPO: ${{ github.repository }}
-          ARGUS_VERDICT: ${{ runner.temp }}/argus-verdict.txt
-          ARGUS_REVIEW_BODY: ${{ runner.temp }}/argus-review.md
+          ARGUS_VERDICT: /tmp/argus-verdict.txt
+          ARGUS_REVIEW_BODY: /tmp/argus-review.md
         run: |
           set -euo pipefail
           # Read the prompt from the PR's base SHA, not the working tree or PR
@@ -292,42 +292,58 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-          VERDICT_FILE: ${{ runner.temp }}/argus-verdict.txt
-          BODY_FILE: ${{ runner.temp }}/argus-review.md
+          VERDICT_FILE: /tmp/argus-verdict.txt
+          BODY_FILE: /tmp/argus-review.md
           EXECUTION_FILE: ${{ steps.ai-review.outputs.execution_file }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # No `set -e`: a failed post must fall through to the next recovery tier.
           set -uo pipefail
 
+          # Surface the silent failure mode: if the reviewer wrote neither file,
+          # the run degrades to a COMMENT below — make that visible in the logs.
+          if [ ! -f "$VERDICT_FILE" ] && [ ! -f "$BODY_FILE" ]; then
+            echo "::warning::reviewer wrote no verdict/body files ($VERDICT_FILE, $BODY_FILE)"
+          fi
+
           VERDICT=""
           if [ -f "$VERDICT_FILE" ]; then
-            VERDICT="$(tr -d '[:space:]' < "$VERDICT_FILE" | tr '[:upper:]' '[:lower:]')"
+            # Bound the read (the verdict file should be one word) and lowercase it.
+            VERDICT="$(head -c 200 "$VERDICT_FILE" | tr '[:upper:]' '[:lower:]')"
           fi
           BODY=""
           if [ -f "$BODY_FILE" ]; then
             BODY="$(cat "$BODY_FILE")"
           fi
 
-          # Map the reviewer's verdict to a gh review event. Anything else is
-          # treated as "no verdict" and degrades to a COMMENT below.
+          # Map the reviewer's verdict to a gh review event. Match request-changes
+          # synonyms FIRST so any decoration or phrasing that reads as a block maps
+          # to --request-changes (fail closed). Anything unparseable leaves EVENT
+          # empty and degrades to a COMMENT below.
           EVENT=""
           case "$VERDICT" in
-            approve)         EVENT="--approve" ;;
-            comment)         EVENT="--comment" ;;
-            request-changes) EVENT="--request-changes" ;;
+            *request*chang*|*reject*|*block*) EVENT="--request-changes" ;;
+            *approv*|*lgtm*)                  EVENT="--approve" ;;
+            *comment*)                        EVENT="--comment" ;;
           esac
 
-          POST_FILE="${RUNNER_TEMP}/argus-post.md"
+          POST_FILE="/tmp/argus-post.md"
 
-          # Tier 1 — valid verdict + body: post the real review.
-          if [ -n "$EVENT" ] && [ -n "$BODY" ]; then
+          # Tier 1 — valid verdict: post the real review. When the verdict is valid
+          # but the body is empty (body write failed or the turn limit was hit),
+          # still post under the verdict with a placeholder body — a recorded block
+          # must not silently degrade to a non-blocking COMMENT.
+          if [ -n "$EVENT" ]; then
+            if [ -z "$BODY" ]; then
+              BODY="_Argus recorded a \`${VERDICT}\` verdict but did not write a review body (it may have hit the turn limit). See the diff and CI checks._"
+            fi
             printf '%s' "$BODY" | head -c 60000 > "$POST_FILE"
             if gh pr review "$PR_NUMBER" "$EVENT" --body-file "$POST_FILE"; then
               echo "Posted '$VERDICT' review on PR #$PR_NUMBER"
               exit 0
             fi
             echo "::warning::gh pr review ($VERDICT) failed — degrading to a COMMENT."
+            POST_FAILED=1
           fi
 
           # Tiers 2/3 — recover the substance, never fabricate an approval.
@@ -338,7 +354,11 @@ jobs:
           fi
 
           if [ -n "$RECOVERED" ]; then
-            PREAMBLE=$'> [!NOTE]\n> Argus did not record a clean verdict this run (it may have ended early). Posting its output as a **comment** — not an approval. A human reviewer should take this PR.\n\n'
+            if [ -n "${POST_FAILED:-}" ]; then
+              PREAMBLE=$'> [!NOTE]\n> Argus recorded a `'"${VERDICT}"$'` verdict but the post failed. Reposting its output as a **comment** — not an approval. Retry or take this PR to human review.\n\n'
+            else
+              PREAMBLE=$'> [!NOTE]\n> Argus did not record a clean verdict this run (it may have ended early). Posting its output as a **comment** — not an approval. A human reviewer should take this PR.\n\n'
+            fi
             { printf '%s' "$PREAMBLE"; printf '%s' "$RECOVERED"; } | head -c 60000 > "$POST_FILE"
             if gh pr review "$PR_NUMBER" --comment --body-file "$POST_FILE"; then
               echo "Posted fallback COMMENT review on PR #$PR_NUMBER"
