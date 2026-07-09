@@ -168,7 +168,12 @@ runs:
         claude_args: |
           --model ${{ inputs.model }}
           --max-turns ${{ inputs.max-turns }}
-          --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/*/issues/*:*),Bash(gh api repos/*/contents/*:*),Read,Write,Glob,Grep"
+          # gh grants are read-only by intent: the reviewer posts inline comments via the
+          # MCP tool, not Bash gh. `gh pr view/diff` are read-only subcommands; the `contents`
+          # grant is for reading head-file versions under a base-SHA checkout. The write-capable
+          # `gh api .../issues/*` grant is deliberately omitted — with ENV_SCRUB=0 the token is in
+          # the Bash env, and a POST there would be a prompt-injection exfil path.
+          --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/*/contents/*:*),Read,Write,Glob,Grep"
 
     - name: Read findings JSON
       id: findings
