@@ -6,10 +6,11 @@
  * schemas.
  *
  * Wraps `syncSchemas()` so we inherit cosign verification, sha256 check,
- * and tarball extraction. The wrapper restores the `latest` symlink to
- * the SDK's primary pin afterwards — `syncSchemas()` always points
- * `latest/` at whatever it just synced, which is correct for a pin bump
- * but wrong for an opt-in side-bundle.
+ * and tarball extraction. For a side-bundle, `syncSchemas()` populates only the
+ * version-scoped caches — it leaves the shared surfaces (protocol skills, the
+ * `latest/` pointer) at the primary pin and never writes the registry spec — so
+ * the wrapper's only cleanup is a defensive re-affirmation of the `latest`
+ * symlink against the primary pin.
  */
 
 import { existsSync, lstatSync, readFileSync, rmSync, symlinkSync } from 'fs';
@@ -22,23 +23,6 @@ const SCHEMA_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache');
 const COMPLIANCE_CACHE_DIR = path.join(REPO_ROOT, 'compliance/cache');
 const BETA_VERSION = '3.1.0-beta.7';
 const GITHUB_DIST_BASE_URL = 'https://raw.githubusercontent.com/adcontextprotocol/adcp/main/dist';
-
-/**
- * Paths that `syncSchemas` overwrites as a side effect of any tarball
- * extraction — protocol-managed skills, the registry OpenAPI spec, and any
- * other check-in surfaces that piggyback on the primary sync. An opt-in
- * beta sync MUST NOT bump these against the SDK's primary pin, so we
- * restore them from `HEAD` after the sync runs.
- *
- * If you add a new check-in surface to `syncSchemas`, add the path here
- * (or refactor `syncSchemas` to expose a schemas-only mode).
- */
-const RESTORE_PATHS = [
-  'schemas/registry/registry.yaml',
-  'skills/adcp-brand/SKILL.md',
-  'skills/adcp-creative/SKILL.md',
-  'skills/adcp-media-buy/SKILL.md',
-];
 
 function getPrimaryAdcpVersion(): string {
   const versionFile = path.join(REPO_ROOT, 'ADCP_VERSION');
@@ -65,26 +49,6 @@ function restoreLatestSymlink(cacheRoot: string, primaryVersion: string): void {
   console.log(`🔗 ${cacheRoot}/latest → ${primaryVersion}`);
 }
 
-function restoreFromHead(paths: readonly string[]): void {
-  const tracked = paths.filter(p => existsSync(path.join(REPO_ROOT, p)));
-  if (tracked.length === 0) return;
-  // `git checkout HEAD --` is the narrowest restoration: it touches only the
-  // listed paths, never the working-tree state of anything else, and fails
-  // loudly if the paths aren't tracked. Run from REPO_ROOT so paths resolve
-  // relative to the git work tree.
-  const result = spawnSync('git', ['checkout', 'HEAD', '--', ...tracked], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to restore side-effect paths from HEAD:\n  ${result.stderr || result.stdout}\n` +
-        `Run \`git status\` and restore manually before re-running.`
-    );
-  }
-  console.log(`♻️  Restored ${tracked.length} side-effect path(s) from HEAD (primary-pin state preserved).`);
-}
-
 function hasBetaCache(): boolean {
   return (
     existsSync(path.join(SCHEMA_CACHE_DIR, BETA_VERSION)) && existsSync(path.join(COMPLIANCE_CACHE_DIR, BETA_VERSION))
@@ -100,26 +64,24 @@ async function main(): Promise<void> {
     restoreLatestSymlink(COMPLIANCE_CACHE_DIR, primary);
     return;
   }
-  const delegatedToFallback = await syncBetaSchemasWithFallback();
+  const delegatedToFallback = await syncBetaSchemasWithFallback(primary);
   if (delegatedToFallback) return;
-  // `syncSchemas` repointed `latest/` at the beta. Move it back so the
-  // primary GA pin remains the default bundle for downstream consumers.
+  // As a side-bundle, `syncSchemas` no longer repoints `latest/` at the beta
+  // (it gates the pointer behind the primary pin). Re-affirm it defensively so
+  // the primary GA pin stays the default bundle regardless of prior cache state.
   restoreLatestSymlink(SCHEMA_CACHE_DIR, primary);
   restoreLatestSymlink(COMPLIANCE_CACHE_DIR, primary);
-  // When the beta is the primary pin, the synced tracked artifacts are the
-  // desired state; restoring from HEAD would undo the intended schema bump.
-  if (primary !== BETA_VERSION) {
-    // `syncSchemas` also overwrites tracked artifacts (registry.yaml, protocol
-    // skills) from the synced tarball. Those track the primary pin, not the
-    // opt-in beta — restore them from HEAD.
-    restoreFromHead(RESTORE_PATHS);
-  }
+  // No skill restore needed: unless the beta is itself the primary pin,
+  // `syncSchemas` runs schemas-only and never touches the shared skills, so
+  // they already hold the primary pin's committed content.
   console.log(`✅ ${BETA_VERSION} schemas at schemas/cache/${BETA_VERSION}/`);
 }
 
-async function syncBetaSchemasWithFallback(): Promise<boolean> {
+async function syncBetaSchemasWithFallback(primary: string): Promise<boolean> {
   try {
-    await syncSchemas(BETA_VERSION);
+    // Only write the shared surfaces (skills, `latest/` pointer) when the beta
+    // IS the primary pin. As a side-bundle they stay at the primary pin's state.
+    await syncSchemas(BETA_VERSION, { includeSharedSurfaces: primary === BETA_VERSION });
     return false;
   } catch (err) {
     if (process.env.ADCP_BASE_URL || process.env.ADCP_BETA_GITHUB_FALLBACK === '0') {
