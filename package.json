@@ -35,6 +35,11 @@
       "require": "./dist/lib/types/index.js",
       "types": "./dist/lib/types/index.d.ts"
     },
+    "./enums": {
+      "import": "./dist/lib/enums.js",
+      "require": "./dist/lib/enums.js",
+      "types": "./dist/lib/enums.d.ts"
+    },
     "./types/v2-5": {
       "import": "./dist/lib/types/v2-5/index.js",
       "require": "./dist/lib/types/v2-5/index.js",
