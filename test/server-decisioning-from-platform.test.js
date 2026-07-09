@@ -2377,17 +2377,17 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(
       page1.structuredContent.pagination.has_more,
       true,
-      'pagination.has_more MUST be true when adopter returned nextCursor',
+      'pagination.has_more MUST be true when adopter returned nextCursor'
     );
     assert.strictEqual(
       page1.structuredContent.pagination.cursor,
       'cursor_page_2',
-      'pagination.cursor MUST echo adopter nextCursor',
+      'pagination.cursor MUST echo adopter nextCursor'
     );
     assert.strictEqual(
       page1.structuredContent.next_cursor,
       undefined,
-      'top-level next_cursor MUST NOT leak — schema models pagination via pagination block',
+      'top-level next_cursor MUST NOT leak — schema models pagination via pagination block'
     );
 
     const terminalPlatform = buildPlatform();
@@ -2405,12 +2405,12 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(
       terminal.structuredContent.pagination.has_more,
       false,
-      'pagination.has_more MUST be false when adopter returned no nextCursor',
+      'pagination.has_more MUST be false when adopter returned no nextCursor'
     );
     assert.strictEqual(
       terminal.structuredContent.pagination.cursor,
       undefined,
-      'pagination.cursor MUST be absent when has_more is false (per pagination-response schema)',
+      'pagination.cursor MUST be absent when has_more is false (per pagination-response schema)'
     );
   });
 
