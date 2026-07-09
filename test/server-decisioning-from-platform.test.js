@@ -2335,6 +2335,85 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(result.structuredContent.accounts[0].brand.domain, 'acme.com');
   });
 
+  it('list_accounts projects CursorPage into 3.1 pagination block (not top-level next_cursor)', async () => {
+    // Regression: adcontextprotocol/adcp#5723 — the pre-fix projector emitted a
+    // top-level `next_cursor` field. Both 3.0 and 3.1 `list-accounts-response`
+    // model pagination as `pagination: { has_more, cursor?, total_count? }`
+    // via `core/pagination-response.json`. The old shape passed schema
+    // (`additionalProperties: true`) but silently failed the
+    // `pagination_integrity_list_accounts` storyboard assertions for every
+    // adopter.
+    const page1Platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+        upsert: async () => [],
+        list: async () => ({
+          items: [
+            {
+              id: 'acc_1',
+              metadata: { name: 'Acme', advertiser: 'Acme Corp' },
+              authInfo: { kind: 'api_key' },
+            },
+          ],
+          nextCursor: 'cursor_page_2',
+        }),
+      },
+    });
+    const server1 = createAdcpServerFromPlatform(page1Platform, {
+      name: 'pagination-fix',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const page1 = await server1.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_accounts', arguments: { pagination: { max_results: 1 } } },
+    });
+    assert.notStrictEqual(page1.isError, true, `page1 unexpected error: ${JSON.stringify(page1.structuredContent)}`);
+    assert.ok(page1.structuredContent.pagination, 'response MUST carry a pagination block');
+    assert.strictEqual(
+      page1.structuredContent.pagination.has_more,
+      true,
+      'pagination.has_more MUST be true when adopter returned nextCursor',
+    );
+    assert.strictEqual(
+      page1.structuredContent.pagination.cursor,
+      'cursor_page_2',
+      'pagination.cursor MUST echo adopter nextCursor',
+    );
+    assert.strictEqual(
+      page1.structuredContent.next_cursor,
+      undefined,
+      'top-level next_cursor MUST NOT leak — schema models pagination via pagination block',
+    );
+
+    const terminalPlatform = buildPlatform();
+    const server2 = createAdcpServerFromPlatform(terminalPlatform, {
+      name: 'pagination-terminal',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const terminal = await server2.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_accounts', arguments: {} },
+    });
+    assert.notStrictEqual(terminal.isError, true);
+    assert.ok(terminal.structuredContent.pagination, 'terminal-page response MUST also carry pagination');
+    assert.strictEqual(
+      terminal.structuredContent.pagination.has_more,
+      false,
+      'pagination.has_more MUST be false when adopter returned no nextCursor',
+    );
+    assert.strictEqual(
+      terminal.structuredContent.pagination.cursor,
+      undefined,
+      'pagination.cursor MUST be absent when has_more is false (per pagination-response schema)',
+    );
+  });
+
   it('opts.accounts.listAccounts runs when platform.accounts.list is undefined', async () => {
     let sawCall = false;
     const platform = buildPlatform({
