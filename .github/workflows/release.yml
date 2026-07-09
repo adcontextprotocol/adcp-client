@@ -26,8 +26,24 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # Mint an AAO IPR Bot installation token so events created by this
+      # workflow (the release-PR branch push and the "chore: release package"
+      # PR itself) trigger downstream workflows. GitHub suppresses workflow
+      # triggers for events authored by the default GITHUB_TOKEN, which left
+      # the release PR permanently BLOCKED on the pull_request_target-based
+      # `IPR Policy / Signature` required check — it never fired, so only an
+      # admin bypass could merge. An App identity's events are not suppressed.
+      - name: Mint release bot token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.IPR_APP_ID }}
+          private-key: ${{ secrets.IPR_APP_PRIVATE_KEY }}
+
       - name: Checkout Repo
         uses: actions/checkout@v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -50,7 +66,7 @@ jobs:
           title: 'chore: release package'
           commit: 'chore: release package'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
 
       # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
