@@ -1,0 +1,26 @@
+{
+  "name": "@adcp/aao-secretariat-setup",
+  "version": "0.1.0",
+  "description": "AAO-SECRETARIAT v2 setup action — parses AAO-SECRETARIAT.md, computes diff/delta, evaluates short-circuit conditions.",
+  "type": "module",
+  "main": "dist/index.js",
+  "private": true,
+  "scripts": {
+    "build": "ncc build src/index.ts -o dist --minify",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^6.0.1",
+    "picomatch": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/picomatch": "^3.0.2",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.7.3",
+    "vitest": "^4.1.1"
+  }
+}
