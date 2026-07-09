@@ -1,10 +1,16 @@
 name: AI PR Review (Argus)
 
-# Argus is an LLM PR reviewer that posts an `--approve`, `--comment`, or
-# `--request-changes` review on every non-dependabot PR. It reads the diff,
-# delegates to subagents when relevant (javascript-protocol-expert,
-# ad-tech-protocol-expert, security-reviewer, code-reviewer, etc.), and
-# writes the review in bokelley's voice.
+# Argus is an LLM PR reviewer that posts an approve / comment / request-changes
+# review on every non-dependabot PR, in bokelley's voice. It runs in two stages:
+#
+#   1. reviewer  — a single Claude agent reads the diff and changed files inline
+#                  (no Task subagents) and writes its verdict + review body to two
+#                  files.
+#   2. arbiter   — a deterministic step reads those files and posts the review.
+#
+# Splitting posting out of the reviewer means a reviewer that ends its turn early
+# cannot swallow the verdict: the arbiter posts what the reviewer recorded,
+# and degrades to a COMMENT (never a fabricated approval) when no verdict was written.
 #
 # Reviews are posted as the AAO IPR Bot GitHub App (reused — same App that
 # powers ipr-agreement.yml), so they count toward the "1 review required"
@@ -201,6 +207,8 @@ jobs:
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           REPO: ${{ github.repository }}
+          ARGUS_VERDICT: ${{ runner.temp }}/argus-verdict.txt
+          ARGUS_REVIEW_BODY: ${{ runner.temp }}/argus-review.md
         run: |
           set -euo pipefail
           # Read the prompt from the PR's base SHA, not the working tree or PR
@@ -222,6 +230,8 @@ jobs:
             echo "- PR_NUMBER: $PR_NUMBER"
             echo "- REPO: $REPO"
             echo "- PR_BASE_REF: $PR_BASE_REF"
+            echo "- ARGUS_REVIEW_BODY (Write your review body to this exact path): $ARGUS_REVIEW_BODY"
+            echo "- ARGUS_VERDICT (Write one word — approve, comment, or request-changes — to this exact path): $ARGUS_VERDICT"
             echo "${SENTINEL}"
           } >> "$GITHUB_OUTPUT"
 
@@ -231,14 +241,12 @@ jobs:
         continue-on-error: true
         uses: anthropics/claude-code-action@v1
         env:
-          # Setting allowed_non_write_users below auto-enables the action's
-          # subprocess env scrub on EVERY run, not just read-only-actor runs.
-          # Per the action's security docs the scrub strips GitHub Actions
-          # secrets from Bash subprocesses — which would break the
-          # `gh pr review` call that is the review's deliverable. This
-          # workflow never executes PR-controlled code (base-SHA checkout,
-          # API-only inspection, tight tool allowlist), so opt out to keep
-          # the posting path working.
+          # allowed_non_write_users (below) auto-enables the action's subprocess
+          # env scrub on EVERY run, which strips the GitHub token from Bash
+          # subprocesses — that would break the reviewer's own `gh pr view/diff/api`
+          # reads. This job never executes PR-controlled code (base-SHA checkout,
+          # API-only inspection, tight tool allowlist), so opt out. Posting is done
+          # by the separate arbiter step below, not by the agent.
           CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0'
         with:
           prompt: ${{ steps.build-prompt.outputs.ARGUS_PROMPT }}
@@ -255,100 +263,89 @@ jobs:
           # rather than trigger a review whose approval counts toward branch
           # protection.
           allowed_non_write_users: fgranata
+          # No `gh pr review` (the arbiter posts) and no `Task` (the reviewer works
+          # as a single agent inline — subagent dispatch in this harness stalls the
+          # run and never records a verdict). Write is how it emits the two files.
           claude_args: |
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*),Bash(gh api repos/*/contents/*),Bash(gh api repos/*/issues/*),Read,Write,Glob,Grep,Task"
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/*/pulls/*),Bash(gh api repos/*/contents/*),Bash(gh api repos/*/issues/*),Read,Write,Glob,Grep"
             --max-turns 60
             --model claude-opus-4-8
             --effort high
 
-      - name: Verify Argus posted a review
-        id: verify
+      # ─────────────────────────────────────────────────────────────────────
+      # Arbiter: post the verdict.
+      #
+      # The reviewer does NOT call `gh pr review` — it writes its verdict
+      # (approve|comment|request-changes) and review body to two files. This
+      # deterministic step reads them and posts the review, so a reviewer that
+      # ends its turn early cannot swallow the verdict. It degrades safely,
+      # in order:
+      #   1. valid verdict + body        → post that review (approve/comment/request-changes)
+      #   2. no verdict but body present → post the body as a COMMENT (never an approval)
+      #   3. only the agent's final text → post that as a COMMENT
+      #   4. nothing usable              → leave a plain "could not complete" comment
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Post review (arbiter)
         if: always() && steps.app-token.outcome == 'success' && steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          LATEST="$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            --jq "[.[] | select(
-              .user.login == \"${ARGUS_BOT_LOGIN}\"
-              and (((.body // \"\") | contains(\"Argus is **not auto-reviewing**\")) | not)
-              and (((.body // \"\") | contains(\"Argus review could not complete\")) | not)
-            )] | sort_by(.submitted_at) | last // {}")"
-          STATE="$(echo "$LATEST" | jq -r '.state // ""')"
-          SUBMITTED="$(echo "$LATEST" | jq -r '.submitted_at // ""')"
-          echo "Latest ${ARGUS_BOT_LOGIN} review — state: $STATE, submitted: $SUBMITTED"
-          if [ -z "$STATE" ]; then
-            echo "review_posted=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No ${ARGUS_BOT_LOGIN} review found on PR #$PR_NUMBER"
-            exit 0
-          fi
-          SUBMITTED_TS="$(date -u -d "$SUBMITTED" +%s)"
-          NOW_TS="$(date -u +%s)"
-          if [ $((NOW_TS - SUBMITTED_TS)) -gt 600 ]; then
-            echo "review_posted=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Latest ${ARGUS_BOT_LOGIN} review is older than 10 minutes — Argus didn't post in this run"
-            exit 0
-          fi
-          echo "review_posted=true" >> "$GITHUB_OUTPUT"
-          echo "review_state=$STATE" >> "$GITHUB_OUTPUT"
-
-      # ─────────────────────────────────────────────────────────────────────
-      # Fallback: Claude finished but never called `gh pr review` (it
-      # occasionally ends its session early instead of retrying a denied
-      # posting command). Its final output is still a written review — post
-      # it as a COMMENT review so the PR gets the substance without granting
-      # an approval Claude never explicitly issued.
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Post fallback review from Claude output
-        id: fallback
-        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true' && steps.ai-review.outcome == 'success' && steps.verify.outputs.review_posted != 'true'
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
+          VERDICT_FILE: ${{ runner.temp }}/argus-verdict.txt
+          BODY_FILE: ${{ runner.temp }}/argus-review.md
           EXECUTION_FILE: ${{ steps.ai-review.outputs.execution_file }}
-        run: |
-          set -euo pipefail
-          echo "posted=false" >> "$GITHUB_OUTPUT"
-          FILE="${EXECUTION_FILE:-}"
-          if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-            echo "No execution file at '$FILE' — nothing to fall back to."
-            exit 0
-          fi
-          BODY="$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$FILE")"
-          if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
-            echo "Execution result has no final text — nothing to fall back to."
-            exit 0
-          fi
-          # GitHub caps review bodies at 65536 chars; leave room for the preamble.
-          BODY="$(printf '%s' "$BODY" | head -c 60000)"
-          PREAMBLE=$'> [!NOTE]\n> Argus finished its review but failed to post it through the normal path. This is its final output, posted verbatim as a **comment** (not an approval) by the workflow fallback.\n\n'
-          printf '%s%s' "$PREAMBLE" "$BODY" > /tmp/fallback-review-body.md
-          gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            -X POST \
-            -f event='COMMENT' \
-            -f body="$(cat /tmp/fallback-review-body.md)"
-          # Later writes to GITHUB_OUTPUT override earlier ones.
-          echo "posted=true" >> "$GITHUB_OUTPUT"
-          echo "Posted fallback COMMENT review on PR #$PR_NUMBER"
-
-      - name: Comment on PR if Argus review failed
-        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true' && steps.fallback.outputs.posted != 'true' && (steps.ai-review.outcome == 'failure' || steps.verify.outputs.review_posted != 'true')
-        uses: actions/github-script@v7
-        env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const runUrl = process.env.RUN_URL;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `⚠️ **Argus review could not complete**\n\nThe automated review encountered an issue (possibly reached max turns, timed out, or failed to post the final \`gh pr review\`). A human reviewer should take this PR.\n\n[View workflow run](${runUrl})\n\n<sub>This is an automated message from the Argus AI review workflow.</sub>`
-            })
+        run: |
+          # No `set -e`: a failed post must fall through to the next recovery tier.
+          set -uo pipefail
+
+          VERDICT=""
+          if [ -f "$VERDICT_FILE" ]; then
+            VERDICT="$(tr -d '[:space:]' < "$VERDICT_FILE" | tr '[:upper:]' '[:lower:]')"
+          fi
+          BODY=""
+          if [ -f "$BODY_FILE" ]; then
+            BODY="$(cat "$BODY_FILE")"
+          fi
+
+          # Map the reviewer's verdict to a gh review event. Anything else is
+          # treated as "no verdict" and degrades to a COMMENT below.
+          EVENT=""
+          case "$VERDICT" in
+            approve)         EVENT="--approve" ;;
+            comment)         EVENT="--comment" ;;
+            request-changes) EVENT="--request-changes" ;;
+          esac
+
+          POST_FILE="${RUNNER_TEMP}/argus-post.md"
+
+          # Tier 1 — valid verdict + body: post the real review.
+          if [ -n "$EVENT" ] && [ -n "$BODY" ]; then
+            printf '%s' "$BODY" | head -c 60000 > "$POST_FILE"
+            if gh pr review "$PR_NUMBER" "$EVENT" --body-file "$POST_FILE"; then
+              echo "Posted '$VERDICT' review on PR #$PR_NUMBER"
+              exit 0
+            fi
+            echo "::warning::gh pr review ($VERDICT) failed — degrading to a COMMENT."
+          fi
+
+          # Tiers 2/3 — recover the substance, never fabricate an approval.
+          RECOVERED="$BODY"
+          if [ -z "$RECOVERED" ] && [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+            RECOVERED="$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE")"
+            [ "$RECOVERED" = "null" ] && RECOVERED=""
+          fi
+
+          if [ -n "$RECOVERED" ]; then
+            PREAMBLE=$'> [!NOTE]\n> Argus did not record a clean verdict this run (it may have ended early). Posting its output as a **comment** — not an approval. A human reviewer should take this PR.\n\n'
+            { printf '%s' "$PREAMBLE"; printf '%s' "$RECOVERED"; } | head -c 60000 > "$POST_FILE"
+            if gh pr review "$PR_NUMBER" --comment --body-file "$POST_FILE"; then
+              echo "Posted fallback COMMENT review on PR #$PR_NUMBER"
+              exit 0
+            fi
+            echo "::warning::Fallback COMMENT review failed — leaving a plain note."
+          fi
+
+          # Tier 4 — nothing usable: leave a plain note so the PR isn't silently unreviewed.
+          gh pr comment "$PR_NUMBER" --body "⚠️ **Argus review could not complete** (no verdict or review body was produced). A human reviewer should take this PR. [View workflow run](${RUN_URL})"
