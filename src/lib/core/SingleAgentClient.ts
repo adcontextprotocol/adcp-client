@@ -85,6 +85,10 @@ import type {
   CreateMediaBuyResponse,
 } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
+import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
+// A2A SDK client used untyped — wire shapes are validated at runtime, matching
+// the prior CommonJS `require('@a2a-js/sdk/client')` behaviour.
+const A2AClient: any = A2AClientImpl;
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { attachMatch } from './match';
@@ -832,9 +836,6 @@ export class SingleAgentClient {
    * - Check for OAuth metadata to provide helpful guidance
    */
   private async fetchA2ACanonicalUrl(agentUri: string, readOptions?: ReadRequestOptions): Promise<string> {
-    const clientModule = require('@a2a-js/sdk/client');
-    const A2AClient = clientModule.A2AClient;
-
     // adcp-client#1804 — wrap A2A card discovery in withResponseSizeLimit so
     // `transport.maxResponseBytes` applies to every agent-card fetch. The
     // auth-stamping fetchImpl composes through wrapFetchWithSizeLimit so the
@@ -3788,8 +3789,6 @@ export class SingleAgentClient {
       }
     } else if (this.normalizedAgent.protocol === 'a2a') {
       // Use A2A SDK to get agent card
-      const clientModule = require('@a2a-js/sdk/client');
-      const A2AClient = clientModule.A2AClient;
 
       // adcp-client#1799 — route the custom fetchImpl through
       // `wrapFetchWithSizeLimit` so the active ALS slot enforces the cap on

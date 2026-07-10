@@ -20,7 +20,9 @@ import { checkAccountDiscoveryGate } from './spec-conformance';
 // reference without shipping the matching implementation module. Without this,
 // `resolveAssertions` throws and every comply() call against an up-to-date
 // compliance cache fails at startup.
-import '../storyboard/default-invariants';
+import { registerDefaultInvariants } from '../storyboard/default-invariants';
+
+registerDefaultInvariants();
 import {
   resolveStoryboardsForCapabilities,
   resolveBundleOrStoryboard,

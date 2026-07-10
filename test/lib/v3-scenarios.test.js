@@ -124,7 +124,7 @@ describe('testAgent routes new scenarios', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'property_list_filters'"), 'agent-tester should route property_list_filters');
+    assert.ok(src.includes('property_list_filters'), 'agent-tester should route property_list_filters');
     assert.ok(src.includes('testPropertyListFilters'), 'agent-tester should call testPropertyListFilters');
   });
 
@@ -132,7 +132,7 @@ describe('testAgent routes new scenarios', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'si_handoff'"), 'agent-tester should route si_handoff');
+    assert.ok(src.includes('si_handoff'), 'agent-tester should route si_handoff');
     assert.ok(src.includes('testSIHandoff'), 'agent-tester should call testSIHandoff');
   });
 
@@ -140,7 +140,7 @@ describe('testAgent routes new scenarios', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'schema_compliance'"), 'agent-tester should route schema_compliance');
+    assert.ok(src.includes('schema_compliance'), 'agent-tester should route schema_compliance');
     assert.ok(src.includes('testSchemaCompliance'), 'agent-tester should call testSchemaCompliance');
   });
 });

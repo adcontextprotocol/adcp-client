@@ -10,10 +10,12 @@
 // Side-effect import: registers the default cross-step assertions that
 // upstream storyboards reference by id (idempotency.conflict_no_payload_leak,
 // context.no_secret_echo, governance.denial_blocks_mutation). Without this
-// import here, any `runStoryboard` call against a storyboard declaring
+// registration here, any `runStoryboard` call against a storyboard declaring
 // `invariants: [...]` would throw at start on unresolved ids. Consumers who
 // want to replace the defaults can `clearAssertionRegistry()` first.
-import './default-invariants';
+import { registerDefaultInvariants } from './default-invariants';
+
+registerDefaultInvariants();
 
 // Types
 export type {

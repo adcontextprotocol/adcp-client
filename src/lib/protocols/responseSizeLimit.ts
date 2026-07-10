@@ -10,14 +10,14 @@
 // reads the size-limited body via `response.clone()`, so a hostile reply
 // can't blow memory through the capture path either.
 
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { ResponseTooLargeError } from '../errors';
 
 interface SizeLimitSlot {
   maxResponseBytes: number;
 }
 
-export const responseSizeLimitStorage = new AsyncLocalStorage<SizeLimitSlot>();
+export const responseSizeLimitStorage = globalAsyncLocalStorage<SizeLimitSlot>('responseSizeLimit');
 
 /**
  * Run `fn` with a response body byte cap active. Every fetch made through

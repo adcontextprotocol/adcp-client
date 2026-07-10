@@ -44,7 +44,7 @@ describe('brand helpers public exports', () => {
 
   it('publishes runtime and declaration paths for @adcp/sdk/brand', () => {
     assert.deepStrictEqual(pkg.exports['./brand'], {
-      import: './dist/lib/brand/index.js',
+      import: './dist/lib/brand/index.mjs',
       require: './dist/lib/brand/index.js',
       types: './dist/lib/brand/index.d.ts',
     });

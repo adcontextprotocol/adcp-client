@@ -10,7 +10,11 @@
  */
 import { createHash } from 'crypto';
 import Ajv from 'ajv';
-import Ajv2020 from 'ajv/dist/2020';
+// Loaded via `require` (extension-lenient CJS resolution) rather than a
+// bare-specifier `import` — ajv ships no `exports` map, so Node's ESM resolver
+// would demand an explicit `ajv/dist/2020.js`. The ESM build gets a
+// `createRequire` shim, so `require` is available in both formats.
+const Ajv2020 = require('ajv/dist/2020') as typeof import('ajv/dist/2020').default;
 import addFormats from 'ajv-formats';
 import { ssrfSafeFetch, SSRF_TRANSIENT_CODES, SsrfRefusedError } from '../net/ssrf-fetch';
 import {
@@ -752,7 +756,7 @@ function getDraft07Ajv(): Ajv {
   return ajv;
 }
 
-function getDraft2020Ajv(): Ajv2020 {
+function getDraft2020Ajv(): InstanceType<typeof Ajv2020> {
   const ajv = new Ajv2020({
     strict: false,
     allErrors: true,

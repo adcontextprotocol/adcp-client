@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import type { AgentConfig, AgentRequestSigningConfig } from '../types/adcp';
 import {
   buildCapabilityCacheKey,
@@ -70,7 +70,7 @@ export interface AgentSigningContext {
  * so a non-signing call cannot inherit a stale context from an enclosing
  * scope.
  */
-export const signingContextStorage = new AsyncLocalStorage<AgentSigningContext | undefined>();
+export const signingContextStorage = globalAsyncLocalStorage<AgentSigningContext | undefined>('signingContext');
 
 /**
  * Build an `AgentSigningContext` from an `AgentConfig` when signing is

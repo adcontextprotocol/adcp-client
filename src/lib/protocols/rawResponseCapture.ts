@@ -9,7 +9,7 @@
 // every HTTP request that happened inside `fn`. The uniform-error invariant
 // uses the captures to compare two probes byte-for-byte.
 
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 
 export interface RawHttpCapture {
   url: string;
@@ -33,7 +33,7 @@ interface CaptureSlot {
 // against accidentally retaining huge responses.
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
 
-export const rawResponseCaptureStorage = new AsyncLocalStorage<CaptureSlot>();
+export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('rawResponseCapture');
 
 /**
  * Run `fn` with a raw-response capture slot active. Every HTTP request made
