@@ -81,7 +81,7 @@ runs:
 
     - name: Setup
       id: setup
-      uses: ./.github/aao-secretariat/setup
+      uses: ./.secretariat/ai-review/setup
       with:
         github-token: ${{ steps.app-token.outputs.token }}
         aao-secretariat-bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
@@ -105,7 +105,7 @@ runs:
     - name: Reviewer
       if: steps.setup.outputs.should-run == 'true'
       id: reviewer
-      uses: ./.github/aao-secretariat/reviewer
+      uses: ./.secretariat/ai-review/reviewer
       with:
         anthropic-api-key: ${{ inputs.anthropic-api-key }}
         github-token: ${{ steps.app-token.outputs.token }}
@@ -125,7 +125,7 @@ runs:
     - name: Arbiter
       if: steps.setup.outputs.should-run == 'true'
       id: arbiter
-      uses: ./.github/aao-secretariat/arbiter
+      uses: ./.secretariat/ai-review/arbiter
       with:
         anthropic-api-key: ${{ inputs.anthropic-api-key }}
         github-token: ${{ steps.app-token.outputs.token }}

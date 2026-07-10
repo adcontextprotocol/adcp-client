@@ -15,5 +15,5 @@ head-read handling, repo rules in `AAO-SECRETARIAT.md`) are tracked in this fork
 
 ## Layout
 
-Phase-1: the action tree lives here under `.github/aao-secretariat/`. Phase-2:
+Phase-1: the action tree lives here under `.secretariat/ai-review/`. Phase-2:
 it moves to a central AdCP repo and every AdCP repo consumes it from there.
