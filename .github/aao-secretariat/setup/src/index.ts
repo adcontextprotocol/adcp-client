@@ -202,7 +202,8 @@ async function main(): Promise<void> {
     })
     mergeable = prData.mergeable !== false
   } catch {
-    mergeable = true
+    // Transient lookup failure — keep the default (assume mergeable); a PR
+    // metadata blip should not block the review.
   }
 
   const surfaceFiles = await computePrSurfaceFiles({
