@@ -21,6 +21,6 @@ test/lib/v2-projection-fixtures/
 # AAO-SECRETARIAT v2 code-review system, forked verbatim from scope3data/actions
 # (aao-secretariat-v2/ tree). Files here are fetched byte-for-byte from upstream so
 # the fork stays diffable against its source; prettier would reformat them
-# and mask real upstream drift. See .github/aao-secretariat/README.md for the pinned
+# and mask real upstream drift. See .secretariat/ai-review/README.md for the pinned
 # SHA and fork rationale.
-.github/aao-secretariat/
+.secretariat/ai-review/

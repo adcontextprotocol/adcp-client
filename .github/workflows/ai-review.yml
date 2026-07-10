@@ -1,7 +1,7 @@
 name: AI PR Review (AAO-SECRETARIAT)
 
 # AAO-SECRETARIAT reviews every non-draft, non-dependabot PR. The heavy lifting lives in
-# the forked action tree under .github/aao-secretariat/ (setup → reviewer → arbiter),
+# the forked action tree under .secretariat/ai-review/ (setup → reviewer → arbiter),
 # adapted from Scope3's PR-review action set. This workflow only handles the
 # pull_request_target security posture (trusted base-SHA checkout only; the PR
 # head is never fetched, checked out, or executed — setup reads head content
@@ -14,7 +14,7 @@ on:
     types: [opened, labeled, ready_for_review, synchronize]
     paths-ignore:
       - '.github/workflows/ai-review.yml'
-      - '.github/aao-secretariat/**'
+      - '.secretariat/ai-review/**'
       - 'AAO-SECRETARIAT.md'
 
 jobs:
@@ -58,7 +58,7 @@ jobs:
           MODIFIED=""
           while IFS= read -r f; do
             case "$f" in
-              .github/aao-secretariat/*|.github/workflows/ai-review.yml|AAO-SECRETARIAT.md)
+              .secretariat/ai-review/*|.github/workflows/ai-review.yml|AAO-SECRETARIAT.md)
                 MODIFIED="${MODIFIED}${f}"$'\n' ;;
             esac
           done <<< "$CHANGED"
@@ -90,7 +90,7 @@ jobs:
 
       - name: Run AAO-SECRETARIAT
         if: steps.workflow-mod.outputs.modified != 'true'
-        uses: ./.github/aao-secretariat/review
+        uses: ./.secretariat/ai-review/review
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           app-id: ${{ secrets.SECRETARIAT_APP_ID }}
