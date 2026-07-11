@@ -136,6 +136,58 @@ jobs:
             console.log('✅ Package exports are valid');
           "
 
+      - name: Static export-map checks (publint + attw)
+        run: npm run check:package
+
+  # Clean-room dual-format smoke: install the packed tarball with peers at their
+  # range floors and load it via real ESM + CJS. This does a live registry
+  # install, so the expensive steps run only when a packaging-relevant file
+  # changed. The job itself always completes (skipped steps = success), so it is
+  # safe to require via the `test` aggregator and never hangs pending.
+  package-smoke:
+    name: Package Artifact Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect packaging-relevant changes
+        id: detect
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            # No usable base (first push, force-push, scheduled run) — run to be safe.
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$base" HEAD | grep -qE '^(package\.json|package-lock\.json|tsup\.config\.ts|tsconfig\.json|tsconfig\.lib\.json|tsconfig\.build\.json|scripts/(generate-dmts-declarations|generate-per-tool-types|copy-schemas-to-dist|copy-v2-projection-catalog|generate-wire-spec-fields)\.ts|scripts/verify-package\.mjs|\.github/workflows/ci\.yml)$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No packaging-relevant changes; skipping the clean-room smoke."
+          fi
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.changed == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.detect.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build library
+        if: steps.detect.outputs.changed == 'true'
+        run: npm run build:lib
+
+      - name: Clean-room dual-format smoke (packed artifact + peer floors)
+        if: steps.detect.outputs.changed == 'true'
+        run: npm run verify:package
+
   adopter-typechecks:
     name: Adopter Typechecks
     runs-on: ubuntu-latest
@@ -397,6 +449,7 @@ jobs:
       - unit-tests
       - example-integration-tests
       - security-audit
+      - package-smoke
     if: ${{ always() }}
     timeout-minutes: 2
 
