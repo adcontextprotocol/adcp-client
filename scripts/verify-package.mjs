@@ -21,7 +21,7 @@
  * Exits non-zero on any failure.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,16 +55,7 @@ const peerFloors = Object.entries(pkg.peerDependencies ?? {})
   .map(([name, range]) => `${name}@${rangeFloor(range)}`);
 
 let tmpDir;
-let tarballPath;
 try {
-  console.log('📦 Packing tarball...');
-  // --ignore-scripts: dist/ is already built, so skip the prepare hook whose
-  // stdout would otherwise corrupt the --json payload.
-  const packJson = run('npm', ['pack', '--json', '--ignore-scripts'], { cwd: REPO_ROOT });
-  const filename = JSON.parse(packJson.slice(packJson.indexOf('[')))[0].filename;
-  tarballPath = path.join(REPO_ROOT, filename);
-  console.log(`   → ${filename}`);
-
   tmpDir = mkdtempSync(path.join(tmpdir(), 'adcp-verify-'));
   console.log(`🧪 Clean-room dir: ${tmpDir}`);
 
@@ -74,6 +65,20 @@ try {
     path.join(tmpDir, 'package.json'),
     JSON.stringify({ name: 'adcp-verify-consumer', version: '1.0.0', private: true }, null, 2)
   );
+
+  // Pack into the temp dir and locate the .tgz on disk. We deliberately do NOT
+  // parse `npm pack --json` stdout: npm runs the `prepare` lifecycle during
+  // pack and its banner pollutes stdout (even with --ignore-scripts on some npm
+  // versions), which breaks JSON parsing. Reading the emitted file sidesteps it.
+  console.log('📦 Packing tarball...');
+  run('npm', ['pack', '--pack-destination', tmpDir, '--ignore-scripts', '--loglevel=error'], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+  });
+  const tgz = readdirSync(tmpDir).find(f => f.endsWith('.tgz'));
+  if (!tgz) throw new Error(`npm pack produced no .tgz in ${tmpDir}`);
+  const tarballPath = path.join(tmpDir, tgz);
+  console.log(`   → ${tgz}`);
 
   console.log(`📥 Installing tarball + peer floors:\n   ${peerFloors.join('\n   ')}`);
   run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...peerFloors], {
@@ -133,6 +138,6 @@ try {
   console.error(err.message ?? err);
   process.exitCode = 1;
 } finally {
+  // The tarball lives inside tmpDir, so removing the dir removes it too.
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
-  if (tarballPath) rmSync(tarballPath, { force: true });
 }
