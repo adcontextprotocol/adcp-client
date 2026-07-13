@@ -1,7 +1,5 @@
 // Official A2A client implementation - NO FALLBACKS
-const clientModule = require('@a2a-js/sdk/client');
-const A2AClient = clientModule.A2AClient;
-
+import { A2AClient as A2AClientImpl } from '@a2a-js/sdk/client';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHmac, randomUUID } from 'node:crypto';
 import type { PushNotificationConfig } from '../types/tools.generated';
@@ -22,6 +20,11 @@ import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
 import { DEFAULT_REQUEST_TIMEOUT_MS, resolveRequestTimeoutMs, withAbortSignal } from './abort';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
+
+// The A2A SDK client is used untyped: request/response shapes are validated at
+// runtime against the AdCP wire contract, not against the SDK's exported
+// types. Preserves the prior behaviour of the CommonJS `require` form.
+const A2AClient: any = A2AClientImpl;
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');

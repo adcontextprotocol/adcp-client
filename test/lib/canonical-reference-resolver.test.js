@@ -553,9 +553,14 @@ describe('canonical reference resolver', () => {
     assert.strictEqual(typeof canonical.createCanonicalReferenceResolver, 'function');
     assert.strictEqual(sdk.createCanonicalReferenceResolver, canonical.createCanonicalReferenceResolver);
     assert.deepStrictEqual(pkg.exports['./canonical-references'], {
-      import: './dist/lib/canonical-references/index.js',
-      require: './dist/lib/canonical-references/index.js',
-      types: './dist/lib/canonical-references/index.d.ts',
+      import: {
+        types: './dist/lib/canonical-references/index.d.mts',
+        default: './dist/lib/canonical-references/index.mjs',
+      },
+      require: {
+        types: './dist/lib/canonical-references/index.d.ts',
+        default: './dist/lib/canonical-references/index.js',
+      },
     });
     assert.deepStrictEqual(pkg.typesVersions['*']['canonical-references'], [
       'dist/lib/canonical-references/index.d.ts',

@@ -35,9 +35,8 @@ describe('net SSRF helpers public exports', () => {
 
   it('publishes runtime and declaration paths for @adcp/sdk/net', () => {
     assert.deepStrictEqual(pkg.exports['./net'], {
-      import: './dist/lib/net/index.js',
-      require: './dist/lib/net/index.js',
-      types: './dist/lib/net/index.d.ts',
+      import: { types: './dist/lib/net/index.d.mts', default: './dist/lib/net/index.mjs' },
+      require: { types: './dist/lib/net/index.d.ts', default: './dist/lib/net/index.js' },
     });
     assert.deepStrictEqual(pkg.typesVersions['*'].net, ['dist/lib/net/index.d.ts']);
 

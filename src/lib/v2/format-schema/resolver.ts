@@ -1,6 +1,13 @@
-import Ajv2019 from 'ajv/dist/2019';
+// Loaded via `require` (extension-lenient CJS resolution) rather than a
+// bare-specifier `import` — ajv ships no `exports` map, so Node's ESM resolver
+// would demand an explicit `ajv/dist/2019.js`. The ESM build gets a
+// `createRequire` shim, so `require` is available in both formats.
+const Ajv2019 = require('ajv/dist/2019') as typeof import('ajv/dist/2019').default;
 import addFormats from 'ajv-formats';
-import draft7MetaSchema from 'ajv/dist/refs/json-schema-draft-07.json';
+// Loaded via `require` (not a JSON `import`) so it resolves in both CJS and
+// ESM without a Node import attribute; the ESM build gets a `createRequire`
+// shim for this module.
+const draft7MetaSchema = require('ajv/dist/refs/json-schema-draft-07.json');
 import {
   fetchFormatSchema,
   FormatSchemaFetchError,

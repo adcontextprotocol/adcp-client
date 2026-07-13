@@ -66,7 +66,7 @@ describe('State machine scenario routing in agent-tester', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'media_buy_lifecycle'"), 'should route media_buy_lifecycle');
+    assert.ok(src.includes('media_buy_lifecycle'), 'should route media_buy_lifecycle');
     assert.ok(src.includes('testMediaBuyLifecycle'), 'should call testMediaBuyLifecycle');
   });
 
@@ -74,7 +74,7 @@ describe('State machine scenario routing in agent-tester', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'terminal_state_enforcement'"), 'should route terminal_state_enforcement');
+    assert.ok(src.includes('terminal_state_enforcement'), 'should route terminal_state_enforcement');
     assert.ok(src.includes('testTerminalStateEnforcement'), 'should call testTerminalStateEnforcement');
   });
 
@@ -82,7 +82,7 @@ describe('State machine scenario routing in agent-tester', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/agent-tester.js'), 'utf8');
-    assert.ok(src.includes("'package_lifecycle'"), 'should route package_lifecycle');
+    assert.ok(src.includes('package_lifecycle'), 'should route package_lifecycle');
     assert.ok(src.includes('testPackageLifecycle'), 'should call testPackageLifecycle');
   });
 });

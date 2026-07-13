@@ -7,171 +7,332 @@
     "packages/*"
   ],
   "main": "dist/lib/index.js",
+  "module": "./dist/lib/index.mjs",
   "types": "dist/lib/index.d.ts",
   "type": "commonjs",
   "exports": {
     ".": {
-      "import": "./dist/lib/index.js",
-      "require": "./dist/lib/index.js",
-      "types": "./dist/lib/index.d.ts"
+      "import": {
+        "types": "./dist/lib/index.d.mts",
+        "default": "./dist/lib/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/index.d.ts",
+        "default": "./dist/lib/index.js"
+      }
     },
     "./client": {
-      "import": "./dist/lib/client/index.js",
-      "require": "./dist/lib/client/index.js",
-      "types": "./dist/lib/client/index.d.ts"
+      "import": {
+        "types": "./dist/lib/client/index.d.mts",
+        "default": "./dist/lib/client/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/client/index.d.ts",
+        "default": "./dist/lib/client/index.js"
+      }
     },
     "./compliance": {
-      "import": "./dist/lib/compliance/index.js",
-      "require": "./dist/lib/compliance/index.js",
-      "types": "./dist/lib/compliance/index.d.ts"
+      "import": {
+        "types": "./dist/lib/compliance/index.d.mts",
+        "default": "./dist/lib/compliance/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/compliance/index.d.ts",
+        "default": "./dist/lib/compliance/index.js"
+      }
     },
     "./advanced": {
-      "import": "./dist/lib/advanced.js",
-      "require": "./dist/lib/advanced.js",
-      "types": "./dist/lib/advanced.d.ts"
+      "import": {
+        "types": "./dist/lib/advanced.d.mts",
+        "default": "./dist/lib/advanced.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/advanced.d.ts",
+        "default": "./dist/lib/advanced.js"
+      }
     },
     "./types": {
-      "import": "./dist/lib/types/index.js",
-      "require": "./dist/lib/types/index.js",
-      "types": "./dist/lib/types/index.d.ts"
+      "import": {
+        "types": "./dist/lib/types/index.d.mts",
+        "default": "./dist/lib/types/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/types/index.d.ts",
+        "default": "./dist/lib/types/index.js"
+      }
     },
     "./enums": {
-      "import": "./dist/lib/enums.js",
-      "require": "./dist/lib/enums.js",
-      "types": "./dist/lib/enums.d.ts"
+      "import": {
+        "types": "./dist/lib/enums.d.mts",
+        "default": "./dist/lib/enums.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/enums.d.ts",
+        "default": "./dist/lib/enums.js"
+      }
     },
     "./types/v2-5": {
-      "import": "./dist/lib/types/v2-5/index.js",
-      "require": "./dist/lib/types/v2-5/index.js",
-      "types": "./dist/lib/types/v2-5/index.d.ts"
+      "import": {
+        "types": "./dist/lib/types/v2-5/index.d.mts",
+        "default": "./dist/lib/types/v2-5/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/types/v2-5/index.d.ts",
+        "default": "./dist/lib/types/v2-5/index.js"
+      }
     },
     "./types/v3-1-beta": {
-      "import": "./dist/lib/types/v3-1-beta/index.js",
-      "require": "./dist/lib/types/v3-1-beta/index.js",
-      "types": "./dist/lib/types/v3-1-beta/index.d.ts"
+      "import": {
+        "types": "./dist/lib/types/v3-1-beta/index.d.mts",
+        "default": "./dist/lib/types/v3-1-beta/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/types/v3-1-beta/index.d.ts",
+        "default": "./dist/lib/types/v3-1-beta/index.js"
+      }
     },
     "./types/*": {
       "types": "./dist/lib/types/*.d.ts"
     },
     "./wholesale-feed-sync": {
-      "import": "./dist/lib/wholesale-feed-sync/index.js",
-      "require": "./dist/lib/wholesale-feed-sync/index.js",
-      "types": "./dist/lib/wholesale-feed-sync/index.d.ts"
+      "import": {
+        "types": "./dist/lib/wholesale-feed-sync/index.d.mts",
+        "default": "./dist/lib/wholesale-feed-sync/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/wholesale-feed-sync/index.d.ts",
+        "default": "./dist/lib/wholesale-feed-sync/index.js"
+      }
     },
     "./v2/projection": {
-      "import": "./dist/lib/v2/projection/index.js",
-      "require": "./dist/lib/v2/projection/index.js",
-      "types": "./dist/lib/v2/projection/index.d.ts"
+      "import": {
+        "types": "./dist/lib/v2/projection/index.d.mts",
+        "default": "./dist/lib/v2/projection/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/v2/projection/index.d.ts",
+        "default": "./dist/lib/v2/projection/index.js"
+      }
     },
     "./v2/format-schema": {
-      "import": "./dist/lib/v2/format-schema/index.js",
-      "require": "./dist/lib/v2/format-schema/index.js",
-      "types": "./dist/lib/v2/format-schema/index.d.ts"
+      "import": {
+        "types": "./dist/lib/v2/format-schema/index.d.mts",
+        "default": "./dist/lib/v2/format-schema/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/v2/format-schema/index.d.ts",
+        "default": "./dist/lib/v2/format-schema/index.js"
+      }
     },
     "./v2/publisher-catalog": {
-      "import": "./dist/lib/v2/publisher-catalog/index.js",
-      "require": "./dist/lib/v2/publisher-catalog/index.js",
-      "types": "./dist/lib/v2/publisher-catalog/index.d.ts"
+      "import": {
+        "types": "./dist/lib/v2/publisher-catalog/index.d.mts",
+        "default": "./dist/lib/v2/publisher-catalog/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/v2/publisher-catalog/index.d.ts",
+        "default": "./dist/lib/v2/publisher-catalog/index.js"
+      }
     },
     "./testing": {
-      "import": "./dist/lib/testing/index.js",
-      "require": "./dist/lib/testing/index.js",
-      "types": "./dist/lib/testing/index.d.ts"
+      "import": {
+        "types": "./dist/lib/testing/index.d.mts",
+        "default": "./dist/lib/testing/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/testing/index.d.ts",
+        "default": "./dist/lib/testing/index.js"
+      }
     },
     "./testing/personas": {
-      "import": "./dist/lib/testing/personas/index.js",
-      "require": "./dist/lib/testing/personas/index.js",
-      "types": "./dist/lib/testing/personas/index.d.ts"
+      "import": {
+        "types": "./dist/lib/testing/personas/index.d.mts",
+        "default": "./dist/lib/testing/personas/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/testing/personas/index.d.ts",
+        "default": "./dist/lib/testing/personas/index.js"
+      }
     },
     "./auth": {
-      "import": "./dist/lib/auth/index.js",
-      "require": "./dist/lib/auth/index.js",
-      "types": "./dist/lib/auth/index.d.ts"
+      "import": {
+        "types": "./dist/lib/auth/index.d.mts",
+        "default": "./dist/lib/auth/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/auth/index.d.ts",
+        "default": "./dist/lib/auth/index.js"
+      }
     },
     "./webhooks": {
-      "import": "./dist/lib/webhooks/index.js",
-      "require": "./dist/lib/webhooks/index.js",
-      "types": "./dist/lib/webhooks/index.d.ts"
+      "import": {
+        "types": "./dist/lib/webhooks/index.d.mts",
+        "default": "./dist/lib/webhooks/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/webhooks/index.d.ts",
+        "default": "./dist/lib/webhooks/index.js"
+      }
     },
     "./brand": {
-      "import": "./dist/lib/brand/index.js",
-      "require": "./dist/lib/brand/index.js",
-      "types": "./dist/lib/brand/index.d.ts"
+      "import": {
+        "types": "./dist/lib/brand/index.d.mts",
+        "default": "./dist/lib/brand/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/brand/index.d.ts",
+        "default": "./dist/lib/brand/index.js"
+      }
     },
     "./net": {
-      "import": "./dist/lib/net/index.js",
-      "require": "./dist/lib/net/index.js",
-      "types": "./dist/lib/net/index.d.ts"
+      "import": {
+        "types": "./dist/lib/net/index.d.mts",
+        "default": "./dist/lib/net/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/net/index.d.ts",
+        "default": "./dist/lib/net/index.js"
+      }
     },
     "./canonical-references": {
-      "import": "./dist/lib/canonical-references/index.js",
-      "require": "./dist/lib/canonical-references/index.js",
-      "types": "./dist/lib/canonical-references/index.d.ts"
+      "import": {
+        "types": "./dist/lib/canonical-references/index.d.mts",
+        "default": "./dist/lib/canonical-references/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/canonical-references/index.d.ts",
+        "default": "./dist/lib/canonical-references/index.js"
+      }
     },
     "./server": {
-      "import": "./dist/lib/server/index.js",
-      "require": "./dist/lib/server/index.js",
-      "types": "./dist/lib/server/index.d.ts"
+      "import": {
+        "types": "./dist/lib/server/index.d.mts",
+        "default": "./dist/lib/server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/server/index.d.ts",
+        "default": "./dist/lib/server/index.js"
+      }
     },
     "./server/legacy/v5": {
-      "import": "./dist/lib/server/legacy/v5/index.js",
-      "require": "./dist/lib/server/legacy/v5/index.js",
-      "types": "./dist/lib/server/legacy/v5/index.d.ts"
+      "import": {
+        "types": "./dist/lib/server/legacy/v5/index.d.mts",
+        "default": "./dist/lib/server/legacy/v5/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/server/legacy/v5/index.d.ts",
+        "default": "./dist/lib/server/legacy/v5/index.js"
+      }
     },
     "./signing": {
-      "import": "./dist/lib/signing/index.js",
-      "require": "./dist/lib/signing/index.js",
-      "types": "./dist/lib/signing/index.d.ts"
+      "import": {
+        "types": "./dist/lib/signing/index.d.mts",
+        "default": "./dist/lib/signing/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/signing/index.d.ts",
+        "default": "./dist/lib/signing/index.js"
+      }
     },
     "./signing/client": {
-      "import": "./dist/lib/signing/client.js",
-      "require": "./dist/lib/signing/client.js",
-      "types": "./dist/lib/signing/client.d.ts"
+      "import": {
+        "types": "./dist/lib/signing/client.d.mts",
+        "default": "./dist/lib/signing/client.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/signing/client.d.ts",
+        "default": "./dist/lib/signing/client.js"
+      }
     },
     "./signing/server": {
-      "import": "./dist/lib/signing/server.js",
-      "require": "./dist/lib/signing/server.js",
-      "types": "./dist/lib/signing/server.d.ts"
+      "import": {
+        "types": "./dist/lib/signing/server.d.mts",
+        "default": "./dist/lib/signing/server.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/signing/server.d.ts",
+        "default": "./dist/lib/signing/server.js"
+      }
     },
     "./signing/testing": {
-      "import": "./dist/lib/signing/testing.js",
-      "require": "./dist/lib/signing/testing.js",
-      "types": "./dist/lib/signing/testing.d.ts"
+      "import": {
+        "types": "./dist/lib/signing/testing.d.mts",
+        "default": "./dist/lib/signing/testing.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/signing/testing.d.ts",
+        "default": "./dist/lib/signing/testing.js"
+      }
     },
     "./schemas": {
-      "import": "./dist/lib/schemas/index.js",
-      "require": "./dist/lib/schemas/index.js",
-      "types": "./dist/lib/schemas/index.d.ts"
+      "import": {
+        "types": "./dist/lib/schemas/index.d.mts",
+        "default": "./dist/lib/schemas/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/schemas/index.d.ts",
+        "default": "./dist/lib/schemas/index.js"
+      }
     },
     "./compliance-fixtures": {
-      "import": "./dist/lib/compliance-fixtures/index.js",
-      "require": "./dist/lib/compliance-fixtures/index.js",
-      "types": "./dist/lib/compliance-fixtures/index.d.ts"
+      "import": {
+        "types": "./dist/lib/compliance-fixtures/index.d.mts",
+        "default": "./dist/lib/compliance-fixtures/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/compliance-fixtures/index.d.ts",
+        "default": "./dist/lib/compliance-fixtures/index.js"
+      }
     },
     "./conformance": {
-      "import": "./dist/lib/conformance/index.js",
-      "require": "./dist/lib/conformance/index.js",
-      "types": "./dist/lib/conformance/index.d.ts"
+      "import": {
+        "types": "./dist/lib/conformance/index.d.mts",
+        "default": "./dist/lib/conformance/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/conformance/index.d.ts",
+        "default": "./dist/lib/conformance/index.js"
+      }
     },
     "./substitution": {
-      "import": "./dist/lib/substitution/index.js",
-      "require": "./dist/lib/substitution/index.js",
-      "types": "./dist/lib/substitution/index.d.ts"
+      "import": {
+        "types": "./dist/lib/substitution/index.d.mts",
+        "default": "./dist/lib/substitution/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/substitution/index.d.ts",
+        "default": "./dist/lib/substitution/index.js"
+      }
     },
     "./express-mcp": {
-      "import": "./dist/lib/express-mcp/index.js",
-      "require": "./dist/lib/express-mcp/index.js",
-      "types": "./dist/lib/express-mcp/index.d.ts"
+      "import": {
+        "types": "./dist/lib/express-mcp/index.d.mts",
+        "default": "./dist/lib/express-mcp/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/express-mcp/index.d.ts",
+        "default": "./dist/lib/express-mcp/index.js"
+      }
     },
     "./mock-server": {
-      "import": "./dist/lib/mock-server/index.js",
-      "require": "./dist/lib/mock-server/index.js",
-      "types": "./dist/lib/mock-server/index.d.ts"
+      "import": {
+        "types": "./dist/lib/mock-server/index.d.mts",
+        "default": "./dist/lib/mock-server/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/mock-server/index.d.ts",
+        "default": "./dist/lib/mock-server/index.js"
+      }
     },
     "./upstream-recorder": {
-      "import": "./dist/lib/upstream-recorder/index.js",
-      "require": "./dist/lib/upstream-recorder/index.js",
-      "types": "./dist/lib/upstream-recorder/index.d.ts"
+      "import": {
+        "types": "./dist/lib/upstream-recorder/index.d.mts",
+        "default": "./dist/lib/upstream-recorder/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/upstream-recorder/index.d.ts",
+        "default": "./dist/lib/upstream-recorder/index.js"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -261,6 +422,15 @@
       "upstream-recorder": [
         "dist/lib/upstream-recorder/index.d.ts"
       ],
+      "enums": [
+        "dist/lib/enums.d.ts"
+      ],
+      "testing/personas": [
+        "dist/lib/testing/personas/index.d.ts"
+      ],
+      "server/legacy/v5": [
+        "dist/lib/server/legacy/v5/index.d.ts"
+      ],
       "types/*": [
         "dist/lib/types/*.d.ts"
       ]
@@ -290,7 +460,7 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run schemas:ensure",
     "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present",
@@ -338,6 +508,8 @@
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
+    "check:package": "publint --strict && attw --pack .",
+    "verify:package": "node scripts/verify-package.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",
     "sync-version": "tsx scripts/sync-version.ts",
@@ -409,8 +581,8 @@
     "yaml": "^2.7.1"
   },
   "peerDependencies": {
-    "@a2a-js/sdk": "^0.3.4",
-    "@modelcontextprotocol/sdk": "^1.17.5",
+    "@a2a-js/sdk": "^0.3.13",
+    "@modelcontextprotocol/sdk": "^1.24.0",
     "@opentelemetry/api": "^1.0.0",
     "pg": "^8.0.0",
     "redis": "^4.6.0 || ^5.0.0",
@@ -428,7 +600,8 @@
     }
   },
   "devDependencies": {
-    "@a2a-js/sdk": "^0.3.4",
+    "@a2a-js/sdk": "^0.3.13",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@changesets/cli": "^2.29.7",
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
@@ -439,15 +612,18 @@
     "@types/pg": "^8.20.0",
     "@types/tar": "^6.1.13",
     "actionlint": "^2.0.6",
+    "esbuild-fix-imports-plugin": "^1.0.23",
     "eslint": "^10.0.3",
     "json-schema-to-typescript": "^15.0.4",
     "json-schema-to-zod": "^2.6.1",
     "openapi-typescript": "^7.13.0",
     "pg": "^8.20.0",
     "prettier": "^3.6.2",
+    "publint": "^0.3.21",
     "redis": "^4.7.0",
     "tar": "^7.5.13",
     "ts-to-zod": "^5.0.1",
+    "tsup": "^8.5.1",
     "tsx": "^4.6.0",
     "typedoc": "^0.28.13",
     "typedoc-plugin-markdown": "^4.9.0",
@@ -467,5 +643,8 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.1.2"
+  "adcp_version": "3.1.2",
+  "sideEffects": [
+    "**/default-invariants.*"
+  ]
 }

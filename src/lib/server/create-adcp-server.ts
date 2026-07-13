@@ -40,6 +40,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { resolveBundleKey } from '../validation/schema-loader';
+import { TOOL_INPUT_SHAPES } from '../schemas';
 import { bundleSupportsAdcpVersionField } from '../protocols';
 import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -2433,7 +2434,7 @@ const SHALLOW_HINT_FIELD_SCHEMA = z.unknown().optional();
 const SHALLOW_HINT_SCHEMAS = new Map<string, AnySchema>();
 
 function getToolInputShapes(): ToolInputShapeMap {
-  cachedToolInputShapes ??= require('../schemas').TOOL_INPUT_SHAPES as ToolInputShapeMap;
+  cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
 }
 

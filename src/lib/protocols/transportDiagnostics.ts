@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 import { createHmac } from 'node:crypto';
 
 export type TransportActivityType = 'request_started' | 'response_received' | 'request_failed';
@@ -83,7 +83,7 @@ const SENSITIVE_TEXT_FIELD_RE =
   /((?:"[^"]*(?:authorization|cookie|credentials?|secret|signature|token|api[_-]?key|private[_-]?key|idempotency[_-]?key|password)[^"]*"\s*:\s*)|(?:^|[&\s])[^=&\s]*(?:authorization|cookie|credentials?|secret|signature|token|api[_-]?key|private[_-]?key|idempotency[_-]?key|password)[^=&\s]*=)("[^"]*"|[^&\s,}]+)/gi;
 const URL_LIKE_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;
 
-export const transportDiagnosticsStorage = new AsyncLocalStorage<TransportDiagnosticsSlot>();
+export const transportDiagnosticsStorage = globalAsyncLocalStorage<TransportDiagnosticsSlot>('transportDiagnostics');
 
 export function withTransportDiagnostics<T>(
   context: TransportActivityContext & { onTransportActivity?: TransportActivityHandler },

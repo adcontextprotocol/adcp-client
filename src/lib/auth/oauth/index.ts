@@ -94,6 +94,7 @@ export { MCPOAuthProvider } from './MCPOAuthProvider';
 
 import { MCPOAuthProvider } from './MCPOAuthProvider';
 import { CLIFlowHandler, type CLIFlowHandlerConfig } from './CLIFlowHandler';
+import { NonInteractiveFlowHandler } from './NonInteractiveFlowHandler';
 import type { OAuthClientMetadata, OAuthConfigStorage, AgentConfig } from './types';
 import { DEFAULT_CLIENT_METADATA } from './types';
 
@@ -202,7 +203,6 @@ export function createNonInteractiveOAuthProvider(
     allowHttp?: boolean;
   }
 ): MCPOAuthProvider {
-  const { NonInteractiveFlowHandler } = require('./NonInteractiveFlowHandler');
   const flowHandler = new NonInteractiveFlowHandler({ agentHint: options?.agentHint });
 
   const clientMetadata: OAuthClientMetadata = {

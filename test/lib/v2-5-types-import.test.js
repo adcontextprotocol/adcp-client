@@ -60,6 +60,7 @@ describe('v2.5 type bundle', () => {
     const pkg = require('../../package.json');
     const exp = pkg.exports?.['./types/v2-5'];
     assert.ok(exp, 'package.json must export `./types/v2-5`');
-    assert.match(exp.types, /v2-5\/index\.d\.ts$/);
+    assert.match(exp.require.types, /v2-5\/index\.d\.ts$/);
+    assert.match(exp.import.types, /v2-5\/index\.d\.mts$/);
   });
 });
