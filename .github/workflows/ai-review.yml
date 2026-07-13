@@ -1,43 +1,21 @@
-name: AI PR Review (Argus)
+name: AI PR Review (AAO-SECRETARIAT)
 
-# Argus is an LLM PR reviewer that posts an approve / comment / request-changes
-# review on every non-dependabot PR, in bokelley's voice. It runs in two stages:
-#
-#   1. reviewer  — a single Claude agent reads the diff and changed files inline
-#                  (no Task subagents) and writes its verdict + review body to two
-#                  files.
-#   2. arbiter   — a deterministic step reads those files and posts the review.
-#
-# Splitting posting out of the reviewer means a reviewer that ends its turn early
-# cannot swallow the verdict: the arbiter posts what the reviewer recorded,
-# and degrades to a COMMENT (never a fabricated approval) when no verdict was written.
-#
-# Reviews are posted as the AAO Secretariat GitHub App, so they count
-# toward the "1 review required" branch-protection check the same way a
-# human approval does.
-#
-# Required secrets:
-#   SECRETARIAT_APP_ID          — AAO Secretariat GitHub App ID (org-level)
-#   SECRETARIAT_APP_PRIVATE_KEY — AAO Secretariat App private key PEM (org-level)
-#   ANTHROPIC_API_KEY           — already configured
-#
-# Adapted from adcontextprotocol/adcp's Argus workflow (PR #4816).
+# AAO-SECRETARIAT reviews every non-draft, non-dependabot PR. The heavy lifting lives in
+# the forked action tree under .secretariat/ai-review/ (setup → reviewer → arbiter),
+# adapted from Scope3's PR-review action set. This workflow only handles the
+# pull_request_target security posture (trusted base-SHA checkout only; the PR
+# head is never fetched, checked out, or executed — setup reads head content
+# via the GitHub API), the review-workflow-modification gate, and invoking
+# the composite. Reviews post as the AAO Secretariat App so they count toward the
+# "1 review required" branch-protection check.
 
 on:
   pull_request_target:
-    types:
-      - opened
-      - labeled
-      - ready_for_review
-      - synchronize
+    types: [opened, labeled, ready_for_review, synchronize]
     paths-ignore:
       - '.github/workflows/ai-review.yml'
-      - '.github/ai-review/**'
-
-# Bot login that posts Argus reviews. Verifier pins on this so reviews
-# from other bots do not satisfy the "Argus posted" check.
-env:
-  ARGUS_BOT_LOGIN: aao-secretariat[bot]
+      - '.secretariat/ai-review/**'
+      - 'AAO-SECRETARIAT.md'
 
 jobs:
   code_review:
@@ -49,38 +27,24 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      # This workflow uses pull_request_target so fork PRs can access the
-      # review App token and Anthropic secret. Never check out the PR head or
-      # execute PR-controlled code in this job. Keep the workspace pinned to the
-      # trusted base SHA and inspect the PR through GitHub APIs / gh pr diff.
+      # Trusted base-SHA checkout. Never check out or execute PR-head code.
+      # The PR head is never fetched: setup derives the diff/delta and changed
+      # files entirely from the GitHub API.
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
 
-      # ─────────────────────────────────────────────────────────────────────
-      # Mint an installation token from the AAO Secretariat GitHub App. Reviews
-      # posted with this token appear as the App's bot user and count
-      # toward branch-protection's required-approvals check.
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Mint App token
+      - name: Mint App token (for the workflow-mod gate comment)
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.SECRETARIAT_APP_ID }}
           private-key: ${{ secrets.SECRETARIAT_APP_PRIVATE_KEY }}
 
-      # ─────────────────────────────────────────────────────────────────────
-      # Workflow-modification gate.
-      #
-      # If this PR modifies `.github/ai-review/**` or this workflow, Argus may
-      # be reviewing the review system itself. Even though pull_request_target
-      # keeps this run on the base-branch prompt and workflow, a human should
-      # own those changes.
-      #
-      # `paths-ignore` only suppresses runs when ALL changed paths are ignored;
-      # this step handles mixed PRs.
-      # ─────────────────────────────────────────────────────────────────────
+      # Workflow-modification gate: if this PR touches the review system itself,
+      # a human owns it. paths-ignore suppresses pure-review-file PRs; this
+      # handles mixed PRs.
       - name: Check for review-workflow modifications
         id: workflow-mod
         shell: bash
@@ -94,9 +58,8 @@ jobs:
           MODIFIED=""
           while IFS= read -r f; do
             case "$f" in
-              .github/ai-review/*|.github/workflows/ai-review.yml)
-                MODIFIED="${MODIFIED}${f}"$'\n'
-                ;;
+              .secretariat/ai-review/*|.github/workflows/ai-review.yml|AAO-SECRETARIAT.md)
+                MODIFIED="${MODIFIED}${f}"$'\n' ;;
             esac
           done <<< "$CHANGED"
           if [ -n "$MODIFIED" ]; then
@@ -104,8 +67,6 @@ jobs:
             echo "modified_files<<EOF" >> "$GITHUB_OUTPUT"
             echo "$MODIFIED" >> "$GITHUB_OUTPUT"
             echo "EOF" >> "$GITHUB_OUTPUT"
-            echo "PR modifies review workflow files:"
-            echo "$MODIFIED"
           else
             echo "modified=false" >> "$GITHUB_OUTPUT"
           fi
@@ -124,259 +85,14 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
               event: 'COMMENT',
-              body: `Argus is **not auto-reviewing** this PR because it modifies the review workflow itself (${files}). A human reviewer should review and merge this PR; Argus will resume on subsequent PRs once these changes land on \`main\`.`
+              body: `AAO-SECRETARIAT is **not auto-reviewing** this PR because it modifies the review system itself (${files}). A human reviewer should review and merge this PR; AAO-SECRETARIAT resumes on subsequent PRs once these changes land on \`main\`.`
             });
 
-      # ─────────────────────────────────────────────────────────────────────
-      # Skip re-runs on `synchronize` when the last bot review on this PR
-      # was APPROVED and the new commits only touch trivial paths (docs,
-      # changesets, tests, generated files). Cuts thrash on rebases and
-      # docs/test follow-up pushes. Force-pushes fall back to full review
-      # because the prior SHA may be unreachable.
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Check for skippable re-run
-        id: skip-check
-        if: github.event.action == 'synchronize' && steps.workflow-mod.outputs.modified != 'true'
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          LATEST_APPROVED="$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            --jq "[.[] | select(.user.login == \"${ARGUS_BOT_LOGIN}\" and .state == \"APPROVED\")] | sort_by(.submitted_at) | last // {}")"
-          PRIOR_SHA="$(echo "$LATEST_APPROVED" | jq -r '.commit_id // ""')"
-          if [ -z "$PRIOR_SHA" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "No prior Argus APPROVED review — running full review."
-            exit 0
-          fi
-          CHANGED="$(gh api "/repos/${REPO}/compare/${PRIOR_SHA}...${HEAD_SHA}" \
-            --jq '.files[]?.filename' 2>/dev/null || true)"
-          if [ -z "$CHANGED" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Could not compare $PRIOR_SHA...$HEAD_SHA (likely force-pushed or fork edge case) — running full review."
-            exit 0
-          fi
-          # Trivial paths in adcp-client — re-pushes touching only these skip re-review.
-          # `src/lib/**` (non-generated), `bin/**`, `scripts/**`, and `schemas/registry/**`
-          # are NEVER trivial.
-          is_trivial() {
-            case "$1" in
-              .changeset/*) return 0 ;;
-              *.md|*.mdx) return 0 ;;
-              docs/*) return 0 ;;
-              schemas/cache/*) return 0 ;;
-              *.generated.ts) return 0 ;;
-              *__tests__/*) return 0 ;;
-              test/*) return 0 ;;
-              tests/*) return 0 ;;
-              *.test.ts|*.test.tsx|*.test.js|*.test.cjs|*.test.mjs) return 0 ;;
-              *.spec.ts|*.spec.tsx|*.spec.js|*.spec.cjs|*.spec.mjs) return 0 ;;
-              package-lock.json) return 0 ;;
-            esac
-            return 1
-          }
-          NON_TRIVIAL=""
-          while IFS= read -r f; do
-            [ -z "$f" ] && continue
-            if ! is_trivial "$f"; then
-              NON_TRIVIAL="${NON_TRIVIAL}${f}"$'\n'
-            fi
-          done <<< "$CHANGED"
-          if [ -z "$NON_TRIVIAL" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "All changes since $PRIOR_SHA are trivial — skipping re-review. Changed files:"
-            echo "$CHANGED"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Non-trivial changes since $PRIOR_SHA — running full review:"
-            echo "$NON_TRIVIAL"
-          fi
-
-      - name: Build Argus review prompt
-        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true'
-        id: build-prompt
-        shell: bash
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          REPO: ${{ github.repository }}
-          ARGUS_VERDICT: /tmp/argus-verdict.txt
-          ARGUS_REVIEW_BODY: /tmp/argus-review.md
-        run: |
-          set -euo pipefail
-          # Read the prompt from the PR's base SHA, not the working tree or PR
-          # head. This keeps the runnable prompt trusted under pull_request_target.
-          if ! git cat-file -e "${BASE_SHA}:.github/ai-review/expert-adcp-reviewer.md" 2>/dev/null; then
-            echo "::error::Prompt file does not exist at base SHA ${BASE_SHA}."
-            exit 1
-          fi
-          PROMPT_BODY="$(git show "${BASE_SHA}:.github/ai-review/expert-adcp-reviewer.md")"
-          # The WG constitution lives in the spec repo, not here. Fetch it from
-          # adcp@main at review time — the PR cannot mutate the rules it is
-          # reviewed under. If the fetch fails, the review runs without it.
-          CONSTITUTION="$(curl -sf https://raw.githubusercontent.com/adcontextprotocol/adcp/main/.agents/wg/constitution.md || true)"
-          SENTINEL="ARGUS_$(openssl rand -hex 8)_EOF"
-          {
-            echo "ARGUS_PROMPT<<${SENTINEL}"
-            echo "$PROMPT_BODY"
-            if [ -n "$CONSTITUTION" ]; then
-              echo ''
-              echo '---'
-              echo ''
-              echo '## WG constitution (from adcontextprotocol/adcp@main)'
-              echo ''
-              echo "$CONSTITUTION"
-            fi
-            echo ''
-            echo '---'
-            echo ''
-            echo '## Pre-computed inputs for this PR'
-            echo ''
-            echo "- PR_NUMBER: $PR_NUMBER"
-            echo "- REPO: $REPO"
-            echo "- PR_BASE_REF: $PR_BASE_REF"
-            echo "- ARGUS_REVIEW_BODY (Write your review body to this exact path): $ARGUS_REVIEW_BODY"
-            echo "- ARGUS_VERDICT (Write one word — approve, comment, or request-changes — to this exact path): $ARGUS_VERDICT"
-            echo "${SENTINEL}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Run Argus PR Review
-        id: ai-review
-        if: steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true'
-        continue-on-error: true
-        uses: anthropics/claude-code-action@v1
-        env:
-          # allowed_non_write_users (below) auto-enables the action's subprocess
-          # env scrub on EVERY run, which strips the GitHub token from Bash
-          # subprocesses — that would break the reviewer's own `gh pr view/diff/api`
-          # reads. This job never executes PR-controlled code (base-SHA checkout,
-          # API-only inspection, tight tool allowlist), so opt out. Posting is done
-          # by the separate arbiter step below, not by the agent.
-          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '0'
+      - name: Run AAO-SECRETARIAT
+        if: steps.workflow-mod.outputs.modified != 'true'
+        uses: ./.secretariat/ai-review/review
         with:
-          prompt: ${{ steps.build-prompt.outputs.ARGUS_PROMPT }}
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ steps.app-token.outputs.token }}
-          use_sticky_comment: false
-          track_progress: false
-          # The action has its own actor-permission gate (separate from this
-          # job's `if:`) that hard-fails when the triggering actor has only
-          # read access — that gate, not the workflow, is what blocked
-          # contributor PRs. List trusted read-only contributors here.
-          # Deliberately NOT '*': an unknown fork author should still fall
-          # through to the "a human reviewer should take this PR" comment
-          # rather than trigger a review whose approval counts toward branch
-          # protection.
-          allowed_non_write_users: fgranata
-          # No `gh pr review` (the arbiter posts) and no `Task` (the reviewer works
-          # as a single agent inline — subagent dispatch in this harness stalls the
-          # run and never records a verdict). Write is how it emits the two files.
-          claude_args: |
-            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/*/pulls/*),Bash(gh api repos/*/contents/*),Bash(gh api repos/*/issues/*),Read,Write,Glob,Grep"
-            --max-turns 60
-            --model claude-opus-4-8
-            --effort high
-
-      # ─────────────────────────────────────────────────────────────────────
-      # Arbiter: post the verdict.
-      #
-      # The reviewer does NOT call `gh pr review` — it writes its verdict
-      # (approve|comment|request-changes) and review body to two files. This
-      # deterministic step reads them and posts the review, so a reviewer that
-      # ends its turn early cannot swallow the verdict. It degrades safely,
-      # in order:
-      #   1. valid verdict + body        → post that review (approve/comment/request-changes)
-      #   2. no verdict but body present → post the body as a COMMENT (never an approval)
-      #   3. only the agent's final text → post that as a COMMENT
-      #   4. nothing usable              → leave a plain "could not complete" comment
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Post review (arbiter)
-        if: always() && steps.app-token.outcome == 'success' && steps.workflow-mod.outputs.modified != 'true' && steps.skip-check.outputs.skip != 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          VERDICT_FILE: /tmp/argus-verdict.txt
-          BODY_FILE: /tmp/argus-review.md
-          EXECUTION_FILE: ${{ steps.ai-review.outputs.execution_file }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          # No `set -e`: a failed post must fall through to the next recovery tier.
-          set -uo pipefail
-
-          # Surface the silent failure mode: if the reviewer wrote neither file,
-          # the run degrades to a COMMENT below — make that visible in the logs.
-          if [ ! -f "$VERDICT_FILE" ] && [ ! -f "$BODY_FILE" ]; then
-            echo "::warning::reviewer wrote no verdict/body files ($VERDICT_FILE, $BODY_FILE)"
-          fi
-
-          VERDICT=""
-          if [ -f "$VERDICT_FILE" ]; then
-            # Bound the read (the verdict file should be one word) and lowercase it.
-            VERDICT="$(head -c 200 "$VERDICT_FILE" | tr '[:upper:]' '[:lower:]')"
-          fi
-          BODY=""
-          if [ -f "$BODY_FILE" ]; then
-            BODY="$(cat "$BODY_FILE")"
-          fi
-
-          # Map the reviewer's verdict to a gh review event. Match request-changes
-          # synonyms FIRST so any decoration or phrasing that reads as a block maps
-          # to --request-changes (fail closed). Anything unparseable leaves EVENT
-          # empty and degrades to a COMMENT below.
-          EVENT=""
-          case "$VERDICT" in
-            *request*chang*|*reject*|*block*) EVENT="--request-changes" ;;
-            *approv*|*lgtm*)                  EVENT="--approve" ;;
-            *comment*)                        EVENT="--comment" ;;
-          esac
-
-          POST_FILE="/tmp/argus-post.md"
-
-          # Tier 1 — valid verdict: post the real review. When the verdict is valid
-          # but the body is empty (body write failed or the turn limit was hit),
-          # still post under the verdict with a placeholder body — a recorded block
-          # must not silently degrade to a non-blocking COMMENT.
-          if [ -n "$EVENT" ]; then
-            if [ -z "$BODY" ]; then
-              BODY="_Argus recorded a \`${VERDICT}\` verdict but did not write a review body (it may have hit the turn limit). See the diff and CI checks._"
-            fi
-            printf '%s' "$BODY" | head -c 60000 > "$POST_FILE"
-            if gh pr review "$PR_NUMBER" "$EVENT" --body-file "$POST_FILE"; then
-              echo "Posted '$VERDICT' review on PR #$PR_NUMBER"
-              exit 0
-            fi
-            echo "::warning::gh pr review ($VERDICT) failed — degrading to a COMMENT."
-            POST_FAILED=1
-          fi
-
-          # Tiers 2/3 — recover the substance, never fabricate an approval.
-          RECOVERED="$BODY"
-          if [ -z "$RECOVERED" ] && [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
-            RECOVERED="$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE")"
-            [ "$RECOVERED" = "null" ] && RECOVERED=""
-          fi
-
-          if [ -n "$RECOVERED" ]; then
-            if [ -n "${POST_FAILED:-}" ]; then
-              PREAMBLE=$'> [!NOTE]\n> Argus recorded a `'"${VERDICT}"$'` verdict but the post failed. Reposting its output as a **comment** — not an approval. Retry or take this PR to human review.\n\n'
-            else
-              PREAMBLE=$'> [!NOTE]\n> Argus did not record a clean verdict this run (it may have ended early). Posting its output as a **comment** — not an approval. A human reviewer should take this PR.\n\n'
-            fi
-            { printf '%s' "$PREAMBLE"; printf '%s' "$RECOVERED"; } | head -c 60000 > "$POST_FILE"
-            if gh pr review "$PR_NUMBER" --comment --body-file "$POST_FILE"; then
-              echo "Posted fallback COMMENT review on PR #$PR_NUMBER"
-              exit 0
-            fi
-            echo "::warning::Fallback COMMENT review failed — leaving a plain note."
-          fi
-
-          # Tier 4 — nothing usable: leave a plain note so the PR isn't silently unreviewed.
-          gh pr comment "$PR_NUMBER" --body "⚠️ **Argus review could not complete** (no verdict or review body was produced). A human reviewer should take this PR. [View workflow run](${RUN_URL})"
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          app-id: ${{ secrets.SECRETARIAT_APP_ID }}
+          app-private-key: ${{ secrets.SECRETARIAT_APP_PRIVATE_KEY }}
+          model: claude-opus-4-8

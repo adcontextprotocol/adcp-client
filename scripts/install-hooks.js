@@ -134,6 +134,22 @@ echo "✅ Pre-push validation passed! (~6s)"
 echo "💡 Full validation (tests, schemas) will run in GitHub Actions CI"
 `;
 
+// Pre-commit hook content — a thin delegator. The actual rebuild logic lives
+// with the review tree (.secretariat/ai-review/scripts/precommit.sh) so it
+// travels with that tree; this hook just links .git/hooks to it.
+const preCommitHook = `#!/bin/bash
+
+# Pre-commit hook — delegates to the self-contained AAO Secretariat rebuild
+# script. Keeps a node action's committed dist/ in sync when its source is
+# staged. No-op for commits that don't touch .secretariat/ai-review.
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+[ -z "$REPO_ROOT" ] && exit 0
+HOOK="$REPO_ROOT/.secretariat/ai-review/scripts/precommit.sh"
+[ -f "$HOOK" ] || exit 0
+exec bash "$HOOK"
+`;
+
 function installHooks() {
   // Handle both regular git repos and git worktrees
   let gitDir = path.join(process.cwd(), '.git');
@@ -158,6 +174,7 @@ function installHooks() {
   const hooksDir = path.join(gitDir, 'hooks');
   const prePushPath = path.join(hooksDir, 'pre-push');
   const commitMsgPath = path.join(hooksDir, 'commit-msg');
+  const preCommitPath = path.join(hooksDir, 'pre-commit');
 
   // Create hooks directory if it doesn't exist
   if (!fs.existsSync(hooksDir)) {
@@ -205,6 +222,24 @@ function installHooks() {
     installed++;
   }
 
+  // Install pre-commit hook (delegates to the self-contained secretariat script).
+  // Never clobber a foreign pre-commit hook (husky, lint-staged, secret-scan, …) —
+  // overwriting one would silently disable a contributor's own checks. Only install
+  // when none exists; otherwise leave it and tell the developer how to chain ours in.
+  if (fs.existsSync(preCommitPath)) {
+    const existingContent = fs.readFileSync(preCommitPath, 'utf8');
+    if (!existingContent.includes('.secretariat/ai-review/scripts/precommit.sh')) {
+      log('  ⚠️  Existing pre-commit hook found — not overwriting it.', 'yellow');
+      log('     To keep .secretariat/ai-review dist/ in sync, add this line to it:', 'yellow');
+      log('       bash "$(git rev-parse --show-toplevel)/.secretariat/ai-review/scripts/precommit.sh"', 'yellow');
+    }
+    // else: it is already our delegator — up to date.
+  } else {
+    fs.writeFileSync(preCommitPath, preCommitHook);
+    fs.chmodSync(preCommitPath, 0o755);
+    installed++;
+  }
+
   if (installed === 0) {
     log('✅ Git hooks are already configured', 'green');
     return;
@@ -215,6 +250,7 @@ function installHooks() {
   log('🪝 Installed hooks:', 'blue');
   log('  • commit-msg - Validates commit message format (conventional commits)', 'reset');
   log('  • pre-push   - Fast validation: format + typecheck + build (~6s)', 'reset');
+  log('  • pre-commit - Rebuilds .secretariat/ai-review dist/ when action source is staged', 'reset');
   log('', 'reset');
   log('⚡ What changed: Pre-push now runs FAST checks only (~6s)', 'green');
   log('   Full tests, schema validation run in GitHub Actions CI', 'reset');

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AaoSecretariatReviewerFindings",
+  "type": "object",
+  "required": ["summary", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "1-3 sentence overview of what the reviewer observed across the changeset.",
+      "maxLength": 1500
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "rationale", "file", "category", "posted_inline"],
+        "additionalProperties": false,
+        "properties": {
+          "severity": { "enum": ["critical", "high", "medium", "low"] },
+          "title":     { "type": "string", "maxLength": 120 },
+          "rationale": { "type": "string", "maxLength": 1500 },
+          "file":      { "type": "string" },
+          "line":      { "type": ["integer", "null"] },
+          "category":  {
+            "enum": [
+              "correctness", "security", "performance", "data-loss",
+              "schema", "infra", "tests", "operability", "style", "other"
+            ]
+          },
+          "posted_inline": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
