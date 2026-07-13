@@ -88,37 +88,55 @@ export async function computeChangedFiles(params: {
   }
 }
 
+// GitHub caps pulls.listFiles at 3000 files total, even across pagination.
+// A response at the cap means the surface is truncated and cannot be trusted
+// for the high-risk / gated-path gates.
+const LIST_FILES_CAP = 3000
+
 /**
  * The PR's changed-file surface (equivalent to `base...head`), sourced from the
  * pulls.listFiles API — never fetches or checks out the PR head. Each file
  * carries its ChangeKind so high-risk / gated-path evaluation needs no extra
  * API call.
+ *
+ * `reliable` is false when the surface could not be fully determined — the API
+ * errored, or the response hit the 3000-file cap. The high-risk / gated-path
+ * gates read this list, so the caller MUST fail closed on an unreliable
+ * surface: an empty or truncated list would otherwise silently clear those
+ * gates (fail-closed beats fail-open).
  */
 export async function computePrSurfaceFiles(params: {
   octokit: Octokit
   owner: string
   repo: string
   prNumber: number
-}): Promise<ChangedFile[]> {
+}): Promise<{ files: ChangedFile[]; reliable: boolean }> {
   const { octokit, owner, repo, prNumber } = params
   try {
-    const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+    const raw = await octokit.paginate(octokit.rest.pulls.listFiles, {
       owner,
       repo,
       pull_number: prNumber,
       per_page: 100,
     })
-    return files.map((f) => ({
+    const files = raw.map((f) => ({
       path: f.filename,
       changeKind: mapStatus(f.status),
     }))
+    if (raw.length >= LIST_FILES_CAP) {
+      core.warning(
+        `pulls.listFiles for #${prNumber} returned ${raw.length} files — GitHub caps the PR file list at ${LIST_FILES_CAP}, so the surface is truncated. Treating it as unreliable so the high-risk / gated gates fail closed.`,
+      )
+      return { files, reliable: false }
+    }
+    return { files, reliable: true }
   } catch (err) {
-    core.info(
+    core.warning(
       `pulls.listFiles for #${prNumber} failed: ${
         err instanceof Error ? err.message : String(err)
-      }`,
+      }. Treating the PR surface as unreliable so the high-risk / gated gates fail closed.`,
     )
-    return []
+    return { files: [], reliable: false }
   }
 }
 

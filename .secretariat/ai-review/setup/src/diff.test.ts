@@ -76,13 +76,14 @@ describe('computePrSurfaceFiles', () => {
       ]),
       rest: { pulls: { listFiles: vi.fn() } },
     }
-    const files = await computePrSurfaceFiles({
+    const surface = await computePrSurfaceFiles({
       octokit,
       owner: 'o',
       repo: 'r',
       prNumber: 7,
     })
-    expect(files).toEqual([
+    expect(surface.reliable).toBe(true)
+    expect(surface.files).toEqual([
       { path: 'src/a.ts', changeKind: 'added' },
       { path: 'src/b.ts', changeKind: 'modified' },
       { path: 'src/c.ts', changeKind: 'deleted' },
@@ -100,14 +101,33 @@ describe('computePrSurfaceFiles', () => {
     )
   })
 
-  test('returns [] on API error', async () => {
+  test('reliable=false with empty files on API error (fail closed)', async () => {
     const octokit: any = {
       paginate: vi.fn().mockRejectedValue(new Error('boom')),
       rest: { pulls: { listFiles: vi.fn() } },
     }
     expect(
       await computePrSurfaceFiles({ octokit, owner: 'o', repo: 'r', prNumber: 7 }),
-    ).toEqual([])
+    ).toEqual({ files: [], reliable: false })
+  })
+
+  test('reliable=false when the 3000-file cap is hit (truncated surface)', async () => {
+    const raw = Array.from({ length: 3000 }, (_, i) => ({
+      filename: `src/f${i}.ts`,
+      status: 'modified',
+    }))
+    const octokit: any = {
+      paginate: vi.fn().mockResolvedValue(raw),
+      rest: { pulls: { listFiles: vi.fn() } },
+    }
+    const surface = await computePrSurfaceFiles({
+      octokit,
+      owner: 'o',
+      repo: 'r',
+      prNumber: 7,
+    })
+    expect(surface.reliable).toBe(false)
+    expect(surface.files).toHaveLength(3000)
   })
 })
 

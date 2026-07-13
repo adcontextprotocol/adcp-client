@@ -206,12 +206,24 @@ async function main(): Promise<void> {
     // metadata blip should not block the review.
   }
 
-  const surfaceFiles = await computePrSurfaceFiles({
+  const surface = await computePrSurfaceFiles({
     octokit,
     owner,
     repo,
     prNumber,
   })
+  // Fail closed: the high-risk / gated-path gates are computed from this
+  // surface, so an incomplete surface (API error or the 3000-file cap) would
+  // silently clear them and let a security-critical PR auto-approve. Refuse to
+  // review rather than review an unknown surface.
+  if (!surface.reliable) {
+    throw new Error(
+      'PR file surface could not be reliably determined (pulls.listFiles errored or hit the 3000-file cap). ' +
+        'Refusing to auto-review: an incomplete surface would silently clear the high-risk / gated-path gates. ' +
+        'Re-run once the API recovers, or review this PR manually.',
+    )
+  }
+  const surfaceFiles = surface.files
   const surfacePaths = surfaceFiles.map((f) => f.path)
 
   let priorReviewedSha: string | null = null

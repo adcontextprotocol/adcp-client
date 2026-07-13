@@ -139,7 +139,7 @@ runs:
           printf 'Procedure:\n'
           printf '1. Read the delta diff first. Understand what changed.\n'
           printf '2. Pull the full diff only when delta context is insufficient.\n'
-          printf '3. Use `gh pr view` and `gh pr diff` as needed. The checked-out workspace is pinned to the BASE SHA (%s): `Read`/`Glob`/`Grep` there show the OLD version of changed files, so treat them as base-only context, not as a way to see the actual changes (the delta and full diff files already carry those). To read the CHANGED (head, %s) version of a specific file, run: `gh api "repos/%s/contents/<path>?ref=%s" -H "Accept: application/vnd.github.raw"`.\n' "${BASE_SHA}" "${HEAD_SHA}" "${REPO}" "${HEAD_SHA}"
+          printf '3. Use `gh pr view` and `gh pr diff` as needed. The checked-out workspace is pinned to the BASE SHA (%s): `Read`/`Glob`/`Grep` there show the OLD version of changed files, so treat them as base-only context. The delta and full diff files (paths above) carry the actual changes since base — rely on them to see what changed, and pair them with the base-version `Read` for surrounding context.\n' "${BASE_SHA}"
           printf '4. Post one inline comment per finding via `mcp__github_inline_comment__create_inline_comment` (with `confirmed: true`) following the inline-comment rules above.\n'
           printf '5. **At end-of-run, write the findings JSON to `%s` using the `Write` tool.** The JSON MUST conform to this schema:\n\n' "${FINDINGS_PATH}"
           printf '```json\n'
@@ -165,15 +165,17 @@ runs:
         github_token: ${{ inputs.github-token }}
         allowed_non_write_users: fgranata
         prompt: ${{ steps.prompt.outputs.prompt }}
+        # Bash grants are strictly read-only. The reviewer reads via `gh pr view`/`gh pr diff`
+        # (read-only subcommands) and the diff files, and posts inline comments through the MCP
+        # tool — never Bash gh writes. With ENV_SCRUB=0 the App token is present in the Bash env,
+        # so NO write-capable `gh api` grant (issues, contents) is allowed: `gh api` cannot be
+        # method-restricted in the allowlist, and a POST/PUT there would be a prompt-injection
+        # token-exfil / repo-write path. (Comments must stay out of claude_args below — that block
+        # is passed verbatim to the CLI as arguments.)
         claude_args: |
           --model ${{ inputs.model }}
           --max-turns ${{ inputs.max-turns }}
-          # gh grants are read-only by intent: the reviewer posts inline comments via the
-          # MCP tool, not Bash gh. `gh pr view/diff` are read-only subcommands; the `contents`
-          # grant is for reading head-file versions under a base-SHA checkout. The write-capable
-          # `gh api .../issues/*` grant is deliberately omitted — with ENV_SCRUB=0 the token is in
-          # the Bash env, and a POST there would be a prompt-injection exfil path.
-          --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api repos/*/contents/*:*),Read,Write,Glob,Grep"
+          --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Read,Write,Glob,Grep"
 
     - name: Read findings JSON
       id: findings
