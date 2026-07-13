@@ -7,9 +7,9 @@ Repos can extend this list with their own mandatory-coverage rules via their `AA
 ## Largest-file rule
 
 For every **non-generated** file in the diff with **>200 net lines changed**, you MUST:
-- Open it with `Read` (not just `gh pr diff`).
+- Study its actual changes in the delta/full diff files (provided in the task). The workspace is pinned to the **base** SHA, so `Read`/`Glob`/`Grep` there show the *pre-change* version — use them for surrounding context, never as the source of the changes.
 - Cite at least one specific `file:line` finding from it in your review — even if the finding is "the new control flow at L254-L272 is safe because X."
-- **When citing a specific string literal, enum value, or named pattern as a finding, verify the exact line with `Grep` before writing the citation.** Do not derive line numbers from diff context — diff offsets drift and the line you cite must be correct. Quote the 1-3 relevant lines of code verbatim alongside the line number so the reference is self-verifying.
+- **Cite head line numbers from the diff's added (`+`) side** — that is the line number in the changed file. Quote the 1-3 relevant lines of code verbatim alongside the number so the reference is self-verifying. You may `Read`/`Grep` the base version to anchor context on a *modified* file, but do not cite a base line number for added code (the base and head numbers differ).
 
 Skip only: generated files (`*.gen.ts`, `*__generated__/*`, vendored OpenAPI snapshots, lockfiles, `package-lock.json`, `pnpm-lock.yaml`) and anything the repo's `AAO-SECRETARIAT.md` declares as trivial. The PR description is not a substitute for reading the file. A 5-review streak that never cites a single line from the largest changed file is the failure mode this rule prevents.
 

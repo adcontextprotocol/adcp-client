@@ -156,33 +156,40 @@ export async function writeDiffFile(params: {
   toSha?: string
 }): Promise<string> {
   const { octokit, owner, repo, target, prNumber, fromSha, toSha } = params
-  let diff: string
-  if (fromSha !== undefined && toSha !== undefined) {
-    const res = await octokit.request(
-      'GET /repos/{owner}/{repo}/compare/{basehead}',
-      {
-        owner,
-        repo,
-        basehead: `${fromSha}...${toSha}`,
-        mediaType: { format: 'diff' },
-      },
-    )
-    diff = res.data as unknown as string
-  } else if (prNumber !== undefined) {
-    const res = await octokit.request(
-      'GET /repos/{owner}/{repo}/pulls/{pull_number}',
-      {
-        owner,
-        repo,
-        pull_number: prNumber,
-        mediaType: { format: 'diff' },
-      },
-    )
-    diff = res.data as unknown as string
-  } else {
+  const isDelta = fromSha !== undefined && toSha !== undefined
+  if (!isDelta && prNumber === undefined) {
     throw new Error(
       'writeDiffFile requires either prNumber (full PR diff) or fromSha+toSha (delta diff)',
     )
+  }
+  let diff: string
+  try {
+    const res = isDelta
+      ? await octokit.request('GET /repos/{owner}/{repo}/compare/{basehead}', {
+          owner,
+          repo,
+          basehead: `${fromSha}...${toSha}`,
+          mediaType: { format: 'diff' },
+        })
+      : await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+          owner,
+          repo,
+          pull_number: prNumber as number,
+          mediaType: { format: 'diff' },
+        })
+    diff = res.data as unknown as string
+  } catch (err) {
+    // GitHub returns HTTP 406 for diffs over its size limit; transient errors
+    // land here too. Degrade to a note rather than failing the whole review —
+    // unlike the old local `git diff`, the API diff has a size cap, and a large
+    // PR that used to review should still get a (human-flagged) review.
+    core.warning(
+      `Could not fetch the ${isDelta ? 'delta' : 'full'} diff for ${target}: ${
+        err instanceof Error ? err.message : String(err)
+      }. Writing a placeholder — the diff is likely too large (HTTP 406).`,
+    )
+    diff =
+      '> The diff could not be retrieved from the GitHub API — it is likely too large (HTTP 406) or the request failed. Review the changes from the PR page or via `gh pr diff`.\n'
   }
   await writeFile(target, diff)
   return target

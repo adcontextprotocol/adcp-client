@@ -253,4 +253,30 @@ describe('writeDiffFile', () => {
       }),
     )
   })
+
+  test('degrades to a placeholder note (does not throw) on an oversized/failed diff (HTTP 406)', async () => {
+    const octokit: any = {
+      request: vi.fn().mockRejectedValue(new Error('HTTP 406: diff exceeded the maximum number of lines')),
+    }
+    const target = await tmpTarget()
+    const written = await writeDiffFile({
+      octokit,
+      owner: 'o',
+      repo: 'r',
+      prNumber: 7,
+      target,
+    })
+    expect(written).toBe(target)
+    const fs = await import('node:fs/promises')
+    const body = await fs.readFile(target, 'utf8')
+    expect(body).toContain('could not be retrieved')
+  })
+
+  test('throws only on the programmer error of neither prNumber nor from/to', async () => {
+    const octokit: any = { request: vi.fn() }
+    await expect(
+      writeDiffFile({ octokit, owner: 'o', repo: 'r', target: await tmpTarget() }),
+    ).rejects.toThrow(/requires either prNumber/)
+    expect(octokit.request).not.toHaveBeenCalled()
+  })
 })

@@ -222,15 +222,21 @@ function installHooks() {
     installed++;
   }
 
-  // Install pre-commit hook (delegates to the self-contained secretariat script)
+  // Install pre-commit hook (delegates to the self-contained secretariat script).
+  // Never clobber a foreign pre-commit hook (husky, lint-staged, secret-scan, …) —
+  // overwriting one would silently disable a contributor's own checks. Only install
+  // when none exists; otherwise leave it and tell the developer how to chain ours in.
   if (fs.existsSync(preCommitPath)) {
     const existingContent = fs.readFileSync(preCommitPath, 'utf8');
     if (!existingContent.includes('.secretariat/ai-review/scripts/precommit.sh')) {
-      fs.writeFileSync(preCommitPath, preCommitHook);
-      fs.chmodSync(preCommitPath, 0o755);
-      installed++;
-      log('  ✨ Installed pre-commit hook (secretariat dist rebuild)', 'green');
+      log('  ⚠️  Existing pre-commit hook found — not overwriting it.', 'yellow');
+      log('     To keep .secretariat/ai-review dist/ in sync, add this line to it:', 'yellow');
+      log(
+        '       bash "$(git rev-parse --show-toplevel)/.secretariat/ai-review/scripts/precommit.sh"',
+        'yellow',
+      );
     }
+    // else: it is already our delegator — up to date.
   } else {
     fs.writeFileSync(preCommitPath, preCommitHook);
     fs.chmodSync(preCommitPath, 0o755);

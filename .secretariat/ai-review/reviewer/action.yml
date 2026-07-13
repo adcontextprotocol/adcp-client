@@ -89,7 +89,10 @@ runs:
         # adcp@main at review time — the PR under review cannot mutate the rules
         # it is judged under. Fail-open: if the fetch fails, the review runs
         # without it.
-        CONSTITUTION="$(curl -sf https://raw.githubusercontent.com/adcontextprotocol/adcp/main/.agents/wg/constitution.md || true)"
+        CONSTITUTION="$(curl -sf --max-filesize 1000000 https://raw.githubusercontent.com/adcontextprotocol/adcp/main/.agents/wg/constitution.md || true)"
+        if [[ -z "${CONSTITUTION}" ]]; then
+          echo "::warning::WG constitution could not be fetched (network error, >1MB, or empty) — reviewing without it."
+        fi
 
         {
           cat "${RULES}/voice.md"
@@ -128,13 +131,13 @@ runs:
               printf 'Prior findings: none (clean pass).\n'
             fi
             printf '\n## Scope rules for this pass\n\n'
-            printf '1. **New findings must come from delta files only.** The constrained delta diff lists the files changed since the prior review. Surface new findings ONLY in those files. Do not use the full diff to hunt for issues in files absent from the delta — the full diff is for understanding context of delta changes, not for expanding your review surface.\n\n'
+            printf '1. **New findings must come from delta files only.** The delta diff shows the files changed since the prior review. Surface new findings ONLY in those files. Do not use the full diff to hunt for issues in files absent from the delta — the full diff is for understanding context of delta changes, not for expanding your review surface.\n\n'
             printf '2. **Prior findings:** for each finding listed above, check whether its file is in the delta AND whether the issue persists. If the file is not in the delta, skip it — do not re-raise it. If the file IS in the delta and the issue is still present, you may re-surface it.\n\n'
             printf '3. **Largest-file rule applies to delta files only on this pass,** not to the full diff.\n'
           fi
           printf '\n\n# Your task — review PR #%s in %s\n\n' "${PR_NUMBER}" "${REPO}"
           printf 'Base SHA: %s\nHead SHA: %s\n\n' "${BASE_SHA}" "${HEAD_SHA}"
-          printf 'The constrained delta diff (what changed since the prior review, intersected with the current PR surface, with trivial paths removed) is at:\n  %s\n\n' "${DELTA_PATH}"
+          printf 'The delta diff (what changed since the prior review) is at:\n  %s\n\n' "${DELTA_PATH}"
           printf 'The full PR diff (use only when you need broader context) is at:\n  %s\n\n' "${FULL_PATH}"
           printf 'Procedure:\n'
           printf '1. Read the delta diff first. Understand what changed.\n'
@@ -148,10 +151,14 @@ runs:
           printf 'Do NOT post a top-level PR review. Do NOT call `gh pr review`. The arbiter step handles the overall verdict.\n'
         } > "${PROMPT_PATH}"
 
+        # Randomize the heredoc sentinel so prompt content (rule files, repo
+        # context, the fetched WG constitution) cannot close the block early and
+        # inject GITHUB_OUTPUT directives.
+        PROMPT_EOF="AAO_SECRETARIAT_PROMPT_EOF_$(openssl rand -hex 8)"
         {
-          echo "prompt<<__AAO_SECRETARIAT_PROMPT_EOF__"
+          echo "prompt<<${PROMPT_EOF}"
           cat "${PROMPT_PATH}"
-          echo "__AAO_SECRETARIAT_PROMPT_EOF__"
+          echo "${PROMPT_EOF}"
           echo "findings-path=${FINDINGS_PATH}"
         } >> "${GITHUB_OUTPUT}"
 
@@ -196,10 +203,11 @@ runs:
           exit 1
         fi
 
+        FINDINGS_EOF="AAO_SECRETARIAT_FINDINGS_EOF_$(openssl rand -hex 8)"
         {
-          echo "findings-json<<__AAO_SECRETARIAT_FINDINGS_EOF__"
+          echo "findings-json<<${FINDINGS_EOF}"
           cat "${FINDINGS_PATH}"
-          echo "__AAO_SECRETARIAT_FINDINGS_EOF__"
+          echo "${FINDINGS_EOF}"
         } >> "${GITHUB_OUTPUT}"
 
 branding:
