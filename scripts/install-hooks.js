@@ -231,10 +231,7 @@ function installHooks() {
     if (!existingContent.includes('.secretariat/ai-review/scripts/precommit.sh')) {
       log('  ⚠️  Existing pre-commit hook found — not overwriting it.', 'yellow');
       log('     To keep .secretariat/ai-review dist/ in sync, add this line to it:', 'yellow');
-      log(
-        '       bash "$(git rev-parse --show-toplevel)/.secretariat/ai-review/scripts/precommit.sh"',
-        'yellow',
-      );
+      log('       bash "$(git rev-parse --show-toplevel)/.secretariat/ai-review/scripts/precommit.sh"', 'yellow');
     }
     // else: it is already our delegator — up to date.
   } else {
