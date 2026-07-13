@@ -396,11 +396,7 @@ function isVerifiedHttpSigPayload(credential: { agent_url?: string }): credentia
  * `{ kind: 'http_sig', ... }` credential will NOT carry the brand —
  * `signingOnly` and `mixed` registry factories reject those.
  */
-// `Symbol.for` (global registry) rather than a fresh `Symbol()` so this
-// fail-closed brand still matches when a consumer loads both the ESM and CJS
-// builds: a plain `Symbol()` would differ between the two copies and silently
-// reject a legitimately verified credential.
-const VERIFIED_HTTP_SIG_BRAND: unique symbol = Symbol.for('@adcp/sdk.verifiedHttpSig');
+const VERIFIED_HTTP_SIG_BRAND: unique symbol = Symbol('@adcp/sdk.verifiedHttpSig');
 
 type VerifiedHttpSig = Extract<AdcpCredential, { kind: 'http_sig' }> & {
   readonly [VERIFIED_HTTP_SIG_BRAND]: true;
