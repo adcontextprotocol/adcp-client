@@ -13,6 +13,7 @@ import {
   symlinkSync,
   renameSync,
   copyFileSync,
+  cpSync,
 } from 'fs';
 import { mkdtempSync } from 'fs';
 import { createHash } from 'crypto';
@@ -102,6 +103,22 @@ function normalizeRefsInTree(dir: string, semanticVersion: string): void {
   }
 }
 
+/**
+ * renameSync that survives EXDEV. Inside `docker build`, /app is overlayfs and
+ * a directory that came from a lower image layer (e.g. via `COPY . .`) cannot
+ * be renamed — the kernel returns EXDEV even though src and dest are on the
+ * same mount. Fall back to copy + delete, which overlayfs handles fine.
+ */
+function moveTreeSync(src: string, dest: string): void {
+  try {
+    renameSync(src, dest);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err;
+    cpSync(src, dest, { recursive: true });
+    rmSync(src, { recursive: true, force: true });
+  }
+}
+
 function replaceTree(srcDir: string, destDir: string): void {
   if (!existsSync(srcDir)) {
     throw new Error(`Expected tarball entry ${srcDir} is missing.`);
@@ -119,11 +136,11 @@ function replaceTree(srcDir: string, destDir: string): void {
         rmSync(snapshotDir, { recursive: true, force: true });
       }
     }
-    renameSync(destDir, snapshotDir);
+    moveTreeSync(destDir, snapshotDir);
     console.log(`📸 Previous tree snapshotted → ${snapshotDir}`);
   }
   mkdirSync(path.dirname(destDir), { recursive: true });
-  renameSync(srcDir, destDir);
+  moveTreeSync(srcDir, destDir);
 }
 
 function updateLatestSymlink(cacheRoot: string, version: string): void {
@@ -251,7 +268,7 @@ function copySkillTree(srcDir: string, destDir: string): void {
     // schema-diff helper can pick up changes between syncs.
     const previous = `${destDir}.previous`;
     if (existsSync(previous)) rmSync(previous, { recursive: true, force: true });
-    renameSync(destDir, previous);
+    moveTreeSync(destDir, previous);
   }
   mkdirSync(destDir, { recursive: true });
   copyTreeFiltered(srcDir, destDir);
@@ -600,7 +617,10 @@ async function sync(version?: string, options: { includeSharedSurfaces?: boolean
     if (ADCP_BASE_URL !== DEFAULT_ADCP_BASE_URL || process.env.ADCP_GITHUB_FALLBACK === '0') {
       throw err;
     }
-    console.warn(`⚠️  AdCP ${adcpVersion} was not reachable from adcontextprotocol.org; retrying against GitHub dist.`);
+    console.warn(
+      `⚠️  Sync from adcontextprotocol.org failed for AdCP ${adcpVersion}; retrying against GitHub dist. ` +
+        `Original error: ${err instanceof Error ? err.message : err}`
+    );
     await syncWithBase(GITHUB_DIST_BASE_URL);
   }
 
