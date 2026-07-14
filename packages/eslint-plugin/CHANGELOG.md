@@ -1,5 +1,14 @@
 # @adcp/eslint-plugin
 
+## 0.1.6
+
+### Patch Changes
+
+- Updated dependencies [5a38f85]
+- Updated dependencies [1053705]
+- Updated dependencies [1053705]
+  - @adcp/sdk@12.0.0
+
 ## 0.1.5
 
 ### Patch Changes

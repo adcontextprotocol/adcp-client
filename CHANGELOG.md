@@ -1,5 +1,59 @@
 # Changelog
 
+## 12.0.0
+
+### Major Changes
+
+- 5a38f85: Add MCP 2026-07-28 client negotiation and dual-era HTTP serving through the official v2 SDK while retaining the v1 path for legacy peers and 2025 Tasks compatibility. High-level endpoint discovery, tool listing, and OAuth calls now negotiate the modern era; modern requests reject cross-origin redirects, do not replay failed tool calls, and fail closed on malformed JSON. Host/Origin validation now protects framework-owned AdCP servers before era classification, so it applies to legacy and modern traffic: public deployments must configure `publicUrl` or explicit `allowedHosts`/`allowedOrigins`, including an upstream hostname when a reverse proxy rewrites `Host`. Raw v1 `McpServer` instances remain legacy-only so resources, prompts, and Tasks extras are preserved. Raise the minimum supported Node.js version to 20, as required by MCP SDK v2.
+- 1053705: Ship a tree-shakeable dual ESM + CJS build.
+
+  The library now builds with tsup (`bundle: false`, one output file per source
+  module), emitting ESM (`.mjs`, reached via the `import` condition) alongside the
+  existing CommonJS (`.js`, reached via `require`), and declares `sideEffects` so
+  bundlers can drop unused code. Importing a single symbol no longer pulls the
+  whole barrel: `import { EventTypeValues } from '@adcp/sdk/types'` bundles to
+  under 1 KB with zod absent, down from ~1.9 MB.
+
+  `require('@adcp/sdk')` and the CLI keep working. This is a major version because
+  every consumer's module resolution goes through the reworked `exports` map
+  (each subpath now resolves `import` → `.mjs`, `require` → `.js`, `types` →
+  `.d.ts`).
+
+  The `@a2a-js/sdk` peer floor is raised from `^0.3.4` to `^0.3.13`: `@adcp/sdk/server`
+  imports `agentCardHandler` from `@a2a-js/sdk/server/express`, which only exists
+  from 0.3.13. CJS named-import interop masked a too-low pin; ESM surfaces it as a
+  load-time error, so the floor now matches what the code actually needs.
+
+  Dual-package safety: the request-signing and response-capture
+  `AsyncLocalStorage` stores are anchored on the global symbol registry so a
+  process that loads both builds shares one instance (no silently unsigned
+  requests), and the verified-signature brand uses `Symbol.for`. Consumers that
+  `instanceof`-check SDK errors across a mixed ESM/CJS boundary should use the
+  exported `isADCPError` / `isErrorOfType` guards instead.
+
+### Patch Changes
+
+- 1053705: Harden the publish artifact and correct a peer-dependency floor.
+  - Raise the `@modelcontextprotocol/sdk` peer floor from `^1.17.5` to `^1.24.0`.
+    The main entry eagerly loads `server/tasks`, which imports
+    `@modelcontextprotocol/sdk/experimental/tasks/*`; those subpaths first ship in
+    1.24.0, so any consumer importing `@adcp/sdk` on an older MCP SDK hit
+    `ERR_MODULE_NOT_FOUND`. Same class of too-low pin as the `@a2a-js/sdk` fix.
+  - Emit ESM-format type declarations (`.d.mts`) alongside `.d.ts` and give every
+    subpath export per-condition types, so the ESM `import` condition no longer
+    resolves to a CJS declaration ("masquerading as CJS"). `@adcp/sdk/enums`'s
+    `import` condition now points at `enums.mjs`, and `enums`, `testing/personas`,
+    and `server/legacy/v5` gained the `typesVersions` entries they were missing.
+
+  Raising the `@modelcontextprotocol/sdk` peer floor is a breaking-shaped change; it
+  is safe here only because it is co-released with the major bump from the
+  tree-shakeable dual-build changeset.
+
+  Verification tooling only (devDependencies, no new runtime deps): `npm run
+check:package` (publint + attw) and `npm run verify:package` (clean-room
+  dual-format smoke against the packed tarball with peers at their range floors),
+  both wired into CI. See `docs/development/PACKAGE-VERIFICATION.md`.
+
 ## 11.2.0
 
 ### Minor Changes
