@@ -1186,6 +1186,13 @@ export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/clien
 export const ADCP_INSTRUCTIONS_FN: unique symbol = Symbol.for('@adcp/client.instructionsFn');
 
 /**
+ * Resolve function-form instructions for transports without a legacy
+ * `initialize` handshake (notably MCP 2026-07-28). Internal contract between
+ * `createAdcpServer` and transport adapters.
+ */
+export const ADCP_INSTRUCTIONS_RESOLVER: unique symbol = Symbol.for('@adcp/client.instructionsResolver');
+
+/**
  * Pre-resolution session context passed to a function-form `instructions`.
  * Slim by design — no `account` (resolution hasn't run yet at MCP `initialize`
  * time, which is the natural eval moment for per-session instructions).
@@ -3250,10 +3257,16 @@ function buildSignedRequestsPreTransport(
       const raw = (req as { rawBody?: string }).rawBody;
       if (!raw) return undefined;
       try {
-        const parsed = JSON.parse(raw) as { method?: string; params?: { name?: string } };
-        if (parsed.method === 'tools/call' && typeof parsed.params?.name === 'string') {
-          return parsed.params.name;
-        }
+        const parsed = JSON.parse(raw) as unknown;
+        const messages = Array.isArray(parsed) ? parsed : [parsed];
+        const operations = messages.flatMap(message => {
+          if (message == null || typeof message !== 'object') return [];
+          const candidate = message as { method?: unknown; params?: { name?: unknown } };
+          return candidate.method === 'tools/call' && typeof candidate.params?.name === 'string'
+            ? [candidate.params.name]
+            : [];
+        });
+        return operations.find(operation => requiredFor.includes(operation)) ?? operations[0];
       } catch {
         // Non-JSON or malformed body — let transport handle rejection.
       }
@@ -3814,6 +3827,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const instructionsIsFn = typeof instructionsOption === 'function';
   let resolvedInstructions: string | undefined;
   let pendingInstructions: Promise<string | undefined> | undefined;
+  let resolveInstructionsForTransport: (() => Promise<string | undefined>) | undefined;
   if (typeof instructionsOption === 'string') {
     resolvedInstructions = instructionsOption;
   } else if (instructionsIsFn) {
@@ -3830,6 +3844,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // Async return: store the running Promise; resolution happens in the
         // wrapInitializeHandler block below, just before the MCP response.
         pendingInstructions = Promise.resolve(result as Promise<string | undefined>);
+        // Mark eager rejection as observed immediately. The original promise
+        // remains rejected and is awaited by the transport resolver later,
+        // where onInstructionsError decides fail vs skip. Without this
+        // observer, stateless modern tool requests that never run discovery
+        // could surface an unhandled rejection from an async instructions fn.
+        void pendingInstructions.catch(() => {});
       } else {
         // Reject non-string non-undefined sync returns instead of silently coercing
         // (`String({})` → "[object Object]" would ship as instructions otherwise).
@@ -3870,22 +3890,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // in the MCP handshake without making createAdcpServer itself async.
   if (pendingInstructions !== undefined) {
     const pending = pendingInstructions;
-    wrapInitializeHandler(server, async (origHandler, req, extra) => {
-      try {
-        const resolved = await pending;
-        if (resolved !== undefined && typeof resolved !== 'string') {
-          throw new Error(
-            `function-form \`instructions\` resolved to ${typeof resolved}, expected string | undefined. ` +
-              `Return a string for the prose, or undefined for "no instructions on this session."`
-          );
+    let resolvedOnce: Promise<string | undefined> | undefined;
+    resolveInstructionsForTransport = () => {
+      resolvedOnce ??= (async () => {
+        try {
+          const resolved = await pending;
+          if (resolved !== undefined && typeof resolved !== 'string') {
+            throw new Error(
+              `function-form \`instructions\` resolved to ${typeof resolved}, expected string | undefined. ` +
+                `Return a string for the prose, or undefined for "no instructions on this session."`
+            );
+          }
+          setSdkServerInstructions(server, resolved);
+          return resolved;
+        } catch (err) {
+          if (onInstructionsError === 'fail') throw err;
+          logger.warn('[adcp/createAdcpServer] async instructions threw; skipping (onInstructionsError: "skip")', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return undefined;
         }
-        setSdkServerInstructions(server, resolved);
-      } catch (err) {
-        if (onInstructionsError === 'fail') throw err;
-        logger.warn('[adcp/createAdcpServer] async instructions threw; skipping (onInstructionsError: "skip")', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+      })();
+      return resolvedOnce;
+    };
+    wrapInitializeHandler(server, async (origHandler, req, extra) => {
+      await resolveInstructionsForTransport?.();
       return origHandler(req, extra);
     });
   }
@@ -6405,6 +6434,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       configurable: true,
       writable: false,
     });
+    if (resolveInstructionsForTransport) {
+      Object.defineProperty(wrapped, ADCP_INSTRUCTIONS_RESOLVER, {
+        value: resolveInstructionsForTransport,
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
+    }
   }
   // Expose the capabilitiesData object so post-registration helpers
   // (registerTestController) can add spec-defined capability blocks

@@ -8,7 +8,7 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - `@adcp/sdk` installed from the AdCP 3.1 line while validating AdCP 3.1 (`npm install @adcp/sdk@adcp-3.1`)
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
@@ -713,7 +713,21 @@ serve(() => createAdcpServerFromPlatform(platform, { /* ... */ }), { path: '/v1/
 
 `serve()` returns the underlying `http.Server` for lifecycle control (e.g., graceful shutdown).
 
-When using `createTaskCapableServer` directly, `serve()` passes a `{ taskStore }` to your factory so MCP Tasks work correctly across stateless HTTP requests.
+**Breaking transport requirement:** Host/Origin validation runs before MCP era
+classification, so it applies to both legacy and MCP 2026-07-28 requests served
+by an `AdcpServer`. Public deployments that previously omitted these settings
+must set `publicUrl` so `serve()` derives the public hostname, or pass explicit
+`allowedHosts` and `allowedOrigins` lists. Without either, requests are
+localhost-only to prevent DNS rebinding. If a reverse proxy rewrites `Host`,
+include both the public hostname and the upstream hostname in `allowedHosts`;
+keep browser-facing origins in `allowedOrigins`. Entries are hostnames without
+ports. Era classification buffers JSON bodies up to 2 MiB by default; use
+`maxRequestBytes` when a documented extension needs a larger payload.
+
+When using the v1 `createTaskCapableServer` directly, `serve()` passes a
+`{ taskStore }` to your factory so legacy MCP Tasks work correctly across
+stateless HTTP requests. Raw v1 `McpServer` instances remain legacy-only;
+return an `AdcpServer` from `createAdcpServerFromPlatform` for MCP 2026-07-28.
 
 For custom routing or middleware, you can wire the transport manually:
 

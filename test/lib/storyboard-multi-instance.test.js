@@ -88,6 +88,17 @@ async function startFakeAgent({
     if (handleMcpHandshake(rpc, res, tools)) {
       return;
     }
+    if (rpc.method !== 'tools/call') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          error: { code: -32601, message: 'Method not found' },
+        })
+      );
+      return;
+    }
     const toolName = rpc.params?.name;
     const args = rpc.params?.arguments ?? {};
     requests.push({ tool: toolName, args, label });

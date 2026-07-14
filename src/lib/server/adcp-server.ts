@@ -337,9 +337,20 @@ export const ADCP_STATE_STORE: unique symbol = Symbol.for('@adcp/client.stateSto
  */
 export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabilities');
 
+/** Per-request tool visibility policy consumed by transport adapters. @internal */
+export const ADCP_TOOL_VISIBILITY: unique symbol = Symbol.for('@adcp/client.toolVisibility');
+
+/** @internal */
+export type AdcpToolVisibilityResolver = (options: {
+  toolName: string;
+  authInfo?: AdcpAuthInfo;
+  input?: Readonly<Record<string, unknown>>;
+}) => boolean | Promise<boolean>;
+
 /** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
+  [ADCP_TOOL_VISIBILITY]?: AdcpToolVisibilityResolver;
 }
 
 /**
@@ -352,6 +363,20 @@ export interface AdcpServerInternal extends AdcpServer {
 export function getSdkServer(server: AdcpServer | McpServer): McpServer | undefined {
   const candidate = (server as unknown as Partial<AdcpServerInternal>)[ADCP_SDK_SERVER];
   return candidate;
+}
+
+/** Attach a transport-independent per-request tool visibility policy. @internal */
+export function setToolVisibilityResolver(server: AdcpServer, resolver: AdcpToolVisibilityResolver): void {
+  (server as AdcpServerInternal)[ADCP_TOOL_VISIBILITY] = resolver;
+}
+
+/** Resolve whether a registered tool may be exposed to this request. @internal */
+export async function isRegisteredToolVisible(
+  server: AdcpServer,
+  options: Parameters<AdcpToolVisibilityResolver>[0]
+): Promise<boolean> {
+  const resolver = (server as AdcpServerInternal)[ADCP_TOOL_VISIBILITY];
+  return resolver ? resolver(options) : true;
 }
 
 /**
@@ -381,6 +406,13 @@ export function isAdcpServer(value: unknown): value is AdcpServerInternal {
 // helpers for that API. The AdcpServer surface stays the same.
 
 interface RegisteredTool {
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  annotations?: unknown;
+  _meta?: Record<string, unknown>;
+  enabled?: boolean;
   handler: (args: unknown, extra: unknown) => unknown | Promise<unknown>;
 }
 
@@ -391,8 +423,20 @@ interface McpServerPrivates {
       string,
       (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>
     >;
+    _serverInfo?: { name: string; version: string; [key: string]: unknown };
     _instructions?: string;
   };
+}
+
+/** Tool metadata needed to mirror the registered AdCP surface into another official MCP transport. @internal */
+export interface RegisteredToolDefinition {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  annotations?: unknown;
+  _meta?: Record<string, unknown>;
 }
 
 /** @internal */
@@ -478,6 +522,46 @@ export function wrapRegisteredToolHandler(
 export function listRegisteredToolNames(server: McpServer): string[] {
   const registered = (server as unknown as McpServerPrivates)._registeredTools ?? {};
   return Object.keys(registered);
+}
+
+/**
+ * Return enabled registered-tool metadata for the modern MCP server adapter.
+ * Handler functions stay private; the adapter dispatches through
+ * {@link AdcpServer.invoke} so the framework pipeline remains authoritative.
+ *
+ * @internal
+ */
+export function listRegisteredToolDefinitions(server: McpServer): RegisteredToolDefinition[] {
+  const registered = (server as unknown as McpServerPrivates)._registeredTools ?? {};
+  return Object.entries(registered).flatMap(([name, tool]) => {
+    if (!tool || tool.enabled === false) return [];
+    return [
+      {
+        name,
+        ...(tool.title !== undefined && { title: tool.title }),
+        ...(tool.description !== undefined && { description: tool.description }),
+        ...(tool.inputSchema !== undefined && { inputSchema: tool.inputSchema }),
+        ...(tool.outputSchema !== undefined && { outputSchema: tool.outputSchema }),
+        ...(tool.annotations !== undefined && { annotations: tool.annotations }),
+        ...(tool._meta !== undefined && { _meta: tool._meta }),
+      },
+    ];
+  });
+}
+
+/** Return the SDK server identity advertised during MCP discovery. @internal */
+export function getSdkServerInfo(server: McpServer): { name: string; version: string; [key: string]: unknown } {
+  return (
+    (server as unknown as McpServerPrivates).server?._serverInfo ?? {
+      name: 'AdCP Server',
+      version: 'unknown',
+    }
+  );
+}
+
+/** Return static or already-resolved server instructions. @internal */
+export function getSdkServerInstructions(server: McpServer): string | undefined {
+  return (server as unknown as McpServerPrivates).server?._instructions;
 }
 
 function getRequestHandler(

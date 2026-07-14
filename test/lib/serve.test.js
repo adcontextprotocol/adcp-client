@@ -2,9 +2,9 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
-function makeRequest(port, path = '/mcp', method = 'POST') {
+function makeRequest(port, path = '/mcp', method = 'POST', { headers, body } = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port, path, method }, res => {
+    const req = http.request({ hostname: '127.0.0.1', port, path, method, headers }, res => {
       let data = '';
       res.on('data', chunk => {
         data += chunk;
@@ -12,7 +12,7 @@ function makeRequest(port, path = '/mcp', method = 'POST') {
       res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(body);
   });
 }
 
@@ -159,7 +159,10 @@ describe('serve()', { concurrency: false }, () => {
     await waitForListening(server);
     const port = server.address().port;
 
-    const res = await makeRequest(port, '/mcp');
+    const res = await makeRequest(port, '/mcp', 'POST', {
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
     assert.strictEqual(res.status, 500);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.error, 'Internal server error');

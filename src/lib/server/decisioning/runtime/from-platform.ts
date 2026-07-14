@@ -159,7 +159,12 @@ import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatus
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
-import { getSdkServer, wrapRegisteredToolHandler, wrapSdkRequestHandler } from '../../adcp-server';
+import {
+  getSdkServer,
+  setToolVisibilityResolver,
+  wrapRegisteredToolHandler,
+  wrapSdkRequestHandler,
+} from '../../adcp-server';
 import { isSandboxOrMockAccount } from '../../account-mode';
 import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
@@ -1592,6 +1597,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
     return false;
   };
+
+  if (hasComplianceTestingProjection) {
+    setToolVisibilityResolver(server, ({ toolName, authInfo, input }) => {
+      if (toolName !== 'comply_test_controller') return true;
+      return resolveComplyControllerVisible(authInfo === undefined ? undefined : { authInfo }, toolName, input);
+    });
+  }
 
   if (mcp != null && hasComplianceTestingProjection) {
     const wrappedCapabilities = wrapRegisteredToolHandler(mcp, 'get_adcp_capabilities', async (orig, args, extra) => {

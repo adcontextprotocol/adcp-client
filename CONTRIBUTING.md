@@ -203,7 +203,7 @@ Your PR will be reviewed for:
 
 ✅ **Compatibility**
 
-- Works with Node.js >=18.0.0
+- Works with Node.js >=20.0.0
 - Compatible with both CommonJS and ESM
 - No breaking changes without major version bump
 - Backward compatible when possible

@@ -17,7 +17,7 @@
  * pattern as `get-agent-info-size-limit.test.js`.
  */
 
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 
@@ -118,13 +118,17 @@ describe('SingleAgentClient.getAgentInfo() — header-only auth (basic, x-api-ke
     baseUrl = `http://127.0.0.1:${port}`;
   });
 
+  beforeEach(async () => {
+    await closeMCPConnections();
+    received = [];
+  });
+
   after(async () => {
-    closeMCPConnections();
+    await closeMCPConnections();
     await new Promise(resolve => server.close(resolve));
   });
 
   it('forwards basic-auth Authorization header from agent.headers on the precheck path', async () => {
-    received = [];
     const client = new AgentClient({
       id: 'basic-auth-mcp',
       agent_uri: baseUrl,
@@ -163,7 +167,6 @@ describe('SingleAgentClient.getAgentInfo() — header-only auth (basic, x-api-ke
     // Lock the precedence ordering in `connectMCP`'s `authHeaders` merge:
     // `{ ...customHeaders, ...createMCPAuthHeaders(authToken) }` — the bearer
     // spread last and wins. If someone reorders the merge, this fails.
-    received = [];
     const bearerToken = 'bearer-token-xyz';
     const client = new AgentClient({
       id: 'bearer-with-stray-basic',
@@ -182,12 +185,15 @@ describe('SingleAgentClient.getAgentInfo() — header-only auth (basic, x-api-ke
       'expected getAgentInfo to fail because bearer overrode the basic header'
     );
 
-    // And the wire should show `Bearer …`, not `Basic …`, on the first request.
-    const firstReq = received.find(r => r.authHeader != null);
-    assert.ok(firstReq, 'server should have observed an Authorization header');
+    // The wire should include the authoritative bearer. A request from the
+    // prior cached Basic-auth client may finish while its connection is being
+    // closed, so do not infer this client's credentials from array order.
+    const bearerReq = received.find(r => r.authHeader?.startsWith('Bearer '));
     assert.ok(
-      firstReq.authHeader.startsWith('Bearer '),
-      `expected static bearer to win merge; got header prefix "${firstReq.authHeader.split(' ')[0] ?? ''}"`
+      bearerReq,
+      `expected static bearer on the wire; got prefixes ${received
+        .map(r => r.authHeader?.split(' ')[0] ?? 'none')
+        .join(', ')}`
     );
   });
 });

@@ -18,7 +18,7 @@
  * `MockProposalManager` (PR #504).
  *
  * **Runtime requirement**: uses `globalThis.fetch`, which lands as a built-in
- * on Node 18+ (the package declares `"engines": { "node": ">=18.0.0" }`).
+ * on Node 20+ (the package declares `"engines": { "node": ">=20.0.0" }`).
  * Adopters running on older Node, on Bun without the global, or in any
  * environment without a global `fetch` should pass an explicit `fetch`
  * implementation via the `fetch` constructor option.
