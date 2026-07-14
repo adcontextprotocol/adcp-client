@@ -19,6 +19,8 @@
  */
 
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { PARSE_ERROR, isJsonContentType } from '@modelcontextprotocol/server';
+import { hostHeaderValidation, originValidation } from '@modelcontextprotocol/node';
 import { createServer, type IncomingMessage, type Server as HttpServer } from 'http';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { TaskStore } from '@modelcontextprotocol/sdk/experimental/tasks/interfaces.js';
@@ -33,7 +35,8 @@ import {
   signatureErrorCodeFromCause,
 } from './auth';
 import { ADCP_PRE_TRANSPORT, ADCP_INSTRUCTIONS_FN, type AdcpPreTransport } from './create-adcp-server';
-import type { AdcpServer } from './adcp-server';
+import { isAdcpServer, type AdcpServer } from './adcp-server';
+import { createModernMcpServerAdapter } from './mcp-modern-server';
 
 /**
  * Context passed to the agent factory on each request.
@@ -104,6 +107,27 @@ export interface ServeOptions {
   port?: number;
   /** HTTP path to mount the MCP endpoint on. Defaults to '/mcp'. */
   path?: string;
+  /**
+   * Hostnames allowed on framework-owned AdCP server requests, without ports.
+   * The guard runs before protocol-era classification, so it protects both
+   * legacy and MCP 2026-07-28 traffic. Defaults to the hostname from
+   * `publicUrl`, or localhost-only when no public URL is set. Public and
+   * reverse-proxied deployments must configure `publicUrl` or this allowlist;
+   * include the upstream Host too when a proxy rewrites it.
+   */
+  allowedHosts?: string[];
+  /**
+   * Origin hostnames allowed on browser-originated framework AdCP requests,
+   * across both protocol eras. Requests without Origin pass. Defaults to
+   * {@link allowedHosts}.
+   */
+  allowedOrigins?: string[];
+  /**
+   * Maximum buffered MCP request body size used for era classification.
+   * Defaults to 2 MiB. Set explicitly when an AdCP extension legitimately
+   * carries larger JSON payloads.
+   */
+  maxRequestBytes?: number;
   /** Called when the server starts listening. */
   onListening?: (url: string) => void;
   /**
@@ -274,6 +298,9 @@ export interface ServeOptions {
  *   fresh instance (a server can only be connected once). Receives a
  *   `ServeContext` with a shared `taskStore` and the resolved `host` —
  *   branch on `host` to return host-specific handlers in multi-host mode.
+ *   Framework `AdcpServer` instances serve both MCP 2026-07-28 and legacy
+ *   clients. Raw v1 SDK `McpServer` instances remain legacy-only so resources,
+ *   prompts, Tasks, and custom transport extras are never silently dropped.
  * @param options - Port, path, and callback configuration.
  * @returns The http.Server instance. Use the `onListening` callback or
  *   listen for the 'listening' event to know when it's ready.
@@ -288,6 +315,10 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
   const taskStore = options?.taskStore ?? new InMemoryTaskStore();
   const trustForwardedHost = options?.trustForwardedHost === true;
   const reuseAgent = options?.reuseAgent === true;
+  const maxRequestBytes = options?.maxRequestBytes ?? 2 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) {
+    throw new Error('serve(): `maxRequestBytes` must be a positive safe integer');
+  }
 
   // Per-instance mutex chain for `reuseAgent: true`. The MCP SDK's
   // `Protocol.connect()` hard-throws when a transport is already
@@ -455,15 +486,16 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // path share the buffer without re-reading a drained stream.
       let rawBody: string | undefined;
       let parsedBody: unknown;
+      let bodyParseFailed = false;
       const ensureRawBody = async (): Promise<void> => {
         if (rawBody !== undefined) return;
-        rawBody = await bufferBody(req);
+        rawBody = await bufferBody(req, maxRequestBytes);
         (req as { rawBody?: string }).rawBody = rawBody;
         if (rawBody.length > 0) {
           try {
             parsedBody = JSON.parse(rawBody);
           } catch {
-            // Non-JSON body — let transport reject as malformed JSON-RPC.
+            bodyParseFailed = true;
           }
         }
       };
@@ -625,19 +657,74 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
       // Outside reuseAgent mode the factory returns a fresh server per
       // request — no shared instance, no lock needed.
       const runTransportCycle = async (): Promise<void> => {
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
+        let modernAdapter: ReturnType<typeof createModernMcpServerAdapter> | undefined;
         try {
-          await agentServer.connect(transport);
-          // When preTransport already consumed the request stream, pass the
-          // parsed body through so the transport doesn't re-read (stream is
-          // drained). MCP SDK's `handleRequest(req, res, parsedBody)` accepts
-          // this shape.
-          if (parsedBody !== undefined) {
-            await transport.handleRequest(req, res, parsedBody);
+          // The official v2 classifier and Node adapter both need the parsed
+          // body after auth/signing middleware may have drained the stream.
+          // Buffer once, then pass the same parsed value to whichever era owns
+          // the request. Malformed JSON and unsupported media types fail before
+          // either protocol era receives a drained request stream.
+          await ensureRawBody();
+
+          if (req.method?.toUpperCase() === 'POST' && !isJsonContentType(req.headers['content-type'])) {
+            res.writeHead(415, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: -32000, message: 'Unsupported Media Type: Content-Type must be application/json' },
+                id: null,
+              })
+            );
+            return;
+          }
+
+          if (req.method?.toUpperCase() === 'POST' && (bodyParseFailed || rawBody?.length === 0)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: PARSE_ERROR, message: 'Parse error: request body is not valid JSON' },
+                id: null,
+              })
+            );
+            return;
+          }
+
+          // Raw v1 SDK McpServer instances retain their complete legacy
+          // surface (resources, prompts, custom handlers, Tasks extras).
+          // Only the framework-owned AdcpServer can be mirrored losslessly
+          // onto the 2026-07-28 tool transport.
+          const frameworkAgent = isAdcpServer(agentServer) ? agentServer : undefined;
+          if (frameworkAgent) {
+            const defaultAllowedHosts = resolvedPublicUrl
+              ? [new URL(resolvedPublicUrl).hostname]
+              : ['localhost', '127.0.0.1', '[::1]'];
+            const allowedHosts = options?.allowedHosts ?? defaultAllowedHosts;
+            const allowedOrigins = options?.allowedOrigins ?? allowedHosts;
+            if (!hostHeaderValidation(allowedHosts)(req, res)) return;
+            if (!originValidation(allowedOrigins)(req, res)) return;
+          }
+
+          let legacyRequest = true;
+          if (frameworkAgent) {
+            modernAdapter = createModernMcpServerAdapter(frameworkAgent);
+            legacyRequest = await modernAdapter.isLegacyRequest(req, parsedBody);
+          }
+
+          if (legacyRequest) {
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: undefined,
+            });
+            await agentServer.connect(transport);
+            // The stream was consumed for era classification, so always pass
+            // the parsed body when one was available.
+            if (parsedBody !== undefined) {
+              await transport.handleRequest(req, res, parsedBody);
+            } else {
+              await transport.handleRequest(req, res);
+            }
           } else {
-            await transport.handleRequest(req, res);
+            await modernAdapter!.handle(req, res, parsedBody);
           }
         } catch (err) {
           console.error('Server error:', err);
@@ -646,6 +733,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
             res.end(JSON.stringify({ error: 'Internal server error' }));
           }
         } finally {
+          await modernAdapter?.close();
           // close() here releases the transport AND (in reuseAgent mode)
           // resets `_transport = undefined` on the cached server so the
           // next queued request can connect. The server's tools,
@@ -916,15 +1004,14 @@ function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {
   (req as IncomingMessage & { auth?: AuthInfo }).auth = info;
 }
 
-function bufferBody(req: import('http').IncomingMessage): Promise<string> {
+function bufferBody(req: import('http').IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    const MAX = 2 * 1024 * 1024; // 2 MiB — generous for MCP JSON-RPC payloads
     req.on('data', chunk => {
       size += chunk.length;
-      if (size > MAX) {
-        reject(new Error(`Request body exceeded ${MAX} bytes`));
+      if (size > maxBytes) {
+        reject(new Error(`Request body exceeded ${maxBytes} bytes`));
         req.destroy();
         return;
       }

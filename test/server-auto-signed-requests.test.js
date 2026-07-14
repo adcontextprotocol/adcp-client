@@ -349,6 +349,16 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       assert.strictEqual(payload.error, 'request_signature_required');
     });
 
+    it('rejects an unsigned JSON-RPC batch containing a required operation', async () => {
+      const create = JSON.parse(mcpCreateMediaBuyBody());
+      const read = JSON.parse(mcpGetProductsBody());
+      const body = JSON.stringify([read, create]);
+      const res = await postSigned({ url: started.url, body, sign: false });
+      assert.strictEqual(res.status, 401, 'batching must not bypass required_for enforcement');
+      const payload = await res.json();
+      assert.strictEqual(payload.error, 'request_signature_required');
+    });
+
     it('accepts a signed non-mutating get_products request', async () => {
       // Confirms `required_for` default doesn't over-reject: a read-only tool
       // that was signed anyway (for authenticity) must pass through the
@@ -382,12 +392,12 @@ describe('createAdcpServer: signedRequests auto-wiring', () => {
       );
       const payload = await res.json();
       assert.strictEqual(payload.error, 'request_signature_required');
-      assert.strictEqual(
-        typeof payload.message,
-        'string',
-        '401 body must include a human-readable message alongside the code'
+      assert.strictEqual(payload.message, 'Request signature verification failed');
+      assert.doesNotMatch(
+        payload.message,
+        /create_media_buy|keyid|nonce/i,
+        'public error must not expose verifier details'
       );
-      assert.ok(payload.message.length > 0, 'error message should not be empty');
     });
   });
 

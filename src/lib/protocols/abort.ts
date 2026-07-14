@@ -37,9 +37,10 @@ export function isAbortOrTimeoutError(error: unknown): boolean {
   if (error == null || typeof error !== 'object') return false;
   const value = error as { name?: unknown; code?: unknown };
   if (value.name === 'AbortError' || value.name === 'TimeoutError') return true;
-  // @modelcontextprotocol/sdk raises JSON-RPC RequestTimeout (-32001) for
-  // both SDK timeouts and AbortSignal-triggered request cancellation.
-  return value.code === -32001;
+  // MCP SDK v1 raises JSON-RPC RequestTimeout (-32001); the v2 packages use
+  // the typed SDK error code REQUEST_TIMEOUT. Both represent the same
+  // timeout/cancellation boundary and must bypass endpoint fallback.
+  return value.code === -32001 || value.code === 'REQUEST_TIMEOUT';
 }
 
 export function throwIfAborted(signal?: AbortSignal): void {

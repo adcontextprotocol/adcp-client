@@ -178,7 +178,7 @@ describe('read-path cancellation and timeout', () => {
     await assert.rejects(
       () => client.getAgentInfo(),
       err => {
-        assert.ok(err?.name === 'TimeoutError' || err?.code === -32001);
+        assert.ok(err?.name === 'TimeoutError' || err?.code === -32001 || err?.code === 'REQUEST_TIMEOUT');
         assert.doesNotMatch(err.message, /Failed to discover MCP endpoint/);
         return true;
       }

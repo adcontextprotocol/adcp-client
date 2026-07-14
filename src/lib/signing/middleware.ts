@@ -125,7 +125,7 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
         // rather than the next-callback.
         res.status(401).set('WWW-Authenticate', `Signature error="${err.code}"`).json({
           error: err.code,
-          message: err.message,
+          message: 'Request signature verification failed',
         });
         return;
       }

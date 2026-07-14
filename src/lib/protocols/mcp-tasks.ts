@@ -20,6 +20,7 @@ import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { withResponseSizeLimit } from './responseSizeLimit';
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
+import { tryCallModernMCPTool } from './mcp-modern';
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -193,6 +194,47 @@ export async function callMCPToolWithTasks(
     requestTimeoutMs?: number;
   }
 ): Promise<unknown> {
+  // Keep the public debug-log contract identical across modern and legacy
+  // protocol eras. Era negotiation happens after these common entries; the
+  // selected transport appends its own connection diagnostics.
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Auth configuration`,
+    timestamp: new Date().toISOString(),
+    hasAuth: !!authToken,
+    headers: authToken ? { 'x-adcp-auth': '***' } : {},
+    customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
+  });
+
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactArgsForLog(args))}`,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (authToken) {
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  const modernAttempt = await tryCallModernMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, {
+    ...(options?.signingContext && { signingContext: options.signingContext }),
+    ...(options?.signal && { signal: options.signal }),
+    ...(options?.requestTimeoutMs !== undefined && { requestTimeoutMs: options.requestTimeoutMs }),
+  });
+  if (modernAttempt.handled) {
+    debugLogs.push({
+      type: modernAttempt.response?.isError ? 'error' : 'success',
+      message: `MCP: Tool ${toolName} response received (${modernAttempt.response?.isError ? 'error' : 'success'})`,
+      timestamp: new Date().toISOString(),
+      response: modernAttempt.response,
+    });
+    return modernAttempt.response;
+  }
+
   return withSpan(
     'adcp.mcp.call_tool',
     {
@@ -203,30 +245,6 @@ export async function callMCPToolWithTasks(
       signingContextStorage.run(options?.signingContext, async () => {
         const authHeaders = buildAuthHeaders(authToken, customHeaders);
         const workingTimeout = options?.workingTimeout ?? 120_000;
-
-        // Log auth configuration (matching callMCPTool debug format for test compatibility)
-        debugLogs.push({
-          type: 'info',
-          message: `MCP: Auth configuration`,
-          timestamp: new Date().toISOString(),
-          hasAuth: !!authToken,
-          headers: authToken ? { 'x-adcp-auth': '***' } : {},
-          customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
-        });
-
-        debugLogs.push({
-          type: 'info',
-          message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactArgsForLog(args))}`,
-          timestamp: new Date().toISOString(),
-        });
-
-        if (authToken) {
-          debugLogs.push({
-            type: 'info',
-            message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
-            timestamp: new Date().toISOString(),
-          });
-        }
 
         return withCachedConnection(
           agentUrl,

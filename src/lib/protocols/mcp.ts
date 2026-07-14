@@ -24,6 +24,7 @@ import {
   resolveRequestTimeoutMs,
   withAbortSignal,
 } from './abort';
+import { closeModernMCPConnections, tryCallModernMCPTool } from './mcp-modern';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -226,6 +227,7 @@ export async function closeMCPConnections(): Promise<void> {
     }
   }
   await closeOAuthConnections();
+  await closeModernMCPConnections();
 }
 
 /**
@@ -622,7 +624,7 @@ async function connectMCPWithFallbackImpl(
       }) as typeof fetch)
     : diagnosticFetch;
   const transportOptions: StreamableHTTPClientTransportOptions = {
-    requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
+    requestInit: { headers: authHeaders, redirect: 'manual' },
     fetch: wrapFetchWithCapture(baseFetch),
   };
   let failedClient: MCPClient | undefined;
@@ -734,7 +736,7 @@ async function connectMCPWithFallbackImpl(
     try {
       await client.connect(
         new SSEClientTransport(url, {
-          requestInit: { headers: authHeaders, ...(transportFetch ? { redirect: 'manual' as const } : {}) },
+          requestInit: { headers: authHeaders, redirect: 'manual' },
           fetch: wrapFetchWithCapture(baseFetch),
         }),
         mcpRequestOptions
@@ -767,6 +769,49 @@ export async function callMCPTool(
   transportFetch?: typeof fetch,
   requestOptions?: { signal?: AbortSignal; requestTimeoutMs?: number }
 ): Promise<unknown> {
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Auth configuration`,
+    timestamp: new Date().toISOString(),
+    hasAuth: !!authToken,
+    headers: authToken ? { 'x-adcp-auth': '***' } : {},
+    customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
+  });
+  debugLogs.push({
+    type: 'info',
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactIdempotencyKeyInArgs(args))}`,
+    timestamp: new Date().toISOString(),
+  });
+  if (authToken) {
+    debugLogs.push({
+      type: 'info',
+      message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Custom fetch injection is an internal conformance seam whose mocks use
+  // the v1 transport shape. Normal remote calls negotiate the modern era;
+  // injected transports retain their exact legacy behavior.
+  if (!transportFetch) {
+    const modernAttempt = await tryCallModernMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, {
+      ...(signingContext && { signingContext }),
+      ...(requestOptions?.signal && { signal: requestOptions.signal }),
+      ...(requestOptions?.requestTimeoutMs !== undefined && {
+        requestTimeoutMs: requestOptions.requestTimeoutMs,
+      }),
+    });
+    if (modernAttempt.handled) {
+      debugLogs.push({
+        type: modernAttempt.response?.isError ? 'error' : 'success',
+        message: `MCP: Tool ${toolName} response received (${modernAttempt.response?.isError ? 'error' : 'success'})`,
+        timestamp: new Date().toISOString(),
+        response: modernAttempt.response,
+      });
+      return modernAttempt.response;
+    }
+  }
+
   return withSpan(
     'adcp.mcp.call_tool',
     {
@@ -819,30 +864,6 @@ async function callMCPToolImpl(
     ...traceHeaders,
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
-
-  // Log auth configuration (token values redacted)
-  debugLogs.push({
-    type: 'info',
-    message: `MCP: Auth configuration`,
-    timestamp: new Date().toISOString(),
-    hasAuth: !!authToken,
-    headers: authToken ? { 'x-adcp-auth': '***' } : {},
-    customHeaderKeys: customHeaders ? Object.keys(customHeaders) : [],
-  });
-
-  debugLogs.push({
-    type: 'info',
-    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactIdempotencyKeyInArgs(args))}`,
-    timestamp: new Date().toISOString(),
-  });
-
-  if (authToken) {
-    debugLogs.push({
-      type: 'info',
-      message: `MCP: Transport configured with x-adcp-auth header for ${toolName}`,
-      timestamp: new Date().toISOString(),
-    });
-  }
 
   const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestOptions?.requestTimeoutMs);
   const response = await withCachedConnection(
@@ -933,6 +954,11 @@ async function callMCPToolRawImpl(
  *   }
  * }
  * ```
+ *
+ * @deprecated Low-level v1/SSE escape hatch. High-level AgentClient discovery,
+ * tool listing, OAuth calls, and `callMCPTool*` APIs negotiate MCP 2026-07-28.
+ * Keep this only for callers that require the v1 SDK client/transport pair or
+ * its interactive `finishAuth()` lifecycle.
  */
 export async function connectMCP(options: {
   agentUrl: string;
@@ -991,9 +1017,7 @@ export async function connectMCP(options: {
     ...filteredCustomHeaders,
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
-  if (Object.keys(authHeaders).length > 0) {
-    transportOptions.requestInit = { headers: authHeaders };
-  }
+  transportOptions.requestInit = { headers: authHeaders, redirect: 'manual' };
   if (authProvider) {
     transportOptions.authProvider = authProvider;
     debugLogs.push({
@@ -1146,6 +1170,22 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       signal,
       requestTimeoutMs,
     });
+  }
+
+  const modernAttempt = await tryCallModernMCPTool(agentUrl, toolName, args, undefined, debugLogs, customHeaders, {
+    authProvider,
+    signingContext,
+    signal,
+    requestTimeoutMs,
+    handleLegacy: true,
+  });
+  if (modernAttempt.handled) {
+    debugLogs.push({
+      type: modernAttempt.response?.isError ? 'error' : 'success',
+      message: `MCP: Tool ${toolName} response received`,
+      timestamp: new Date().toISOString(),
+    });
+    return modernAttempt.response;
   }
 
   const response = await withCachedOAuthConnection(
