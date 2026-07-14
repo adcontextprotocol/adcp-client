@@ -15,9 +15,9 @@ Harden the publish artifact and correct a peer-dependency floor.
   `import` condition now points at `enums.mjs`, and `enums`, `testing/personas`,
   and `server/legacy/v5` gained the `typesVersions` entries they were missing.
 
-Raising the `@modelcontextprotocol/sdk` peer floor is a breaking-shaped change; it
-is safe here only because it is co-released with the major bump from the
-tree-shakeable dual-build changeset.
+The `@modelcontextprotocol/sdk` peer floor is raised `^1.17.5` → `^1.24.0`:
+consumers must be on `@modelcontextprotocol/sdk` ≥ 1.24 (the main entry eagerly
+loads `server/tasks`, which imports `experimental/tasks/*`, absent before 1.24.0).
 
 Verification tooling only (devDependencies, no new runtime deps): `npm run
 check:package` (publint + attw) and `npm run verify:package` (clean-room
