@@ -132,7 +132,28 @@ try {
   console.log('🔍 CJS require:');
   run('node', ['smoke.cjs'], { cwd: tmpDir, stdio: 'inherit' });
 
-  console.log('\n✅ Package loads in both ESM and CJS with peer floors satisfied.');
+  // `@adcp/sdk/enums` is documented as a lean, zod-free entry point safe for
+  // browser bundlers. Bundling it with `--platform=browser` catches
+  // Node-only imports (`node:url`/`node:path`/`node:module`, etc.) that
+  // esbuild's `--platform=node` and plain `node` execution above wouldn't —
+  // this is what would have caught adcp#2364 (an unconditional ESM banner
+  // dragging Node built-ins into every `.mjs`, including pure-data ones).
+  console.log('🌐 Browser bundle check (--platform=browser) for @adcp/sdk/enums:');
+  writeFileSync(
+    path.join(tmpDir, 'smoke.browser.mjs'),
+    [
+      "import { EventTypeValues } from '@adcp/sdk/enums';",
+      "if (EventTypeValues.length === 0) throw new Error('EventTypeValues is empty');",
+    ].join('\n')
+  );
+  run(
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'esbuild'),
+    ['smoke.browser.mjs', '--bundle', '--format=esm', '--platform=browser', '--outfile=smoke.browser.out.js'],
+    { cwd: tmpDir, stdio: 'inherit' }
+  );
+  console.log('  browser bundle of @adcp/sdk/enums ok');
+
+  console.log('\n✅ Package loads in both ESM and CJS with peer floors satisfied, and browser-bundles cleanly.');
 } catch (err) {
   console.error('\n❌ Package verification failed:');
   console.error(err.message ?? err);
