@@ -1,0 +1,114 @@
+name: Beta Release
+
+on:
+  pull_request:
+    types: [labeled, synchronize, closed]
+
+concurrency:
+  group: beta-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish PR snapshot
+    if: ${{ github.event.action != 'closed' && contains(github.event.pull_request.labels.*.name, 'beta-release') && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    env:
+      BETA_TAG: pr-${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Version snapshot
+        run: npx changeset version --snapshot "$BETA_TAG"
+
+      - name: Build
+        run: npm run build:lib
+
+      - name: Publish snapshot to npm
+        id: publish
+        run: |
+          ADCP_NPM_TAG="$BETA_TAG" npm run release
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        env:
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Comment install instructions
+        uses: actions/github-script@v7
+        env:
+          BETA_VERSION: ${{ steps.publish.outputs.version }}
+        with:
+          script: |
+            const marker = '<!-- beta-release-bot -->';
+            const { BETA_TAG, BETA_VERSION } = process.env;
+            const body = `${marker}\n### Beta release published\n\n` +
+              `\`@adcp/sdk@${BETA_VERSION}\` was published under the \`${BETA_TAG}\` npm dist-tag.\n\n` +
+              '```sh\n' +
+              `npm install @adcp/sdk@${BETA_TAG}\n` +
+              '```\n\n' +
+              'This snapshot is republished on every push while the `beta-release` label is attached. ' +
+              'Promotion to an official release happens by merging this PR normally — ' +
+              'the real version is cut fresh by the standard release flow, not by retagging this build.';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  cleanup:
+    name: Remove PR dist-tag
+    if: ${{ github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'beta-release') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      HAS_DIST_TAG_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN != '' }}
+    steps:
+      - name: Setup Node.js
+        if: ${{ env.HAS_DIST_TAG_TOKEN == 'true' }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Remove pr-<N> dist-tag
+        if: ${{ env.HAS_DIST_TAG_TOKEN == 'true' }}
+        run: npm dist-tag rm @adcp/sdk "pr-${{ github.event.pull_request.number }}" || true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}
