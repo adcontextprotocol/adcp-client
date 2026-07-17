@@ -1,7 +1,45 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as nodePath from 'node:path';
+import { transformSync } from 'esbuild';
 import { defineConfig } from 'tsup';
 import { fixImportsPlugin } from 'esbuild-fix-imports-plugin';
+
+// Only files that actually reference `__dirname`/`__filename`/`require` in
+// their body need the ESM shim below; injecting it into every ESM output
+// (as a global esbuild `banner`) drags `node:url`/`node:path`/`node:module`
+// imports into pure-data/pure-logic modules that never touch them, which a
+// browser bundler can't resolve (adcp#2364).
+//
+// Runs pre-transform via `onLoad` — prepending to the TS source rather than
+// the emitted JS — so esbuild's own sourcemap generation accounts for the
+// added lines, matching what the (removed) `banner` option got for free.
+// Detection uses a throwaway `transformSync` of the file (comments and types
+// stripped) instead of matching the raw source, so a comment that merely
+// mentions "require()" can't trigger a false positive.
+function conditionalNodeShimPlugin() {
+  const banner = [
+    "import { fileURLToPath as __adcpFileURLToPath } from 'node:url';",
+    "import { dirname as __adcpDirname } from 'node:path';",
+    "import { createRequire as __adcpCreateRequire } from 'node:module';",
+    'const __filename = __adcpFileURLToPath(import.meta.url);',
+    'const __dirname = __adcpDirname(__filename);',
+    'const require = __adcpCreateRequire(import.meta.url);',
+  ].join('\n');
+  const needsShim = /\b(__dirname|__filename)\b|\brequire\s*\(/;
+
+  return {
+    name: 'conditional-node-shim',
+    setup(build: import('esbuild').PluginBuild) {
+      if (build.initialOptions.format !== 'esm') return;
+      build.onLoad({ filter: /\.ts$/ }, args => {
+        const source = readFileSync(args.path, 'utf8');
+        const { code } = transformSync(source, { loader: 'ts', legalComments: 'none' });
+        if (!needsShim.test(code)) return null;
+        return { contents: `${banner}\n${source}`, loader: 'ts' };
+      });
+    },
+  };
+}
 
 // Companion to `fixImportsPlugin`: that plugin rewrites static `from '...'` and
 // `require('...')` specifiers, but not dynamic `import('...')`. Under
@@ -75,28 +113,14 @@ export default defineConfig({
   clean: true,
   dts: false,
   // Not tsup's `shims: true`: with many entries it emits `__dirname` once in a
-  // shared chunk (resolving to the chunk's dir, not each module's). The banner
-  // below is inlined into every ESM file, so `import.meta.url` — and therefore
-  // `__dirname` — is correct per file. CJS keeps the native globals.
+  // shared chunk (resolving to the chunk's dir, not each module's). The shim
+  // plugin below inlines it per file that needs it, so `import.meta.url` —
+  // and therefore `__dirname` — is correct per file. CJS keeps the native globals.
   shims: false,
-  esbuildOptions(options, context) {
-    if (context.format === 'esm') {
-      options.banner = {
-        js: [
-          "import { fileURLToPath as __adcpFileURLToPath } from 'node:url';",
-          "import { dirname as __adcpDirname } from 'node:path';",
-          "import { createRequire as __adcpCreateRequire } from 'node:module';",
-          'const __filename = __adcpFileURLToPath(import.meta.url);',
-          'const __dirname = __adcpDirname(__filename);',
-          'const require = __adcpCreateRequire(import.meta.url);',
-        ].join('\n'),
-      };
-    }
-  },
   // ESM → .mjs (the `import` condition), CJS → .js (the `require` condition and
   // the CLI's `require('../dist/lib/...')`). The package stays `type: commonjs`.
   outExtension({ format }) {
     return { js: format === 'esm' ? '.mjs' : '.js' };
   },
-  esbuildPlugins: [fixImportsPlugin(), fixDynamicImportExtensions()],
+  esbuildPlugins: [fixImportsPlugin(), fixDynamicImportExtensions(), conditionalNodeShimPlugin()],
 });
