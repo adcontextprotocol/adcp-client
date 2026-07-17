@@ -2,7 +2,7 @@ name: Beta Release
 
 on:
   pull_request:
-    types: [labeled, synchronize, closed]
+    types: [labeled, unlabeled, synchronize, closed]
 
 concurrency:
   group: beta-release-${{ github.event.pull_request.number }}
@@ -11,34 +11,55 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  BETA_TAG: pr-${{ github.event.pull_request.number }}
+
 jobs:
   publish:
     name: Publish PR snapshot
-    if: ${{ github.event.action != 'closed' && contains(github.event.pull_request.labels.*.name, 'beta-release') && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event.action != 'closed' && github.event.action != 'unlabeled' && contains(github.event.pull_request.labels.*.name, 'beta-release') && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       id-token: write
-    env:
-      BETA_TAG: pr-${{ github.event.pull_request.number }}
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Reject incompatible Changesets pre-release mode
+        run: |
+          if [ -f .changeset/pre.json ] && [ "$(jq -r '.mode' .changeset/pre.json)" = "pre" ]; then
+            echo "::error::main is currently in Changesets pre-release mode (a long-lived beta channel is active — see docs/development/v8.0-beta-plan.md). Per-PR snapshot releases are not supported while pre-release mode is active."
+            exit 1
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install Dependencies
         run: npm ci
 
+      - name: Capture pre-snapshot version
+        id: pre_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
       - name: Version snapshot
         run: npx changeset version --snapshot "$BETA_TAG"
+
+      - name: Verify snapshot bumped the version
+        run: |
+          NEW_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$NEW_VERSION" = "${{ steps.pre_version.outputs.version }}" ]; then
+            echo "::error::No changeset (or only empty changesets) found on this PR, so the snapshot version was not bumped and there is nothing to publish. Add a real changeset with 'npm run changeset' and push again."
+            exit 1
+          fi
 
       - name: Build
         run: npm run build:lib
@@ -68,12 +89,13 @@ jobs:
               'Promotion to an official release happens by merging this PR normally — ' +
               'the real version is cut fresh by the standard release flow, not by retagging this build.';
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              per_page: 100,
             });
-            const existing = comments.find(c => c.body.includes(marker));
+            const existing = comments.find(c => (c.body || '').includes(marker));
 
             if (existing) {
               await github.rest.issues.updateComment({
@@ -93,7 +115,7 @@ jobs:
 
   cleanup:
     name: Remove PR dist-tag
-    if: ${{ github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'beta-release') }}
+    if: ${{ (github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'beta-release')) || (github.event.action == 'unlabeled' && github.event.label.name == 'beta-release') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,6 +131,6 @@ jobs:
 
       - name: Remove pr-<N> dist-tag
         if: ${{ env.HAS_DIST_TAG_TOKEN == 'true' }}
-        run: npm dist-tag rm @adcp/sdk "pr-${{ github.event.pull_request.number }}" || true
+        run: npm dist-tag rm @adcp/sdk "$BETA_TAG" || true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_DIST_TAG_TOKEN }}

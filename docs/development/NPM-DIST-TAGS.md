@@ -53,7 +53,10 @@ The `beta-release.yml` workflow publishes this automatically under the
 `pr-<N>` dist-tag using a Changesets snapshot release (`changeset version
 --snapshot` + `changeset publish --tag`), reusing `scripts/publish-adcp-release.ts`
 via `ADCP_NPM_TAG`. It republishes on every push while the label stays
-attached, and comments the resolved version and install command on the PR.
+attached, and comments the resolved version and install command on the PR. A
+PR without a real changeset (or with only an empty one) fails this step
+loudly instead of silently publishing nothing — add one with `npm run
+changeset` first.
 
 **Promotion is just merging the PR normally.** There is no separate promote
 step: the real `latest` version is cut fresh by the existing `release.yml` +
@@ -61,11 +64,18 @@ Changesets flow from whatever lands on `main`, which is not guaranteed to be
 byte-identical to the last snapshot build if other PRs merge into the same
 release batch first.
 
-Cleanup of the `pr-<N>` dist-tag on PR close is best-effort — it requires an
-`NPM_DIST_TAG_TOKEN` secret (dist-tag removal isn't covered by OIDC trusted
-publishing, same limitation as above) and silently no-ops if that secret isn't
-configured. Stale `pr-<N>` tags left behind are harmless registry clutter, not
-a functional problem.
+The `pr-<N>` dist-tag is removed when the PR closes with the `beta-release`
+label still attached, or immediately if the label is removed before that.
+Cleanup is best-effort — it requires an `NPM_DIST_TAG_TOKEN` secret (dist-tag
+removal isn't covered by OIDC trusted publishing, same limitation as above)
+and silently no-ops if that secret isn't configured. Stale `pr-<N>` tags left
+behind are harmless registry clutter, not a functional problem.
+
+Per-PR snapshots are incompatible with Changesets pre-release mode
+(`.changeset/pre.json` with `mode: "pre"`) — the workflow detects this and
+fails with an explicit error rather than letting `changeset version
+--snapshot` throw an opaque one. This mechanism is unavailable for the
+duration of any long-lived beta channel cut with the pattern below.
 
 This is a different mechanism from the long-lived beta-channel pattern
 described in [`v8.0-beta-plan.md`](./v8.0-beta-plan.md) (a dedicated
