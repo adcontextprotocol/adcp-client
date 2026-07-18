@@ -304,6 +304,72 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   await hostileClient.close().catch(() => {});
 });
 
+test('modern serving forwards portable MCP App metadata for custom tools', async t => {
+  const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
+  const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
+  const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+
+  const appOnlyMeta = { ui: { visibility: ['app'] } };
+  const result = text => async () => ({ content: [{ type: 'text', text }] });
+  const httpServer = serve(
+    () =>
+      createAdcpServer({
+        name: 'modern-mcp-app-test',
+        version: '1.0.0',
+        stateStore: new InMemoryStateStore(),
+        customTools: {
+          upload_creative_asset: {
+            description: 'Open the portable creative upload app',
+            _meta: { ui: { resourceUri: 'ui://creative/upload' } },
+            handler: result('opened'),
+          },
+          prepare_creative_upload: {
+            _meta: appOnlyMeta,
+            handler: result('prepared'),
+          },
+          finalize_creative_upload: {
+            _meta: appOnlyMeta,
+            handler: result('finalized'),
+          },
+        },
+      }),
+    { port: 0, onListening: () => {} }
+  );
+  await new Promise((resolve, reject) => {
+    httpServer.once('error', reject);
+    if (httpServer.listening) resolve();
+    else httpServer.once('listening', resolve);
+  });
+  const address = httpServer.address();
+  assert.ok(address && typeof address === 'object');
+
+  const client = new Client(
+    { name: 'portable-mcp-app-client', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  );
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await closeServer(httpServer);
+  });
+
+  await client.connect(transport);
+  const listed = await client.listTools();
+  const tools = Object.fromEntries(listed.tools.map(tool => [tool.name, tool]));
+  assert.deepEqual(tools.upload_creative_asset._meta, {
+    ui: { resourceUri: 'ui://creative/upload' },
+  });
+  assert.deepEqual(tools.prepare_creative_upload._meta, appOnlyMeta);
+  assert.deepEqual(tools.finalize_creative_upload._meta, appOnlyMeta);
+
+  const prepared = await client.callTool({ name: 'prepare_creative_upload', arguments: {} });
+  assert.equal(
+    prepared.content[0].text,
+    'prepared',
+    'visibility metadata must not become a server-side authorization boundary'
+  );
+});
+
 test('modern serving honors per-request tool visibility', async t => {
   const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
   const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');

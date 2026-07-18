@@ -1022,6 +1022,8 @@ export type {
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
   AdcpCustomToolConfig,
+  McpAppUiMeta,
+  McpAppMeta,
   AdcpLogger,
   HandlerContext,
   MediaBuyHandlers,

@@ -6,7 +6,7 @@
 // Run with `npm run typecheck`.
 
 import type { AdcpServer } from './adcp-server';
-import type { MediaBuyHandlers } from './create-adcp-server';
+import type { AdcpCustomToolConfig, McpAppMeta, MediaBuyHandlers } from './create-adcp-server';
 
 // ── Plain object with same structural shape isn't an AdcpServer ──────────
 
@@ -56,9 +56,36 @@ function _legacy_media_buy_handlers_accept_payload_returns(): MediaBuyHandlers {
   };
 }
 
+// ── MCP App metadata is strict and portable ─────────────────────────────
+
+const _validMcpAppMeta: McpAppMeta = {
+  ui: { resourceUri: 'ui://creative/upload', visibility: ['model', 'app'] },
+};
+
+const _customToolWithMcpAppMeta: AdcpCustomToolConfig = {
+  _meta: _validMcpAppMeta,
+  handler: async () => ({ content: [] }),
+};
+
+const _invalidMcpAppMeta: McpAppMeta = {
+  ui: {
+    // @ts-expect-error — only model and app are supported visibility values.
+    visibility: ['server'],
+  },
+};
+
+const _flatMcpAppMeta: McpAppMeta = {
+  // @ts-expect-error — MCP App metadata uses the nested ui.resourceUri shape.
+  'ui.resourceUri': 'ui://creative/upload',
+};
+
 export const _references = [
   _imitationCannotBeAdcpServer,
   _registerToolNotOnAdcpServer,
   _adcpServerCallSitesStillWork,
   _legacy_media_buy_handlers_accept_payload_returns,
+  _validMcpAppMeta,
+  _customToolWithMcpAppMeta,
+  _invalidMcpAppMeta,
+  _flatMcpAppMeta,
 ] as const;

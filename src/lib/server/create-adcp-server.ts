@@ -1272,6 +1272,19 @@ export type AdcpPreTransport = (
 // Custom tool config
 // ---------------------------------------------------------------------------
 
+/** UI hints for a custom tool backed by an MCP App. */
+export interface McpAppUiMeta {
+  /** URI of the MCP App resource rendered when the tool is invoked. */
+  resourceUri?: string;
+  /** Audiences a compliant host exposes the tool to. Routing metadata, not authorization. */
+  visibility?: Array<'model' | 'app'>;
+}
+
+/** Typed MCP App metadata forwarded unchanged in `tools/list`. */
+export interface McpAppMeta {
+  ui?: McpAppUiMeta;
+}
+
 /**
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
@@ -1318,6 +1331,8 @@ export interface AdcpCustomToolConfig<
   outputSchema?: OutputArgs;
   /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
   annotations?: ToolAnnotations;
+  /** Portable MCP App metadata surfaced unchanged in `tools/list`. */
+  _meta?: McpAppMeta;
   /**
    * Tool handler. Gets SDK-validated `args` based on `inputSchema` and
    * must return a `CallToolResult`. Use `capabilitiesResponse`,
@@ -6097,7 +6112,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
       const custom = config.customTools[customName];
       if (!custom) continue;
-      const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      const { description, title, inputSchema, outputSchema, annotations, _meta, handler } = custom;
       // Wrap the adopter-supplied handler so `throw new AdcpError(...)` and
       // `throw adcpError(...)` from inside it project to the typed envelope —
       // matching the behavior framework-registered tools get from the catch
@@ -6122,6 +6137,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           ...(inputSchema != null && { inputSchema }),
           ...(outputSchema != null && { outputSchema }),
           ...(annotations != null && { annotations }),
+          ...(_meta != null && { _meta }),
         } as Parameters<typeof server.registerTool>[1],
         wrappedHandler
       );

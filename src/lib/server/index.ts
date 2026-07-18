@@ -351,6 +351,8 @@ export type {
   AdcpCapabilitiesConfig,
   AdcpCapabilitiesOverrides,
   AdcpCustomToolConfig,
+  McpAppUiMeta,
+  McpAppMeta,
   AdcpLogger,
   SignedRequestsConfig,
   AdcpPreTransport,
