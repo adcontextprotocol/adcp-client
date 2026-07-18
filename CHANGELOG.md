@@ -1,5 +1,11 @@
 # Changelog
 
+## 12.0.2
+
+### Patch Changes
+
+- 4a9c283: Add typed MCP App metadata to custom tools and forward it through modern MCP tool discovery.
+
 ## 12.0.1
 
 ### Patch Changes
