@@ -1,5 +1,11 @@
 # Changelog
 
+## 12.0.3
+
+### Patch Changes
+
+- ee40711: Add typed, portable MCP App resource registration across legacy and modern server transports.
+
 ## 12.0.2
 
 ### Patch Changes
