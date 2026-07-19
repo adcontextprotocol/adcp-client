@@ -30,6 +30,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { McpToolResponse } from './responses';
+import type { AdcpMcpResourceDefinition } from './mcp-app';
 import { ADCP_VERSION } from '../version';
 
 /**
@@ -340,6 +341,9 @@ export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabil
 /** Per-request tool visibility policy consumed by transport adapters. @internal */
 export const ADCP_TOOL_VISIBILITY: unique symbol = Symbol.for('@adcp/client.toolVisibility');
 
+/** Configured MCP App resources mirrored into modern per-request servers. @internal */
+export const ADCP_MCP_APP_RESOURCES: unique symbol = Symbol.for('@adcp/client.mcpAppResources');
+
 /** @internal */
 export type AdcpToolVisibilityResolver = (options: {
   toolName: string;
@@ -351,6 +355,7 @@ export type AdcpToolVisibilityResolver = (options: {
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
   [ADCP_TOOL_VISIBILITY]?: AdcpToolVisibilityResolver;
+  [ADCP_MCP_APP_RESOURCES]?: readonly AdcpMcpResourceDefinition[];
 }
 
 /**
@@ -368,6 +373,21 @@ export function getSdkServer(server: AdcpServer | McpServer): McpServer | undefi
 /** Attach a transport-independent per-request tool visibility policy. @internal */
 export function setToolVisibilityResolver(server: AdcpServer, resolver: AdcpToolVisibilityResolver): void {
   (server as AdcpServerInternal)[ADCP_TOOL_VISIBILITY] = resolver;
+}
+
+/** Attach validated resource definitions for transport adapters. @internal */
+export function setMcpAppResources(server: AdcpServer, resources: readonly AdcpMcpResourceDefinition[]): void {
+  Object.defineProperty(server, ADCP_MCP_APP_RESOURCES, {
+    value: resources,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+}
+
+/** Read validated resource definitions for transport adapters. @internal */
+export function listMcpAppResources(server: AdcpServer): readonly AdcpMcpResourceDefinition[] {
+  return (server as AdcpServerInternal)[ADCP_MCP_APP_RESOURCES] ?? [];
 }
 
 /** Resolve whether a registered tool may be exposed to this request. @internal */

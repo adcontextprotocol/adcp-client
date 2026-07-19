@@ -12,6 +12,7 @@ import {
   createMcpHandler,
   isLegacyRequest,
   type AuthInfo as ModernAuthInfo,
+  type ResourceMetadata,
   type StandardSchemaWithJSON,
   type ServerContext,
   type ToolAnnotations,
@@ -23,11 +24,13 @@ import {
   getSdkServerInfo,
   getSdkServerInstructions,
   isRegisteredToolVisible,
+  listMcpAppResources,
   listRegisteredToolDefinitions,
   type AdcpAuthInfo,
   type AdcpServer,
 } from './adcp-server';
 import { ADCP_INSTRUCTIONS_RESOLVER } from './create-adcp-server';
+import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
 
 export interface ModernMcpServerAdapter {
   handle: NodeMcpRequestHandler;
@@ -44,6 +47,13 @@ function toAdcpAuthInfo(authInfo: ModernAuthInfo | undefined): AdcpAuthInfo | un
     ...(authInfo.expiresAt !== undefined && { expiresAt: authInfo.expiresAt }),
     ...(authInfo.extra !== undefined && { extra: authInfo.extra }),
   };
+}
+
+function linkedMcpAppResourceUri(tool: { _meta?: Record<string, unknown> }): string | undefined {
+  const ui = tool._meta?.['ui'];
+  if (ui === null || typeof ui !== 'object') return undefined;
+  const resourceUri = (ui as Record<string, unknown>)['resourceUri'];
+  return typeof resourceUri === 'string' ? resourceUri : undefined;
 }
 
 /** Build a strict 2026-07-28 handler around one configured AdCP server. @internal */
@@ -69,8 +79,11 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
       );
 
       const authInfo = toAdcpAuthInfo(requestContext.authInfo);
+      const toolVisibility = new Map<string, boolean>();
       for (const tool of toolDefinitions) {
-        if (!(await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo }))) continue;
+        const visible = await isRegisteredToolVisible(agentServer, { toolName: tool.name, authInfo });
+        toolVisibility.set(tool.name, visible);
+        if (!visible) continue;
         const config = {
           ...(tool.title !== undefined && { title: tool.title }),
           ...(tool.description !== undefined && { description: tool.description }),
@@ -97,6 +110,23 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
         } else {
           modern.registerTool(tool.name, config, async ctx => invoke({}, ctx));
         }
+      }
+
+      // `createMcpHandler` reconstructs the MCP v2 server for every request,
+      // so resources must be registered inside the factory rather than once
+      // when the opaque AdCP server is created.
+      for (const resource of listMcpAppResources(agentServer)) {
+        const linkedTools = toolDefinitions.filter(tool => linkedMcpAppResourceUri(tool) === resource.uri);
+        if (linkedTools.length > 0 && !linkedTools.some(tool => toolVisibility.get(tool.name) === true)) continue;
+        modern.registerResource(
+          resource.name,
+          resource.uri,
+          mcpAppResourceMetadata(resource) as ResourceMetadata,
+          async (uri, ctx) =>
+            readMcpAppResource(resource, uri, {
+              signal: ctx.mcpReq.signal,
+            })
+        );
       }
 
       return modern;
