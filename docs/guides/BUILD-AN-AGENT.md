@@ -562,6 +562,76 @@ createAdcpServerFromPlatform(platform, {
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 
+### Portable MCP Apps for custom tools
+
+Use `resources` with custom-tool `_meta.ui` to attach one host-neutral MCP
+App to a tool. The framework registers the `ui://` resource on both legacy
+MCP connections and every modern per-request server reconstruction; the same
+configuration therefore works in compliant Claude, ChatGPT, and future hosts.
+
+```typescript
+import {
+  createAdcpServerFromPlatform,
+  MCP_APP_RESOURCE_MIME_TYPE,
+} from '@adcp/sdk/server';
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Publisher',
+  version: '1.0.0',
+  resources: [
+    {
+      name: 'creative_upload',
+      uri: 'ui://creative/upload',
+      mimeType: MCP_APP_RESOURCE_MIME_TYPE,
+      _meta: {
+        ui: {
+          csp: {
+            connectDomains: ['https://uploads.example.com'],
+            resourceDomains: ['https://assets.example.com'],
+          },
+          prefersBorder: true,
+        },
+      },
+      handler: async () => renderUploadApp(),
+    },
+  ],
+  customTools: {
+    upload_creative_asset: {
+      description: 'Open the creative upload flow.',
+      _meta: { ui: { resourceUri: 'ui://creative/upload' } },
+      handler: async () => ({
+        // Required text-only fallback for hosts without MCP Apps support.
+        content: [{ type: 'text', text: 'Upload a creative asset.' }],
+      }),
+    },
+    prepare_creative_upload: {
+      _meta: { ui: { visibility: ['app'] } },
+      handler: prepareCreativeUpload,
+    },
+    finalize_creative_upload: {
+      _meta: { ui: { visibility: ['app'] } },
+      handler: finalizeCreativeUpload,
+    },
+  },
+});
+```
+
+MCP App resources always use a `ui://` URI and
+`text/html;profile=mcp-app`; the public types and construction-time checks
+reject other shapes. The resource `_meta.ui` object carries CSP domains,
+permissions, a dedicated host domain, and border preference, and is emitted
+consistently by both `resources/list` and `resources/read`.
+
+`ui.visibility` is host routing metadata, not an authorization boundary.
+App-only handlers must still authenticate and authorize every request, and
+tools should always return meaningful text content so clients that do not
+negotiate `io.modelcontextprotocol/ui` degrade gracefully. A startup warning
+identifies any tool `resourceUri` that does not match a configured resource.
+Resource handlers intentionally receive no authentication material: the HTML
+bundle must be principal-independent and cache-safe. Fetch tenant data or mint
+short-lived upload URLs through authenticated app-only tools after the app has
+loaded.
+
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServerFromPlatform` calls into this internally.

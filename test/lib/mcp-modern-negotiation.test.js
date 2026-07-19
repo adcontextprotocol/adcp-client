@@ -310,6 +310,16 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
   const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
 
   const appOnlyMeta = { ui: { visibility: ['app'] } };
+  const resourceMeta = {
+    ui: {
+      csp: {
+        connectDomains: ['https://api.example.com'],
+        resourceDomains: ['https://cdn.example.com'],
+      },
+      domain: 'creative-upload.example.com',
+      prefersBorder: true,
+    },
+  };
   const result = text => async () => ({ content: [{ type: 'text', text }] });
   const httpServer = serve(
     () =>
@@ -317,6 +327,15 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
         name: 'modern-mcp-app-test',
         version: '1.0.0',
         stateStore: new InMemoryStateStore(),
+        resources: [
+          {
+            name: 'creative_upload',
+            uri: 'ui://creative/upload',
+            title: 'Creative upload',
+            _meta: resourceMeta,
+            handler: async () => '<!doctype html><html><body>upload</body></html>',
+          },
+        ],
         customTools: {
           upload_creative_asset: {
             description: 'Open the portable creative upload app',
@@ -345,7 +364,14 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
 
   const client = new Client(
     { name: 'portable-mcp-app-client', version: '1.0.0' },
-    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+    {
+      capabilities: {
+        extensions: {
+          'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] },
+        },
+      },
+      versionNegotiation: { mode: { pin: '2026-07-28' } },
+    }
   );
   const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
   t.after(async () => {
@@ -362,12 +388,45 @@ test('modern serving forwards portable MCP App metadata for custom tools', async
   assert.deepEqual(tools.prepare_creative_upload._meta, appOnlyMeta);
   assert.deepEqual(tools.finalize_creative_upload._meta, appOnlyMeta);
 
+  const listedResources = await client.listResources();
+  assert.deepEqual(listedResources.resources, [
+    {
+      name: 'creative_upload',
+      uri: 'ui://creative/upload',
+      title: 'Creative upload',
+      mimeType: 'text/html;profile=mcp-app',
+      _meta: resourceMeta,
+    },
+  ]);
+  const resource = await client.readResource({ uri: 'ui://creative/upload' });
+  assert.deepEqual(resource.contents, [
+    {
+      uri: 'ui://creative/upload',
+      mimeType: 'text/html;profile=mcp-app',
+      text: '<!doctype html><html><body>upload</body></html>',
+      _meta: resourceMeta,
+    },
+  ]);
+
   const prepared = await client.callTool({ name: 'prepare_creative_upload', arguments: {} });
   assert.equal(
     prepared.content[0].text,
     'prepared',
     'visibility metadata must not become a server-side authorization boundary'
   );
+
+  // Capability negotiation belongs to the host. A client that does not
+  // advertise MCP Apps must still receive and call the ordinary text tool;
+  // the optional resource registration cannot make the server UI-only.
+  const fallbackClient = new Client(
+    { name: 'text-only-client', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  );
+  const fallbackTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
+  t.after(async () => fallbackClient.close().catch(() => {}));
+  await fallbackClient.connect(fallbackTransport);
+  const fallback = await fallbackClient.callTool({ name: 'upload_creative_asset', arguments: {} });
+  assert.equal(fallback.content[0].text, 'opened');
 });
 
 test('modern serving honors per-request tool visibility', async t => {
@@ -382,8 +441,24 @@ test('modern serving honors per-request tool visibility', async t => {
         name: 'modern-visibility-test',
         version: '1.0.0',
         stateStore: new InMemoryStateStore(),
+        resources: [
+          {
+            name: 'private_app',
+            uri: 'ui://private/app',
+            handler: async () => '<!doctype html><html><body>private</body></html>',
+          },
+        ],
+        customTools: {
+          open_private_app: {
+            _meta: { ui: { resourceUri: 'ui://private/app' } },
+            handler: async () => ({ content: [{ type: 'text', text: 'private' }] }),
+          },
+        },
       });
-      setToolVisibilityResolver(server, ({ toolName }) => toolName !== 'get_adcp_capabilities');
+      setToolVisibilityResolver(
+        server,
+        ({ toolName }) => toolName !== 'get_adcp_capabilities' && toolName !== 'open_private_app'
+      );
       return server;
     },
     { port: 0, onListening: () => {} }
@@ -409,5 +484,9 @@ test('modern serving honors per-request tool visibility', async t => {
   await client.connect(transport);
   const listed = await client.listTools();
   assert.ok(!listed.tools.some(tool => tool.name === 'get_adcp_capabilities'));
+  assert.ok(!listed.tools.some(tool => tool.name === 'open_private_app'));
+  const resources = await client.listResources();
+  assert.deepEqual(resources.resources, [], 'resources linked only from hidden tools must also be hidden');
   await assert.rejects(() => client.callTool({ name: 'get_adcp_capabilities', arguments: {} }));
+  await assert.rejects(() => client.readResource({ uri: 'ui://private/app' }));
 });
