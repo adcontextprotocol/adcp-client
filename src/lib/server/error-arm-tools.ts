@@ -26,6 +26,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
 import { resolveBundleKey } from '../validation/schema-loader';
+import { getSchemaDataRoots } from '../internal/schema-data-roots';
 
 /**
  * Resolve the schema-cache root for a given AdCP version.
@@ -43,12 +44,13 @@ import { resolveBundleKey } from '../validation/schema-loader';
  */
 function resolveBundledRoot(version: string): string | undefined {
   const key = resolveBundleKey(version);
+  const { builtSchemasDataRoot, sourceSchemasCacheRoot } = getSchemaDataRoots();
   // Built layout (dist): dist/lib/schemas-data/<bundle-key>/bundled
-  const distCandidate = path.join(__dirname, '..', 'schemas-data', key, 'bundled');
+  const distCandidate = path.join(builtSchemasDataRoot, key, 'bundled');
   if (existsSync(distCandidate)) return distCandidate;
 
   // Source-tree layout (dev): schemas/cache/<exact-version>/bundled
-  const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
+  const cacheRoot = sourceSchemasCacheRoot;
   const exactCandidate = path.join(cacheRoot, version, 'bundled');
   if (existsSync(exactCandidate)) return exactCandidate;
 

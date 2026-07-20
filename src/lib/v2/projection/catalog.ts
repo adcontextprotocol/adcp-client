@@ -22,6 +22,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import { getPackageRoot } from '../../internal/package-root';
 
 /**
  * Canonical projection reference (`canonical-projection-ref.json` in the
@@ -120,21 +121,12 @@ function indexKey(agentUrl: string, id: string): string {
 export function loadCatalog(explicitPath?: string): CatalogIndex {
   if (cached) return cached;
 
+  const packageRoot = getPackageRoot();
   const candidates = explicitPath
     ? [explicitPath]
     : [
-        path.join(__dirname, 'aao-reference-formats.json'),
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          '..',
-          '..',
-          'test',
-          'lib',
-          'v2-projection-fixtures',
-          'aao-reference-formats.json'
-        ),
+        path.join(packageRoot, 'dist', 'lib', 'v2', 'projection', 'aao-reference-formats.json'),
+        path.join(packageRoot, 'test', 'lib', 'v2-projection-fixtures', 'aao-reference-formats.json'),
       ];
 
   for (const file of candidates) {

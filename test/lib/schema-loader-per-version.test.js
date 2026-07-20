@@ -70,6 +70,9 @@ function runPrereleaseSortFixture() {
     const tempDist = path.join(tempRoot, 'dist');
     fs.cpSync(path.join(REPO_ROOT, 'dist'), tempDist, { recursive: true });
     fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), path.join(tempRoot, 'node_modules'), 'dir');
+    // getPackageRoot()'s require.resolve self-reference needs an ancestor
+    // package.json named @adcp/sdk to find this package's own root.
+    fs.cpSync(path.join(REPO_ROOT, 'package.json'), path.join(tempRoot, 'package.json'));
     const tempSchemasData = path.join(tempDist, 'lib', 'schemas-data');
     writeMinimalGetProductsBundle(path.join(tempSchemasData, PRERELEASE_SORT_OLD), PRERELEASE_SORT_OLD, 'old');
     writeMinimalGetProductsBundle(path.join(tempSchemasData, PRERELEASE_SORT_NEW), PRERELEASE_SORT_NEW, 'new');
