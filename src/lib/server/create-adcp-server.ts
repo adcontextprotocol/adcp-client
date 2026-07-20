@@ -51,10 +51,17 @@ import {
   ADCP_STATE_STORE,
   wrapMcpServer,
   setSdkServerInstructions,
+  setMcpAppResources,
   wrapInitializeHandler,
   type AdcpServer,
   type AdcpServerInternal,
 } from './adcp-server';
+import {
+  mcpAppResourceMetadata,
+  normalizeMcpAppResources,
+  readMcpAppResource,
+  type AdcpMcpResourceDefinition,
+} from './mcp-app';
 import { createTaskCapableServer, InMemoryTaskStore } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError, applyAdcpErrorAllowlist, sanitizeStructuredAdcpError } from './errors';
@@ -1272,6 +1279,19 @@ export type AdcpPreTransport = (
 // Custom tool config
 // ---------------------------------------------------------------------------
 
+/** UI hints for a custom tool backed by an MCP App. */
+export interface McpAppUiMeta {
+  /** URI of the MCP App resource rendered when the tool is invoked. */
+  resourceUri?: string;
+  /** Audiences a compliant host exposes the tool to. Routing metadata, not authorization. */
+  visibility?: Array<'model' | 'app'>;
+}
+
+/** Typed MCP App metadata forwarded unchanged in `tools/list`. */
+export interface McpAppMeta {
+  ui?: McpAppUiMeta;
+}
+
 /**
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
@@ -1318,6 +1338,8 @@ export interface AdcpCustomToolConfig<
   outputSchema?: OutputArgs;
   /** Tool annotations (readOnlyHint / destructiveHint / idempotentHint / openWorldHint). */
   annotations?: ToolAnnotations;
+  /** Portable MCP App metadata surfaced unchanged in `tools/list`. */
+  _meta?: McpAppMeta;
   /**
    * Tool handler. Gets SDK-validated `args` based on `inputSchema` and
    * must return a `CallToolResult`. Use `capabilitiesResponse`,
@@ -1761,6 +1783,17 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * construction time — the spec handler wins by convention.
    */
   customTools?: Record<string, AdcpCustomToolConfig<any, any>>;
+
+  /**
+   * Portable HTML MCP Apps served through standard MCP resources.
+   *
+   * Each definition is registered on both the legacy MCP server and every
+   * modern per-request server reconstruction. A custom tool links to a
+   * resource with `_meta.ui.resourceUri`; a startup warning identifies any
+   * link whose URI is absent here. Hosts without MCP Apps support can ignore
+   * the metadata and consume the tool's normal text result.
+   */
+  resources?: readonly AdcpMcpResourceDefinition[];
 
   /**
    * Opt-in bridge between the `comply_test_controller` seed store and the
@@ -3494,6 +3527,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     config.exposeToolSchemas === true
       ? (shallowToolInputHintSchema(toolName) ?? PASSTHROUGH_INPUT_SCHEMA)
       : PASSTHROUGH_INPUT_SCHEMA;
+  const mcpAppResources = normalizeMcpAppResources(config.resources);
+  const mcpAppResourceUris = new Set<string>(mcpAppResources.map(resource => resource.uri));
+  for (const [toolName, tool] of Object.entries(config.customTools ?? {})) {
+    const resourceUri = tool?._meta?.ui?.resourceUri;
+    if (resourceUri === undefined || mcpAppResourceUris.has(resourceUri)) continue;
+    const message =
+      `[adcp/createAdcpServer] customTools["${toolName}"]._meta.ui.resourceUri references ` +
+      `"${resourceUri}", but no matching MCP App resource is configured in resources[].`;
+    process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_MCP_APP_RESOURCE_MISSING' });
+    logger.warn(message);
+  }
 
   // One-shot construction-time warn when `testController` is wired without
   // any account resolver. The dispatch-time sandbox gate admits requests
@@ -3883,6 +3927,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskMessageQueue,
     instructions: resolvedInstructions,
   });
+
+  // The v1 SDK server remains the canonical legacy path. The modern adapter
+  // separately mirrors these validated definitions onto every per-request
+  // MCP v2 server reconstruction.
+  for (const resource of mcpAppResources) {
+    server.registerResource(
+      resource.name,
+      resource.uri,
+      mcpAppResourceMetadata(resource) as Parameters<typeof server.registerResource>[2],
+      async (uri, extra) =>
+        readMcpAppResource(resource, uri, {
+          signal: extra.signal,
+        })
+    );
+  }
 
   // Wire async instructions resolution into the MCP `initialize` handler.
   // The function returned a Promise at construction time; await it here
@@ -6097,7 +6156,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
       const custom = config.customTools[customName];
       if (!custom) continue;
-      const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      const { description, title, inputSchema, outputSchema, annotations, _meta, handler } = custom;
       // Wrap the adopter-supplied handler so `throw new AdcpError(...)` and
       // `throw adcpError(...)` from inside it project to the typed envelope —
       // matching the behavior framework-registered tools get from the catch
@@ -6122,6 +6181,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           ...(inputSchema != null && { inputSchema }),
           ...(outputSchema != null && { outputSchema }),
           ...(annotations != null && { annotations }),
+          ...(_meta != null && { _meta }),
         } as Parameters<typeof server.registerTool>[1],
         wrappedHandler
       );
@@ -6391,6 +6451,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     },
   };
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
+  setMcpAppResources(wrapped, mcpAppResources);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
   // on the HTTP transport. Stashed under a non-enumerable symbol property

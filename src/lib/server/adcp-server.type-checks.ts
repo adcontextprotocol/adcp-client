@@ -6,7 +6,8 @@
 // Run with `npm run typecheck`.
 
 import type { AdcpServer } from './adcp-server';
-import type { MediaBuyHandlers } from './create-adcp-server';
+import type { AdcpCustomToolConfig, McpAppMeta, MediaBuyHandlers } from './create-adcp-server';
+import type { AdcpMcpResourceDefinition, McpAppResourceMeta } from './mcp-app';
 
 // ── Plain object with same structural shape isn't an AdcpServer ──────────
 
@@ -56,9 +57,76 @@ function _legacy_media_buy_handlers_accept_payload_returns(): MediaBuyHandlers {
   };
 }
 
+// ── MCP App metadata is strict and portable ─────────────────────────────
+
+const _validMcpAppMeta: McpAppMeta = {
+  ui: { resourceUri: 'ui://creative/upload', visibility: ['model', 'app'] },
+};
+
+const _customToolWithMcpAppMeta: AdcpCustomToolConfig = {
+  _meta: _validMcpAppMeta,
+  handler: async () => ({ content: [] }),
+};
+
+const _invalidMcpAppMeta: McpAppMeta = {
+  ui: {
+    // @ts-expect-error — only model and app are supported visibility values.
+    visibility: ['server'],
+  },
+};
+
+const _flatMcpAppMeta: McpAppMeta = {
+  // @ts-expect-error — MCP App metadata uses the nested ui.resourceUri shape.
+  'ui.resourceUri': 'ui://creative/upload',
+};
+
+const _validMcpAppResourceMeta: McpAppResourceMeta = {
+  ui: {
+    csp: {
+      connectDomains: ['https://api.example.com'],
+      resourceDomains: ['https://cdn.example.com'],
+      frameDomains: ['https://player.example.com'],
+      baseUriDomains: ['https://cdn.example.com'],
+    },
+    domain: 'upload.example.com',
+    prefersBorder: true,
+  },
+};
+
+const _validMcpAppResource: AdcpMcpResourceDefinition = {
+  name: 'creative_upload',
+  uri: 'ui://creative/upload',
+  mimeType: 'text/html;profile=mcp-app',
+  _meta: _validMcpAppResourceMeta,
+  handler: async (_uri, { signal }) => (signal.aborted ? '' : '<!doctype html><html></html>'),
+};
+
+const _invalidMcpAppResourceUri: AdcpMcpResourceDefinition = {
+  name: 'wrong_scheme',
+  // @ts-expect-error — MCP App resources require the ui:// scheme.
+  uri: 'https://example.com/app',
+  handler: async () => '<!doctype html><html></html>',
+};
+
+const _invalidMcpAppResourceMime: AdcpMcpResourceDefinition = {
+  name: 'wrong_mime',
+  uri: 'ui://creative/wrong-mime',
+  // @ts-expect-error — arbitrary HTML MIME types are not MCP App resources.
+  mimeType: 'text/html',
+  handler: async () => '<!doctype html><html></html>',
+};
+
 export const _references = [
   _imitationCannotBeAdcpServer,
   _registerToolNotOnAdcpServer,
   _adcpServerCallSitesStillWork,
   _legacy_media_buy_handlers_accept_payload_returns,
+  _validMcpAppMeta,
+  _customToolWithMcpAppMeta,
+  _invalidMcpAppMeta,
+  _flatMcpAppMeta,
+  _validMcpAppResourceMeta,
+  _validMcpAppResource,
+  _invalidMcpAppResourceUri,
+  _invalidMcpAppResourceMime,
 ] as const;

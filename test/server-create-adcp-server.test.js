@@ -382,6 +382,147 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('MCP App resources', () => {
+    it('lists and reads a typed ui:// HTML resource on the legacy MCP path', async () => {
+      let seen;
+      const resourceMeta = {
+        ui: {
+          csp: {
+            connectDomains: ['https://api.example.com'],
+            resourceDomains: ['https://cdn.example.com'],
+          },
+          domain: 'creative-upload.example.com',
+          prefersBorder: true,
+        },
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resources: [
+          {
+            name: 'creative_upload',
+            uri: 'ui://creative/upload',
+            title: 'Creative upload',
+            description: 'Upload creative assets without leaving the host.',
+            _meta: resourceMeta,
+            handler: async (uri, ctx) => {
+              seen = {
+                uri: uri.href,
+                hasAuthInfo: Object.hasOwn(ctx, 'authInfo'),
+                aborted: ctx.signal.aborted,
+              };
+              return '<!doctype html><html><body>upload</body></html>';
+            },
+          },
+        ],
+      });
+
+      const listed = await server.dispatchTestRequest({ method: 'resources/list' });
+      assert.deepStrictEqual(listed.resources, [
+        {
+          name: 'creative_upload',
+          uri: 'ui://creative/upload',
+          title: 'Creative upload',
+          description: 'Upload creative assets without leaving the host.',
+          mimeType: 'text/html;profile=mcp-app',
+          _meta: resourceMeta,
+        },
+      ]);
+
+      const read = await server.dispatchTestRequest(
+        { method: 'resources/read', params: { uri: 'ui://creative/upload' } },
+        { authInfo: { token: 'secret', clientId: 'buyer_1', scopes: [] } }
+      );
+      assert.deepStrictEqual(seen, { uri: 'ui://creative/upload', hasAuthInfo: false, aborted: false });
+      assert.deepStrictEqual(read.contents, [
+        {
+          uri: 'ui://creative/upload',
+          mimeType: 'text/html;profile=mcp-app',
+          text: '<!doctype html><html><body>upload</body></html>',
+          _meta: resourceMeta,
+        },
+      ]);
+    });
+
+    it('fails construction for invalid or duplicate resource definitions', () => {
+      const html = async () => '<!doctype html><html></html>';
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            resources: [{ name: 'bad', uri: 'https://example.com/app', handler: html }],
+          }),
+        /resources\[0\]\.uri must use the ui:\/\/ scheme/
+      );
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            resources: [
+              { name: 'one', uri: 'ui://creative/upload', handler: html },
+              { name: 'two', uri: 'ui://creative/upload', handler: html },
+            ],
+          }),
+        /duplicate MCP App resource URI/
+      );
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            resources: [{ name: 'noncanonical', uri: 'ui://creative/upload/../other', handler: html }],
+          }),
+        /must be a valid canonical ui:\/\/ URI \(non-canonical URI; use "ui:\/\/creative\/other"\)/
+      );
+    });
+
+    it('logs private resource-handler failures but returns a fixed public error', async t => {
+      const errorLog = t.mock.method(console, 'error', () => {});
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        resources: [
+          {
+            name: 'creative_upload',
+            uri: 'ui://creative/upload',
+            handler: async () => {
+              throw new Error('provider password: top-secret');
+            },
+          },
+        ],
+      });
+
+      await assert.rejects(
+        () => server.dispatchTestRequest({ method: 'resources/read', params: { uri: 'ui://creative/upload' } }),
+        error => {
+          assert.doesNotMatch(error.message, /top-secret/);
+          assert.match(error.message, /MCP App resource is temporarily unavailable/);
+          return true;
+        }
+      );
+      assert.strictEqual(errorLog.mock.callCount(), 1, 'private cause should remain observable server-side');
+    });
+
+    it('warns when a tool links to an unregistered resource URI', () => {
+      const warn = mock.fn();
+      createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        logger: { debug() {}, info() {}, warn, error() {} },
+        customTools: {
+          upload_creative_asset: {
+            _meta: { ui: { resourceUri: 'ui://creative/missing' } },
+            handler: async () => ({ content: [{ type: 'text', text: 'Text-only fallback' }] }),
+          },
+        },
+      });
+      assert.strictEqual(warn.mock.callCount(), 1);
+      assert.match(warn.mock.calls[0].arguments[0], /ui:\/\/creative\/missing/);
+    });
+  });
+
   describe('auto-generated capabilities', () => {
     it('detects media_buy protocol from mediaBuy handlers', async () => {
       const server = createAdcpServer({

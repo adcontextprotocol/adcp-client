@@ -320,6 +320,16 @@ export type { PostgresStateStoreOptions } from './postgres-state-store';
 
 export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
+export { MCP_APP_RESOURCE_MIME_TYPE } from './mcp-app';
+export type {
+  AdcpMcpResourceDefinition,
+  McpAppResourceCsp,
+  McpAppResourcePermissions,
+  McpAppResourceUiMeta,
+  McpAppResourceMeta,
+  McpAppResourceReadContext,
+} from './mcp-app';
+
 // `createAdcpServer` is NOT re-exported from `@adcp/sdk/server` anymore —
 // LLMs scaffolding from skills consistently latched onto it as the canonical
 // entry point despite the @deprecated JSDoc. Removing the top-level export
@@ -351,6 +361,8 @@ export type {
   AdcpCapabilitiesConfig,
   AdcpCapabilitiesOverrides,
   AdcpCustomToolConfig,
+  McpAppUiMeta,
+  McpAppMeta,
   AdcpLogger,
   SignedRequestsConfig,
   AdcpPreTransport,

@@ -987,6 +987,7 @@ export {
   ADCP_SERVE_REQUEST_CONTEXT,
   createA2AAdapter,
   A2AInvocationError,
+  MCP_APP_RESOURCE_MIME_TYPE,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -1022,6 +1023,14 @@ export type {
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
   AdcpCustomToolConfig,
+  McpAppUiMeta,
+  McpAppMeta,
+  AdcpMcpResourceDefinition,
+  McpAppResourceCsp,
+  McpAppResourcePermissions,
+  McpAppResourceUiMeta,
+  McpAppResourceMeta,
+  McpAppResourceReadContext,
   AdcpLogger,
   HandlerContext,
   MediaBuyHandlers,
