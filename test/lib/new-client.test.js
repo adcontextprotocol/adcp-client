@@ -210,9 +210,17 @@ describe('Integration with existing codebase', () => {
   });
 
   test('should work with protocol clients from /advanced', () => {
-    const { callMCPTool, callA2ATool, ProtocolClient } = require('../../dist/lib/advanced.js');
+    const {
+      callMCPTool,
+      callMCPToolWithOAuth,
+      connectMCP,
+      callA2ATool,
+      ProtocolClient,
+    } = require('../../dist/lib/advanced.js');
 
     assert(typeof callMCPTool === 'function', 'MCP client should be available in /advanced');
+    assert(typeof callMCPToolWithOAuth === 'function', 'OAuth MCP client should be available in /advanced');
+    assert(typeof connectMCP === 'function', 'low-level MCP connection should be available in /advanced');
     assert(typeof callA2ATool === 'function', 'A2A client should be available in /advanced');
     assert(typeof ProtocolClient === 'function', 'ProtocolClient should be available in /advanced');
   });

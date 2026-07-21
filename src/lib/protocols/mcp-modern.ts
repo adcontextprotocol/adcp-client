@@ -43,6 +43,7 @@ export interface ModernMCPConnectionOptions {
   authProvider?: object;
   signal?: AbortSignal;
   requestTimeoutMs?: number;
+  fetchFn?: typeof fetch;
   /** Use the v2 SDK's negotiated legacy client instead of handing off to v1. */
   handleLegacy?: boolean;
 }
@@ -56,6 +57,7 @@ interface ModernConnectionOptions {
   authProvider?: object;
   signal?: AbortSignal;
   requestTimeoutMs?: number;
+  fetchFn?: typeof fetch;
   handleLegacy?: boolean;
 }
 
@@ -66,7 +68,9 @@ const knownLegacyConnections = new Map<string, number>();
 const MAX_CACHED_CONNECTIONS = 20;
 const LEGACY_CLASSIFICATION_TTL_MS = 5 * 60 * 1000;
 const modernOAuthProviderIds = new WeakMap<object, string>();
+const modernFetchFnIds = new WeakMap<typeof fetch, string>();
 let nextModernOAuthProviderId = 0;
+let nextModernFetchFnId = 0;
 let connectionGeneration = 0;
 
 function cacheDisambiguator(value: string): string {
@@ -103,11 +107,22 @@ function oauthProviderCacheKey(provider: object | undefined): string | undefined
   return key;
 }
 
+function fetchFnCacheKey(fetchFn: typeof fetch | undefined): string | undefined {
+  if (!fetchFn) return undefined;
+  let key = modernFetchFnIds.get(fetchFn);
+  if (!key) {
+    key = `fetch:${++nextModernFetchFnId}`;
+    modernFetchFnIds.set(fetchFn, key);
+  }
+  return key;
+}
+
 function connectionCacheKey(
   agentUrl: string,
   headers: Record<string, string>,
   signingCacheKey?: string,
-  authProvider?: object
+  authProvider?: object,
+  fetchFn?: typeof fetch
 ): string {
   const normalizedHeaders = Object.entries(headers)
     .map(([key, value]) => [key.toLowerCase(), value] as const)
@@ -116,6 +131,8 @@ function connectionCacheKey(
   if (signingCacheKey) parts.push(signingCacheKey);
   const providerKey = oauthProviderCacheKey(authProvider);
   if (providerKey) parts.push(providerKey);
+  const fetchKey = fetchFnCacheKey(fetchFn);
+  if (fetchKey) parts.push(fetchKey);
   return parts.join('::');
 }
 
@@ -191,7 +208,7 @@ async function createNegotiatedClient(
 ): Promise<Client> {
   const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
   const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(options.requestTimeoutMs);
-  const rawNetworkFetch: typeof fetch = (input, init) => fetch(input, init);
+  const rawNetworkFetch: typeof fetch = options.fetchFn ?? ((input, init) => fetch(input, init));
   const networkFetch: typeof fetch = (input, init) =>
     withAbortSignal<Response>([options.signal, init?.signal], requestTimeoutMs, signal =>
       rawNetworkFetch(input, { ...init, signal })
@@ -301,11 +318,13 @@ async function attemptModernCall(
     options.agentUrl,
     authHeaders,
     options.signingContext?.cacheKey,
-    options.authProvider
+    options.authProvider,
+    options.fetchFn
   );
   if (isKnownLegacy(cacheKey)) return { handled: false };
 
-  const guardedConnection = options.signal !== undefined || options.requestTimeoutMs !== undefined;
+  const guardedConnection =
+    options.signal !== undefined || options.requestTimeoutMs !== undefined || options.fetchFn !== undefined;
   let client: Client;
   try {
     client = guardedConnection
@@ -408,6 +427,7 @@ export async function tryCallModernMCPTool(
           authProvider: options.authProvider,
           signal: options.signal,
           requestTimeoutMs: options.requestTimeoutMs,
+          fetchFn: options.fetchFn,
           handleLegacy: options.handleLegacy,
         },
         toolName,
@@ -436,6 +456,7 @@ export async function probeModernMCPConnection(
     authProvider: options.authProvider,
     signal: options.signal,
     requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
     handleLegacy: options.handleLegacy,
   };
   const authHeaders = buildAuthHeaders(authToken, customHeaders, options.authProvider);
@@ -469,6 +490,7 @@ export async function tryListModernMCPTools(
     authProvider: options.authProvider,
     signal: options.signal,
     requestTimeoutMs: options.requestTimeoutMs,
+    fetchFn: options.fetchFn,
   };
   const authHeaders = buildAuthHeaders(authToken, customHeaders, options.authProvider);
   let client: Client | undefined;

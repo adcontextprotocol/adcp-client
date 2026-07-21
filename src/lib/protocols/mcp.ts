@@ -57,8 +57,10 @@ const pendingConnections = new Map<string, Promise<MCPClient>>();
 const oauthConnectionCache = new Map<string, MCPClient>();
 const pendingOAuthConnections = new Map<string, Promise<MCPClient>>();
 const oauthProviderIds = new WeakMap<OAuthClientProvider, string>();
+const oauthFetchFnIds = new WeakMap<typeof fetch, string>();
 const MAX_CACHED_CONNECTIONS = 20;
 let nextOAuthProviderId = 0;
+let nextOAuthFetchFnId = 0;
 
 /**
  * Track URLs where StreamableHTTP has previously connected successfully.
@@ -272,6 +274,15 @@ function getOAuthProviderDisambiguator(authProvider: OAuthClientProvider): strin
   return id;
 }
 
+function getOAuthFetchFnDisambiguator(fetchFn: typeof fetch): string {
+  let id = oauthFetchFnIds.get(fetchFn);
+  if (!id) {
+    id = cacheDisambiguator(`oauth-fetch:${++nextOAuthFetchFnId}`);
+    oauthFetchFnIds.set(fetchFn, id);
+  }
+  return id;
+}
+
 function customHeadersDisambiguator(customHeaders?: Record<string, string>): string | undefined {
   return headersCacheDisambiguator(customHeaders);
 }
@@ -280,12 +291,14 @@ function oauthConnectionCacheKey(
   agentUrl: string,
   authProvider: OAuthClientProvider,
   signingCacheKey?: string,
-  customHeaders?: Record<string, string>
+  customHeaders?: Record<string, string>,
+  fetchFn?: typeof fetch
 ): string {
   const parts = [`${agentUrl}::oauth:${getOAuthProviderDisambiguator(authProvider)}`];
   if (signingCacheKey) parts.push(signingCacheKey);
   const headersKey = customHeadersDisambiguator(customHeaders);
   if (headersKey) parts.push(`headers:${headersKey}`);
+  if (fetchFn) parts.push(`fetch:${getOAuthFetchFnDisambiguator(fetchFn)}`);
   return parts.join('::');
 }
 
@@ -309,6 +322,7 @@ async function getOrCreateOAuthConnection(
     signingContext?: AgentSigningContext;
     signal?: AbortSignal;
     requestTimeoutMs?: number;
+    fetchFn?: typeof fetch;
   }
 ): Promise<MCPClient> {
   const cached = getCachedOAuthConnection(cacheKey);
@@ -340,6 +354,7 @@ async function withCachedOAuthConnection<T>(
     signingContext?: AgentSigningContext;
     signal?: AbortSignal;
     requestTimeoutMs?: number;
+    fetchFn?: typeof fetch;
   },
   label: string,
   fn: (client: MCPClient) => Promise<T>
@@ -348,9 +363,10 @@ async function withCachedOAuthConnection<T>(
     options.agentUrl,
     options.authProvider,
     options.signingContext?.cacheKey,
-    options.customHeaders
+    options.customHeaders,
+    options.fetchFn
   );
-  if (options.signal || options.requestTimeoutMs !== undefined) {
+  if (options.signal || options.requestTimeoutMs !== undefined || options.fetchFn) {
     const { client } = await connectMCP(options);
     try {
       return await fn(client);
@@ -546,6 +562,12 @@ export interface MCPCallOptions {
   signal?: AbortSignal;
   /** Optional per-request timeout for connect and callTool. */
   requestTimeoutMs?: number;
+  /**
+   * Scoped fetch implementation used for MCP requests, OAuth discovery, and token exchange.
+   * Calls with a scoped fetcher use an isolated one-shot connection rather than the shared
+   * OAuth connection cache, so callers must not rely on cross-call MCP session state.
+   */
+  fetchFn?: typeof fetch;
 }
 
 /**
@@ -969,6 +991,7 @@ export async function connectMCP(options: {
   signingContext?: AgentSigningContext;
   signal?: AbortSignal;
   requestTimeoutMs?: number;
+  fetchFn?: typeof fetch;
 }): Promise<MCPConnectionResult> {
   const {
     agentUrl,
@@ -979,6 +1002,7 @@ export async function connectMCP(options: {
     signingContext,
     signal,
     requestTimeoutMs: configuredRequestTimeoutMs,
+    fetchFn,
   } = options;
   const baseUrl = new URL(agentUrl);
 
@@ -1049,9 +1073,10 @@ export async function connectMCP(options: {
     ...(signal && { signal }),
     ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
   };
+  const rawNetworkFetch: typeof fetch = fetchFn ?? ((input, init) => fetch(input, init));
   const sizeLimited = wrapFetchWithSizeLimit((input, init) =>
     withAbortSignal<Response>([signal, init?.signal], requestTimeoutMs, linkedSignal =>
-      fetch(input as string | URL, { ...init, signal: linkedSignal })
+      rawNetworkFetch(input, { ...init, signal: linkedSignal })
     )
   );
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
@@ -1135,6 +1160,10 @@ export async function connectMCP(options: {
  * session/source/principal; the provider owns token refresh state for the
  * cached transport.
  *
+ * Supplying `fetchFn` opts out of connection reuse. Scoped fetchers commonly
+ * carry request- or tenant-specific network policy, so each call gets an
+ * isolated connection that is closed after the tool response.
+ *
  * Signing: this path consumes `options.signingContext` via the transport —
  * `connectMCP` attaches a signing-fetch wrapper at transport-creation time —
  * rather than via `signingContextStorage`. The OAuth cache key includes the
@@ -1157,6 +1186,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
     signingContext,
     signal,
     requestTimeoutMs,
+    fetchFn,
   } = options;
   const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(requestTimeoutMs);
   const requestOptions = {
@@ -1166,7 +1196,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
 
   // If no OAuth provider, use the legacy function
   if (!authProvider) {
-    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext, undefined, {
+    return callMCPTool(agentUrl, toolName, args, authToken, debugLogs, customHeaders, signingContext, fetchFn, {
       signal,
       requestTimeoutMs,
     });
@@ -1177,6 +1207,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
     signingContext,
     signal,
     requestTimeoutMs,
+    fetchFn,
     handleLegacy: true,
   });
   if (modernAttempt.handled) {
@@ -1197,6 +1228,7 @@ export async function callMCPToolWithOAuth(options: MCPCallOptions): Promise<unk
       signingContext,
       signal,
       requestTimeoutMs,
+      fetchFn,
     },
     toolName,
     async client => {
