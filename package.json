@@ -579,7 +579,7 @@
     "secure-json-parse": "^4.1.0",
     "structured-headers": "^2.0.2",
     "tldts": "^7.0.29",
-    "undici": "^6.27.0",
+    "undici": "^8.8.0",
     "ws": "^8.21.0",
     "yaml": "^2.7.1"
   },
@@ -615,7 +615,7 @@
     "@types/pg": "^8.20.0",
     "@types/tar": "^6.1.13",
     "actionlint": "^2.0.6",
-    "esbuild": "^0.27.0",
+    "esbuild": "^0.28.1",
     "esbuild-fix-imports-plugin": "^1.0.23",
     "eslint": "^10.0.3",
     "json-schema-to-typescript": "^15.0.4",
