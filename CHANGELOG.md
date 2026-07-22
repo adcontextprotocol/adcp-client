@@ -1,5 +1,11 @@
 # Changelog
 
+## 12.0.4
+
+### Patch Changes
+
+- 6d645e9: Allow MCP OAuth callers to supply a scoped `fetchFn` for transport requests, discovery, and token refresh.
+
 ## 12.0.3
 
 ### Patch Changes

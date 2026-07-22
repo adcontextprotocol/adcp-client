@@ -10,6 +10,7 @@ import { resolveConfig, type ActionInputs } from './resolve-config.js'
 import { evaluateShortCircuit } from './short-circuit.js'
 import { evaluateHighRisk } from './high-risk.js'
 import { evaluateGatedPaths } from './gated-paths.js'
+import { isPullRequestEvent } from './event.js'
 import {
   computeChangedFiles,
   computePrSurfaceFiles,
@@ -162,7 +163,7 @@ async function main(): Promise<void> {
   const config = resolveConfig({ aaoSecretariatMd, actionInputs: inputs })
 
   const ctx = github.context
-  if (ctx.eventName !== 'pull_request') {
+  if (!isPullRequestEvent(ctx.eventName)) {
     core.setOutput('should-run', 'false')
     core.setOutput('skip-reason', 'not-a-pull-request')
     return

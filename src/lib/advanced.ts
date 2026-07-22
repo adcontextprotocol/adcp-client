@@ -38,4 +38,13 @@
  * - Type-safe tool methods
  * - Error handling and validation
  */
-export { ProtocolClient, callMCPTool, callA2ATool, createMCPClient, createA2AClient } from './protocols';
+export {
+  ProtocolClient,
+  callMCPTool,
+  callMCPToolWithOAuth,
+  connectMCP,
+  callA2ATool,
+  createMCPClient,
+  createA2AClient,
+} from './protocols';
+export type { MCPCallOptions, MCPConnectionResult } from './protocols';
