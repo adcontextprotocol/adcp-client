@@ -1,21 +1,23 @@
-name: AI PR Review (AAO-SECRETARIAT)
+name: AI PR Review (Ladon)
 
-# AAO-SECRETARIAT reviews every non-draft, non-dependabot PR. The heavy lifting lives in
-# the forked action tree under .secretariat/ai-review/ (setup → reviewer → arbiter),
-# adapted from Scope3's PR-review action set. This workflow only handles the
-# pull_request_target security posture (trusted base-SHA checkout only; the PR
-# head is never fetched, checked out, or executed — setup reads head content
-# via the GitHub API), the review-workflow-modification gate, and invoking
-# the composite. Reviews post as the AAO Secretariat App so they count toward the
-# "1 review required" branch-protection check.
+# Ladon reviews every non-draft, non-dependabot PR. The heavy lifting lives in
+# the shared action tree at adcontextprotocol/actions (ladon/), consumed here by
+# floating major tag. This workflow handles the pull_request_target security
+# posture (trusted base-SHA checkout only; the PR head is never fetched, checked
+# out, or executed - setup reads head content via the GitHub API), the
+# review-workflow-modification gate, and invoking the composite. Reviews post as
+# the AAO Secretariat App so they count toward the "1 review required"
+# branch-protection check.
+#
+# pull_request_target (not pull_request) is required on a public repo so that PRs
+# from forks can access the App token and Anthropic key.
 
 on:
   pull_request_target:
     types: [opened, labeled, ready_for_review, synchronize]
     paths-ignore:
       - '.github/workflows/ai-review.yml'
-      - '.secretariat/ai-review/**'
-      - 'AAO-SECRETARIAT.md'
+      - 'LADON.md'
 
 jobs:
   code_review:
@@ -58,7 +60,7 @@ jobs:
           MODIFIED=""
           while IFS= read -r f; do
             case "$f" in
-              .secretariat/ai-review/*|.github/workflows/ai-review.yml|AAO-SECRETARIAT.md)
+              .github/workflows/ai-review.yml|LADON.md)
                 MODIFIED="${MODIFIED}${f}"$'\n' ;;
             esac
           done <<< "$CHANGED"
@@ -85,12 +87,12 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
               event: 'COMMENT',
-              body: `AAO-SECRETARIAT is **not auto-reviewing** this PR because it modifies the review system itself (${files}). A human reviewer should review and merge this PR; AAO-SECRETARIAT resumes on subsequent PRs once these changes land on \`main\`.`
+              body: `Ladon is **not auto-reviewing** this PR because it modifies the review system itself (${files}). A human reviewer should review and merge this PR; Ladon resumes on subsequent PRs once these changes land on \`main\`.`
             });
 
-      - name: Run AAO-SECRETARIAT
+      - name: Run Ladon
         if: steps.workflow-mod.outputs.modified != 'true'
-        uses: ./.secretariat/ai-review/review
+        uses: adcontextprotocol/actions/ladon/review@ladon/review/v1
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           app-id: ${{ secrets.SECRETARIAT_APP_ID }}
