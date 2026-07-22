@@ -2850,10 +2850,11 @@ function rejectHandRolledSubmitted(result: unknown): void {
  * projection.
  *
  * Adopter return type is `Success | TaskHandoff<Success>`. Each
- * specialism dispatcher uses this helper so all three call sites
- * (`createMediaBuy`, `sales.syncCreatives`, `creative.syncCreatives`)
+ * specialism dispatcher uses this helper so all four call sites
+ * (`createMediaBuy`, `updateMediaBuy`, `sales.syncCreatives`,
+ * `creative.syncCreatives`)
  * route through a single seam — closes round-6 CR-1 (drift across
- * three near-identical `isTaskHandoff` branches).
+ * near-identical `isTaskHandoff` branches).
  *
  * `project` shapes both arms identically — for `syncCreatives`,
  * `rows → { creatives: rows }`; for `createMediaBuy`, identity.
@@ -4321,38 +4322,35 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
             const result = await sales!.updateMediaBuy!(media_buy_id, params, reqCtx);
-            // Persist optimistically: the platform method returned without
-            // throwing, so the patch was accepted at the seam. If the
-            // publisher returned an error envelope on the success path
-            // (rare but possible — `update_media_buy` can return a Failed
-            // status arm in the wire schema), the persisted overlay
-            // diverges from the seller's view of the buy. Adopters who
-            // need stricter coupling should not return error-shaped
-            // success arms; the spec's preferred shape is to throw an
-            // `AdcpError` for genuine failures.
-            await persistTargetingOverlayFromUpdate(mediaBuyStore, reqCtx.account?.id, media_buy_id, params, logger);
-            // F12 sync auto-emit. updateMediaBuy is sync-only on the
-            // platform interface (no TaskHandoff arm — spec response
-            // doesn't include Submitted), so we don't route through
-            // routeIfHandoff. Fire-and-forget to keep slowloris webhook
-            // receivers from blocking the sync response.
-            if (pushOpts.autoEmitCompletionWebhooks && push.url) {
-              const emitOpts = {
-                tool: 'update_media_buy' as const,
+            return routeIfHandoff(
+              taskRegistry,
+              {
+                tool: 'update_media_buy',
                 accountId: reqCtx.account.id,
+                ownerScope: taskOwnerScopeFor(ctx, reqCtx.account.id),
                 pushNotificationUrl: push.url,
-                ...(push.token !== undefined && { pushNotificationToken: push.token }),
-                ...(push.operationId !== undefined && { pushNotificationOperationId: push.operationId }),
+                pushNotificationToken: push.token,
+                pushNotificationOperationId: push.operationId,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                ...(observability && { observability }),
+                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+                observability,
                 logger,
-              };
-              void emitSyncCompletionWebhook(emitOpts, result).catch((err: unknown) => {
-                const msg = err instanceof Error ? err.message : String(err);
-                logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
-              });
-            }
-            return result;
+              },
+              result,
+              async r => {
+                // A TaskHandoff marker is not acceptance of the patch. Apply
+                // the local overlay only when the sync call or background
+                // task completes and the result is projected to the wire.
+                await persistTargetingOverlayFromUpdate(
+                  mediaBuyStore,
+                  reqCtx.account?.id,
+                  media_buy_id,
+                  params,
+                  logger
+                );
+                return r;
+              }
+            );
           },
           r => r
         );

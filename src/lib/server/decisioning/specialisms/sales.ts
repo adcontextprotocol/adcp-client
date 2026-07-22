@@ -118,6 +118,7 @@ export type SyncEventSourcesPayload = ServerPayload<SyncEventSourcesSuccess>;
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 export type GetProductsHandlerResult = GetProductsPayload | TaskHandoff<GetProductsPayload>;
 export type CreateMediaBuyHandlerResult = CreateMediaBuyPayload | TaskHandoff<CreateMediaBuyPayload>;
+export type UpdateMediaBuyHandlerResult = UpdateMediaBuyPayload | TaskHandoff<UpdateMediaBuyPayload>;
 export type SyncCreativesHandlerResult = SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>;
 
 export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
@@ -203,17 +204,18 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    */
   createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<CreateMediaBuyHandlerResult>;
 
-  // ── update_media_buy: sync only (today) ─────────────────────────────
-  // Spec inconsistency — same root cause as get_products above. The
-  // `UpdateMediaBuyAsyncSubmitted` schema exists, but the per-tool
-  // `update-media-buy-response.json` `oneOf` doesn't reference it, so
-  // codegen produces `Success | Error` (no Submitted). Tracked as
-  // adcontextprotocol/adcp#3392. Until that lands, operator
-  // re-approval flows surface eventual transitions via
-  // `publishStatusChange` on `resource_type: 'media_buy'` rather than
-  // HITL on this tool.
-  /** Sync update. Returns the patched buy. */
-  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuyPayload>;
+  // ── update_media_buy: unified hybrid shape
+  /**
+   * Update a media buy. Return the patched buy immediately (sync fast path)
+   * OR `ctx.handoffToTask(fn)` when the upstream activation or approval flow
+   * must continue in the background. The framework owns task registration,
+   * caller scoping, polling, and completion webhooks on the handoff path.
+   */
+  updateMediaBuy?(
+    buyId: string,
+    patch: UpdateMediaBuyRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<UpdateMediaBuyHandlerResult>;
 
   // ── sync_creatives: unified hybrid shape ────────────────────────────
 

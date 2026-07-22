@@ -698,6 +698,21 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
   }
 
+  function dispatchUpdate(server, overrides = {}) {
+    return server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: {
+          media_buy_id: 'mb_1',
+          idempotency_key: '33333333-3333-3333-3333-333333333333',
+          account: { account_id: 'acc_1' },
+          ...overrides,
+        },
+      },
+    });
+  }
+
   function dispatchGetProducts(server, overrides = {}) {
     return server.dispatchTestRequest({
       method: 'tools/call',
@@ -1188,6 +1203,81 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
+  });
+
+  it('updateMediaBuy returning ctx.handoffToTask is caller-scoped and pollable through task status', async () => {
+    let capturedTaskId;
+    const platform = buildHitlPlatform({
+      updateMediaBuy: async (_buyId, _patch, ctx) =>
+        ctx.handoffToTask(async taskCtx => {
+          capturedTaskId = taskCtx.id;
+          await new Promise(r => setTimeout(r, 20));
+          return { media_buy_id: 'mb_1', status: 'paused' };
+        }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'update-hitl',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      resolveSessionKey: () => 'buyer-session-1',
+    });
+
+    const submitted = await dispatchUpdate(server);
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
+    assert.ok(submitted.structuredContent.task_id.startsWith('task_'));
+    assert.strictEqual(submitted.structuredContent.task_id, capturedTaskId);
+    assert.strictEqual(submitted.structuredContent.media_buy_id, undefined);
+
+    const taskId = submitted.structuredContent.task_id;
+    await server.awaitTask(taskId);
+
+    const polled = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_task_status',
+        arguments: { task_id: taskId, include_result: true, account: { account_id: 'acc_1' } },
+      },
+    });
+    assert.notStrictEqual(polled.isError, true, JSON.stringify(polled.structuredContent));
+    assert.strictEqual(polled.structuredContent.task_type, 'update_media_buy');
+    assert.strictEqual(polled.structuredContent.status, 'completed');
+    assert.deepStrictEqual(polled.structuredContent.result, { media_buy_id: 'mb_1', status: 'paused' });
+  });
+
+  it('updateMediaBuy keeps synchronous success on the non-handoff path', async () => {
+    const platform = buildHitlPlatform({
+      updateMediaBuy: async () => ({ media_buy_id: 'mb_sync', status: 'active' }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'update-sync',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchUpdate(server, { media_buy_id: 'mb_sync' });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_sync');
+    assert.strictEqual(result.structuredContent.status, 'completed');
+    assert.strictEqual(result.structuredContent.media_buy_status, 'active');
+    assert.strictEqual(result.structuredContent.task_id, undefined);
+  });
+
+  it('updateMediaBuy keeps typed error bodies on the non-handoff path', async () => {
+    const platform = buildHitlPlatform({
+      updateMediaBuy: async () => ({
+        errors: [{ code: 'INVALID_STATE', message: 'media buy cannot be updated from its current state' }],
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'update-error',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchUpdate(server);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.task_id, undefined);
+    assert.strictEqual(result.structuredContent.errors[0].code, 'INVALID_STATE');
   });
 
   it('hybrid createMediaBuy: returns Success directly OR ctx.handoffToTask per call', async () => {

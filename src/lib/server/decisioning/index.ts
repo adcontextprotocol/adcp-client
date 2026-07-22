@@ -242,6 +242,7 @@ export type {
   CreateMediaBuyPayload,
   CreateMediaBuyHandlerResult,
   UpdateMediaBuyPayload,
+  UpdateMediaBuyHandlerResult,
   GetMediaBuyDeliveryPayload,
   GetMediaBuysPayload,
   ProvidePerformanceFeedbackPayload,

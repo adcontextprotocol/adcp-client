@@ -33,6 +33,7 @@ import type {
   CreateMediaBuyHandlerResult,
   CreateMediaBuyPayload,
   UpdateMediaBuyPayload,
+  UpdateMediaBuyHandlerResult,
   GetMediaBuyDeliveryPayload,
   GetMediaBuysPayload,
   GetAccountFinancialsHandlerResult,
@@ -442,7 +443,7 @@ function _sales_platform_handler_results_accept_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async (_req, ctx) => ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' })),
     createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => _createBuyPayload()),
-    updateMediaBuy: async () => _updateBuyPayload(),
+    updateMediaBuy: async (_buyId, _patch, ctx) => ctx.handoffToTask(async () => _updateBuyPayload()),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },
       media_buy_deliveries: [],
@@ -453,9 +454,11 @@ function _sales_platform_handler_results_accept_task_handoff() {
 
   const getProductsResult: GetProductsHandlerResult = { products: [], cache_scope: 'account' };
   const createResult: CreateMediaBuyHandlerResult = _createBuyPayload();
+  const updateResult: UpdateMediaBuyHandlerResult = _updateBuyPayload();
   const syncResult: SyncCreativesHandlerResult = [];
   void getProductsResult;
   void createResult;
+  void updateResult;
   void syncResult;
   return sales;
 }
