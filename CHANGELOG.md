@@ -1,5 +1,11 @@
 # Changelog
 
+## 12.0.6
+
+### Patch Changes
+
+- 74c68df: Restore MCP version negotiation for Bun consumers of the ESM package artifact.
+
 ## 12.0.5
 
 ### Patch Changes
