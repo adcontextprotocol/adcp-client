@@ -86,14 +86,16 @@ function fixDynamicImportExtensions() {
 // Build the library as a tree-shakeable dual package.
 //
 // `bundle: false` transpiles each source module 1:1 (no bundling, no chunks),
-// so the output mirrors the source tree exactly. That keeps three things
+// so the output mirrors the source tree exactly. That keeps two things
 // correct with zero extra work:
 //   1. a consumer's bundler tree-shakes across the preserved module graph when
-//      it imports from a public entry (importing one symbol stays lean),
+//      it imports from a public entry (importing one symbol stays lean), and
 //   2. the CLI and internal tooling that deep-`require` dist paths still
-//      resolve, and
-//   3. the `__dirname`-based schema-data lookups keep their original directory
-//      depth (each module stays at its own path).
+//      resolve.
+// (Schema/data-root resolution no longer depends on this: the 7 loaders that
+// used to hand-tune `__dirname` arithmetic to their own directory depth now
+// anchor via `getPackageRoot()`, which resolves via module self-reference
+// independent of where the calling module lives — see src/lib/internal/.)
 //
 // `fixImportsPlugin` (see tsup#1240) supplies what `bundle: false` leaves out:
 // it appends the correct extension to relative imports, rewrites directory

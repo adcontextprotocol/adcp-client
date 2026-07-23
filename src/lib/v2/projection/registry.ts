@@ -30,6 +30,7 @@ import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { BETA_VERSIONS_TO_TRY } from './cache-versions';
+import { getSchemaDataRoots } from '../../internal/schema-data-roots';
 
 interface RegistryEntryV1Pattern {
   format_id_glob?: string;
@@ -78,14 +79,13 @@ let cached: CanonicalMappingRegistry | null = null;
  */
 export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   if (cached) return cached;
+  const { builtSchemasDataRoot, sourceSchemasCacheRoot } = getSchemaDataRoots();
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
     : [
+        ...BETA_VERSIONS_TO_TRY.map(v => path.join(builtSchemasDataRoot, v, 'registries', 'v1-canonical-mapping.json')),
         ...BETA_VERSIONS_TO_TRY.map(v =>
-          path.join(__dirname, '..', '..', 'schemas-data', v, 'registries', 'v1-canonical-mapping.json')
-        ),
-        ...BETA_VERSIONS_TO_TRY.map(v =>
-          path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
+          path.join(sourceSchemasCacheRoot, v, 'registries', 'v1-canonical-mapping.json')
         ),
       ];
   for (const file of candidates) {
