@@ -4,13 +4,11 @@ import { transformSync } from 'esbuild';
 import { defineConfig } from 'tsup';
 import { fixImportsPlugin } from 'esbuild-fix-imports-plugin';
 
-// Only files that actually reference `__dirname` or `require` in their body
-// need the ESM shim below (no source file reads bare `__filename`, so it's
-// only an intermediate in computing `__dirname` from `import.meta.url`, not
-// its own shim target); injecting it into every ESM output (as a global
-// esbuild `banner`) drags `node:url`/`node:path`/`node:module` imports into
-// pure-data/pure-logic modules that never touch them, which a browser
-// bundler can't resolve (adcp#2364).
+// Files that reference `__dirname` or `require` in their body need the ESM
+// shim below. Protocol transport modules also receive it: Bun uses the
+// createRequire binding to load dual ESM/CJS MCP dependencies consistently.
+// Applying the shim to every ESM output would still drag Node built-ins into
+// pure-data modules that browser bundlers consume (adcp#2364).
 //
 // Runs pre-transform via `onLoad` — prepending to the TS source rather than
 // the emitted JS — so esbuild's own sourcemap generation accounts for the
@@ -37,7 +35,10 @@ function conditionalNodeShimPlugin() {
       build.onLoad({ filter: /\.ts$/ }, args => {
         const source = readFileSync(args.path, 'utf8');
         const { code } = transformSync(source, { loader: 'ts', legalComments: 'none' });
-        if (!needsShim.test(code)) return null;
+        const isProtocolTransport = args.path.includes(
+          `${nodePath.sep}src${nodePath.sep}lib${nodePath.sep}protocols${nodePath.sep}`
+        );
+        if (!isProtocolTransport && !needsShim.test(code)) return null;
         return { contents: `${banner}\n${source}`, loader: 'ts' };
       });
     },

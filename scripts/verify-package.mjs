@@ -8,7 +8,8 @@
  * range floors into a throwaway directory in the OS temp dir, then loads
  * `@adcp/sdk`, `@adcp/sdk/enums`, and `@adcp/sdk/server` through both a real
  * ESM `import` and a real CJS `require`, asserting each exposes a known runtime
- * symbol.
+ * symbol. It also runs a modern MCP negotiation under Bun, whose ESM/CJS
+ * interoperability differs from Node's.
  *
  * Why a temp dir outside the repo: installing inside the workspace would let
  * the monorepo dedupe peers against the repo's own node_modules, so a missing
@@ -132,6 +133,47 @@ try {
   console.log('🔍 CJS require:');
   run('node', ['smoke.cjs'], { cwd: tmpDir, stdio: 'inherit' });
 
+  // Bun selects a different conditional-export path for dual ESM/CJS
+  // dependencies than Node. Exercise the packed artifact through a real MCP
+  // initialize + tool call so protocol modules retain the createRequire shim
+  // needed by Bun's MCP dependency loading.
+  writeFileSync(
+    path.join(tmpDir, 'smoke.mcp.mjs'),
+    [
+      "import { createServer } from 'node:http';",
+      "import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';",
+      "import { toNodeHandler } from '@modelcontextprotocol/node';",
+      "import { callMCPTool, closeMCPConnections } from '@adcp/sdk';",
+      '',
+      'const handler = createMcpHandler(() => {',
+      "  const server = new McpServer({ name: 'package-smoke', version: '1.0.0' });",
+      "  server.registerTool('echo', { description: 'Echo a fixed result' }, async () => ({",
+      "    content: [{ type: 'text', text: 'ok' }],",
+      '  }));',
+      '  return server;',
+      "}, { legacy: 'reject' });",
+      'const nodeHandler = toNodeHandler(handler);',
+      'const httpServer = createServer((req, res) => void nodeHandler(req, res));',
+      "await new Promise((resolve, reject) => { httpServer.once('error', reject); httpServer.listen(0, '127.0.0.1', resolve); });",
+      'try {',
+      '  const address = httpServer.address();',
+      "  if (!address || typeof address === 'string') throw new Error('server did not bind');",
+      '  const result = await callMCPTool(',
+      '    `http://127.0.0.1:${address.port}/mcp`,',
+      "    'echo', {}, undefined, [], {}, undefined, undefined, { requestTimeoutMs: 5_000 }",
+      '  );',
+      "  if (result.content?.[0]?.text !== 'ok') throw new Error(`unexpected MCP result: ${JSON.stringify(result)}`);",
+      '} finally {',
+      '  await closeMCPConnections();',
+      '  await handler.close();',
+      '  await new Promise((resolve, reject) => httpServer.close(error => error ? reject(error) : resolve()));',
+      '}',
+    ].join('\n')
+  );
+  console.log('🔥 Bun MCP negotiation:');
+  run('npx', ['--yes', 'bun@1.3.8', 'smoke.mcp.mjs'], { cwd: tmpDir, stdio: 'inherit' });
+  console.log('  Bun ESM negotiation through @adcp/sdk ok');
+
   // `@adcp/sdk/enums` is documented as a lean, zod-free entry point safe for
   // browser bundlers. Bundling it with `--platform=browser` catches
   // Node-only imports (`node:url`/`node:path`/`node:module`, etc.) that
@@ -153,7 +195,9 @@ try {
   );
   console.log('  browser bundle of @adcp/sdk/enums ok');
 
-  console.log('\n✅ Package loads in both ESM and CJS with peer floors satisfied, and browser-bundles cleanly.');
+  console.log(
+    '\n✅ Package loads in Node and Bun with peer floors satisfied, negotiates MCP, and browser-bundles cleanly.'
+  );
 } catch (err) {
   console.error('\n❌ Package verification failed:');
   console.error(err.message ?? err);
