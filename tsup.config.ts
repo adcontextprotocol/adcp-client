@@ -26,7 +26,7 @@ function conditionalNodeShimPlugin() {
     'const __dirname = __adcpDirname(__adcpFileURLToPath(import.meta.url));',
     'const require = __adcpCreateRequire(import.meta.url);',
   ].join('\n');
-  const needsShim = /\b__dirname\b|\brequire\s*\(\s*['"`]/;
+  const needsShim = /\b__dirname\b|\brequire\s*\(\s*['"``]/;
 
   return {
     name: 'conditional-node-shim',
@@ -35,6 +35,7 @@ function conditionalNodeShimPlugin() {
       build.onLoad({ filter: /\.ts$/ }, args => {
         const source = readFileSync(args.path, 'utf8');
         const { code } = transformSync(source, { loader: 'ts', legalComments: 'none' });
+        // protocols/ is node-only throughout; directory-wide scope also covers future MCP modules automatically.
         const isProtocolTransport = args.path.includes(
           `${nodePath.sep}src${nodePath.sep}lib${nodePath.sep}protocols${nodePath.sep}`
         );
