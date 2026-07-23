@@ -768,16 +768,18 @@ export class SingleAgentClient {
   private async ensureEndpointDiscovered(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     const needsDiscovery = this.normalizedAgent._needsDiscovery;
+    const transport = options?.transport ?? this.config.transport;
+    const usesScopedFetch = transport?.fetchFn !== undefined;
 
     if (!needsDiscovery) {
       return this.normalizedAgent;
     }
 
     // Already discovered? Use cached value
-    if (this.discoveredAgent) {
+    if (!usesScopedFetch && this.discoveredAgent) {
       return this.discoveredAgent;
     }
-    if (this.discoveredEndpoint) {
+    if (!usesScopedFetch && this.discoveredEndpoint) {
       this.discoveredAgent = {
         ...this.normalizedAgent,
         agent_uri: this.discoveredEndpoint,
@@ -785,8 +787,23 @@ export class SingleAgentClient {
       return this.discoveredAgent;
     }
 
+    if (this.normalizedAgent.oauth_client_credentials) {
+      const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
+      await ensureClientCredentialsTokens(this.normalizedAgent, {
+        storage: getAgentStorage(this.normalizedAgent),
+        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.fetchFn,
+      });
+    }
+
     // Perform discovery
-    this.discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri, options);
+    const discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri, options);
+
+    if (usesScopedFetch) {
+      return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
+    }
+
+    this.discoveredEndpoint = discoveredEndpoint;
 
     // Compute canonical base URL by stripping /mcp suffix
     this.canonicalBaseUrl = this.computeBaseUrl(this.discoveredEndpoint);
@@ -807,22 +824,33 @@ export class SingleAgentClient {
   private async ensureCanonicalUrlResolved(options?: ReadRequestOptions): Promise<AgentConfig> {
     throwIfAborted(options?.signal);
     const needsCanonicalUrl = this.normalizedAgent._needsCanonicalUrl;
+    const transport = options?.transport ?? this.config.transport;
+    const usesScopedFetch = transport?.fetchFn !== undefined;
 
     if (!needsCanonicalUrl) {
       return this.normalizedAgent;
     }
 
     // Already resolved? Use cached value
-    if (this.canonicalBaseUrl) {
+    if (!usesScopedFetch && this.canonicalBaseUrl) {
       return {
         ...this.normalizedAgent,
         agent_uri: this.canonicalBaseUrl,
       };
     }
 
+    if (this.normalizedAgent.oauth_client_credentials) {
+      const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
+      await ensureClientCredentialsTokens(this.normalizedAgent, {
+        storage: getAgentStorage(this.normalizedAgent),
+        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.fetchFn,
+      });
+    }
+
     // Fetch agent card to get canonical URL
     const canonicalUrl = await this.fetchA2ACanonicalUrl(this.normalizedAgent.agent_uri, options);
-    this.canonicalBaseUrl = canonicalUrl;
+    if (!usesScopedFetch) this.canonicalBaseUrl = canonicalUrl;
 
     return {
       ...this.normalizedAgent,
@@ -847,9 +875,13 @@ export class SingleAgentClient {
     const transport = readOptions?.transport ?? this.config.transport;
     const maxResponseBytes = transport?.maxResponseBytes;
     const requestTimeoutMs = resolveRequestTimeoutMs(transport?.requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
-    const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
+    const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
+      transport?.fetchFn ? transport.fetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+    );
 
-    const authToken = this.normalizedAgent.auth_token;
+    const authToken = this.normalizedAgent.oauth_client_credentials
+      ? this.normalizedAgent.oauth_tokens?.access_token
+      : this.normalizedAgent.auth_token;
     let got401 = false;
 
     const fetchImpl = async (url: string | URL | Request, requestInit?: RequestInit) => {
@@ -910,6 +942,7 @@ export class SingleAgentClient {
       if (is401Error(error, got401)) {
         const requirements = await discoverAuthorizationRequirements(agentUri, {
           allowPrivateIp: isLikelyPrivateUrl(agentUri),
+          fetchFn: transport?.fetchFn,
         });
         if (requirements) {
           throw new NeedsAuthorizationError(requirements);
@@ -919,8 +952,11 @@ export class SingleAgentClient {
         // surface the scheme on the error (Basic-fronted gateways are the
         // common non-Bearer case) so consumers don't bounce through OAuth
         // remediation that will never succeed.
-        const challenge = await probeAuthChallenge(agentUri, { allowPrivateIp: isLikelyPrivateUrl(agentUri) });
-        const oauthMetadata = await discoverOAuthMetadata(agentUri);
+        const challenge = await probeAuthChallenge(agentUri, {
+          allowPrivateIp: isLikelyPrivateUrl(agentUri),
+          fetchFn: transport?.fetchFn,
+        });
+        const oauthMetadata = await discoverOAuthMetadata(agentUri, { fetch: transport?.fetchFn });
         throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
       }
 
@@ -966,15 +1002,20 @@ export class SingleAgentClient {
     throwIfAborted(options?.signal);
     const { connectMCPWithFallback } = await import('../protocols/mcp');
     const { probeModernMCPConnection } = await import('../protocols/mcp-modern');
+    const usesScopedFetch = (options?.transport ?? this.config.transport)?.fetchFn !== undefined;
 
-    const authToken = this.agent.auth_token;
+    const authToken = this.normalizedAgent.oauth_client_credentials
+      ? this.normalizedAgent.oauth_tokens?.access_token
+      : this.agent.auth_token;
     const agentHeaders = this.agent.headers;
     const authHeaders = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
-    const authProvider = this.normalizedAgent.oauth_tokens
-      ? (await import('../auth/oauth')).createNonInteractiveOAuthProvider(this.normalizedAgent, {
-          agentHint: this.normalizedAgent.id,
-        })
-      : undefined;
+    const authProvider =
+      this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials
+        ? (await import('../auth/oauth')).createNonInteractiveOAuthProvider(this.normalizedAgent, {
+            agentHint: this.normalizedAgent.id,
+            allowHttp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+          })
+        : undefined;
 
     type EndpointTestResult = {
       success: boolean;
@@ -988,22 +1029,34 @@ export class SingleAgentClient {
           authProvider,
           signal: options?.signal,
           requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
+          fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
         });
         if (modern.connected) {
-          this.discoveredMcpEra = modern.era;
-          this.discoveredMcpEraAt = Date.now();
+          if (!usesScopedFetch) {
+            this.discoveredMcpEra = modern.era;
+            this.discoveredMcpEraAt = Date.now();
+          }
           return { success: true };
         }
 
         // The v2 Streamable HTTP probe could not connect. Preserve the
         // established v1 Streamable→SSE fallback for old SSE-only agents.
-        const client = await connectMCPWithFallback(new URL(url), authHeaders, [], 'endpoint discovery', undefined, {
-          signal: options?.signal,
-          requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
-        });
+        const client = await connectMCPWithFallback(
+          new URL(url),
+          authHeaders,
+          [],
+          'endpoint discovery',
+          options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+          {
+            signal: options?.signal,
+            requestTimeoutMs: options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs,
+          }
+        );
         await client.close();
-        this.discoveredMcpEra = 'legacy';
-        this.discoveredMcpEraAt = Date.now();
+        if (!usesScopedFetch) {
+          this.discoveredMcpEra = 'legacy';
+          this.discoveredMcpEraAt = Date.now();
+        }
         return { success: true };
       } catch (error: unknown) {
         if (isAbortOrTimeoutError(error)) {
@@ -1073,6 +1126,7 @@ export class SingleAgentClient {
     if (got401) {
       const requirements = await discoverAuthorizationRequirements(providedUri, {
         allowPrivateIp: isLikelyPrivateUrl(providedUri),
+        fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
       });
       if (requirements) {
         throw new NeedsAuthorizationError(requirements);
@@ -1081,8 +1135,13 @@ export class SingleAgentClient {
       // scheme on the error envelope — `Basic` is the common shape for
       // gateway-fronted agents (Apigee, Kong, AWS API GW) and routing
       // consumers at OAuth would never succeed.
-      const challenge = await probeAuthChallenge(providedUri, { allowPrivateIp: isLikelyPrivateUrl(providedUri) });
-      const oauthMetadata = await discoverOAuthMetadata(providedUri);
+      const challenge = await probeAuthChallenge(providedUri, {
+        allowPrivateIp: isLikelyPrivateUrl(providedUri),
+        fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+      });
+      const oauthMetadata = await discoverOAuthMetadata(providedUri, {
+        fetch: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+      });
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
     }
 
@@ -3732,6 +3791,16 @@ export class SingleAgentClient {
       ...(options?.signal && { signal: options.signal }),
       ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
     };
+    const ensureReadAuthToken = async (): Promise<string | undefined> => {
+      if (!this.normalizedAgent.oauth_client_credentials) return this.normalizedAgent.auth_token;
+      const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
+      await ensureClientCredentialsTokens(this.normalizedAgent, {
+        storage: getAgentStorage(this.normalizedAgent),
+        allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        fetch: transport?.fetchFn,
+      });
+      return this.normalizedAgent.oauth_tokens?.access_token;
+    };
     if (this.normalizedAgent.protocol === 'mcp') {
       // In-process: use the pre-connected client instead of opening a new HTTP connection
       if (this.normalizedAgent._inProcessMcpClient) {
@@ -3754,6 +3823,7 @@ export class SingleAgentClient {
         };
       }
 
+      const readAuthToken = await ensureReadAuthToken();
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered(options);
 
@@ -3772,28 +3842,35 @@ export class SingleAgentClient {
       if (transport?.requestTimeoutMs !== undefined) {
         connectOptions.requestTimeoutMs = transport.requestTimeoutMs;
       }
+      if (transport?.fetchFn) {
+        connectOptions.fetchFn = transport.fetchFn;
+      }
       if (this.normalizedAgent.headers && Object.keys(this.normalizedAgent.headers).length > 0) {
         connectOptions.customHeaders = this.normalizedAgent.headers;
       }
       let authProvider: Parameters<typeof connectMCP>[0]['authProvider'];
-      if (this.normalizedAgent.oauth_tokens) {
+      if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
         const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
         authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
           agentHint: this.normalizedAgent.id,
+          allowHttp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
         });
         connectOptions.authProvider = authProvider;
-      } else if (this.normalizedAgent.auth_token) {
-        connectOptions.authToken = this.normalizedAgent.auth_token;
+      } else if (readAuthToken) {
+        connectOptions.authToken = readAuthToken;
       }
 
       const modernTools =
-        this.discoveredMcpEra === 'legacy' && Date.now() - this.discoveredMcpEraAt < 5 * 60 * 1000
+        !transport?.fetchFn &&
+        this.discoveredMcpEra === 'legacy' &&
+        Date.now() - this.discoveredMcpEraAt < 5 * 60 * 1000
           ? ({ handled: false } as const)
           : await withResponseSizeLimit(maxResponseBytes, () =>
-              tryListModernMCPTools(agent.agent_uri, this.normalizedAgent.auth_token, this.normalizedAgent.headers, {
+              tryListModernMCPTools(agent.agent_uri, readAuthToken, this.normalizedAgent.headers, {
                 authProvider,
                 signal: options?.signal,
                 requestTimeoutMs: transport?.requestTimeoutMs,
+                fetchFn: transport?.fetchFn,
               })
             );
       if (modernTools.handled) {
@@ -3847,9 +3924,11 @@ export class SingleAgentClient {
       // the card-discovery body. Without this, the auth-stamping wrapper
       // calls native `fetch` directly and ignores `transport.maxResponseBytes`.
       const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
-      const authToken = this.normalizedAgent.auth_token;
+      const authToken = await ensureReadAuthToken();
       const agentHeaders = this.normalizedAgent.headers ?? {};
-      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
+      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) =>
+        transport?.fetchFn ? transport.fetchFn(input, init) : fetch(input as RequestInfo | URL, init)
+      );
       const normalizeHeaders = (headers?: HeadersInit): Record<string, string> => {
         const normalized: Record<string, string> = {};
         if (!headers) return normalized;
@@ -3954,8 +4033,9 @@ export class SingleAgentClient {
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
+    const usesScopedFetch = (options?.transport ?? this.config.transport)?.fetchFn !== undefined;
     // Return cached if available
-    if (this.cachedCapabilities) {
+    if (!usesScopedFetch && this.cachedCapabilities) {
       this.maybeWarnV2Sunset(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
@@ -3970,11 +4050,12 @@ export class SingleAgentClient {
     // Cache raw tool schemas for field-level compatibility checks (e.g. buying_mode on get_products).
     // INVARIANT: must be assigned before cachedCapabilities below so that any code path
     // reaching adaptRequest always finds the schemas populated.
-    this.cachedToolSchemas = new Map(
+    const discoveredToolSchemas = new Map(
       agentInfo.tools
         .filter(t => t.inputSchema?.properties)
         .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
     );
+    if (!usesScopedFetch) this.cachedToolSchemas = discoveredToolSchemas;
 
     // Check if agent supports get_adcp_capabilities (v3)
     const hasCapabilitiesTool = tools.some(t => t.name === 'get_adcp_capabilities');
@@ -4000,9 +4081,10 @@ export class SingleAgentClient {
         }
 
         if (result.success && result.data) {
-          this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
-          this.maybeWarnV2Sunset(this.cachedCapabilities);
-          return this.cachedCapabilities;
+          const capabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+          this.maybeWarnV2Sunset(capabilities);
+          return capabilities;
         }
         // Tightened v2 fallback (issue #1189). When `result.success` is false
         // but `result.data` is structurally v3-shaped, the agent is a v3 agent
@@ -4034,9 +4116,10 @@ export class SingleAgentClient {
             version: 'v3',
             majorVersions: parsed.majorVersions.includes(3) ? parsed.majorVersions : ([3] as AdcpMajorVersion[]),
           };
-          this.cachedCapabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
-          this.maybeWarnV2Sunset(this.cachedCapabilities);
-          return this.cachedCapabilities;
+          const capabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
+          if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+          this.maybeWarnV2Sunset(capabilities);
+          return capabilities;
         }
         // The call returned non-success and the response wasn't even
         // structurally v3-shaped (so the heuristic above didn't catch it),
@@ -4088,9 +4171,10 @@ export class SingleAgentClient {
       // the executor returned non-v3-shaped data, OR threw a non-auth
       // non-timeout error. The agent's v3-only tool list is the affirmative
       // signal that it's v3 even though we couldn't read details.
-      this.cachedCapabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
-      this.maybeWarnV2Sunset(this.cachedCapabilities);
-      return this.cachedCapabilities;
+      const capabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
+      if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+      this.maybeWarnV2Sunset(capabilities);
+      return capabilities;
     }
 
     // No get_adcp_capabilities tool — the agent is verifiably v2 (the tool
@@ -4099,8 +4183,9 @@ export class SingleAgentClient {
       `[AdCP] Agent "${this.agent.id}" detected as v2 (no get_adcp_capabilities tool). ` +
         `Tools: [${tools.map(t => t.name).join(', ')}]`
     );
-    this.cachedCapabilities = buildSyntheticCapabilities(tools);
-    return this.cachedCapabilities;
+    const capabilities = buildSyntheticCapabilities(tools);
+    if (!usesScopedFetch) this.cachedCapabilities = capabilities;
+    return capabilities;
   }
 
   /**

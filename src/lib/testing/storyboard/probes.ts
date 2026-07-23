@@ -52,11 +52,14 @@ export const PROBE_TASKS = new Set([
  */
 export async function probeProtectedResourceMetadata(
   agentUrl: string,
-  options: { allowPrivateIp?: boolean } = {}
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch } = {}
 ): Promise<HttpProbeResult> {
   const u = new URL(agentUrl);
   const metadataUrl = `${u.origin}/.well-known/oauth-protected-resource${u.pathname}`;
-  return fetchProbe(metadataUrl, { allowPrivateIp: options.allowPrivateIp ?? false });
+  return fetchProbe(metadataUrl, {
+    allowPrivateIp: options.allowPrivateIp ?? false,
+    fetchFn: options.fetchFn,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +74,7 @@ export async function probeProtectedResourceMetadata(
  */
 export async function probeOauthAuthServerMetadata(
   priorProbe: HttpProbeResult | undefined,
-  options: { allowPrivateIp?: boolean } = {}
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch } = {}
 ): Promise<HttpProbeResult> {
   if (!priorProbe || priorProbe.error) {
     return {
@@ -95,7 +98,10 @@ export async function probeOauthAuthServerMetadata(
   }
   const issuer = servers[0].replace(/\/$/, '');
   const metadataUrl = `${issuer}/.well-known/oauth-authorization-server`;
-  return fetchProbe(metadataUrl, { allowPrivateIp: options.allowPrivateIp ?? false });
+  return fetchProbe(metadataUrl, {
+    allowPrivateIp: options.allowPrivateIp ?? false,
+    fetchFn: options.fetchFn,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +113,8 @@ export interface FetchProbeOptions {
   allowPrivateIp?: boolean;
   /** Override timeout for specific call sites. */
   timeoutMs?: number;
+  /** Trusted scoped fetch; must enforce DNS-rebinding protection. */
+  fetchFn?: typeof fetch;
 }
 
 /**
@@ -134,6 +142,7 @@ export async function fetchProbe(url: string, options: FetchProbeOptions = {}): 
       headers: { accept: 'application/json' },
       allowPrivateIp: options.allowPrivateIp ?? false,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.fetchFn ? { trustedFetchFn: options.fetchFn } : {}),
     });
     return {
       url,
@@ -217,6 +226,7 @@ async function postRawMcpJsonRpc(options: {
   responseId?: number;
   parseBody?: boolean;
   allowEmptyBody?: boolean;
+  fetchFn?: typeof fetch;
 }): Promise<RawJsonRpcPostResult> {
   const {
     agentUrl,
@@ -242,6 +252,7 @@ async function postRawMcpJsonRpc(options: {
       },
       body: JSON.stringify(envelope),
       allowPrivateIp,
+      ...(options.fetchFn ? { trustedFetchFn: options.fetchFn } : {}),
     });
     httpResult.status = res.status;
     httpResult.headers = res.headers;
@@ -385,8 +396,10 @@ export async function rawMcpProbe(options: {
   headers?: Record<string, string>;
   /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
   allowPrivateIp?: boolean;
+  /** Scoped fetch implementation for every handshake and tool request. */
+  fetchFn?: typeof fetch;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
-  const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false } = options;
+  const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false, fetchFn } = options;
   const initializeId = ++probeRequestId;
   const initialize = await postRawMcpJsonRpc({
     agentUrl,
@@ -402,6 +415,7 @@ export async function rawMcpProbe(options: {
     },
     headers,
     allowPrivateIp,
+    fetchFn,
     responseId: initializeId,
   });
   if (
@@ -440,6 +454,7 @@ export async function rawMcpProbe(options: {
     },
     headers,
     allowPrivateIp,
+    fetchFn,
     ...(sessionId && { sessionId }),
     protocolVersion: negotiatedProtocolVersion,
     allowEmptyBody: true,
@@ -468,6 +483,7 @@ export async function rawMcpProbe(options: {
     envelope: toolEnvelope,
     headers,
     allowPrivateIp,
+    fetchFn,
     ...(sessionId && { sessionId }),
     protocolVersion: negotiatedProtocolVersion,
     responseId: requestId,

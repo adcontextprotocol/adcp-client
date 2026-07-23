@@ -120,6 +120,16 @@ export interface SsrfFetchOptions {
   maxBodyBytes?: number;
   /** Caller-provided abort signal, composed with the internal timeout. */
   signal?: AbortSignal;
+  /**
+   * Trusted scoped fetch implementation. URL validation and address
+   * classification still run before invocation, but DNS pinning is delegated
+   * to this implementation because custom fetchers do not accept undici
+   * dispatchers. The caller MUST enforce DNS-rebinding protection itself.
+   *
+   * This deliberately explicit name prevents callers from mistaking a custom
+   * transport for the internally DNS-pinned path.
+   */
+  trustedFetchFn?: typeof fetch;
 }
 
 export interface SsrfFetchResult {
@@ -129,9 +139,11 @@ export interface SsrfFetchResult {
   headers: Record<string, string>;
   /** Raw response body bytes (empty Uint8Array if no body). */
   body: Uint8Array;
-  /** The IP address we pinned the outbound connection to. */
+  /** The validated IP address. The connection used it only when `connectionPinned` is true. */
   pinnedAddress: string;
   pinnedFamily: 4 | 6;
+  /** Whether the internal undici dispatcher pinned the connection to `pinnedAddress`. */
+  connectionPinned: boolean;
 }
 
 /**
@@ -242,16 +254,22 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   const timer = setTimeout(() => ac.abort(new Error('ssrf-fetch: timeout')), timeoutMs);
 
   try {
-    const init: Parameters<typeof undiciFetch>[1] = {
-      method: options.method ?? 'GET',
-      redirect: 'manual',
-      signal: ac.signal,
-      headers: options.headers,
-      dispatcher,
-    };
-    if (options.body !== undefined) init.body = options.body;
-
-    const res = await undiciFetch(url, init);
+    const res = options.trustedFetchFn
+      ? await options.trustedFetchFn(url, {
+          method: options.method ?? 'GET',
+          redirect: 'manual',
+          signal: ac.signal,
+          headers: options.headers,
+          ...(options.body !== undefined && { body: options.body as BodyInit }),
+        })
+      : await undiciFetch(url, {
+          method: options.method ?? 'GET',
+          redirect: 'manual',
+          signal: ac.signal,
+          headers: options.headers,
+          dispatcher,
+          ...(options.body !== undefined && { body: options.body }),
+        });
 
     const headers: Record<string, string> = {};
     res.headers.forEach((v, k) => {
@@ -267,6 +285,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
         body: new Uint8Array(),
         pinnedAddress: pinned.address,
         pinnedFamily,
+        connectionPinned: !options.trustedFetchFn,
       };
     }
 
@@ -301,6 +320,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
       body: buf,
       pinnedAddress: pinned.address,
       pinnedFamily,
+      connectionPinned: !options.trustedFetchFn,
     };
   } finally {
     clearTimeout(timer);

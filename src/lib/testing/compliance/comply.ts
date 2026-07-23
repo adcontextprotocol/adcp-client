@@ -1206,7 +1206,12 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       // universal/security_baseline, which is designed precisely to diagnose
       // agents that mishandle auth. Fall back to the unreachable result only
       // when no such storyboards are available.
-      const authCheck = await detectAuthRejection(agentUrl, profileStep.error, signal);
+      const authCheck = await detectAuthRejection(
+        agentUrl,
+        profileStep.error,
+        signal,
+        effectiveOptions.transport?.fetchFn
+      );
       if (authCheck.isAuth) {
         const degraded: AgentProfile = { name: profile.name || 'Unknown (auth required)', tools: [] };
         const candidate = explicitStoryboards?.length
@@ -1491,7 +1496,8 @@ function buildComplyTimeoutBudgetObservation(
 export async function detectAuthRejection(
   agentUrl: string,
   errorMsg: string | undefined,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  fetchFn?: typeof fetch
 ): Promise<{ isAuth: boolean; observations: AdvisoryObservation[] }> {
   const err = errorMsg || 'Unknown error';
   const observations: AdvisoryObservation[] = [];
@@ -1533,7 +1539,7 @@ export async function detectAuthRejection(
   if (!isAuth) {
     try {
       const probeSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-      const probe = await fetch(agentUrl, {
+      const probe = await (fetchFn ?? fetch)(agentUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         redirect: 'manual',
@@ -1547,7 +1553,7 @@ export async function detectAuthRejection(
 
   if (isAuth) {
     const { discoverOAuthMetadata } = await import('../../auth/oauth/discovery');
-    const oauthMeta = await discoverOAuthMetadata(agentUrl);
+    const oauthMeta = await discoverOAuthMetadata(agentUrl, { fetch: fetchFn });
     // Classify OAuth vs bearer based on (a) explicit OAuth phrasing in the
     // error text, or (b) a resolvable OAuth metadata document. Either is
     // enough; a plain 401 on a static-token endpoint matches neither.
@@ -1715,11 +1721,16 @@ async function buildUnreachableResult(
   profile: AgentProfile,
   errorMsg: string | undefined,
   start: number,
-  _effectiveOptions: TestOptions,
+  effectiveOptions: TestOptions,
   adcpVersion: string,
   signal?: AbortSignal
 ): Promise<ComplianceResult> {
-  const { isAuth, observations } = await detectAuthRejection(agentUrl, errorMsg, signal);
+  const { isAuth, observations } = await detectAuthRejection(
+    agentUrl,
+    errorMsg,
+    signal,
+    effectiveOptions.transport?.fetchFn
+  );
   const err = errorMsg || 'Unknown error';
   const headline = isAuth ? `Authentication required` : `Agent unreachable — ${err}`;
   return {
