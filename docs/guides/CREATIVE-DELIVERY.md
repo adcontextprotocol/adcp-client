@@ -3,6 +3,13 @@
 Buyer integrations should treat creative-library sync and inline media-buy
 creatives as different workflows.
 
+Canonical creative identity stays canonical in buyer code. At the outbound
+boundary, the SDK projects a creative onto the seller-owned legacy `format_id`
+when the selected package advertises one. This applies automatically to inline
+`packages[].creatives` in `AgentClient.createMediaBuy()` and
+`AgentClient.updateMediaBuy()`, and inside `inlineCreativesForPackages()`.
+The caller's creative object is never mutated.
+
 Use `supportsSyncCreatives(caps)` to decide whether the seller advertises a
 reusable creative library:
 
@@ -67,3 +74,38 @@ await agent.updateMediaBuy(patch);
 Each mutating leg needs its own `idempotency_key`. Do not reuse a
 `sync_creatives` key for the fallback `create_media_buy` or `update_media_buy`
 request.
+
+## Creative libraries and legacy format projection
+
+A raw `sync_creatives` request contains package assignments but not the
+seller's product declarations, so the SDK cannot safely derive a custom legacy
+format ID from `format_kind` alone. Supply the assignment-scoped package or
+product selectors through `creativeFormatProjection`:
+
+```ts
+const caps = await agent.getCapabilities();
+
+await agent.syncCreatives(
+  {
+    account,
+    idempotency_key: crypto.randomUUID(),
+    creatives,
+    assignments,
+  },
+  undefined,
+  {
+    creativeFormatProjection: {
+      selectorContainers: selectedPackages,
+      wireMode: resolveCreativeFormatWireMode(caps),
+    },
+  },
+);
+```
+
+The same pure functions are exported for composition outside a client call:
+`projectCreativeForDelivery()`, `projectMediaBuyCreativesForDelivery()`, and
+`projectSyncCreativesForDelivery()`. A seller-owned legacy ref wins even for a
+3.1+ peer because legacy named formats remain supported during the migration.
+Canonical-only products stay canonical when the peer supports 3.1+. Ambiguous
+legacy mappings and canonical-only delivery to a known legacy peer throw
+`CreativeFormatProjectionError` before transport.

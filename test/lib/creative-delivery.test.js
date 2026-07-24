@@ -47,6 +47,26 @@ describe('inlineCreativesForPackages', () => {
     assert.equal(packages[0].creatives, undefined, 'input packages are not mutated');
   });
 
+  test('projects canonical creatives onto package legacy refs', () => {
+    const canonical = {
+      creative_id: 'cre_canonical_image',
+      name: 'Canonical image',
+      format_kind: 'image',
+      assets: { image: { asset_type: 'image', url: 'https://cdn.example.com/canonical.png' } },
+    };
+    const result = inlineCreativesForPackages(
+      [{ package_id: 'pkg_1', format_ids: [{ ...IMAGE_FORMAT, id: 'display_300x250_image' }] }],
+      [canonical]
+    );
+
+    assert.deepEqual(result[0].creatives[0].format_id, {
+      ...IMAGE_FORMAT,
+      id: 'display_300x250_image',
+    });
+    assert.equal(result[0].creatives[0].format_kind, undefined);
+    assert.equal(canonical.format_kind, 'image', 'input remains canonical');
+  });
+
   test('preserves package assignment semantics with weight and placements', () => {
     const packages = [
       { package_id: 'pkg_1', product_id: 'prod_display', pricing_option_id: 'cpm', budget: 1000 },

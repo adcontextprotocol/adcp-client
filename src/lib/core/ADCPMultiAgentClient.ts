@@ -2,7 +2,11 @@
 
 import type { AgentConfig } from '../types';
 import { AgentClient, type V2AugmentedGetProductsResponse } from './AgentClient';
-import type { SingleAgentClientConfig } from './SingleAgentClient';
+import type {
+  CreativeDeliveryTaskOptions,
+  SingleAgentClientConfig,
+  SyncCreativesTaskOptions,
+} from './SingleAgentClient';
 import { ADCP_VERSION } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { ConfigurationManager } from './ConfigurationManager';
@@ -149,7 +153,7 @@ export class AgentCollection {
   async createMediaBuy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>[]> {
     return this.executeAllSettled(client => client.createMediaBuy(params, inputHandler, options));
   }
@@ -160,7 +164,7 @@ export class AgentCollection {
   async updateMediaBuy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>[]> {
     return this.executeAllSettled(client => client.updateMediaBuy(params, inputHandler, options));
   }
@@ -171,7 +175,7 @@ export class AgentCollection {
   async syncCreatives(
     params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>[]> {
     return this.executeAllSettled(client => client.syncCreatives(params, inputHandler, options));
   }
