@@ -107,3 +107,14 @@ export {
 } from './catalog';
 
 export { isCanonicalV1Translatable } from './canonical-properties';
+
+export {
+  CreativeFormatProjectionError,
+  projectCreativeForDelivery,
+  projectMediaBuyCreativesForDelivery,
+  projectSyncCreativesForDelivery,
+  resolveCreativeFormatWireMode,
+  type CreativeFormatSelectorContainer,
+  type CreativeFormatWireMode,
+  type SyncCreativeFormatProjection,
+} from './creative-delivery';

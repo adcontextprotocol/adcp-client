@@ -7,7 +7,9 @@ import type { MCPWebhookPayload } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
   SingleAgentClient,
+  type CreativeDeliveryTaskOptions,
   type SingleAgentClientConfig,
+  type SyncCreativesTaskOptions,
   type VerifyAndParseWebhookOptions,
   type WebhookParseResult,
 } from './SingleAgentClient';
@@ -622,6 +624,8 @@ export class AgentClient {
    *
    * `format_ids` is omitted entirely when every chosen format option is V2-only
    * (the spec's "neither present" fallback fires for v1 sellers in that case).
+   * Inline canonical creatives are projected automatically when their package
+   * carries one unambiguous seller-owned legacy `format_id`.
    *
    * **Inline creative fallback.** Sellers that do not advertise a creative
    * library (`supportsSyncCreatives(await agent.getCapabilities()) === false`)
@@ -648,7 +652,7 @@ export class AgentClient {
   async createMediaBuy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const result = await this.client.createMediaBuy(params, inputHandler, {
       ...this.withSession('create_media_buy', options),
@@ -668,11 +672,13 @@ export class AgentClient {
    * request. Build the package patch with `inlineCreativesForPackages()` and
    * preflight it with `preflightUpdateMediaBuy(currentBuy, patch)` so
    * `available_actions[]` allows `replace_creative` before dispatch.
+   * Canonical creatives in the patch are projected automatically when the
+   * package carries one unambiguous seller-owned legacy `format_id`.
    */
   async updateMediaBuy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
     const result = await this.client.updateMediaBuy(params, inputHandler, {
       ...this.withSession('update_media_buy', options),
@@ -695,11 +701,16 @@ export class AgentClient {
    * send a separate `create_media_buy` or `update_media_buy` request with its
    * own idempotency key. If neither capability is advertised, creative upload
    * is not available through this SDK helper surface.
+   *
+   * A raw sync request does not carry product declarations. To project
+   * canonical creatives for a legacy-format seller, pass
+   * `options.creativeFormatProjection.selectorContainers` with the routed
+   * package/product selectors. Assignments scope each creative to its package.
    */
   async syncCreatives(
     params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
     const result = await this.client.syncCreatives(params, inputHandler, {
       ...this.withSession('sync_creatives', options),

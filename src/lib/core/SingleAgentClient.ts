@@ -165,8 +165,22 @@ import {
   type ProductPropertyPolicyValidationResult,
 } from '../media-buy/property-policy';
 import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
+import {
+  projectMediaBuyCreativesForDelivery,
+  projectSyncCreativesForDelivery,
+  type CreativeFormatWireMode,
+  type SyncCreativeFormatProjection,
+} from '../v2/projection/creative-delivery';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
+
+export type CreativeDeliveryTaskOptions = TaskOptions & {
+  creativeFormatWireMode?: CreativeFormatWireMode;
+};
+
+export type SyncCreativesTaskOptions = CreativeDeliveryTaskOptions & {
+  creativeFormatProjection?: SyncCreativeFormatProjection;
+};
 
 /**
  * Error class for v3 feature compatibility issues
@@ -2561,8 +2575,9 @@ export class SingleAgentClient {
   async createMediaBuy(
     params: MutatingRequestInput<CreateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    const { creativeFormatWireMode = 'canonical', ...taskOptions } = options ?? {};
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
     // Generates a media_buy_delivery webhook URL using operation_id pattern: delivery_report_{agent_id}_{YYYY-MM}
@@ -2608,9 +2623,9 @@ export class SingleAgentClient {
     return this.executeAndHandle<CreateMediaBuyResponse>(
       'create_media_buy',
       'onCreateMediaBuyStatusChange',
-      params,
+      projectMediaBuyCreativesForDelivery(params, creativeFormatWireMode, 'create_media_buy'),
       inputHandler,
-      options
+      taskOptions
     );
   }
 
@@ -2624,14 +2639,15 @@ export class SingleAgentClient {
   async updateMediaBuy(
     params: MutatingRequestInput<UpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
+    const { creativeFormatWireMode = 'canonical', ...taskOptions } = options ?? {};
     return this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
       'onUpdateMediaBuyStatusChange',
-      params,
+      projectMediaBuyCreativesForDelivery(params, creativeFormatWireMode, 'update_media_buy'),
       inputHandler,
-      options
+      taskOptions
     );
   }
 
@@ -2645,14 +2661,22 @@ export class SingleAgentClient {
   async syncCreatives(
     params: MutatingRequestInput<SyncCreativesRequest>,
     inputHandler?: InputHandler,
-    options?: TaskOptions
+    options?: SyncCreativesTaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
+    const { creativeFormatProjection, creativeFormatWireMode = 'canonical', ...taskOptions } = options ?? {};
+    const wireParams = creativeFormatProjection
+      ? projectSyncCreativesForDelivery(
+          params,
+          creativeFormatProjection.selectorContainers,
+          creativeFormatProjection.wireMode ?? creativeFormatWireMode
+        )
+      : params;
     return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',
       'onSyncCreativesStatusChange',
-      params,
+      wireParams,
       inputHandler,
-      options
+      taskOptions
     );
   }
 

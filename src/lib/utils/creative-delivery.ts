@@ -1,4 +1,5 @@
 import type { CreativeAsset, PackageRequest } from '../types/tools.generated';
+import { projectCreativeForDelivery, type CreativeFormatWireMode } from '../v2/projection/creative-delivery';
 
 /**
  * Package-like input accepted by `inlineCreativesForPackages`.
@@ -74,6 +75,14 @@ export interface InlineCreativesForPackagesOptions<TPackage extends InlineCreati
    * mistakes do not silently remove assigned delivery.
    */
   onIncompatibleAssignment?: 'throw' | 'ignore';
+
+  /**
+   * Maximum creative selector shape the seller can consume. Seller-owned
+   * legacy refs on the package still win in `canonical` mode. Use `legacy`
+   * for a known 3.0 seller and `unknown` to fail unless a legacy ref exists.
+   * Defaults to `canonical`.
+   */
+  creativeFormatWireMode?: CreativeFormatWireMode;
 }
 
 export type InlineCreativePackagePatch<TPackage extends InlineCreativePackage = InlineCreativePackage> = TPackage & {
@@ -120,6 +129,7 @@ export function inlineCreativesForPackages<TPackage extends InlineCreativePackag
     onUnmatchedAssignment = 'throw',
     onMissingCreative = 'throw',
     onIncompatibleAssignment = 'throw',
+    creativeFormatWireMode = 'canonical',
   } = options;
 
   const creativesById = new Map<string, CreativeAsset>();
@@ -159,9 +169,10 @@ export function inlineCreativesForPackages<TPackage extends InlineCreativePackag
     for (const assignment of assigned) {
       const creative = creativesById.get(assignment.creative_id);
       if (!creative) continue;
-      const compatible = !filterByFormat || creativeMatchesPackage(pkg, creative);
+      const projected = projectCreativeForDelivery(creative, pkg, creativeFormatWireMode, 'inline_creatives');
+      const compatible = !filterByFormat || creativeMatchesPackage(pkg, projected);
       if (compatible) {
-        inlined.push(applyAssignmentToCreative(creative, assignment));
+        inlined.push(applyAssignmentToCreative(projected, assignment));
       } else if (onIncompatibleAssignment === 'throw') {
         throw new Error(
           `inlineCreativesForPackages assignment creative_id "${assignment.creative_id}" ` +
@@ -173,8 +184,9 @@ export function inlineCreativesForPackages<TPackage extends InlineCreativePackag
     if (includeUnassignedCreatives) {
       for (const creative of creatives) {
         if (typeof creative.creative_id === 'string' && assignedCreativeIds.has(creative.creative_id)) continue;
-        if (!filterByFormat || creativeMatchesPackage(pkg, creative)) {
-          inlined.push({ ...creative });
+        const projected = projectCreativeForDelivery(creative, pkg, creativeFormatWireMode, 'inline_creatives');
+        if (!filterByFormat || creativeMatchesPackage(pkg, projected)) {
+          inlined.push({ ...projected });
         }
       }
     }
