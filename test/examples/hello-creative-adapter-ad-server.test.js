@@ -9,6 +9,7 @@
 
 const path = require('node:path');
 const test = require('node:test');
+const assert = require('node:assert/strict');
 const { runHelloAdapterGates } = require('./_helpers/runHelloAdapterGates');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -30,6 +31,17 @@ runHelloAdapterGates({
   extraEnv: {
     UPSTREAM_API_KEY: 'mock_creative_ad_server_key_do_not_use_in_prod',
   },
+  extraMcpAssertions: [
+    {
+      label: 'projects the canonical creative library onto the legacy 3.1 list_creatives schema',
+      run: async ({ callTool }) => {
+        const account = { account_id: 'acct_acme_creative' };
+        const legacy = await callTool('list_creatives', { account, fields: ['format_id'] });
+        assert.ok(legacy?.structuredContent?.creatives?.[0]?.format_id, JSON.stringify(legacy));
+        assert.equal(legacy.structuredContent.creatives[0].format_kind, undefined);
+      },
+    },
+  ],
   expectedRoutes: ['GET /_lookup/network', 'GET /v1/creatives', 'POST /v1/creatives/{id}/render'],
 });
 

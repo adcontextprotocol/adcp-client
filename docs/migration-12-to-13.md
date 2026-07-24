@@ -81,6 +81,47 @@ than the raw generated `Format`. They neither require nor expose `format_id` or
 `agent_url`; pass any canonical declaration or local object with an `assets`
 array.
 
+Server scaffolding helpers follow the same rule. `buildProduct()` now accepts
+canonical declarations and returns a canonical product:
+
+```ts
+const product = buildProduct({
+  id: 'sports-display',
+  name: 'Sports display',
+  format_options: [
+    {
+      format_option_id: 'medium-rectangle',
+      format_kind: 'image',
+      params: { width: 300, height: 250 },
+    },
+  ],
+  delivery_type: 'non_guaranteed',
+  publisher_domain: 'sports.example',
+});
+```
+
+Code that intentionally assembles the old named-format product moves to the
+explicit compatibility helper without changing its input shape:
+
+```ts
+const legacyProduct = buildProductLegacy({
+  id: 'sports-display',
+  name: 'Sports display',
+  formats: ['display_300x250'],
+  agentUrl: 'https://seller.example/mcp',
+  delivery_type: 'non_guaranteed',
+  publisher_domain: 'sports.example',
+});
+```
+
+Likewise, `buildListCreativesResponse()` accepts canonical list requests and
+canonical creative rows. Migration tooling that still handles
+`filters.format_ids` or rows with `format_id` uses
+`buildListCreativesResponseLegacy()`. Asset accessors (`getAsset()`,
+`getAssetSlot()`, `requireAsset()`) accept only the identity-free
+`CreativeAssetsContainer` view, so a primary helper call cannot depend on a
+manifest's legacy format identity.
+
 The old content-standards adapter also carries raw artifact and format
 identity. Its public names now make that boundary explicit:
 `LegacyContentStandardsAdapter`, `LegacyIContentStandardsAdapter`,

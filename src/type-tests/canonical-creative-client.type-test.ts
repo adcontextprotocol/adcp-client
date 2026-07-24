@@ -128,6 +128,36 @@ type _NoPrimaryAdcpServerConfig = serverSdk.AdcpServerConfig;
 // @ts-expect-error V5 handler bags are explicit Legacy surface area.
 type _NoPrimaryMediaBuyHandlers = serverSdk.MediaBuyHandlers;
 
+const assembledCanonicalProduct = serverSdk.buildProduct({
+  id: 'canonical-helper-product',
+  name: 'Canonical helper product',
+  format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+  delivery_type: 'non_guaranteed',
+  publisher_domain: 'publisher.example',
+});
+void assembledCanonicalProduct.format_options;
+// @ts-expect-error The primary assembly helper never emits legacy product identity.
+assembledCanonicalProduct.format_ids = [];
+serverSdk.buildProduct({
+  id: 'legacy-helper-product',
+  name: 'Legacy helper product',
+  // @ts-expect-error Legacy format assembly requires the explicit buildProductLegacy helper.
+  formats: ['display_300x250'],
+  delivery_type: 'non_guaranteed',
+  publisher_domain: 'publisher.example',
+});
+serverSdk.getAsset({ assets: {} }, 'hero', 'image');
+serverSdk.getAssetSlot({ assets: {} }, 'gallery', 'image');
+serverSdk.getAsset(
+  {
+    assets: {},
+    // @ts-expect-error Canonical asset helpers accept an identity-free assets container.
+    format_id: legacyFormatId,
+  },
+  'hero',
+  'image'
+);
+
 const rootProductIsCanonical: CanonicalProduct = rootProduct;
 void rootProductIsCanonical;
 void rootProduct.format_options;

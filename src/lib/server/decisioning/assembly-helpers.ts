@@ -1,11 +1,11 @@
 /**
- * Wire-shape assembly helpers.
+ * Canonical decisioning assembly helpers.
  *
- * AdCP wire shapes carry many required fields (Product needs 8 required
+ * AdCP products carry many required fields (Product needs 8 required
  * properties; PricingOption needs at least 3 plus model-specific extras).
- * Building them by hand is the largest single source of validation
- * cascades in LLM-generated platforms (Emma matrix v18: a single missed
- * `format_ids[0].id` shape error swallowed 30+ storyboard steps).
+ * Building them by hand is a common source of validation cascades in
+ * generated platforms. The primary product helper accepts only canonical
+ * `format_options`; named-format assembly is explicitly `buildProductLegacy`.
  *
  * These helpers emit correct wire shapes from a flatter, intent-shaped
  * input. Adopters opt in — anything you don't pass in gets a sensible
@@ -15,12 +15,15 @@
  */
 
 import type { Product, PricingOption, ReportingCapabilities } from '../../types/tools.generated';
+import type { CanonicalProduct } from '../../v2/projection/creative-delivery';
+import type { CanonicalFormatDeclaration } from '../../v2/projection/legacy-metadata';
 
 // ---------------------------------------------------------------------------
 // buildProduct
 // ---------------------------------------------------------------------------
 
-export interface BuildProductInput {
+/** @deprecated Compatibility input for {@link buildProductLegacy}. */
+export interface BuildProductLegacyInput {
   /** Unique product id. */
   id: string;
 
@@ -114,8 +117,14 @@ export interface BuildProductInput {
   /** Adapter-internal opaque blob round-tripped by the SDK. */
   ctx_metadata?: unknown;
 
-  /** Anything else on the wire shape (escape hatch). */
+  /** Additional non-identity product fields. Canonical fields and legacy creative identity are rejected. */
   extra?: Record<string, unknown>;
+}
+
+/** Canonical product input used by the primary server SDK. */
+export interface BuildProductInput extends Omit<BuildProductLegacyInput, 'formats' | 'agentUrl'> {
+  /** Canonical creative declarations accepted by this product. */
+  format_options: ReadonlyArray<CanonicalFormatDeclaration>;
 }
 
 const DEFAULT_REPORTING_CAPABILITIES: ReportingCapabilities = {
@@ -127,7 +136,100 @@ const DEFAULT_REPORTING_CAPABILITIES: ReportingCapabilities = {
   date_range_support: 'date_range',
 } as ReportingCapabilities;
 
-function resolvePublisherProperties(input: BuildProductInput): ReadonlyArray<unknown> {
+const CANONICAL_PRODUCT_RESERVED_EXTRA_KEYS = new Set([
+  'product_id',
+  'name',
+  'description',
+  'publisher_properties',
+  'format_options',
+  'format_ids',
+  'delivery_type',
+  'pricing_options',
+  'reporting_capabilities',
+  'channels',
+  'ctx_metadata',
+]);
+
+function assertCanonicalProductExtra(extra: Record<string, unknown> | undefined): void {
+  if (!extra) return;
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown, path: string, root: boolean): void => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+      if (key === 'toJSON') {
+        throw new Error(`buildProduct: extra.${path}${key} is not allowed on canonical product data`);
+      }
+      if (!descriptor.enumerable) continue;
+      if (!('value' in descriptor)) {
+        throw new Error(`buildProduct: extra.${path}${key} must be a data property, not an accessor`);
+      }
+      if (typeof descriptor.value === 'function') {
+        throw new Error(`buildProduct: extra.${path}${key} must not be callable`);
+      }
+      if (root && CANONICAL_PRODUCT_RESERVED_EXTRA_KEYS.has(key)) {
+        throw new Error(`buildProduct: extra.${key} cannot override a canonical product field`);
+      }
+      if (key === 'agent_url' || /(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key)) {
+        throw new Error(`buildProduct: extra.${path}${key} contains legacy creative identity`);
+      }
+      visit(descriptor.value, `${path}${key}.`, false);
+    }
+  };
+  visit(extra, '', true);
+}
+
+function cloneCanonicalProductData<T>(value: T, path: string, active = new WeakSet<object>()): T {
+  if (typeof value === 'function') throw new Error(`buildProduct: ${path} must not be callable`);
+  if (value === null || typeof value !== 'object') return value;
+  if (active.has(value)) throw new Error(`buildProduct: ${path} must not contain cycles`);
+  active.add(value);
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Array.isArray(value)) {
+      const clone: unknown[] = [];
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (key === 'toJSON') {
+          throw new Error(`buildProduct: ${path}.${key} is not allowed on canonical product data`);
+        }
+        if (!descriptor.enumerable) continue;
+        if (!('value' in descriptor)) {
+          throw new Error(`buildProduct: ${path}[${key}] must be a data property, not an accessor`);
+        }
+        if (!/^(0|[1-9]\d*)$/.test(key)) {
+          throw new Error(`buildProduct: ${path} has unsupported enumerable array property ${key}`);
+        }
+        clone[Number(key)] = cloneCanonicalProductData(descriptor.value, `${path}[${key}]`, active);
+      }
+      return clone as T;
+    }
+
+    const clone: Record<string, unknown> = {};
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (key === 'toJSON') {
+        throw new Error(`buildProduct: ${path}.${key} is not allowed on canonical product data`);
+      }
+      if (!descriptor.enumerable) continue;
+      if (!('value' in descriptor)) {
+        throw new Error(`buildProduct: ${path}.${key} must be a data property, not an accessor`);
+      }
+      if (key === 'agent_url' || /(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key)) {
+        throw new Error(`buildProduct: ${path}.${key} contains legacy creative identity`);
+      }
+      Object.defineProperty(clone, key, {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: cloneCanonicalProductData(descriptor.value, `${path}.${key}`, active),
+      });
+    }
+    return clone as T;
+  } finally {
+    active.delete(value);
+  }
+}
+
+function resolvePublisherProperties(input: BuildProductInput | BuildProductLegacyInput): ReadonlyArray<unknown> {
   if (input.publisher_properties && input.publisher_properties.length > 0) {
     return input.publisher_properties;
   }
@@ -142,16 +244,18 @@ function resolvePublisherProperties(input: BuildProductInput): ReadonlyArray<unk
 }
 
 /**
- * Build a wire-correct `Product` from intent-shaped input. Required fields
- * (per AdCP 3.0.1 product.json) are filled in with sensible defaults when
- * omitted; the caller can override any of them.
+ * Build a canonical `Product` from intent-shaped input. Required common
+ * product fields are filled in with sensible defaults when omitted.
  *
  * @example Catalog product (minimal)
  * ```ts
  * const product = buildProduct({
  *   id: 'sports_display_auction',
  *   name: 'Sports Display Auction',
- *   formats: ['display_300x250', 'display_728x90'],
+ *   format_options: [
+ *     { format_option_id: 'medium-rectangle', format_kind: 'image', params: { width: 300, height: 250 } },
+ *     { format_option_id: 'leaderboard', format_kind: 'image', params: { width: 728, height: 90 } },
+ *   ],
  *   delivery_type: 'non_guaranteed',
  *   pricing: { model: 'cpm', floor: 5.0, currency: 'USD' },
  *   ctx_metadata: { gam: { ad_unit_ids: ['au_123'] } },
@@ -163,7 +267,9 @@ function resolvePublisherProperties(input: BuildProductInput): ReadonlyArray<unk
  * const product = buildProduct({
  *   id: 'premium_homepage',
  *   name: 'Premium Homepage Takeover',
- *   formats: [{ id: 'display_970x250' }],
+ *   format_options: [
+ *     { format_option_id: 'billboard', format_kind: 'image', params: { width: 970, height: 250 } },
+ *   ],
  *   delivery_type: 'guaranteed',
  *   pricing: [
  *     buildPricingOption({ id: 'po_cpm', model: 'cpm', fixed: 25.0, currency: 'USD' }),
@@ -172,12 +278,46 @@ function resolvePublisherProperties(input: BuildProductInput): ReadonlyArray<unk
  * });
  * ```
  */
-export function buildProduct(input: BuildProductInput): Product {
+export function buildProduct(input: BuildProductInput): CanonicalProduct {
+  const extraDescriptor = Object.getOwnPropertyDescriptor(input, 'extra');
+  if (extraDescriptor && !('value' in extraDescriptor)) {
+    throw new Error('buildProduct: extra must be an own data property, not an accessor');
+  }
+  const rawExtra = extraDescriptor?.value as Record<string, unknown> | undefined;
+  assertCanonicalProductExtra(rawExtra);
+  const extra = rawExtra === undefined ? undefined : cloneCanonicalProductData(rawExtra, 'extra');
+  const formatOptionsDescriptor = Object.getOwnPropertyDescriptor(input, 'format_options');
+  if (!formatOptionsDescriptor || !('value' in formatOptionsDescriptor)) {
+    throw new Error('buildProduct: format_options must be an own data property');
+  }
+  const format_options = cloneCanonicalProductData(
+    formatOptionsDescriptor.value as ReadonlyArray<CanonicalFormatDeclaration>,
+    'format_options'
+  );
+  const pricing_options = resolvePricingOptions(input);
+
+  return {
+    ...(extra ?? {}),
+    product_id: input.id,
+    name: input.name,
+    description: input.description ?? input.name,
+    publisher_properties: resolvePublisherProperties(input),
+    format_options,
+    delivery_type: input.delivery_type,
+    pricing_options,
+    reporting_capabilities: input.reporting_capabilities ?? DEFAULT_REPORTING_CAPABILITIES,
+    ...(input.channels && input.channels.length > 0 && { channels: [...input.channels] }),
+    ...(input.ctx_metadata !== undefined && { ctx_metadata: input.ctx_metadata }),
+  } as unknown as CanonicalProduct;
+}
+
+/** @deprecated Explicit compatibility helper for legacy `format_ids` products. */
+export function buildProductLegacy(input: BuildProductLegacyInput): Product {
   const formats = input.formats.map(f => {
     if (typeof f === 'string') {
       if (!input.agentUrl) {
         throw new Error(
-          `buildProduct: ${input.id} declares format '${f}' as a bare string, but \`agentUrl\` is required ` +
+          `buildProductLegacy: ${input.id} declares format '${f}' as a bare string, but \`agentUrl\` is required ` +
             `to build the wire \`{ id, agent_url }\` shape. Pass \`agentUrl\` on the input, OR pass each format ` +
             `as \`{ id, agent_url }\` directly.`
         );
@@ -187,23 +327,13 @@ export function buildProduct(input: BuildProductInput): Product {
     if (f.agent_url) return f;
     if (input.agentUrl) return { ...f, agent_url: input.agentUrl };
     throw new Error(
-      `buildProduct: ${input.id} format '${f.id}' has no agent_url and no \`agentUrl\` was passed on the input.`
+      `buildProductLegacy: ${input.id} format '${f.id}' has no agent_url and no \`agentUrl\` was passed on the input.`
     );
   });
 
-  let pricing_options: PricingOption[];
-  if (Array.isArray(input.pricing)) {
-    pricing_options = [...input.pricing];
-  } else if (input.pricing) {
-    // Narrow: not an array, so it's the BuildPricingOptionInput shorthand object.
-    pricing_options = [buildPricingOption(input.pricing as BuildPricingOptionInput)];
-  } else {
-    // No pricing supplied — emit a single CPM placeholder so the wire shape
-    // validates. Adopters who skip pricing usually don't realize it's required.
-    pricing_options = [buildPricingOption({ model: 'cpm', floor: 0.01, currency: 'USD' })];
-  }
+  const pricing_options = resolvePricingOptions(input);
 
-  const product = {
+  return {
     product_id: input.id,
     name: input.name,
     description: input.description ?? input.name,
@@ -216,8 +346,18 @@ export function buildProduct(input: BuildProductInput): Product {
     ...(input.ctx_metadata !== undefined && { ctx_metadata: input.ctx_metadata }),
     ...(input.extra ?? {}),
   } as unknown as Product;
+}
 
-  return product;
+function resolvePricingOptions(input: BuildProductInput | BuildProductLegacyInput): PricingOption[] {
+  if (Array.isArray(input.pricing)) {
+    return [...input.pricing];
+  } else if (input.pricing) {
+    // Narrow: not an array, so it's the BuildPricingOptionInput shorthand object.
+    return [buildPricingOption(input.pricing as BuildPricingOptionInput)];
+  }
+  // No pricing supplied — emit a single CPM placeholder so the wire shape
+  // validates. Adopters who skip pricing usually don't realize it's required.
+  return [buildPricingOption({ model: 'cpm', floor: 0.01, currency: 'USD' })];
 }
 
 // ---------------------------------------------------------------------------

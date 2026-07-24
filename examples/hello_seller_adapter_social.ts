@@ -716,11 +716,12 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
           const landingPageUrl =
             readUrl(assets['click_url']) ?? readUrl(assets['landing_page']) ?? 'https://example.com';
           const mediaUrl = readUrl(assets['image']) ?? readUrl(assets['video']) ?? 'https://example.com/asset';
+          const upstreamFormatId = c.format_kind === 'native_in_feed' ? 'native_feed' : c.format_kind;
 
           const created = await upstream.createCreative(advertiserId, {
             creative_id: c.creative_id,
             name: c.name,
-            format_id: c.format_kind,
+            format_id: upstreamFormatId,
             primary_text: primaryText,
             landing_page_url: landingPageUrl,
             media_url: mediaUrl,

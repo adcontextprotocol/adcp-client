@@ -97,6 +97,7 @@ const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3004);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
+const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 const DEFAULT_PRICING_OPTION_ID = 'cpm_guaranteed_fixed';
 // Test-kit principal for the `comply_controller_mode_gate` storyboard
 // (adcp#4028). The runner authenticates with this bearer to probe the
@@ -838,7 +839,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // into `inventoryService` (catalog) + `forecastService.getDeliveryForecast`
       // (per-product forecast). Use the discrete `getForecast` below if
       // your backend can't fold forecast into the catalog response.
-      const filters = req.filters as
+      const filters = req['filters'] as
         | {
             budget_range?: { max?: number };
             start_date?: string;
@@ -1356,6 +1357,10 @@ serve(
       taskRegistry,
       idempotency: idempotencyStore,
       mediaBuyStore,
+      canonicalFormatLegacyResolver: context => {
+        if (context.source !== 'product' || !context.declaration.format_option_id) return undefined;
+        return { agent_url: PUBLIC_AGENT_URL, id: context.declaration.format_option_id };
+      },
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';

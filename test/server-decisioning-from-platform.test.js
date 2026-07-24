@@ -32,6 +32,7 @@ function buildPlatform(overrides = {}) {
       creative_agents: [],
       channels: ['display'],
       pricingModels: ['cpm'],
+      features: { canonicalCreatives: true },
       config: {},
     },
     accounts: {
@@ -128,7 +129,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         arguments: {
           brief: 'premium',
           promoted_offering: 'cars',
-          fields: ['name', 'format_ids'],
+          fields: ['name', 'format_options'],
           account: { account_id: 'acc_test' },
         },
       },
@@ -143,6 +144,129 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
+  });
+
+  it('keeps an explicit legacy 3.1 get_products request legacy on the wire while the platform stays canonical', async () => {
+    let sawRequest;
+    const base = buildPlatform();
+    const canonicalProductResponse = toCanonicalOnlyResponse({
+      cache_scope: 'account',
+      products: [
+        {
+          product_id: 'legacy-3-1-request',
+          name: 'Legacy 3.1 request',
+          description: 'Canonical platform response projected for a legacy 3.1 buyer',
+          format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        },
+      ],
+    }).response;
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        getProducts: async req => {
+          sawRequest = req;
+          return canonicalProductResponse;
+        },
+      },
+    });
+    delete platform.capabilities.features;
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'legacy-3-1-request',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.1',
+          account: { account_id: 'acc_test' },
+          brief: 'legacy wire',
+          fields: ['name', 'format_ids'],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(sawRequest.fields, ['name', 'format_options']);
+    assert.strictEqual(result.structuredContent.products[0].format_options, undefined);
+    assert.strictEqual(result.structuredContent.products[0].format_ids[0].id, 'display_300x250_image');
+
+    const ambiguous = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { adcp_version: '3.1', account: { account_id: 'acc_test' }, brief: 'no format dialect' },
+      },
+    });
+    assert.notStrictEqual(ambiguous.isError, true, JSON.stringify(ambiguous.structuredContent));
+    assert.strictEqual(ambiguous.structuredContent.products[0].format_ids, undefined);
+    assert.strictEqual(ambiguous.structuredContent.products[0].format_options[0].format_kind, 'image');
+  });
+
+  it('descriptor-scans request arrays without invoking getters or custom iterators', async () => {
+    let getterCalls = 0;
+    let iteratorCalls = 0;
+    const fields = ['name', 'format_ids'];
+    Object.defineProperty(fields, Symbol.iterator, {
+      configurable: true,
+      value() {
+        iteratorCalls += 1;
+        throw new Error('request array iterator must not run during wire detection');
+      },
+    });
+    const probe = [];
+    Object.defineProperty(probe, '0', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error('request array getter must not run during wire detection');
+      },
+    });
+
+    const base = buildPlatform();
+    const canonicalProductResponse = toCanonicalOnlyResponse({
+      cache_scope: 'account',
+      products: [
+        {
+          product_id: 'descriptor-safe-request',
+          name: 'Descriptor-safe request',
+          format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        },
+      ],
+    }).response;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: { ...base.sales, getProducts: async () => canonicalProductResponse },
+      }),
+      {
+        name: 'descriptor-safe-request',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.1',
+          account: { account_id: 'acc_test' },
+          brief: 'legacy wire',
+          fields,
+          dialect_probe: probe,
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.products[0].format_options, undefined);
+    assert.strictEqual(iteratorCalls, 0);
+    assert.strictEqual(getterCalls, 0);
   });
 
   it('projects canonical products back to legacy format_ids on a 3.0 server wire', async () => {
@@ -674,14 +798,14 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_creatives',
-        arguments: { account: { account_id: 'acc_test' }, fields: ['name', 'format_id'] },
+        arguments: { account: { account_id: 'acc_test' }, fields: ['name'] },
       },
     });
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.creatives[0].format_kind, 'image');
     assert.strictEqual(result.structuredContent.creatives[0].format_id, undefined);
-    assert.deepStrictEqual(sawListRequest.fields, ['name', 'format_kind']);
+    assert.deepStrictEqual(sawListRequest.fields, ['name']);
   });
 
   it('rejects legacy list_creatives format filters before canonical platform dispatch', async () => {
@@ -1551,6 +1675,7 @@ describe('SalesPlatform — full surface dispatch', () => {
         creative_agents: [],
         channels: ['display'],
         pricingModels: ['cpm'],
+        features: { canonicalCreatives: true },
         config: {},
       },
       accounts: {
@@ -1956,6 +2081,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
         creative_agents: [],
         channels: ['display'],
         pricingModels: ['cpm'],
+        features: { canonicalCreatives: true },
         config: {},
       },
       accounts: {

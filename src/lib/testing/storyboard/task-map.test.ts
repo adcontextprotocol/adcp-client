@@ -43,6 +43,50 @@ function makeFailureClient(adcpError?: object) {
 }
 
 describe('executeStoryboardTask — adcp_error forwarding', () => {
+  it('uses raw legacy creative methods when grading a pre-3.2 wire', async () => {
+    const calls: string[] = [];
+    let receivedParams: unknown;
+    const client = {
+      getAdcpVersion: () => '3.1.2',
+      getProducts: async () => {
+        calls.push('canonical');
+        return { data: { products: [] } };
+      },
+      getProductsLegacy: async (params: unknown) => {
+        calls.push('legacy');
+        receivedParams = params;
+        return { data: { products: [], format: 'legacy' } };
+      },
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+    expect(calls).toEqual(['legacy']);
+    expect(receivedParams).toEqual({ ext: { adcp: { creative_wire: 'legacy' } } });
+    expect(result.data).toEqual({ products: [], format: 'legacy' });
+  });
+
+  it('uses canonical creative methods when grading a 3.2+ wire', async () => {
+    const calls: string[] = [];
+    let receivedParams: unknown;
+    const client = {
+      getAdcpVersion: () => '3.2',
+      getProducts: async (params: unknown) => {
+        calls.push('canonical');
+        receivedParams = params;
+        return { data: { products: [], format: 'canonical' } };
+      },
+      getProductsLegacy: async () => {
+        calls.push('legacy');
+        return { data: { products: [] } };
+      },
+    };
+
+    const result = await executeStoryboardTask(client, 'get_products', {});
+    expect(calls).toEqual(['canonical']);
+    expect(receivedParams).toEqual({});
+    expect(result.data).toEqual({ products: [], format: 'canonical' });
+  });
+
   it('forwards adcpError from a TaskResultFailure into adcp_error', async () => {
     const client = makeFailureClient(INVALID_REQUEST_ERROR);
     const result = await executeStoryboardTask(client, 'create_media_buy', {});
@@ -76,11 +120,11 @@ describe('executeStoryboardTask — adcp_error forwarding', () => {
     expect(serialized.adcp_error.field).toBe('packages.0.product_id');
   });
 
-  it('omits adcp_error when the task result has no adcpError', async () => {
+  it('falls back to data.adcp_error when the task result has no adcpError property', async () => {
     const client = makeFailureClient(undefined);
     const result = await executeStoryboardTask(client, 'create_media_buy', {});
 
-    expect(result.adcp_error).toBeUndefined();
+    expect(result.adcp_error).toEqual(INVALID_REQUEST_ERROR);
   });
 
   it('falls back to executeTask for unknown task names', async () => {

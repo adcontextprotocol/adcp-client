@@ -293,10 +293,14 @@ function runGrader(agentUrl, storyboardId, adcpAuthToken, { testKitPath } = {}) 
 function formatFailures(failures) {
   return (
     failures
-      .map(
-        f =>
-          `  ✗ ${f.task || '?'} — ${f.step_title || f.step_id || '?'}\n      ${String(f.validation?.description || f.expected || f.error || '').slice(0, 200)}`
-      )
+      .map(f => {
+        const detail =
+          f.error || f.validation?.error || f.validation?.message || f.validation?.description || f.expected || '';
+        return (
+          `  ✗ ${f.task || '?'} — ${f.step_title || f.step_id || '?'}\n      ${String(detail).slice(0, 500)}` +
+          `\n      evidence: ${JSON.stringify(f).slice(0, 1500)}`
+        );
+      })
       .join('\n') || '(no per-step detail captured)'
   );
 }

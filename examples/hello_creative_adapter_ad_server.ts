@@ -67,15 +67,20 @@ import {
   type DecisioningPlatform,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import { FormatAsset, buildCreativeReturn, previewCreative, urlRender } from '@adcp/sdk';
+import {
+  FormatAsset,
+  buildCreativeReturn,
+  previewCreative,
+  urlRender,
+  type CanonicalCreativeAsset,
+  type CanonicalListedCreative,
+} from '@adcp/sdk';
 import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
-  CreativeAsset,
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
   ListCreativeFormatsResponse,
-  ListCreativesResponse,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
 } from '@adcp/sdk/types';
@@ -328,17 +333,26 @@ function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'
   };
 }
 
-/** Project upstream creative → AdCP `CreativeAsset`. The list-creatives
- *  response schema requires `creative_id`, `name`, `format_id`, `status`,
- *  `created_date`, `updated_date`. We wrap the upstream snippet as a single
+function canonicalCreativeKind(formatId: string): CanonicalCreativeAsset['format_kind'] {
+  if (/video|vast|ctv/i.test(formatId)) return 'video_hosted';
+  if (/audio|daast/i.test(formatId)) return 'audio_hosted';
+  if (/native|feed|social/i.test(formatId)) return 'native_in_feed';
+  return 'image';
+}
+
+/** Project upstream creative onto the canonical SDK surface. We retain the
+ *  upstream option id as a product-scoped canonical reference so the explicit
+ *  canonical→legacy resolver below can restore the seller-owned format ID for
+ *  a 3.0 or legacy-3.1 buyer. We wrap the upstream snippet as a single
  *  inline html asset so adopters see how `assets` is keyed; production
  *  sellers project the upstream's structured asset graph (image_url,
  *  video_url, click_url, headline, etc.) here. */
-function projectCreative(c: UpstreamCreative): CreativeAsset {
+function projectCreative(c: UpstreamCreative): CanonicalListedCreative {
   return {
     creative_id: c.creative_id,
     name: c.name,
-    format_id: { agent_url: FORMAT_AGENT_URL, id: c.format_id },
+    format_kind: canonicalCreativeKind(c.format_id),
+    format_option_ref: { scope: 'product', format_option_id: c.format_id },
     status: mapCreativeStatus(c.status),
     created_date: c.created_at,
     updated_date: c.updated_at,
@@ -350,12 +364,12 @@ function projectCreative(c: UpstreamCreative): CreativeAsset {
         click_url: { asset_type: 'url', url: c.click_url },
       }),
     },
-    // CAST: schema-pickiness — `CreativeAsset` requires `assets` keys to
+    // CAST: schema-pickiness — the canonical creative requires `assets` keys to
     // satisfy the discriminated `AssetVariant` union. The `html` and `url`
     // variants we emit ARE valid (asset_type: 'html' + content; asset_type:
     // 'url' + url), but TS's structural inference can't prove it through
     // the spread. Adopters who project richer asset graphs can drop the cast.
-  } as unknown as CreativeAsset;
+  } as unknown as CanonicalListedCreative;
 }
 
 function mapCreativeStatus(s: UpstreamCreative['status']): 'approved' | 'pending_review' | 'rejected' {
@@ -597,14 +611,14 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       return { status: 'completed' as const, formats: upstreamFormats.map(projectFormat) };
     },
 
-    syncCreatives: async (creatives: CreativeAsset[], ctx): Promise<SyncCreativesRow[]> => {
+    syncCreatives: async (creatives: CanonicalCreativeAsset[], ctx): Promise<SyncCreativesRow[]> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const advertiserId = ctx.account.id;
       const rows: SyncCreativesRow[] = [];
       for (const c of creatives) {
         const opaque = c as unknown as Record<string, unknown>;
-        const fmtRef = opaque['format_id'] as { id?: string } | string | undefined;
-        const formatId = typeof fmtRef === 'string' ? fmtRef : fmtRef?.id;
+        const optionRef = opaque['format_option_ref'] as { format_option_id?: string } | undefined;
+        const formatId = optionRef?.format_option_id ?? c.format_kind;
         const idempotencyHint =
           typeof opaque['creative_id'] === 'string' ? (opaque['creative_id'] as string) : undefined;
         // Extract upstream-specific fields the AdCP `CreativeAsset` shape
@@ -809,6 +823,13 @@ serve(
             await seedCreativeOnUpstream(creative_id, fixture);
           },
         },
+      },
+      canonicalFormatLegacyResolver: context => {
+        if (context.source !== 'creative') return undefined;
+        const optionRef = context.creative['format_option_ref'];
+        if (optionRef === null || typeof optionRef !== 'object' || Array.isArray(optionRef)) return undefined;
+        const formatOptionId = (optionRef as { format_option_id?: unknown }).format_option_id;
+        return typeof formatOptionId === 'string' ? { agent_url: FORMAT_AGENT_URL, id: formatOptionId } : undefined;
       },
     }),
   {

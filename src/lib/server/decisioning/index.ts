@@ -371,11 +371,17 @@ export {
 // Manifest helpers — typed accessors for creative_manifest.assets values.
 // Save adopters from writing the same null-check + discriminator-check
 // boilerplate per call.
-export { getAsset, requireAsset } from './manifest-helpers';
+export { getAsset, getAssetSlot, requireAsset } from './manifest-helpers';
+export type { CreativeAssetsContainer } from './manifest-helpers';
 
 // List helpers — wrap row arrays + pagination into the heavier wire shapes
 // (today: list_creatives, which carries query_summary alongside the rows).
-export { buildListCreativesResponse, type BuildListCreativesResponseOpts } from './list-helpers';
+export {
+  buildListCreativesResponse,
+  buildListCreativesResponseLegacy,
+  type BuildListCreativesResponseOpts,
+  type BuildListCreativesResponseLegacyOpts,
+} from './list-helpers';
 
 // Start-time helper — normalize the wire `start_time` union into a Date,
 // with platform-aware ASAP lead-time injection.
@@ -460,9 +466,13 @@ export {
 } from './proposal';
 export type { FinalizeActionRef, ProposalLifecycleLogger, FinalizeInterceptResult, ReservedProposal } from './proposal';
 
-// Wire-shape assembly helpers — emit correct Product / PricingOption /
-// package shapes from intent-shaped input. Reduces 30+ lines of wire
-// boilerplate per resource. Used in slim skill examples so LLMs scaffold
-// correct shapes from first attempt.
-export { buildProduct, buildPricingOption, buildPackage } from './assembly-helpers';
-export type { BuildProductInput, BuildPricingOptionInput, BuildPackageInput } from './assembly-helpers';
+// Canonical assembly helpers — emit Product / PricingOption / package shapes
+// from intent-shaped input. Raw named-format product assembly is available
+// only through the explicit buildProductLegacy compatibility helper.
+export { buildProduct, buildProductLegacy, buildPricingOption, buildPackage } from './assembly-helpers';
+export type {
+  BuildProductInput,
+  BuildProductLegacyInput,
+  BuildPricingOptionInput,
+  BuildPackageInput,
+} from './assembly-helpers';

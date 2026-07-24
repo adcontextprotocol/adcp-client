@@ -667,7 +667,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // forward them so each product comes back with a per-query forecast.
       // Single upstream round-trip surfaces both the catalog and the
       // forecast curve.
-      const filters = req.filters as
+      const filters = req['filters'] as
         | {
             budget_range?: { max?: number };
             start_date?: string;
@@ -1173,6 +1173,10 @@ serve(
       taskStore,
       idempotency: idempotencyStore,
       mediaBuyStore,
+      canonicalFormatLegacyResolver: context => {
+        if (context.source !== 'product' || !context.declaration.format_option_id) return undefined;
+        return { agent_url: FORMAT_AGENT_URL, id: context.declaration.format_option_id };
+      },
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
