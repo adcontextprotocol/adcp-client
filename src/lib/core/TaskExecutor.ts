@@ -1528,7 +1528,7 @@ export class TaskExecutor {
             // adcp-client#1617 Phase 2: pass the full agent so cancelA2ATask
             // can sign the POST when agent.request_signing is configured.
             // signed-requests sellers no longer 401 the cancel.
-            void cancelA2ATask(agent, taskId).catch(() => {
+            void cancelA2ATask(agent, taskId, (transport ?? this.config.transport)?.fetchFn).catch(() => {
               /* see SECURITY note above */
             });
           } catch {

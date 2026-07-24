@@ -197,6 +197,8 @@ export interface DiscoverAuthorizationOptions {
   allowPrivateIp?: boolean;
   /** Override per-probe HTTP timeout (ms). Default inherits from ssrfSafeFetch (10s). */
   timeoutMs?: number;
+  /** Scoped fetch implementation for the agent, PRM, and AS metadata probes. */
+  fetchFn?: typeof fetch;
   /**
    * If provided, use this `WWW-Authenticate` header verbatim instead of
    * re-probing the agent. Use this when you already have a 401 response in
@@ -239,7 +241,7 @@ export async function discoverAuthorizationRequirements(
 
   let challengeHeader = options.wwwAuthenticate;
   if (!challengeHeader) {
-    const probe = await probeAgent401(agentUrl, allowPrivateIpOnAgent, options.timeoutMs);
+    const probe = await probeAgent401(agentUrl, allowPrivateIpOnAgent, options.timeoutMs, options.fetchFn);
     if (probe.status !== 401) {
       // 200, 403, 5xx, or network error — not an OAuth 401 we can act on.
       return null;
@@ -266,7 +268,8 @@ export async function discoverAuthorizationRequirements(
     const prm = await fetchJson(
       challenge.resource_metadata,
       allowPrivateIpForHop(challenge.resource_metadata),
-      options.timeoutMs
+      options.timeoutMs,
+      options.fetchFn
     );
     if (prm && typeof prm === 'object') {
       const resource = (prm as { resource?: unknown }).resource;
@@ -293,7 +296,7 @@ export async function discoverAuthorizationRequirements(
     let md: Record<string, unknown> | undefined;
     let source: 'rfc-8414' | 'openid-configuration' | undefined;
     if (asUrl) {
-      const res = await fetchJson(asUrl, allowPrivateIpForHop(asUrl), options.timeoutMs);
+      const res = await fetchJson(asUrl, allowPrivateIpForHop(asUrl), options.timeoutMs, options.fetchFn);
       if (res && typeof res === 'object') {
         md = res as Record<string, unknown>;
         source = 'rfc-8414';
@@ -302,7 +305,7 @@ export async function discoverAuthorizationRequirements(
     if (!md) {
       const oidcUrl = buildOidcDiscoveryUrl(requirements.authorizationServer);
       if (oidcUrl) {
-        const res = await fetchJson(oidcUrl, allowPrivateIpForHop(oidcUrl), options.timeoutMs);
+        const res = await fetchJson(oidcUrl, allowPrivateIpForHop(oidcUrl), options.timeoutMs, options.fetchFn);
         if (res && typeof res === 'object') {
           md = res as Record<string, unknown>;
           source = 'openid-configuration';
@@ -355,9 +358,9 @@ export async function discoverAuthorizationRequirements(
  */
 export async function probeAuthChallenge(
   agentUrl: string,
-  options: { allowPrivateIp?: boolean; timeoutMs?: number } = {}
+  options: { allowPrivateIp?: boolean; timeoutMs?: number; fetchFn?: typeof fetch } = {}
 ): Promise<WWWAuthenticateChallenge | null> {
-  const probe = await probeAgent401(agentUrl, options.allowPrivateIp ?? false, options.timeoutMs);
+  const probe = await probeAgent401(agentUrl, options.allowPrivateIp ?? false, options.timeoutMs, options.fetchFn);
   if (probe.status !== 401) return null;
   return parseWWWAuthenticate(probe.wwwAuthenticate ?? null);
 }
@@ -370,7 +373,8 @@ export async function probeAuthChallenge(
 async function probeAgent401(
   agentUrl: string,
   allowPrivateIp: boolean,
-  timeoutMs?: number
+  timeoutMs?: number,
+  fetchFn?: typeof fetch
 ): Promise<{ status: number; wwwAuthenticate?: string }> {
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
   try {
@@ -383,6 +387,7 @@ async function probeAgent401(
       body,
       allowPrivateIp,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
     });
     return { status: res.status, wwwAuthenticate: res.headers['www-authenticate'] };
   } catch {
@@ -445,13 +450,19 @@ function buildOidcDiscoveryUrl(issuer: string): string | undefined {
   return `${base}/.well-known/openid-configuration`;
 }
 
-async function fetchJson(url: string, allowPrivateIp: boolean, timeoutMs?: number): Promise<unknown> {
+async function fetchJson(
+  url: string,
+  allowPrivateIp: boolean,
+  timeoutMs?: number,
+  fetchFn?: typeof fetch
+): Promise<unknown> {
   try {
     const res = await ssrfSafeFetch(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
       allowPrivateIp,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
     });
     if (res.status !== 200) return undefined;
     return decodeBodyAsJsonOrText(res.body, res.headers['content-type']);

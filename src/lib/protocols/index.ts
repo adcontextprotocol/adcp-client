@@ -84,6 +84,7 @@ function getNonInteractiveOAuthProvider(agent: AgentConfig): ReturnType<typeof c
     provider = createNonInteractiveOAuthProvider(agent, {
       agentHint: agent.id,
       storage,
+      allowHttp: isLikelyPrivateUrl(agent.agent_uri),
     });
     nonInteractiveOAuthProviderCache.set(agent, provider);
   }
@@ -244,11 +245,28 @@ export interface TransportOptions {
    *
    * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
-   * timeout overrides) will land here as additional fields rather than
-   * forcing callers to compose their own `fetch` — wrap order with the SDK's
-   * existing signing / capture wrappers is non-obvious and a footgun.
+   * timeout overrides) will land here as additional fields. When `fetchFn`
+   * is supplied, the SDK composes it inside its signing, capture, size-limit,
+   * timeout, and diagnostics wrappers so callers do not have to reproduce
+   * that non-obvious ordering themselves.
    */
   maxResponseBytes?: number;
+  /**
+   * Scoped fetch implementation for all outbound HTTP performed on behalf of
+   * this client or call, including endpoint/card discovery, tool listing,
+   * OAuth discovery and token refresh, and MCP/A2A tool requests.
+   *
+   * The function is runtime-only configuration and is never serialized into
+   * agent records, storyboard artifacts, or compliance output. When unset,
+   * the SDK uses the global `fetch` implementation.
+   *
+   * For SSRF-sensitive metadata probes, supplying this function makes it the
+   * trusted network boundary: the SDK still validates schemes and resolved
+   * addresses, but a custom fetch API cannot accept the SDK's pinned undici
+   * dispatcher. The implementation must therefore prevent DNS rebinding (for
+   * example with an egress proxy or its own DNS pinning).
+   */
+  fetchFn?: typeof fetch;
   /**
    * Timeout in milliseconds for bounded one-shot transport requests such as
    * A2A agent-card discovery and MCP read-path probes. Defaults to 60 seconds
@@ -423,7 +441,11 @@ export class ProtocolClient {
               if (agent.oauth_client_credentials) {
                 const ccStorage = getAgentStorage(agent);
                 const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-                await ensureClientCredentialsTokens(agent, { storage: ccStorage, allowPrivateIp });
+                await ensureClientCredentialsTokens(agent, {
+                  storage: ccStorage,
+                  allowPrivateIp,
+                  fetch: transport?.fetchFn,
+                });
               }
 
               const authToken = getAuthToken(agent);
@@ -502,12 +524,13 @@ export class ProtocolClient {
                       signingContext,
                       signal,
                       requestTimeoutMs: transport?.requestTimeoutMs,
+                      fetchFn: transport?.fetchFn,
                     });
                   } catch (err) {
                     // Refresh failed or server rejected the refreshed token — walk the
                     // discovery chain so the caller can distinguish "re-auth needed"
                     // from other failure modes.
-                    await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+                    await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
                     throw err;
                   }
                 }
@@ -528,6 +551,7 @@ export class ProtocolClient {
                       ...(transport?.requestTimeoutMs !== undefined && {
                         requestTimeoutMs: transport.requestTimeoutMs,
                       }),
+                      ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
                     }
                   );
                 } catch (err) {
@@ -538,7 +562,12 @@ export class ProtocolClient {
                   if (agent.oauth_client_credentials && is401Error(err)) {
                     const ccStorage = getAgentStorage(agent);
                     const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-                    await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+                    await ensureClientCredentialsTokens(agent, {
+                      storage: ccStorage,
+                      force: true,
+                      allowPrivateIp,
+                      fetch: transport?.fetchFn,
+                    });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
                     try {
                       return await callMCPToolWithTasks(
@@ -554,14 +583,15 @@ export class ProtocolClient {
                           ...(transport?.requestTimeoutMs !== undefined && {
                             requestTimeoutMs: transport.requestTimeoutMs,
                           }),
+                          ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
                         }
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn);
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
                   throw err;
                 }
               } else if (agent.protocol === 'a2a') {
@@ -578,7 +608,8 @@ export class ProtocolClient {
                     signingContext,
                     session,
                     signal,
-                    transport?.requestTimeoutMs
+                    transport?.requestTimeoutMs,
+                    transport?.fetchFn
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -588,7 +619,12 @@ export class ProtocolClient {
                   if (agent.oauth_client_credentials && is401Error(err)) {
                     const ccStorage = getAgentStorage(agent);
                     const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-                    await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+                    await ensureClientCredentialsTokens(agent, {
+                      storage: ccStorage,
+                      force: true,
+                      allowPrivateIp,
+                      fetch: transport?.fetchFn,
+                    });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
                     try {
                       return await callA2ATool(
@@ -602,14 +638,15 @@ export class ProtocolClient {
                         signingContext,
                         session,
                         signal,
-                        transport?.requestTimeoutMs
+                        transport?.requestTimeoutMs,
+                        transport?.fetchFn
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn);
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
                   throw err;
                 }
               } else {
@@ -631,7 +668,7 @@ export class ProtocolClient {
  * Keeping this off the hot path: we only probe on error, and the probe is
  * a single unauthenticated `tools/list` POST — no retries, no DNS rebind.
  */
-async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Promise<void> {
+async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string, fetchFn?: typeof fetch): Promise<void> {
   if (err instanceof NeedsAuthorizationError) throw err;
   if (!is401Error(err)) return;
 
@@ -643,7 +680,7 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Prom
   // discoverAuthorizationRequirements internally catches network failures and
   // returns null rather than throwing — anything that escapes is a genuine
   // bug we want to surface rather than mask the 401 with.
-  const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp });
+  const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp, fetchFn });
   if (requirements) {
     throw new NeedsAuthorizationError(requirements);
   }
@@ -684,6 +721,7 @@ export const createMCPClient = (
           headers,
           {
             ...(transport?.requestTimeoutMs !== undefined && { requestTimeoutMs: transport.requestTimeoutMs }),
+            ...(transport?.fetchFn && { fetchFn: transport.fetchFn }),
           }
         )
       ),
@@ -714,7 +752,8 @@ export const createA2AClient = (
           undefined,
           undefined,
           undefined,
-          transport?.requestTimeoutMs
+          transport?.requestTimeoutMs,
+          transport?.fetchFn
         )
       ),
   };

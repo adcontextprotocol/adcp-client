@@ -6,7 +6,7 @@ import type { FormatReferenceStructuredObject as FormatID } from '../types/core.
 import type { ControllerDetection } from './test-controller';
 import type { WebhookReceiver } from './storyboard/webhook-receiver';
 import type { AdcpVersion } from '../version';
-import type { VersionEnvelopeMode } from '../protocols';
+import type { TransportOptions, VersionEnvelopeMode } from '../protocols';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -77,6 +77,12 @@ export interface TestOptions {
   protocol?: 'mcp' | 'a2a';
   /** Optional cancellation signal for discovery and storyboard helper calls. */
   signal?: AbortSignal;
+  /**
+   * Runtime-only transport configuration for discovery and every storyboard
+   * or compliance tool call. In particular, `fetchFn` lets hosted runners
+   * enforce a request-scoped network policy without replacing global fetch.
+   */
+  transport?: TransportOptions;
   /**
    * AdCP protocol version the test client should speak. Storyboard runners
    * set this from the compliance cache version instead of relying on the
