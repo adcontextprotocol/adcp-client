@@ -2824,6 +2824,7 @@ async function executeStoryboardPass(
           stepRequestStarts,
           responseDerivedNotApplicableContextKeys,
           agentLibraryVersion: profile?.library_version,
+          storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
         }
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -3688,6 +3689,7 @@ async function runStoryboardStepBody(
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys,
     agentLibraryVersion: profile?.library_version,
+    storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
   });
 
   if (!result.skipped && result.passed && found.step.contributes_to) {
@@ -3761,6 +3763,12 @@ interface ExecutionState {
    * #850. Undefined when the agent did not advertise `library_version`.
    */
   agentLibraryVersion?: string;
+  /**
+   * Whether the storyboard declares or implicitly requires a request signer.
+   * Unsigned functional storyboards use this to distinguish an expected
+   * signature-required rejection from a failure in a signing test.
+   */
+  storyboardRequiresRequestSigner?: boolean;
 }
 
 async function executeStep(
@@ -4339,6 +4347,43 @@ async function executeStep(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
     storyboardId
   );
+
+  // Until functional storyboards can sign individual mutating requests,
+  // a seller that correctly requires signatures would otherwise receive a
+  // false-negative grade. Convert only the capability-declared rejection:
+  // the response code, dispatched task, and unsigned-storyboard state must
+  // all agree before authored validations are bypassed.
+  const requiredForSigning = resolveCapabilityPath(options._profile?.raw_capabilities, 'request_signing.required_for');
+  if (
+    taskResult?.adcp_error?.code === 'request_signature_required' &&
+    Array.isArray(requiredForSigning) &&
+    requiredForSigning.includes(effectiveStep.task) &&
+    runState.storyboardRequiresRequestSigner !== true
+  ) {
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    const detail =
+      `Agent declared request_signing.required_for includes "${effectiveStep.task}" and rejected the unsigned ` +
+      `request with request_signature_required; storyboard "${storyboardId}" does not require request_signer.`;
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_applicable',
+      skip: buildSkip('not_applicable', detail),
+      duration_ms: stepResult.duration_ms,
+      validations: [],
+      context,
+      response: redactSecrets(taskResult.data),
+      next,
+      request: requestRecord,
+      ...(responseRecord && { response_record: responseRecord }),
+      extraction: extractionFromTaskResult(taskResult),
+      ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
+    };
+  }
 
   // AdCP 3.0.12 runner-output-contract `force_scenario_unsupported`: when a
   // comply_test_controller step calls a force_* scenario that the agent
