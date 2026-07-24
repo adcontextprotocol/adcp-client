@@ -158,6 +158,77 @@ describe('v2.5 seller fixes (smoke-driven)', () => {
         'string-typed brand slot must receive the brand_manifest URL'
       );
     });
+
+    test('uses the current call tool schema when scoped fetch disables shared caching', async () => {
+      const captured = [];
+      const original = ProtocolClient.callTool;
+      ProtocolClient.callTool = async (_cfg, name, args) => {
+        captured.push({ name, args });
+        return { products: [] };
+      };
+
+      try {
+        const mockMCPAgent = {
+          id: 'scoped-v2-5-seller',
+          name: 'Scoped V2.5 Seller',
+          agent_uri: 'https://agents.example.com/mcp',
+          protocol: 'mcp',
+        };
+        const client = new AdCPClient([mockMCPAgent], {
+          transport: { fetchFn: async () => new Response() },
+        });
+        const agent = client.agent(mockMCPAgent.id);
+        const inner = agent.client;
+        inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+        inner.ensureEndpointDiscovered = async () => mockMCPAgent;
+        inner.getAgentInfo = async () => ({
+          name: mockMCPAgent.name,
+          protocol: 'mcp',
+          url: mockMCPAgent.agent_uri,
+          tools: [
+            {
+              name: 'get_products',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  brand: {
+                    anyOf: [{ type: 'object', required: ['domain'] }, { type: 'null' }],
+                  },
+                  brief: { type: 'string' },
+                },
+              },
+            },
+          ],
+        });
+
+        await agent.getProducts({
+          brief: 'test',
+          buying_mode: 'brief',
+          brand: { domain: 'example.com' },
+        });
+
+        assert.strictEqual(
+          inner.cachedToolSchemas,
+          undefined,
+          'scoped fetch must not populate the shared tool-schema cache'
+        );
+      } finally {
+        ProtocolClient.callTool = original;
+      }
+
+      const call = captured.find(c => c.name === 'get_products');
+      assert.ok(call, 'expected get_products to be dispatched');
+      assert.strictEqual(
+        call.args.brand_manifest,
+        undefined,
+        'the per-call schema must strip the incompatible v2 brand_manifest string'
+      );
+      assert.notStrictEqual(
+        typeof call.args.brand,
+        'string',
+        'the per-call schema must not alias a string into the object-typed brand slot'
+      );
+    });
   });
 
   describe('response validation pins to v2.5 for v2-detected sellers', () => {

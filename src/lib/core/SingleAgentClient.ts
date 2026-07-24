@@ -167,6 +167,12 @@ import {
 import { resolvePropertyList, type ResolveListOptions } from '../server/targeting-helpers';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
+type ToolSchemaMap = Map<string, Record<string, unknown>>;
+type CapabilityDiscoveryContext = { toolSchemas?: ToolSchemaMap };
+const CAPABILITY_DISCOVERY_CONTEXT = Symbol('capabilityDiscoveryContext');
+type InternalReadRequestOptions = ReadRequestOptions & {
+  [CAPABILITY_DISCOVERY_CONTEXT]?: CapabilityDiscoveryContext;
+};
 
 /**
  * Error class for v3 feature compatibility issues
@@ -1799,13 +1805,19 @@ export class SingleAgentClient {
     }
 
     // Adapt request for the detected server and AdCP protocol versions.
-    const serverVersion = await this.detectServerVersion(options);
+    const capabilityDiscoveryContext: CapabilityDiscoveryContext = {};
+    const detectionOptions: InternalReadRequestOptions = {
+      ...options,
+      [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
+    };
+    const serverVersion = await this.detectServerVersion(detectionOptions);
     const inputSchemaStripLogs: any[] = [];
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
       normalizedParams,
       serverVersion,
-      inputSchemaStripLogs
+      inputSchemaStripLogs,
+      capabilityDiscoveryContext.toolSchemas
     );
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
@@ -2299,14 +2311,15 @@ export class SingleAgentClient {
    * 3.1-only fields for a 3.0 seller). Returns the adapted params and any
    * drift log entries describing what was changed.
    *
-   * Runs after `detectServerVersion` so `cachedCapabilities` is populated
-   * and the protocol-version adapters see the seller's declared caps.
+   * Runs after `detectServerVersion` so capabilities are available and the
+   * current call's tool schemas can be supplied without cross-tenant caching.
    */
   private adaptRequest(
     taskType: string,
     params: any,
     serverVersion: string,
-    debugLogs?: any[]
+    debugLogs?: any[],
+    perCallToolSchemas?: ToolSchemaMap
   ): { params: any; driftLogs: Record<string, unknown>[] } {
     const driftLogs: Record<string, unknown>[] = [];
     let adapted = params;
@@ -2343,7 +2356,7 @@ export class SingleAgentClient {
     // against unknown-field errors is to gate at the *injection site*
     // (e.g. `applyBrandInvariant` in the storyboard runner — see #940),
     // not to lean on this strip path as a backstop.
-    const toolSchema = this.cachedToolSchemas?.get(taskType);
+    const toolSchema = (perCallToolSchemas ?? this.cachedToolSchemas)?.get(taskType);
     if (toolSchema && Object.keys(toolSchema).length > 0) {
       const declaredFields = new Set(Object.keys(toolSchema));
 
@@ -3320,13 +3333,19 @@ export class SingleAgentClient {
       }
 
       // Adapt request for the detected server and AdCP protocol versions.
-      const serverVersion = await this.detectServerVersion(options);
+      const capabilityDiscoveryContext: CapabilityDiscoveryContext = {};
+      const detectionOptions: InternalReadRequestOptions = {
+        ...options,
+        [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
+      };
+      const serverVersion = await this.detectServerVersion(detectionOptions);
       const inputSchemaStripLogs: any[] = [];
       const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
         taskName,
         normalizedParams,
         serverVersion,
-        inputSchemaStripLogs
+        inputSchemaStripLogs,
+        capabilityDiscoveryContext.toolSchemas
       );
 
       // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
@@ -4033,9 +4052,11 @@ export class SingleAgentClient {
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
+    const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
     const usesScopedFetch = (options?.transport ?? this.config.transport)?.fetchFn !== undefined;
     // Return cached if available
     if (!usesScopedFetch && this.cachedCapabilities) {
+      if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
       this.maybeWarnV2Sunset(this.cachedCapabilities);
       return this.cachedCapabilities;
     }
@@ -4047,14 +4068,15 @@ export class SingleAgentClient {
       description: t.description,
     }));
 
-    // Cache raw tool schemas for field-level compatibility checks (e.g. buying_mode on get_products).
-    // INVARIANT: must be assigned before cachedCapabilities below so that any code path
-    // reaching adaptRequest always finds the schemas populated.
+    // Make raw tool schemas available for field-level compatibility checks
+    // (e.g. buying_mode on get_products). Scoped fetch keeps them in the
+    // request-local discovery context; unscoped calls may share the cache.
     const discoveredToolSchemas = new Map(
       agentInfo.tools
         .filter(t => t.inputSchema?.properties)
         .map(t => [t.name, t.inputSchema!.properties as Record<string, unknown>])
     );
+    if (discoveryContext) discoveryContext.toolSchemas = discoveredToolSchemas;
     if (!usesScopedFetch) this.cachedToolSchemas = discoveredToolSchemas;
 
     // Check if agent supports get_adcp_capabilities (v3)
