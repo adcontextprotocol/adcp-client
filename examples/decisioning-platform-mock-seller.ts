@@ -47,11 +47,11 @@ import {
   type SalesIngestionPlatform,
   type AccountStore,
   type AdcpStructuredError,
-  type GetProductsPayload,
+  type GetProductsHandlerResult,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
+import type { GetProductsRequest } from '@adcp/sdk';
 import type {
-  GetProductsRequest,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -146,7 +146,7 @@ function rejectPreflight(errors: AdcpStructuredError[]): never {
   });
 }
 
-const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsPayload> => ({
+const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProductsHandlerResult> => ({
   cache_scope: 'account' as const,
   products: [
     {
@@ -154,7 +154,13 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
       name: 'Premium Video',
       description: 'Pre-roll video on premium inventory',
       delivery_type: 'non_guaranteed',
-      format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
+      format_options: [
+        {
+          format_option_id: 'video_15s',
+          format_kind: 'video_hosted',
+          params: { duration_ms_exact: 15_000 },
+        },
+      ],
       publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
       pricing_options: [
         {
@@ -176,7 +182,7 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
 const SHARED_SYNC_CREATIVES = async (creatives: CreativeAsset[]): Promise<SyncCreativesRow[]> => {
   return creatives.map(c => {
     const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
-    const needsReview = (c as { format_id?: { id?: string } }).format_id?.id?.startsWith('video_');
+    const needsReview = c.format_kind === 'video_hosted' || c.format_kind === 'video_vast';
     return {
       creative_id: id,
       action: 'created',
@@ -327,10 +333,11 @@ export function buildHybridServerExample(platform: MockHybridSeller) {
     version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
     mergeSeam: 'strict',
-    mediaBuy: {
-      // v5 leftover — listCreativeFormats isn't on SalesPlatform v1.0
-      // (deferred to rc.1). Custom handler here fills the gap until then.
-      listCreativeFormats: async () => ({ status: 'completed' as const, formats: [] }),
+    legacyHandlers: {
+      mediaBuy: {
+        // Explicit v5 raw-handler compatibility seam.
+        listCreativeFormats: async () => ({ status: 'completed' as const, formats: [] }),
+      },
     },
   });
 }

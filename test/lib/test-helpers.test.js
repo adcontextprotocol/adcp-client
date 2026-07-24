@@ -72,7 +72,12 @@ describe('Test Helpers', () => {
 
     // Check that it has the expected AgentClient methods
     assert.strictEqual(typeof testAgent.getProducts, 'function', 'should have getProducts method');
-    assert.strictEqual(typeof testAgent.listCreativeFormats, 'function', 'should have listCreativeFormats method');
+    assert.strictEqual(
+      typeof testAgent.listCreativeFormatsLegacy,
+      'function',
+      'should have listCreativeFormatsLegacy method'
+    );
+    assert.strictEqual(testAgent.listCreativeFormats, undefined, 'should not expose an unqualified legacy format API');
     assert.strictEqual(typeof testAgent.createMediaBuy, 'function', 'should have createMediaBuy method');
   });
 
@@ -81,7 +86,16 @@ describe('Test Helpers', () => {
 
     // Check that it has the expected AgentClient methods
     assert.strictEqual(typeof testAgentA2A.getProducts, 'function', 'should have getProducts method');
-    assert.strictEqual(typeof testAgentA2A.listCreativeFormats, 'function', 'should have listCreativeFormats method');
+    assert.strictEqual(
+      typeof testAgentA2A.listCreativeFormatsLegacy,
+      'function',
+      'should have listCreativeFormatsLegacy method'
+    );
+    assert.strictEqual(
+      testAgentA2A.listCreativeFormats,
+      undefined,
+      'should not expose an unqualified legacy format API'
+    );
     assert.strictEqual(typeof testAgentA2A.createMediaBuy, 'function', 'should have createMediaBuy method');
   });
 
@@ -155,9 +169,16 @@ describe('Test Helpers', () => {
     const { creativeAgent } = require('../../dist/lib/testing/index.js');
 
     // Check that it has the expected CreativeAgentClient methods
-    assert.strictEqual(typeof creativeAgent.listFormats, 'function', 'should have listFormats method');
-    assert.strictEqual(typeof creativeAgent.findByDimensions, 'function', 'should have findByDimensions method');
-    assert.strictEqual(typeof creativeAgent.findById, 'function', 'should have findById method');
+    assert.strictEqual(typeof creativeAgent.listFormatsLegacy, 'function', 'should have listFormatsLegacy method');
+    assert.strictEqual(
+      typeof creativeAgent.findLegacyByDimensions,
+      'function',
+      'should have findLegacyByDimensions method'
+    );
+    assert.strictEqual(typeof creativeAgent.findLegacyById, 'function', 'should have findLegacyById method');
+    assert.strictEqual(creativeAgent.listFormats, undefined, 'should not expose an unqualified legacy format API');
+    assert.strictEqual(creativeAgent.findByDimensions, undefined, 'should not expose an unqualified legacy format API');
+    assert.strictEqual(creativeAgent.findById, undefined, 'should not expose an unqualified legacy format API');
     assert.strictEqual(typeof creativeAgent.listCreatives, 'function', 'should have listCreatives method');
   });
 });

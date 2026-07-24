@@ -20,7 +20,6 @@ import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type { ServerPayload } from '../../../types/server-payload';
 import type {
-  CreativeAsset,
   CreativeManifest,
   BuildCreativeRequest,
   BuildCreativeSuccess,
@@ -30,15 +29,16 @@ import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
+import type { CanonicalCreativeAsset } from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
-type Creative = CreativeAsset;
+type Creative = CanonicalCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
-export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
-export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
-export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
+export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type LegacyPreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
 
 /**
  * Adopter return shape for `buildCreative`. Discriminated by the wire
@@ -65,11 +65,11 @@ export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsRespon
  * multi-format request, is an adopter contract violation that surfaces
  * as schema-validation failure on the wire response.
  */
-export type BuildCreativeReturn =
+export type LegacyBuildCreativeReturn =
   | CreativeManifest
   | CreativeManifest[]
-  | BuildCreativePayload
-  | BuildCreativeMultiPayload;
+  | LegacyBuildCreativePayload
+  | LegacyBuildCreativeMultiPayload;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -124,7 +124,7 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * `BuildCreativeMultiPayload` payload when you need to set
    * `sandbox` / `expires_at` / `preview`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<BuildCreativeReturn>;
+  buildCreativeLegacy(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyBuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always
@@ -138,7 +138,10 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * when `accounts.resolve(undefined)` returned null. Narrow before reading
    * `ctx.account.ctx_metadata`. See {@link NoAccountCtx}.
    */
-  previewCreative?(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativePayload>;
+  previewCreativeLegacy?(
+    req: PreviewCreativeRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<LegacyPreviewCreativePayload>;
 
   /**
    * Format catalog. Buyers call `list_creative_formats` to discover the
@@ -163,10 +166,10 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * claiming only creative specialisms (`creative-template`, `creative-
    * generative`, `creative-ad-server`) without a sales platform attached.
    */
-  listCreativeFormats?(
+  listCreativeFormatsLegacy?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsPayload>;
+  ): Promise<LegacyListCreativeFormatsPayload>;
 
   /**
    * Refine a prior generation. `taskId` references a prior submission.
@@ -175,7 +178,7 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * re-calling `buildCreative` with different inputs and don't carry
    * generation state across calls.
    */
-  refineCreative?(taskId: string, refinement: RefinementMessage, ctx: Ctx<TCtxMeta>): Promise<CreativeManifest>;
+  refineCreativeLegacy?(taskId: string, refinement: RefinementMessage, ctx: Ctx<TCtxMeta>): Promise<CreativeManifest>;
 
   /**
    * Sync review surface. Stateless platforms typically auto-approve;

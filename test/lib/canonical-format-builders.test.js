@@ -2,8 +2,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const {
   CanonicalFormat,
-  formatRef,
-  formatRefs,
+  legacyFormatRef,
+  legacyFormatRefs,
   imageFormatDeclaration,
   productCard,
   productCardDetailed,
@@ -12,7 +12,7 @@ const root = require('../../dist/lib');
 
 describe('canonical creative format helpers', () => {
   it('builds structured v1 format references', () => {
-    const ref = formatRef('https://creative.adcontextprotocol.org', 'display_300x250_image', {
+    const ref = legacyFormatRef('https://creative.adcontextprotocol.org', 'display_300x250_image', {
       width: 300,
       height: 250,
     });
@@ -26,37 +26,45 @@ describe('canonical creative format helpers', () => {
   });
 
   it('copies format reference arrays', () => {
-    const source = formatRef('https://creative.adcontextprotocol.org', 'display_728x90_image');
-    const refs = formatRefs(source);
+    const source = legacyFormatRef('https://creative.adcontextprotocol.org', 'display_728x90_image');
+    const refs = legacyFormatRefs(source);
     refs[0].id = 'changed';
 
     assert.strictEqual(source.id, 'display_728x90_image');
   });
 
-  it('builds canonical image declarations with v1 refs', () => {
+  it('builds canonical image declarations without legacy routing refs', () => {
     const decl = imageFormatDeclaration(
       { width: 300, height: 250 },
       {
         capability_id: 'homepage_mrec',
         display_name: 'Homepage MREC',
-        v1_format_ref: [formatRef('https://creative.adcontextprotocol.org', 'display_300x250_image')],
       }
     );
 
     assert.strictEqual(decl.format_kind, 'image');
     assert.deepStrictEqual(decl.params, { width: 300, height: 250 });
     assert.strictEqual(decl.capability_id, 'homepage_mrec');
-    assert.strictEqual(decl.v1_format_ref[0].id, 'display_300x250_image');
+    assert.strictEqual('v1_format_ref' in decl, false);
+  });
+
+  it('rejects legacy routing refs passed from untyped JavaScript', () => {
+    assert.throws(
+      () =>
+        imageFormatDeclaration(
+          { width: 300, height: 250 },
+          { v1_format_ref: [legacyFormatRef('https://example.com', 'legacy')] }
+        ),
+      /does not accept legacy routing references/
+    );
   });
 
   it('exposes the grouped CanonicalFormat namespace', () => {
-    const decl = CanonicalFormat.videoVast(
-      { max_duration_ms: 30000 },
-      { capability_id: 'vast_30s', v1_format_ref: [CanonicalFormat.ref('https://example.com', 'video_30s')] }
-    );
+    const decl = CanonicalFormat.videoVast({ max_duration_ms: 30000 }, { capability_id: 'vast_30s' });
 
     assert.strictEqual(decl.format_kind, 'video_vast');
     assert.strictEqual(decl.capability_id, 'vast_30s');
+    assert.strictEqual(CanonicalFormat.ref, undefined);
   });
 
   it('exposes all canonical format builders from the root namespace', () => {

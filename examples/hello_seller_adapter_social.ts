@@ -705,12 +705,6 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
       const rows: SyncCreativesRow[] = [];
       for (const c of creatives) {
         try {
-          if (!c.format_id) {
-            throw new AdcpError('INVALID_REQUEST', {
-              message: 'format_id required on creative manifest',
-              field: 'format_id',
-            });
-          }
           // Project AdCP `CreativeAsset.assets` (the asset map keyed by
           // asset_id) onto the upstream native creative shape. Asset values
           // carry an `asset_type` discriminator; we read the typed sub-shapes
@@ -726,7 +720,7 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
           const created = await upstream.createCreative(advertiserId, {
             creative_id: c.creative_id,
             name: c.name,
-            format_id: c.format_id.id,
+            format_id: c.format_kind,
             primary_text: primaryText,
             landing_page_url: landingPageUrl,
             media_url: mediaUrl,

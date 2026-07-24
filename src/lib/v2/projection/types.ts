@@ -144,7 +144,12 @@ export type ProjectionDiagnostic =
           format_kind: CanonicalFormatKind;
           product_id: string;
           format_option_id?: string;
-          resolution_failure: 'no_registry_match' | 'catalog_lacks_canonical_annotation' | 'no_match';
+          resolution_failure:
+            | 'no_registry_match'
+            | 'catalog_lacks_canonical_annotation'
+            | 'no_match'
+            | 'custom_converter_failed';
+          converter_error?: string;
         };
       };
     })
@@ -246,8 +251,8 @@ export type ProjectionDiagnostic =
   | (ProjectionDiagnosticBase & {
       /**
        * SDK-local code: canonical-only projection (`toCanonicalOnlyProduct`
-       * / `toCanonicalOnlyResponse`) dropped a legacy `format_id` that no
-       * `format_options[].v1_format_ref` covers. Emitted only on the
+       * / `toCanonicalOnlyResponse`) found legacy routing metadata that no
+       * canonical format option covers. Emitted only on the
        * v2-native pass-through path — a seller that sent `format_options[]`
        * directly but also carried a `format_ids[]` entry with no canonical
        * representation. Without it, canonical-only mode would silently
@@ -263,14 +268,8 @@ export type ProjectionDiagnostic =
       error: {
         details: {
           product_id: string;
-          /**
-           * The full ref that was dropped, including the dimensional
-           * discriminators (`width` / `height` / `duration_ms`) when the
-           * input carried them — so a buyer can tell which variant of a
-           * multi-size/multi-duration family was lost and re-acquire it on
-           * the v1 path. Omitted keys mean the input ref carried no value.
-           */
-          dropped_format_id: { agent_url: string; id: string; width?: number; height?: number; duration_ms?: number };
+          /** Stable category only; canonical diagnostics never echo routing identifiers. */
+          resolution_failure: 'unmapped_legacy_format';
         };
       };
     });

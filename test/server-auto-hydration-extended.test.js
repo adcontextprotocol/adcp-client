@@ -321,7 +321,7 @@ describe('auto-hydration — acquire_rights', () => {
     let observedReq;
     const brandRightsImpl = {
       getBrandIdentity: async () => ({ brand_id: 'b1', display_name: 'Acme' }),
-      getRights: async () => ({
+      getRightsLegacy: async () => ({
         rights: [
           {
             rights_id: 'rt_001',
@@ -329,7 +329,7 @@ describe('auto-hydration — acquire_rights', () => {
           },
         ],
       }),
-      acquireRights: async (params, ctx) => {
+      acquireRightsLegacy: async (params, ctx) => {
         observedReq = params;
         return {
           rights_id: 'rt_001',

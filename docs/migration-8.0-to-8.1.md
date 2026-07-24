@@ -154,9 +154,10 @@ an extension. New buyer code should compose packages with:
 import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
 ```
 
-`packageRefsForCapabilities()` remains exported for callers pinned to beta.3
-fixtures or sellers, but it is marked deprecated and emits a one-time warning
-on 8.1 because its return value is intentionally beta.3-only.
+`packageRefsForCapabilities()` remains available from the explicit
+`@adcp/sdk/v2/projection` migration subpath for callers pinned to beta.3
+fixtures or sellers. It is deprecated and emits a one-time warning because its
+return value is intentionally beta.3-only.
 
 Projection diagnostics also use the beta.5 field name:
 `diagnostic.error.details.format_option_id`. If you log or branch on the old
@@ -302,20 +303,14 @@ only as the v1 fallback during the migration window, using the v2 declaration's
 `v1_format_ref[]` as the authoritative pairing:
 
 ```ts
-import {
-  CanonicalFormat,
-  packageRefsForCapabilities,
-  withFormatOptions,
-} from '@adcp/sdk';
+import { CanonicalFormat } from '@adcp/sdk';
+import { packageRefsForCapabilities, withFormatOptions } from '@adcp/sdk/v2/projection';
 
 const homepageMrec = CanonicalFormat.image(
   { width: 300, height: 250 },
   {
-    capability_id: 'homepage_mrec',
+    format_option_id: 'homepage_mrec',
     display_name: 'Homepage MREC',
-    v1_format_ref: [
-      CanonicalFormat.ref('https://creative.adcontextprotocol.org', 'display_300x250_image'),
-    ],
   }
 );
 

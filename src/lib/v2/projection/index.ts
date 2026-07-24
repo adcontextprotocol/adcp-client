@@ -28,16 +28,30 @@
  *     `findCatalogEntryByCanonicalAndSize`, registry exports) for
  *     callers wiring projection into their own code paths.
  *
- * Exposed from both `@adcp/sdk/v2/projection` and the package root for
- * adopters migrating from local format metadata and `product_card.format_id`
- * conventions to canonical creative formats.
+ * Legacy-preserving and raw wire projection helpers are exposed only from
+ * `@adcp/sdk/v2/projection`. The package root exports the canonical authoring
+ * surface so ordinary buyers do not accidentally retain legacy identities.
  */
 
 export { projectV1ProductToV2, canonicalDeclarationFromBareId, resolveCanonicalFormatKind } from './v1-to-v2';
-export type { V1ToV2Result, BareFormatIdResolveOptions } from './v1-to-v2';
+export type {
+  V1ToV2Result,
+  V1ToV2ProjectionOptions,
+  BareFormatIdResolveOptions,
+  LegacyFormatConversionContext,
+  LegacyFormatConverter,
+} from './v1-to-v2';
 
 export { projectV2ProductToV1 } from './v2-to-v1';
-export type { V2ToV1Result } from './v2-to-v1';
+export type {
+  V2ToV1Result,
+  V2ToV1ProjectionOptions,
+  CanonicalFormatLegacyResolver,
+  CanonicalFormatLegacyResolutionContext,
+  CanonicalProductFormatLegacyResolutionContext,
+  CanonicalCreativeFormatLegacyResolutionContext,
+  CanonicalSelectorFormatLegacyResolutionContext,
+} from './v2-to-v1';
 
 export {
   augmentProductWithFormatOptions,
@@ -56,8 +70,8 @@ export {
   canonicalFormatDeclaration,
   customFormatDeclaration,
   displayTagFormatDeclaration,
-  formatRef,
-  formatRefs,
+  legacyFormatRef,
+  legacyFormatRefs,
   html5FormatDeclaration,
   imageCarouselFormatDeclaration,
   imageFormatDeclaration,
@@ -110,11 +124,41 @@ export { isCanonicalV1Translatable } from './canonical-properties';
 
 export {
   CreativeFormatProjectionError,
+  CreativeFormatCapabilityError,
   projectCreativeForDelivery,
   projectMediaBuyCreativesForDelivery,
   projectSyncCreativesForDelivery,
+  stripLegacyCreativeIdentity,
   resolveCreativeFormatWireMode,
   type CreativeFormatSelectorContainer,
+  type CanonicalCreativeFormatSelectorContainer,
   type CreativeFormatWireMode,
+  type CanonicalCreativeAsset,
+  type CanonicalCreativeResponse,
+  type CanonicalGetProductsResponse,
+  type CanonicalGetProductsRequest,
+  type CanonicalCreateMediaBuyRequest,
+  type CanonicalCreateMediaBuyResponse,
+  type CanonicalCreativeFilters,
+  type CanonicalListCreativesRequest,
+  type CanonicalListCreativesResponse,
+  type CanonicalGetCreativeDeliveryResponse,
+  type CanonicalGetMediaBuyDeliveryResponse,
+  type CanonicalGetMediaBuysResponse,
+  type CanonicalListedCreative,
+  type CanonicalPackageRequest,
+  type CanonicalPackageUpdate,
+  type CanonicalPackage,
+  type CanonicalPlacement,
+  type CanonicalProduct,
+  type CanonicalProjectedCreative,
+  type CanonicalSyncCreativesRequest,
+  type CanonicalSyncCreativesResponse,
+  type CanonicalUpdateMediaBuyRequest,
+  type CanonicalUpdateMediaBuyResponse,
+  type LegacyCreativeAsset,
+  type LegacyProjectedCreative,
+  type ProjectedMediaBuyCreativeRequest,
+  type ProjectedSyncCreativeRequest,
   type SyncCreativeFormatProjection,
 } from './creative-delivery';

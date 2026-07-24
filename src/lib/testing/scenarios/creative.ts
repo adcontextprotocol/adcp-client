@@ -58,7 +58,7 @@ export async function testCreativeFlow(
         `Build creative: ${formatDisplayName}`,
         'build_creative',
         async () =>
-          client.buildCreative({
+          client.buildCreativeLegacy({
             target_format_id: format.format_id,
             brand: resolveBrand(options),
             message: `Create an ad for an e-commerce brand promoting summer sale`,
@@ -100,7 +100,7 @@ export async function testCreativeFlow(
       'Preview creative: minimal assets',
       'preview_creative',
       async () =>
-        client.previewCreative({
+        client.previewCreativeLegacy({
           request_type: 'single',
           creative_manifest: {
             format_id: formatsToTest[0]?.format_id || {
@@ -121,7 +121,7 @@ export async function testCreativeFlow(
         `Preview creative: with assets (${sampleFormat.format_id.id})`,
         'preview_creative',
         async () =>
-          client.previewCreative({
+          client.previewCreativeLegacy({
             request_type: 'single',
             creative_manifest: {
               format_id: sampleFormat.format_id,
@@ -161,7 +161,7 @@ export async function testCreativeFlow(
       'Preview creative: invalid format (error expected)',
       'preview_creative',
       async () =>
-        client.previewCreative({
+        client.previewCreativeLegacy({
           request_type: 'single',
           creative_manifest: {
             format_id: { agent_url: 'https://creative.adcontextprotocol.org', id: 'INVALID_FORMAT_ID_12345' },
@@ -278,7 +278,7 @@ export async function testCreativeLifecycle(
       `Sync ${creativesToSync.length} creative(s) to library`,
       'sync_creatives',
       async () =>
-        client.executeTask('sync_creatives', {
+        client.executeTaskLegacy('sync_creatives', {
           creatives: creativesToSync,
         }) as Promise<TaskResult>
     );
@@ -412,7 +412,7 @@ export async function testCreativeLifecycle(
       `Build creative for lifecycle (${targetFormat.format_id})`,
       'build_creative',
       async () =>
-        client.executeTask('build_creative', {
+        client.executeTaskLegacy('build_creative', {
           target_format_id: targetFormat.format_id,
           brand: resolveBrand(options),
           message: `Create an ad for lifecycle testing`,
@@ -446,7 +446,7 @@ export async function testCreativeLifecycle(
       `Preview creative for lifecycle (${targetFormat.format_id})`,
       'preview_creative',
       async () =>
-        client.executeTask('preview_creative', {
+        client.executeTaskLegacy('preview_creative', {
           request_type: 'single',
           creative_manifest: {
             format_id: targetFormat.format_id,

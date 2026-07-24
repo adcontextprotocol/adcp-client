@@ -47,14 +47,87 @@ function basePlatform(capabilityOverrides = {}) {
   };
 }
 
-async function dispatchCapabilities(server) {
+async function dispatchCapabilities(server, args = {}) {
   return server.dispatchTestRequest({
     method: 'tools/call',
-    params: { name: 'get_adcp_capabilities', arguments: {} },
+    params: { name: 'get_adcp_capabilities', arguments: args },
   });
 }
 
 describe('Capability projections — declarative capability blocks on DecisioningCapabilities', () => {
+  it('modern platform servers advertise canonical creatives by default', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      name: 'canonical-default',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.strictEqual(result.structuredContent?.media_buy?.features?.canonical_creatives, true);
+  });
+
+  it('3.0-pinned servers reject newer release claims and advertise only their real legacy support', async () => {
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(
+          basePlatform({
+            features: { canonicalCreatives: true },
+            supported_versions: ['3.0', '3.2'],
+          }),
+          {
+            name: 'invalid-newer-release-claim',
+            version: '4.0.0',
+            adcpVersion: '3.0.12',
+            validation: { requests: 'off', responses: 'off' },
+          }
+        ),
+      /newer than the configured server schema 3\.0\.12/
+    );
+
+    const server = createAdcpServerFromPlatform(
+      basePlatform({ features: { canonicalCreatives: true }, supported_versions: ['3.0'] }),
+      {
+        name: 'canonical-legacy-pin',
+        version: '4.0.0',
+        adcpVersion: '3.0.12',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await dispatchCapabilities(server);
+    assert.notStrictEqual(result.structuredContent?.media_buy?.features?.canonical_creatives, true);
+    assert.strictEqual(
+      result.structuredContent?.adcp?.supported_versions,
+      undefined,
+      '3.0 capability responses predate release-precision supported_versions'
+    );
+  });
+
+  it('serves get_adcp_capabilities at the mutually selected 3.0 release', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform({ supported_versions: ['3.0', '3.1'] }), {
+      name: 'capability-downshift',
+      version: '4.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await dispatchCapabilities(server, { adcp_version: '3.0' });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent?.adcp_version, undefined);
+    assert.strictEqual(result.structuredContent?.adcp?.supported_versions, undefined);
+    assert.strictEqual(result.structuredContent?.media_buy?.features?.canonical_creatives, undefined);
+    assert.strictEqual(result.structuredContent?.library_version, undefined);
+  });
+
+  it('canonical creative capability remains authoritative over adopter overrides', async () => {
+    const server = createAdcpServerFromPlatform(
+      basePlatform({
+        features: { canonicalCreatives: false },
+        overrides: { media_buy: { features: { canonical_creatives: false } } },
+      }),
+      { name: 'canonical-authoritative', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await dispatchCapabilities(server);
+    assert.strictEqual(result.structuredContent?.media_buy?.features?.canonical_creatives, true);
+  });
+
   it('audience_targeting projects onto get_adcp_capabilities.media_buy', async () => {
     const server = createAdcpServerFromPlatform(
       basePlatform({
@@ -233,6 +306,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     const server = createAdcpServerFromPlatform(
       basePlatform({
         features: {
+          canonicalCreatives: true,
           inlineCreativeManagement: true,
           propertyListFiltering: true,
           audienceTargeting: false,
@@ -279,6 +353,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     const caps = result.structuredContent;
 
     assert.deepStrictEqual(caps?.adcp?.supported_versions, ['3.1']);
+    assert.strictEqual(caps?.media_buy?.features?.canonical_creatives, true);
     assert.strictEqual(caps?.media_buy?.features?.inline_creative_management, true);
     assert.strictEqual(caps?.media_buy?.features?.property_list_filtering, true);
     assert.strictEqual(caps?.media_buy?.features?.audience_targeting, true);
@@ -325,8 +400,8 @@ describe('Capability projections — declarative capability blocks on Decisionin
           house: { domain: 'acme.example.com', name: 'Acme' },
           names: [{ en_US: 'Acme' }],
         }),
-        getRights: async () => ({ rights: [] }),
-        acquireRights: async req => ({
+        getRightsLegacy: async () => ({ rights: [] }),
+        acquireRightsLegacy: async req => ({
           rights_id: req.rights_id,
           status: 'rejected',
           brand_id: 'b1',

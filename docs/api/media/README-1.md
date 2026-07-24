@@ -337,7 +337,7 @@ All AdCP tools with full type safety:
 
 **Media Buy Lifecycle:**
 - `getProducts()` - Discover advertising products
-- `listCreativeFormats()` - Get supported creative formats
+- `listCreativeFormatsLegacy()` - Inspect legacy named creative formats during migration
 - `createMediaBuy()` - Create new media buy
 - `updateMediaBuy()` - Update existing media buy
 - `syncCreatives()` - Upload/sync creative assets

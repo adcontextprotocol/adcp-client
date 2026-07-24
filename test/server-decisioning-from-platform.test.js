@@ -16,6 +16,7 @@ const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { setStatusChangeBus, createInMemoryStatusChangeBus } = require('../dist/lib/server/decisioning/status-changes');
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 const { getSchemaValidatorByRef } = require('../dist/lib/validation/schema-loader');
+const { toCanonicalOnlyResponse } = require('../dist/lib/v2/projection');
 
 const validateMcpWebhookPayload = getSchemaValidatorByRef('core/mcp-webhook-payload.json');
 assert.ok(validateMcpWebhookPayload, 'MCP webhook payload schema must compile');
@@ -50,7 +51,7 @@ function buildPlatform(overrides = {}) {
             product_id: 'p1',
             name: 'sample',
             description: 'spike test',
-            format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+            format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
             delivery_type: 'non_guaranteed',
             publisher_properties: { reportable: true },
             reporting_capabilities: { available_dimensions: ['geo'] },
@@ -82,9 +83,11 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
 
   it('dispatches get_products through the platform.sales method', async () => {
     let sawCtx;
+    let sawRequest;
     const platform = buildPlatform({
       sales: {
         getProducts: async (req, ctx) => {
+          sawRequest = req;
           sawCtx = ctx;
           return {
             products: [
@@ -92,7 +95,12 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
                 product_id: 'p_dispatched',
                 name: 'dispatched',
                 description: '',
-                format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+                format_ids: [
+                  {
+                    id: 'display_300x250_image',
+                    agent_url: 'https://creative.adcontextprotocol.org/',
+                  },
+                ],
                 delivery_type: 'non_guaranteed',
                 publisher_properties: { reportable: true },
                 reporting_capabilities: { available_dimensions: ['geo'] },
@@ -120,6 +128,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
         arguments: {
           brief: 'premium',
           promoted_offering: 'cars',
+          fields: ['name', 'format_ids'],
           account: { account_id: 'acc_test' },
         },
       },
@@ -127,10 +136,1296 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(result.structuredContent, 'response should carry structuredContent');
     assert.notStrictEqual(result.isError, true, `expected success but got ${JSON.stringify(result.structuredContent)}`);
     assert.strictEqual(result.structuredContent.products[0].product_id, 'p_dispatched');
+    assert.strictEqual(result.structuredContent.products[0].format_ids, undefined);
+    assert.strictEqual(result.structuredContent.products[0].format_options[0].format_kind, 'image');
+    assert.deepStrictEqual(sawRequest.fields, ['name', 'format_options']);
     assert.ok(sawCtx, 'sales.getProducts should receive a RequestContext');
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
+  });
+
+  it('projects canonical products back to legacy format_ids on a 3.0 server wire', async () => {
+    const base = buildPlatform();
+    const canonicalProductResponse = toCanonicalOnlyResponse({
+      cache_scope: 'account',
+      products: [
+        {
+          product_id: 'p1',
+          name: 'sample',
+          description: 'legacy-compatible canonical product',
+          format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        },
+      ],
+    }).response;
+    assert.strictEqual(canonicalProductResponse.products[0].format_ids, undefined);
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({ sales: { ...base.sales, getProducts: async () => canonicalProductResponse } }),
+      {
+        name: 'legacy-wire-products',
+        version: '1.0.0',
+        adcpVersion: '3.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'legacy wire' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const product = result.structuredContent.products[0];
+    assert.strictEqual(product.format_options, undefined);
+    assert.deepStrictEqual(product.format_ids, [
+      { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' },
+    ]);
+  });
+
+  it('downshifts an individual 3.0 get_products request on a 3.1 server', async () => {
+    const base = buildPlatform();
+    const canonicalProductResponse = toCanonicalOnlyResponse({
+      cache_scope: 'account',
+      products: [
+        {
+          product_id: 'per-request-downshift',
+          name: 'Per-request downshift',
+          description: 'Canonical internally, legacy on this request',
+          format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        },
+      ],
+    }).response;
+    const platform = buildPlatform({
+      sales: { ...base.sales, getProducts: async () => canonicalProductResponse },
+    });
+    platform.capabilities.supported_versions = ['3.0', '3.1'];
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'per-request-downshift',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.0',
+          account: { account_id: 'acc_test' },
+          brief: 'legacy wire',
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.adcp_version, undefined);
+    assert.strictEqual(result.structuredContent.products[0].format_options, undefined);
+    assert.strictEqual(result.structuredContent.products[0].format_ids[0].id, 'display_300x250_image');
+  });
+
+  it('emits a schema-valid canonical custom product declaration with an explicit legacy mapping', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({
+            cache_scope: 'account',
+            products: [
+              {
+                product_id: 'custom-homepage',
+                name: 'Custom homepage',
+                description: 'Seller-specific takeover',
+                format_ids: [{ agent_url: 'https://seller.example/custom-formats', id: 'homepage_takeover' }],
+                delivery_type: 'non_guaranteed',
+                publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+                reporting_capabilities: {
+                  available_reporting_frequencies: ['daily'],
+                  expected_delay_minutes: 60,
+                  timezone: 'UTC',
+                  supports_webhooks: false,
+                  available_metrics: ['impressions', 'spend'],
+                  date_range_support: 'date_range',
+                },
+                pricing_options: [
+                  {
+                    pricing_option_id: 'custom-homepage-cpm',
+                    pricing_model: 'cpm',
+                    fixed_price: 10,
+                    currency: 'USD',
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'canonical-custom-product',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'strict' },
+        legacyCreativeFormatConverter: () => ({
+          format_option_id: 'homepage-takeover',
+          format_kind: 'custom',
+          format_shape: 'multi_placement_takeover',
+          format_schema: {
+            uri: 'https://seller.example/formats/homepage_takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        }),
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'custom homepage' },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const declaration = result.structuredContent.products[0].format_options[0];
+    assert.strictEqual(declaration.format_kind, 'custom');
+    assert.deepStrictEqual(declaration.v1_format_ref, [
+      { agent_url: 'https://seller.example/custom-formats', id: 'homepage_takeover' },
+    ]);
+  });
+
+  it('preserves format-agnostic products across canonical and nested 3.0 response projection', async () => {
+    const base = buildPlatform();
+    let modernProduct = {
+      product_id: 'format-agnostic-legacy',
+      name: 'Format agnostic',
+      description: 'No creative format restriction',
+      format_ids: [],
+    };
+    const modernServer = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => ({ cache_scope: 'account', products: [modernProduct] }),
+        },
+      }),
+      {
+        name: 'format-agnostic-modern',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    for (const [index, productShape] of [
+      modernProduct,
+      { ...modernProduct, product_id: 'format-agnostic-canonical', format_ids: undefined, format_options: [] },
+    ].entries()) {
+      modernProduct = productShape;
+      const result = await modernServer.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { account: { account_id: 'acc_test' }, brief: `format agnostic ${index}` },
+        },
+      });
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.deepStrictEqual(result.structuredContent.products[0].format_options, []);
+      assert.strictEqual(result.structuredContent.products[0].format_ids, undefined);
+    }
+
+    const legacyServer = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => ({
+            media_buy_id: 'mb-format-agnostic',
+            packages: [
+              {
+                package_id: 'pkg-format-agnostic',
+                product: {
+                  product_id: 'format-agnostic-nested',
+                  name: 'Nested format agnostic',
+                  description: 'No creative format restriction',
+                  format_options: [],
+                },
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'format-agnostic-legacy',
+        version: '1.0.0',
+        adcpVersion: '3.0.12',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const legacyResult = await legacyServer.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'format-agnostic-legacy',
+          packages: [],
+        },
+      },
+    });
+    assert.notStrictEqual(legacyResult.isError, true, JSON.stringify(legacyResult.structuredContent));
+    const nestedProduct = legacyResult.structuredContent.packages[0].product;
+    assert.deepStrictEqual(nestedProduct.format_ids, []);
+    assert.strictEqual(nestedProduct.format_options, undefined);
+  });
+
+  it('projects semantic creative identities across every 3.0 media-buy response seam', async () => {
+    const legacyRef = {
+      agent_url: 'https://creative.adcontextprotocol.org/',
+      id: 'display_300x250_image',
+    };
+    const canonicalCreative = {
+      creative_id: 'canonical-on-platform',
+      name: 'Canonical on platform',
+      format_kind: 'image',
+      assets: {},
+    };
+    const packageState = () => ({
+      package_id: 'pkg-legacy-wire',
+      product_id: 'p1',
+      format_ids: [legacyRef],
+      creatives: [canonicalCreative],
+    });
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        createMediaBuy: async () => ({
+          media_buy_id: 'mb-legacy-wire',
+          packages: [packageState()],
+        }),
+        updateMediaBuy: async () => ({
+          media_buy_id: 'mb-legacy-wire',
+          revision: 2,
+          packages: [packageState()],
+        }),
+        getMediaBuys: async () => ({
+          media_buys: [{ media_buy_id: 'mb-legacy-wire', status: 'active', packages: [packageState()] }],
+        }),
+        getMediaBuyDelivery: async () => ({
+          media_buy_deliveries: [{ media_buy_id: 'mb-legacy-wire', package_deliveries: [packageState()] }],
+        }),
+        listCreatives: async () => ({
+          query_summary: { total_matching: 1, returned: 1 },
+          creatives: [
+            {
+              creative_id: 'listed-legacy',
+              name: 'Listed legacy',
+              format_id: legacyRef,
+              assets: {},
+            },
+          ],
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'legacy-wire-semantic-responses',
+      version: '1.0.0',
+      adcpVersion: '3.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const requests = [
+      {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'legacy-create-response',
+          packages: [],
+        },
+      },
+      {
+        name: 'update_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'legacy-update-response',
+          media_buy_id: 'mb-legacy-wire',
+        },
+      },
+      {
+        name: 'get_media_buys',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-legacy-wire'] },
+      },
+      {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-legacy-wire'] },
+      },
+      { name: 'list_creatives', arguments: { account: { account_id: 'acc_test' } } },
+    ];
+
+    for (const request of requests) {
+      const result = await server.dispatchTestRequest({ method: 'tools/call', params: request });
+      assert.notStrictEqual(result.isError, true, `${request.name}: ${JSON.stringify(result.structuredContent)}`);
+      const json = JSON.stringify(result.structuredContent);
+      assert.doesNotMatch(json, /"format_kind"\s*:/, `${request.name} leaked canonical creative identity`);
+      assert.match(json, /"format_id"\s*:/, `${request.name} did not emit legacy creative identity`);
+      assert.match(json, /display_300x250_image/);
+    }
+  });
+
+  it('errors cleanly when a canonical-only product cannot be represented on a 3.0 server wire', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      name: 'legacy-wire-unrepresentable-product',
+      version: '1.0.0',
+      adcpVersion: '3.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'legacy wire' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /cannot be represented on the configured legacy wire/);
+  });
+
+  it('normalizes legacy creative refs before modern platform handlers run', async () => {
+    let received;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        syncCreatives: async creatives => {
+          received = creatives;
+          return creatives.map(creative => ({ creative_id: creative.creative_id, action: 'created' }));
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'canonical-boundary',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-boundary-1',
+          creatives: [
+            {
+              creative_id: 'legacy-image',
+              name: 'Legacy image',
+              format_id: {
+                agent_url: 'https://creative.adcontextprotocol.org/',
+                id: 'display_300x250_image',
+              },
+              assets: {},
+            },
+          ],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(received[0].format_kind, 'image');
+    assert.strictEqual(received[0].format_id, undefined);
+  });
+
+  it('rejects an unmapped legacy creative without an explicit converter', async () => {
+    let received;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        syncCreatives: async creatives => {
+          received = creatives;
+          return creatives.map(creative => ({ creative_id: creative.creative_id, action: 'created' }));
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'canonical-boundary',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-boundary-2',
+          creatives: [
+            {
+              creative_id: 'custom-legacy',
+              name: 'Custom legacy',
+              format_id: { agent_url: 'https://seller.example/', id: 'homepage_takeover' },
+              assets: {},
+            },
+          ],
+        },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(received, undefined);
+  });
+
+  it('converts an unmapped legacy creative through the explicit custom-format escape hatch', async () => {
+    let received;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      sales: {
+        ...base.sales,
+        syncCreatives: async creatives => {
+          received = creatives;
+          return creatives.map(creative => ({ creative_id: creative.creative_id, action: 'created' }));
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'canonical-boundary',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatConverter: () => ({
+        format_kind: 'custom',
+        format_option_id: 'homepage-takeover',
+        format_shape: 'multi_placement_takeover',
+        format_schema: {
+          uri: 'https://seller.example/formats/homepage_takeover.json',
+          digest: `sha256:${'a'.repeat(64)}`,
+        },
+        params: {},
+      }),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_creatives',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-boundary-3',
+          creatives: [
+            {
+              creative_id: 'custom-legacy',
+              name: 'Custom legacy',
+              format_id: { agent_url: 'https://seller.example/', id: 'homepage_takeover' },
+              assets: {},
+            },
+          ],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(received[0].format_kind, 'custom');
+    assert.deepStrictEqual(received[0].format_option_ref, {
+      scope: 'product',
+      format_option_id: 'homepage-takeover',
+    });
+  });
+
+  it('canonicalizes legacy list_creatives output before returning it to modern buyers', async () => {
+    const base = buildPlatform();
+    let sawListRequest;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          listCreatives: async req => {
+            sawListRequest = req;
+            return {
+              query_summary: { total_matching: 1, returned: 1 },
+              pagination: { has_more: false },
+              creatives: [
+                {
+                  creative_id: 'listed-legacy',
+                  name: 'Listed legacy',
+                  format_id: {
+                    agent_url: 'https://creative.adcontextprotocol.org/',
+                    id: 'display_300x250_image',
+                  },
+                  status: 'approved',
+                  created_date: '2026-01-01T00:00:00Z',
+                  updated_date: '2026-01-01T00:00:00Z',
+                  assets: {},
+                },
+              ],
+            };
+          },
+        },
+      }),
+      {
+        name: 'canonical-list-output',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_creatives',
+        arguments: { account: { account_id: 'acc_test' }, fields: ['name', 'format_id'] },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.creatives[0].format_kind, 'image');
+    assert.strictEqual(result.structuredContent.creatives[0].format_id, undefined);
+    assert.deepStrictEqual(sawListRequest.fields, ['name', 'format_kind']);
+  });
+
+  it('rejects legacy list_creatives format filters before canonical platform dispatch', async () => {
+    const base = buildPlatform();
+    let called = false;
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          listCreatives: async () => {
+            called = true;
+            return { creatives: [] };
+          },
+        },
+      }),
+      { name: 'canonical-list-filter', version: '1.0.0', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'list_creatives',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          filters: { format_ids: [{ agent_url: 'https://legacy.example/', id: 'display' }] },
+        },
+      },
+    });
+    assert.strictEqual(called, false);
+    assert.strictEqual(result.isError, true);
+    assert.match(JSON.stringify(result.structuredContent), /filters\.format_ids|legacy format_ids/);
+  });
+
+  it('strips legacy creative identity recursively from canonical platform responses', async () => {
+    const base = buildPlatform();
+    const legacyDetails = {
+      format_id: { agent_url: 'https://legacy.example/', id: 'legacy-format' },
+      nested: { format_ids_pending: ['legacy-format'] },
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async () => {
+            const result = await base.sales.getProducts();
+            return {
+              ...result,
+              errors: [{ code: 'LEGACY_DETAIL', message: 'legacy detail', details: legacyDetails }],
+              ext: { safe: 'kept', nested: { agent_url: 'https://legacy.example/' } },
+            };
+          },
+          createMediaBuy: async () => ({
+            media_buy_id: 'mb-canonical-response',
+            packages: [],
+            errors: [{ code: 'LEGACY_DETAIL', message: 'legacy detail', details: legacyDetails }],
+            ext: { safe: 'kept', nested: { v1_format_ref: [legacyDetails.format_id] } },
+          }),
+          updateMediaBuy: async () => ({
+            media_buy_id: 'mb-canonical-response',
+            packages: [],
+            revision: 2,
+            ext: { safe: 'kept', nested: legacyDetails },
+          }),
+        },
+      }),
+      {
+        name: 'canonical-response-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const products = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { account: { account_id: 'acc_test' }, brief: 'test' } },
+    });
+    const created = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-response-create',
+          packages: [],
+        },
+      },
+    });
+    const updated = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-response-update',
+          media_buy_id: 'mb-canonical-response',
+        },
+      },
+    });
+
+    for (const result of [products, created, updated]) {
+      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+      assert.doesNotMatch(
+        JSON.stringify(result.structuredContent),
+        /"(?:format_id|format_ids|format_ids_pending|v1_format_ref|agent_url)"\s*:/
+      );
+      assert.strictEqual(result.structuredContent.ext.safe, 'kept');
+    }
+  });
+
+  it('semantically converts legacy creatives in platform responses instead of only stripping them', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => ({
+            media_buy_id: 'mb-response-conversion',
+            packages: [
+              {
+                package_id: 'pkg-response-conversion',
+                creatives: [
+                  {
+                    creative_id: 'legacy-response-image',
+                    name: 'Legacy response image',
+                    format_id: {
+                      agent_url: 'https://creative.adcontextprotocol.org/',
+                      id: 'display_300x250_image',
+                    },
+                    assets: {},
+                  },
+                  {
+                    creative_id: 'legacy-response-custom',
+                    name: 'Legacy response custom',
+                    format_id: { agent_url: 'https://seller.example/custom', id: 'homepage_takeover' },
+                    assets: {},
+                  },
+                ],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'semantic-response-conversion',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        legacyCreativeFormatConverter: ({ formatId }) =>
+          formatId.id === 'homepage_takeover'
+            ? {
+                format_option_id: 'homepage-takeover',
+                format_kind: 'custom',
+                format_shape: 'takeover',
+                format_schema: {
+                  uri: 'https://seller.example/formats/homepage_takeover.json',
+                  digest: `sha256:${'a'.repeat(64)}`,
+                },
+                params: {},
+              }
+            : undefined,
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'semantic-response-conversion',
+          packages: [],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const creative = result.structuredContent.packages[0].creatives[0];
+    assert.strictEqual(creative.format_kind, 'image');
+    assert.strictEqual(creative.format_id, undefined);
+    const custom = result.structuredContent.packages[0].creatives[1];
+    assert.strictEqual(custom.format_kind, 'custom');
+    assert.deepStrictEqual(custom.format_option_ref, {
+      scope: 'product',
+      format_option_id: 'homepage-takeover',
+    });
+    assert.strictEqual(custom.format_id, undefined);
+  });
+
+  it('canonicalizes recognized creative identities in request extensions and rejects ambiguous legacy metadata', async () => {
+    let receivedExt;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async request => {
+            receivedExt = request.ext;
+            return { media_buy_id: 'mb-extension', packages: [] };
+          },
+        },
+      }),
+      {
+        name: 'canonical-request-extensions',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const converted = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'canonical-request-extension',
+          packages: [],
+          ext: {
+            vendor: {
+              creative_id: 'extension-creative',
+              name: 'Extension creative',
+              format_id: {
+                agent_url: 'https://creative.adcontextprotocol.org/',
+                id: 'display_300x250_image',
+              },
+              assets: {},
+            },
+            buyer_agent: { id: 'buyer-agent', agent_url: 'https://buyer.example/mcp' },
+            agent: { id: 'seller-agent', agent_url: 'https://seller.example/mcp' },
+            property_list: { list_id: 'list-1', agent_url: 'https://lists.example/mcp' },
+            collection_list: { list_id: 'collection-1', agent_url: 'https://lists.example/mcp' },
+            signal_id: { source: 'agent', id: 'signal-1', agent_url: 'https://signals.example/mcp' },
+            signal_ids: [{ source: 'agent', id: 'signal-2', agent_url: 'https://signals.example/mcp' }],
+          },
+        },
+      },
+    });
+    assert.notStrictEqual(converted.isError, true, JSON.stringify(converted.structuredContent));
+    assert.strictEqual(receivedExt.vendor.format_kind, 'image');
+    assert.strictEqual(receivedExt.vendor.format_id, undefined);
+    assert.deepStrictEqual(receivedExt.buyer_agent, {
+      id: 'buyer-agent',
+      agent_url: 'https://buyer.example/mcp',
+    });
+    assert.deepStrictEqual(receivedExt.agent, {
+      id: 'seller-agent',
+      agent_url: 'https://seller.example/mcp',
+    });
+    assert.deepStrictEqual(receivedExt.property_list, {
+      list_id: 'list-1',
+      agent_url: 'https://lists.example/mcp',
+    });
+    assert.deepStrictEqual(receivedExt.collection_list, {
+      list_id: 'collection-1',
+      agent_url: 'https://lists.example/mcp',
+    });
+    assert.deepStrictEqual(receivedExt.signal_id, {
+      source: 'agent',
+      id: 'signal-1',
+      agent_url: 'https://signals.example/mcp',
+    });
+    assert.deepStrictEqual(receivedExt.signal_ids, [
+      { source: 'agent', id: 'signal-2', agent_url: 'https://signals.example/mcp' },
+    ]);
+
+    const rejected = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'ambiguous-request-extension',
+          packages: [],
+          ext: {
+            vendor_ref: { agent_url: 'https://seller.example/custom', id: 'unscoped-format' },
+          },
+        },
+      },
+    });
+    assert.strictEqual(rejected.isError, true);
+    assert.strictEqual(rejected.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(rejected.structuredContent.adcp_error.message, /cannot be represented canonically/);
+
+    const sharedAgentRef = { agent_url: 'https://seller.example/shared', id: 'shared-agent-ref' };
+    const sharedListRef = {
+      agent_url: 'https://lists.example/shared',
+      id: 'shared-list-ref',
+      list_id: 'shared-list',
+    };
+    const sharedSignalRef = {
+      source: 'agent',
+      agent_url: 'https://signals.example/shared',
+      id: 'shared-signal-ref',
+    };
+    const aliasOrderings = [
+      { buyer_agent: sharedAgentRef, vendor_ref: sharedAgentRef },
+      { vendor_ref: sharedAgentRef, buyer_agent: sharedAgentRef },
+      { property_list: sharedListRef, vendor_ref: sharedListRef },
+      { vendor_ref: sharedListRef, property_list: sharedListRef },
+      { signal_id: sharedSignalRef, vendor_ref: sharedSignalRef },
+      { vendor_ref: sharedSignalRef, signal_id: sharedSignalRef },
+    ];
+    for (const [index, ext] of aliasOrderings.entries()) {
+      receivedExt = undefined;
+      const aliased = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: {
+            account: { account_id: 'acc_test' },
+            idempotency_key: `aliased-request-extension-${index}`,
+            packages: [],
+            ext,
+          },
+        },
+      });
+      assert.strictEqual(aliased.isError, true, `shared ref ordering ${index} must fail closed`);
+      assert.strictEqual(aliased.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(receivedExt, undefined, `shared ref ordering ${index} reached the platform handler`);
+    }
+
+    const invalidSignal = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'invalid-catalog-signal-agent-url',
+          packages: [],
+          ext: {
+            signal_id: {
+              source: 'catalog',
+              id: 'catalog-signal',
+              agent_url: 'https://signals.example/disguised',
+            },
+          },
+        },
+      },
+    });
+    assert.strictEqual(invalidSignal.isError, true);
+    assert.strictEqual(invalidSignal.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+
+    const disguisedPropertyList = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'invalid-property-list-format-tuple',
+          packages: [],
+          ext: {
+            property_list: {
+              id: 'custom-format',
+              agent_url: 'https://creative.example/disguised',
+            },
+          },
+        },
+      },
+    });
+    assert.strictEqual(disguisedPropertyList.isError, true);
+    assert.strictEqual(disguisedPropertyList.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+
+    receivedExt = undefined;
+    const cyclicExt = {};
+    cyclicExt.self = cyclicExt;
+    const cyclicRequest = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'cyclic-request-extension',
+          packages: [],
+          ext: cyclicExt,
+        },
+      },
+    });
+    assert.strictEqual(cyclicRequest.isError, true);
+    assert.strictEqual(cyclicRequest.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(receivedExt, undefined, 'cyclic request must not reach the platform handler');
+  });
+
+  it('semantically converts class-instance creative and product response records', async () => {
+    class LegacyCreative {
+      constructor() {
+        this.creative_id = 'class-creative';
+        this.name = 'Class creative';
+        this.format_id = {
+          agent_url: 'https://creative.adcontextprotocol.org/',
+          id: 'display_300x250_image',
+        };
+        this.assets = {};
+      }
+    }
+    class LegacyProduct {
+      constructor() {
+        this.product_id = 'class-product';
+        this.name = 'Class product';
+        this.description = 'Legacy product returned through a class instance';
+        this.format_ids = [
+          {
+            agent_url: 'https://creative.adcontextprotocol.org/',
+            id: 'display_300x250_image',
+          },
+        ];
+      }
+    }
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => ({
+            media_buy_id: 'mb-class-response',
+            packages: [
+              {
+                package_id: 'pkg-class-response',
+                product: new LegacyProduct(),
+                creatives: [new LegacyCreative()],
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'class-response-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'class-response-boundary',
+          packages: [],
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const returnedPackage = result.structuredContent.packages[0];
+    assert.strictEqual(returnedPackage.creatives[0].format_kind, 'image');
+    assert.strictEqual(returnedPackage.creatives[0].format_id, undefined);
+    assert.strictEqual(returnedPackage.product.format_options[0].format_kind, 'image');
+    assert.strictEqual(returnedPackage.product.format_ids, undefined);
+  });
+
+  it('fails cleanly instead of evaluating response accessors', async () => {
+    let plainAccessorReads = 0;
+    class AccessorCreative {
+      constructor() {
+        this.creative_id = 'accessor-creative';
+        Object.defineProperty(this, 'format_id', {
+          enumerable: true,
+          get: () => ({ agent_url: 'https://seller.example/custom', id: 'accessor-format' }),
+        });
+      }
+    }
+    const plainAccessorCreative = { creative_id: 'plain-accessor-creative' };
+    Object.defineProperty(plainAccessorCreative, 'format_id', {
+      enumerable: true,
+      get: () => {
+        plainAccessorReads++;
+        throw new Error('plain response getter must never run');
+      },
+    });
+    let hiddenAccessorReads = 0;
+    const hiddenAccessorCreative = { creative_id: 'hidden-accessor-creative' };
+    Object.defineProperty(hiddenAccessorCreative, 'format_id', {
+      enumerable: false,
+      get: () => {
+        hiddenAccessorReads++;
+        throw new Error('non-enumerable response getter must never run');
+      },
+    });
+    let responseKind = 'class';
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getMediaBuyDelivery: async () => ({
+            creative_deliveries: [
+              responseKind === 'class'
+                ? new AccessorCreative()
+                : responseKind === 'plain'
+                  ? plainAccessorCreative
+                  : hiddenAccessorCreative,
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'accessor-response-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-accessor'] },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /cannot be represented canonically/);
+
+    responseKind = 'plain';
+    const plainResult = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-plain-accessor'] },
+      },
+    });
+    assert.strictEqual(plainResult.isError, true);
+    assert.strictEqual(plainResult.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(plainAccessorReads, 0, 'descriptor scan must not evaluate plain-object getters');
+
+    responseKind = 'hidden';
+    const hiddenResult = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-hidden-accessor'] },
+      },
+    });
+    assert.strictEqual(hiddenResult.isError, true);
+    assert.strictEqual(hiddenResult.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(hiddenAccessorReads, 0, 'descriptor scan must not evaluate non-enumerable getters');
+  });
+
+  it('fails cleanly on cyclic semantic platform responses', async () => {
+    const cyclic = { media_buy_id: 'mb-cyclic', packages: [] };
+    cyclic.ext = { owner: cyclic };
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => cyclic,
+        },
+      }),
+      {
+        name: 'cyclic-response-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_test' },
+          idempotency_key: 'cyclic-response-boundary',
+          packages: [],
+        },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /cannot be represented canonically/);
+  });
+
+  it('rejects array subclasses without invoking overridden prototype behavior', async () => {
+    let mapCalls = 0;
+    let getterReads = 0;
+    class HostileArray extends Array {
+      map() {
+        mapCalls += 1;
+        throw new Error('subclass map must never run');
+      }
+
+      get format_id() {
+        getterReads += 1;
+        return { agent_url: 'https://seller.example/custom', id: 'array-format' };
+      }
+    }
+    const deliveries = new HostileArray();
+    deliveries.push({ creative_id: 'safe-creative', format_kind: 'image' });
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getMediaBuyDelivery: async () => ({ creative_deliveries: deliveries }),
+        },
+      }),
+      {
+        name: 'array-subclass-response-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb-array-subclass'] },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(mapCalls, 0);
+    assert.strictEqual(getterReads, 0);
+  });
+
+  it('3.0 egress rejects own and inherited toJSON hooks without invoking them', async () => {
+    let hookReads = 0;
+    const ownHookResponse = { media_buy_id: 'mb-own-to-json', packages: [] };
+    Object.defineProperty(ownHookResponse, 'toJSON', {
+      configurable: true,
+      value: () => {
+        hookReads++;
+        return { media_buy_id: 'mb-own-to-json', format_kind: 'image' };
+      },
+    });
+
+    const inheritedHook = {};
+    Object.defineProperty(inheritedHook, 'toJSON', {
+      configurable: true,
+      get: () => {
+        hookReads++;
+        return () => ({ media_buy_id: 'mb-inherited-to-json', format_kind: 'image' });
+      },
+    });
+    const inheritedHookResponse = Object.assign(Object.create(inheritedHook), {
+      media_buy_id: 'mb-inherited-to-json',
+      packages: [],
+    });
+
+    let platformResponse = ownHookResponse;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          createMediaBuy: async () => platformResponse,
+        },
+      }),
+      {
+        name: 'legacy-to-json-boundary',
+        version: '1.0.0',
+        adcpVersion: '3.0.12',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const dispatch = idempotency_key =>
+      server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'create_media_buy',
+          arguments: { account: { account_id: 'acc_test' }, idempotency_key, packages: [] },
+        },
+      });
+
+    const ownResult = await dispatch('own-to-json-hook');
+    assert.strictEqual(ownResult.isError, true);
+    assert.strictEqual(ownResult.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+
+    platformResponse = inheritedHookResponse;
+    const inheritedResult = await dispatch('inherited-to-json-hook');
+    assert.strictEqual(inheritedResult.isError, true);
+    assert.strictEqual(inheritedResult.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(hookReads, 0, 'semantic boundary must inspect toJSON descriptors without invoking hooks');
+  });
+
+  it('descriptor-scans get_products responses without evaluating plain getters', async () => {
+    let productReads = 0;
+    const productResponse = { cache_scope: 'account' };
+    Object.defineProperty(productResponse, 'products', {
+      enumerable: true,
+      get: () => {
+        productReads++;
+        throw new Error('product response getter must never run');
+      },
+    });
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({ sales: { ...base.sales, getProducts: async () => productResponse } }),
+      {
+        name: 'product-accessor-boundary',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: { account: { account_id: 'acc_test' }, brief: 'getter safety' },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(productReads, 0, 'get_products descriptor scan must not evaluate getters');
+  });
+
+  it('errors cleanly when a platform response contains an unmapped legacy creative', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getMediaBuyDelivery: async () => ({
+            creative_deliveries: [
+              {
+                creative_id: 'unmapped-response-creative',
+                format_id: { agent_url: 'https://seller.example/custom', id: 'homepage_takeover' },
+              },
+            ],
+          }),
+        },
+      }),
+      {
+        name: 'semantic-response-rejection',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_test' }, media_buy_ids: ['mb_1'] },
+      },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /cannot be represented canonically/);
   });
 
   it('applies responseEnhancer to platform and generated discovery responses', async () => {
@@ -183,7 +1478,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
                 product_id: 'p_auth_scoped',
                 name: 'auth scoped',
                 description: '',
-                format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+                format_options: [{ format_kind: 'image', params: {} }],
                 delivery_type: 'non_guaranteed',
                 publisher_properties: { reportable: true },
                 reporting_capabilities: { available_dimensions: ['geo'] },
@@ -387,11 +1682,11 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       statusMappers: {},
       creative: {
-        buildCreative: async req => {
+        buildCreativeLegacy: async req => {
           sawReq = req;
           return { manifest_id: 'mf_1', assets: [] };
         },
-        previewCreative: async () => ({ preview_url: 'https://example.com/p' }),
+        previewCreativeLegacy: async () => ({ preview_url: 'https://example.com/p' }),
         syncCreatives: async () => [],
       },
     };
@@ -435,7 +1730,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       statusMappers: {},
       creative: {
-        buildCreative: async req => {
+        buildCreativeLegacy: async req => {
           sawReq = req;
           return { manifest_id: 'mf_gen_1', assets: [] };
         },
@@ -492,8 +1787,8 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       statusMappers: {},
       creative: {
-        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
-        listCreativeFormats: async req => {
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        listCreativeFormatsLegacy: async req => {
           sawReq = req;
           return {
             formats: [
@@ -542,7 +1837,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       statusMappers: {},
       creative: {
-        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
         // No listCreativeFormats — adopters who delegate via creative_agents
         // declarations omit it; framework returns UNSUPPORTED_FEATURE.
       },
@@ -580,7 +1875,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       statusMappers: {},
       creative: {
-        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        buildCreativeLegacy: async () => ({ manifest_id: 'mf_1', assets: [] }),
       },
     };
     const server = createAdcpServerFromPlatform(platform, {
@@ -752,7 +2047,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           capturedTaskId = taskCtx.id;
           await new Promise(r => setTimeout(r, 20));
           return {
-            products: [{ product_id: 'p_async', name: 'async product' }],
+            products: [
+              {
+                product_id: 'p_async',
+                name: 'async product',
+                format_options: [{ format_kind: 'image', params: {} }],
+              },
+            ],
             cache_scope: 'account',
           };
         }),
@@ -776,7 +2077,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, {
-      products: [{ product_id: 'p_async', name: 'async product' }],
+      products: [
+        {
+          product_id: 'p_async',
+          name: 'async product',
+          format_options: [{ format_kind: 'image', params: {} }],
+        },
+      ],
       cache_scope: 'account',
     });
   });
@@ -835,7 +2142,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
         ctx.handoffToTask(async () => {
           await unblockTask;
           return {
-            products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+            products: [
+              {
+                product_id: 'p_async_pollable',
+                name: 'pollable product',
+                format_options: [{ format_kind: 'image', params: {} }],
+              },
+            ],
             cache_scope: 'account',
           };
         }),
@@ -911,7 +2224,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     assert.strictEqual(completed.structuredContent.status, 'completed');
     assert.deepStrictEqual(completed.structuredContent.result, {
-      products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+      products: [
+        {
+          product_id: 'p_async_pollable',
+          name: 'pollable product',
+          format_options: [{ format_kind: 'image', params: {} }],
+        },
+      ],
       cache_scope: 'account',
     });
     assert.strictEqual(emits.length, 1, 'one get_products webhook emitted on terminal completion');
@@ -922,7 +2241,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(emits[0].payload.operation_id, 'op_products_async');
     assert.strictEqual(emits[0].payload.token, 'webhook-token-1234');
     assert.deepStrictEqual(emits[0].payload.result, {
-      products: [{ product_id: 'p_async_pollable', name: 'pollable product' }],
+      products: [
+        {
+          product_id: 'p_async_pollable',
+          name: 'pollable product',
+          format_options: [{ format_kind: 'image', params: {} }],
+        },
+      ],
       cache_scope: 'account',
     });
     assertMcpWebhookPayloadValid(emits[0].payload);
@@ -1203,6 +2528,59 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const finalRecord = await server.getTaskState(taskId);
     assert.strictEqual(finalRecord.status, 'completed');
     assert.deepStrictEqual(finalRecord.result, { media_buy_id: 'mb_final', status: 'active' });
+  });
+
+  it('canonicalizes legacy custom creatives in async terminal media-buy results', async () => {
+    const platform = buildHitlPlatform({
+      createMediaBuy: async (_req, ctx) =>
+        ctx.handoffToTask(async () => ({
+          media_buy_id: 'mb_async_custom',
+          packages: [
+            {
+              package_id: 'pkg_async_custom',
+              creatives: [
+                {
+                  creative_id: 'creative_async_custom',
+                  format_id: { agent_url: 'https://seller.example/custom', id: 'homepage_takeover' },
+                  assets: {},
+                },
+              ],
+            },
+          ],
+        })),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'async-custom-boundary',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatConverter: ({ formatId }) =>
+        formatId.id === 'homepage_takeover'
+          ? {
+              format_kind: 'custom',
+              format_option_id: 'homepage-takeover',
+              format_shape: 'takeover',
+              format_schema: {
+                uri: 'https://seller.example/formats/homepage_takeover.json',
+                digest: `sha256:${'a'.repeat(64)}`,
+              },
+              params: {},
+            }
+          : undefined,
+    });
+
+    const submitted = await dispatchCreate(server);
+    assert.strictEqual(submitted.structuredContent.status, 'submitted');
+    await server.awaitTask(submitted.structuredContent.task_id);
+    const finalRecord = await server.getTaskState(submitted.structuredContent.task_id);
+
+    assert.strictEqual(finalRecord.status, 'completed');
+    const creative = finalRecord.result.packages[0].creatives[0];
+    assert.strictEqual(creative.format_kind, 'custom');
+    assert.strictEqual(creative.format_id, undefined);
+    assert.deepStrictEqual(creative.format_option_ref, {
+      scope: 'product',
+      format_option_id: 'homepage-takeover',
+    });
   });
 
   it('updateMediaBuy returning ctx.handoffToTask is caller-scoped and pollable through task status', async () => {
@@ -1662,7 +3040,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
-        listCreativeFormats: async () => ({
+        listCreativeFormatsLegacy: async () => ({
           formats: [{ agent_url: 'https://example.com/mcp', id: 'video_30s', type: 'video' }],
         }),
       },
@@ -2349,17 +3727,19 @@ describe('Custom-handler merge seam (incremental migration)', () => {
   // standards CRUD, etc. — without forking the runtime. Platform-derived
   // handlers WIN per-key; adopter handlers fill the rest.
 
-  it('dispatches getMediaBuys (un-wired by SalesPlatform) through opts.mediaBuy', async () => {
+  it('dispatches getMediaBuys through opts.legacyHandlers.mediaBuy', async () => {
     const platform = buildPlatform();
     let sawArgs;
     const server = createAdcpServerFromPlatform(platform, {
       name: 'merged',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      mediaBuy: {
-        getMediaBuys: async (params, ctx) => {
-          sawArgs = { params, account: ctx.account };
-          return { media_buys: [{ media_buy_id: 'mb_42', status: 'active' }] };
+      legacyHandlers: {
+        mediaBuy: {
+          getMediaBuys: async (params, ctx) => {
+            sawArgs = { params, account: ctx.account };
+            return { media_buys: [{ media_buy_id: 'mb_42', status: 'active' }] };
+          },
         },
       },
     });
@@ -2543,7 +3923,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
               product_id: 'platform_wins',
               name: 'platform',
               description: '',
-              format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+              format_options: [{ format_kind: 'image', params: {} }],
               delivery_type: 'non_guaranteed',
               publisher_properties: { reportable: true },
               reporting_capabilities: { available_dimensions: ['geo'] },
@@ -2562,24 +3942,26 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       name: 'merged',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      mediaBuy: {
-        // Custom handler tries to override platform.sales.getProducts.
-        // Platform-derived MUST win — opts is the gap-filler, not an override.
-        getProducts: async () => ({
-          products: [
-            {
-              product_id: 'opts_should_lose',
-              name: 'opts',
-              description: '',
-              format_ids: [],
-              delivery_type: 'non_guaranteed',
-              publisher_properties: { reportable: true },
-              reporting_capabilities: { available_dimensions: [] },
-              pricing_options: [],
-            },
-          ],
-          cache_scope: 'account',
-        }),
+      legacyHandlers: {
+        mediaBuy: {
+          // Custom handler tries to override platform.sales.getProducts.
+          // Platform-derived MUST win — opts is the gap-filler, not an override.
+          getProducts: async () => ({
+            products: [
+              {
+                product_id: 'opts_should_lose',
+                name: 'opts',
+                description: '',
+                format_ids: [],
+                delivery_type: 'non_guaranteed',
+                publisher_properties: { reportable: true },
+                reporting_capabilities: { available_dimensions: [] },
+                pricing_options: [],
+              },
+            ],
+            cache_scope: 'account',
+          }),
+        },
       },
     });
     const result = await server.dispatchTestRequest({
@@ -2593,7 +3975,7 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(
       result.structuredContent.products[0].product_id,
       'platform_wins',
-      'platform-derived handler must win over opts.mediaBuy.getProducts'
+      'platform-derived handler must win over opts.legacyHandlers.mediaBuy.getProducts'
     );
   });
 
@@ -2636,10 +4018,12 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       name: 'merged',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      governance: {
-        listContentStandards: async () => {
-          listCalled = true;
-          return { standards: [] };
+      legacyHandlers: {
+        governance: {
+          listContentStandards: async () => {
+            listCalled = true;
+            return { standards: [] };
+          },
         },
       },
     });
@@ -2776,15 +4160,15 @@ describe('ContentStandardsPlatform (M1)', () => {
         config: {},
       },
       contentStandards: {
-        listContentStandards: async () => {
+        listContentStandardsLegacy: async () => {
           invoked = true;
           return { standards: [] };
         },
-        getContentStandards: async () => ({ standards: [] }),
-        createContentStandards: async () => ({ standard: { standard_id: 's_1' } }),
-        updateContentStandards: async () => ({ standard: { standard_id: 's_1' } }),
-        calibrateContent: async () => ({ calibration: {} }),
-        validateContentDelivery: async () => ({ result: {} }),
+        getContentStandardsLegacy: async () => ({ standards: [] }),
+        createContentStandardsLegacy: async () => ({ standard: { standard_id: 's_1' } }),
+        updateContentStandardsLegacy: async () => ({ standard: { standard_id: 's_1' } }),
+        calibrateContentLegacy: async () => ({ calibration: {} }),
+        validateContentDeliveryLegacy: async () => ({ result: {} }),
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
@@ -2838,12 +4222,14 @@ describe('Merge-seam collision warning (M3)', () => {
         warn: msg => warnings.push(msg),
         error: () => {},
       },
-      mediaBuy: {
-        // Adopter override that's about to be silently shadowed.
-        getMediaBuys: async () => ({ media_buys: [{ media_buy_id: 'opts_should_warn' }] }),
+      legacyHandlers: {
+        mediaBuy: {
+          // Adopter override that's about to be silently shadowed.
+          getMediaBuys: async () => ({ media_buys: [{ media_buy_id: 'opts_should_warn' }] }),
+        },
       },
     });
-    const collisionWarn = warnings.find(w => w.includes('opts.mediaBuy') && w.includes('getMediaBuys'));
+    const collisionWarn = warnings.find(w => w.includes('opts.legacyHandlers.mediaBuy') && w.includes('getMediaBuys'));
     assert.ok(collisionWarn, `expected merge-seam collision warning, got: ${JSON.stringify(warnings)}`);
   });
 
@@ -2865,11 +4251,13 @@ describe('Merge-seam collision warning (M3)', () => {
           version: '0.0.1',
           validation: { requests: 'off', responses: 'off' },
           mergeSeam: 'strict',
-          mediaBuy: {
-            getMediaBuys: async () => ({ media_buys: [] }),
+          legacyHandlers: {
+            mediaBuy: {
+              getMediaBuys: async () => ({ media_buys: [] }),
+            },
           },
         }),
-      /opts\.mediaBuy.*shadowed/
+      /opts\.legacyHandlers\.mediaBuy.*shadowed/
     );
   });
 
@@ -2899,7 +4287,7 @@ describe('Merge-seam collision warning (M3)', () => {
       validation: { requests: 'off', responses: 'off' },
       mergeSeam: 'log-once',
       logger: { debug: () => {}, info: () => {}, warn: m => warnings1.push(m), error: () => {} },
-      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+      legacyHandlers: { mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) } },
     });
 
     createAdcpServerFromPlatform(buildCollidingPlatform(), {
@@ -2908,7 +4296,7 @@ describe('Merge-seam collision warning (M3)', () => {
       validation: { requests: 'off', responses: 'off' },
       mergeSeam: 'log-once',
       logger: { debug: () => {}, info: () => {}, warn: m => warnings2.push(m), error: () => {} },
-      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+      legacyHandlers: { mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) } },
     });
 
     const merge1 = warnings1.filter(w => w.includes('shadowed by platform-derived'));
@@ -2941,7 +4329,7 @@ describe('Merge-seam collision warning (M3)', () => {
           warn: msg => warnings.push(msg),
           error: () => {},
         },
-        mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+        legacyHandlers: { mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) } },
       })
     );
     const mergeWarnings = warnings.filter(w => w.includes('shadowed by platform-derived'));

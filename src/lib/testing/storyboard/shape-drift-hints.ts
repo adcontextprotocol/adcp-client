@@ -26,19 +26,19 @@ import type { ShapeDriftHint } from './types';
  * Keys match the helper name referenced in the hint `message`.
  */
 const HELPER_MIN_VERSION: Record<string, string> = {
-  buildCreativeResponse: '5.14.0',
-  listCreativesResponse: '5.10.0',
-  listCreativeFormatsResponse: '5.10.0',
-  listAccountsResponse: '5.10.0',
-  productsResponse: '5.10.0',
-  getMediaBuysResponse: '5.10.0',
-  getSignalsResponse: '5.10.0',
-  listPropertyListsResponse: '5.10.0',
-  listCollectionListsResponse: '5.10.0',
-  listContentStandardsResponse: '5.10.0',
-  getPlanAuditLogsResponse: '5.10.0',
-  syncCreativesResponse: '5.10.0',
-  previewCreativeResponse: '5.10.0',
+  legacyBuildCreativeResponse: '13.0.0',
+  legacyListCreativesResponse: '13.0.0',
+  legacyListCreativeFormatsResponse: '13.0.0',
+  legacyListAccountsResponse: '13.0.0',
+  legacyProductsResponse: '13.0.0',
+  legacyGetMediaBuysResponse: '13.0.0',
+  legacyGetSignalsResponse: '13.0.0',
+  legacyListPropertyListsResponse: '13.0.0',
+  legacyListCollectionListsResponse: '13.0.0',
+  legacyListContentStandardsResponse: '13.0.0',
+  legacyGetPlanAuditLogsResponse: '13.0.0',
+  legacySyncCreativesResponse: '13.0.0',
+  legacyPreviewCreativeResponse: '13.0.0',
 };
 
 /**
@@ -67,22 +67,21 @@ function semverLessThan(a: string, b: string): boolean {
  * helper that builds the correct shape.
  *
  * Helper names aren't uniformly prefixed — `get_products` uses
- * `productsResponse` (no `get` prefix) while `get_media_buys` uses
- * `getMediaBuysResponse`. Names match the exports in
- * `src/lib/server/responses.ts` verbatim so a developer can grep
- * straight from the hint.
+ * `legacyProductsResponse` (no `get` prefix) while `get_media_buys` uses
+ * `legacyGetMediaBuysResponse`. Names match the explicit compatibility
+ * aliases on `@adcp/sdk/server`.
  */
 export const LIST_WRAPPER_TOOLS: Record<string, { wrapperKey: string; helper: string }> = {
-  list_creatives: { wrapperKey: 'creatives', helper: 'listCreativesResponse' },
-  list_creative_formats: { wrapperKey: 'formats', helper: 'listCreativeFormatsResponse' },
-  list_accounts: { wrapperKey: 'accounts', helper: 'listAccountsResponse' },
-  get_products: { wrapperKey: 'products', helper: 'productsResponse' },
-  get_media_buys: { wrapperKey: 'media_buys', helper: 'getMediaBuysResponse' },
-  get_signals: { wrapperKey: 'signals', helper: 'getSignalsResponse' },
-  list_property_lists: { wrapperKey: 'lists', helper: 'listPropertyListsResponse' },
-  list_collection_lists: { wrapperKey: 'lists', helper: 'listCollectionListsResponse' },
-  list_content_standards: { wrapperKey: 'standards', helper: 'listContentStandardsResponse' },
-  get_plan_audit_logs: { wrapperKey: 'plans', helper: 'getPlanAuditLogsResponse' },
+  list_creatives: { wrapperKey: 'creatives', helper: 'legacyListCreativesResponse' },
+  list_creative_formats: { wrapperKey: 'formats', helper: 'legacyListCreativeFormatsResponse' },
+  list_accounts: { wrapperKey: 'accounts', helper: 'legacyListAccountsResponse' },
+  get_products: { wrapperKey: 'products', helper: 'legacyProductsResponse' },
+  get_media_buys: { wrapperKey: 'media_buys', helper: 'legacyGetMediaBuysResponse' },
+  get_signals: { wrapperKey: 'signals', helper: 'legacyGetSignalsResponse' },
+  list_property_lists: { wrapperKey: 'lists', helper: 'legacyListPropertyListsResponse' },
+  list_collection_lists: { wrapperKey: 'lists', helper: 'legacyListCollectionListsResponse' },
+  list_content_standards: { wrapperKey: 'standards', helper: 'legacyListContentStandardsResponse' },
+  get_plan_audit_logs: { wrapperKey: 'plans', helper: 'legacyGetPlanAuditLogsResponse' },
 };
 
 /**
@@ -162,7 +161,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `build_creative returned platform-native fields at the top level (${platformNativePresent.join(', ')}). ` +
           `Required: { creative_manifest: { format_id, assets } }. ` +
-          `Use buildCreativeResponse() from @adcp/sdk/server.`,
+          `Use legacyBuildCreativeResponse() from @adcp/sdk/server.`,
       };
     }
   }
@@ -181,7 +180,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `sync_creatives returned a single creative's inner shape at the top level (${perItemPresent.join(', ')}). ` +
           `Required: { creatives: [{ creative_id, action, ... }] } (or { errors: [...] } / { status: 'submitted', task_id }). ` +
-          `Use syncCreativesResponse() from @adcp/sdk/server.`,
+          `Use legacySyncCreativesResponse() from @adcp/sdk/server.`,
       };
     }
 
@@ -200,7 +199,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
           message:
             `sync_creatives returned { results: [...] } instead of { creatives: [...] } — wrong wrapper key. ` +
             `Required: { creatives: [{ creative_id, action, ... }] }. ` +
-            `Use syncCreativesResponse() from @adcp/sdk/server.`,
+            `Use legacySyncCreativesResponse() from @adcp/sdk/server.`,
         };
       }
     }
@@ -221,7 +220,7 @@ function detect(taskName: string, payload: unknown): ShapeDriftHint | undefined 
         message:
           `preview_creative returned raw render fields at the top level (${driftSignal.join(', ')}). ` +
           `Required: { response_type: 'single', previews: [{ renders: [{ preview_url | preview_html }] }], expires_at }. ` +
-          `Use previewCreativeResponse() from @adcp/sdk/server.`,
+          `Use legacyPreviewCreativeResponse() from @adcp/sdk/server.`,
       };
     }
   }

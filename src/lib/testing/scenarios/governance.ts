@@ -356,7 +356,7 @@ export async function testGovernanceContentStandards(
       'List content standards',
       'list_content_standards',
       async () =>
-        client.listContentStandards({
+        client.listContentStandardsLegacy({
           context: 'E2E testing - list available brand safety configurations',
           max_results: 10,
         } as unknown as ListContentStandardsRequest) as Promise<TaskResult>
@@ -402,7 +402,7 @@ export async function testGovernanceContentStandards(
       'Get content standards',
       'get_content_standards',
       async () =>
-        client.getContentStandards({
+        client.getContentStandardsLegacy({
           standards_id: standardsIdToTest,
         } as unknown as GetContentStandardsRequest) as Promise<TaskResult>
     );
@@ -434,7 +434,7 @@ export async function testGovernanceContentStandards(
       'Calibrate content',
       'calibrate_content',
       async () =>
-        client.calibrateContent({
+        client.calibrateContentLegacy({
           context: 'E2E testing - evaluate sample content for brand safety',
           standards_id: standardsIdToTest,
           artifacts: [
@@ -487,7 +487,7 @@ export async function testGovernanceContentStandards(
       'Validate content delivery',
       'validate_content_delivery',
       async () =>
-        client.validateContentDelivery({
+        client.validateContentDeliveryLegacy({
           context: 'E2E testing - validate delivery records against content standards',
           standards_id: standardsIdToTest,
           records: [
@@ -536,7 +536,7 @@ export async function testGovernanceContentStandards(
       'Get invalid content standards (error expected)',
       'get_content_standards',
       async () =>
-        client.getContentStandards({
+        client.getContentStandardsLegacy({
           standards_id: 'INVALID_STANDARDS_ID_DOES_NOT_EXIST_12345',
         }) as Promise<TaskResult>
     );
@@ -847,7 +847,7 @@ export async function testCampaignGovernance(
               },
               countries: ['US'],
               channels: {
-                allowed: ['display', 'video'],
+                allowed: ['display', 'olv'],
               },
               delegations: [
                 {
@@ -900,7 +900,7 @@ export async function testCampaignGovernance(
       async () =>
         client.executeTask('check_governance', {
           plan_id: testPlanId,
-          binding: 'proposed',
+          phase: 'purchase',
           caller: callerUrl,
           tool: 'create_media_buy',
           payload: {
@@ -964,13 +964,13 @@ export async function testCampaignGovernance(
 
   // Step 3: report_plan_outcome (completed) — thread governance_context
   if (profile.tools.includes('report_plan_outcome') && checkId) {
-    const outcomeRequest: Record<string, unknown> = {
+    const outcomeRequest = {
       plan_id: testPlanId,
       check_id: checkId,
-      outcome: 'completed',
+      outcome: 'completed' as const,
       governance_context: governanceContext || '',
       seller_response: {
-        media_buy_id: testMediaBuyId,
+        seller_reference: testMediaBuyId,
         packages: [
           {
             budget: 1000,
@@ -1003,7 +1003,6 @@ export async function testCampaignGovernance(
       async () =>
         client.executeTask('get_plan_audit_logs', {
           plan_ids: [testPlanId],
-          media_buy_id: testMediaBuyId,
           include_entries: true,
         }) as Promise<TaskResult>
     );
@@ -1109,7 +1108,7 @@ export async function testCampaignGovernanceDenied(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        binding: 'proposed',
+        phase: 'purchase',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
@@ -1168,7 +1167,7 @@ export async function testCampaignGovernanceDenied(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        binding: 'proposed',
+        phase: 'purchase',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
@@ -1293,10 +1292,10 @@ export async function testCampaignGovernanceConditions(
             },
             countries: ['US'],
             channels: {
-              allowed: ['display', 'video'],
+              allowed: ['display', 'olv'],
               mix_targets: {
                 display: { min_pct: 30, max_pct: 70 },
-                video: { min_pct: 30, max_pct: 70 },
+                olv: { min_pct: 30, max_pct: 70 },
               },
             },
           },
@@ -1316,7 +1315,7 @@ export async function testCampaignGovernanceConditions(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        binding: 'proposed',
+        phase: 'purchase',
         caller: callerUrl,
         tool: 'create_media_buy',
         payload: {
@@ -1385,7 +1384,7 @@ export async function testCampaignGovernanceConditions(
         async () =>
           client.executeTask('check_governance', {
             plan_id: testPlanId,
-            binding: 'proposed',
+            phase: 'purchase',
             caller: callerUrl,
             tool: 'create_media_buy',
             payload: adjustedPayload,
@@ -1455,7 +1454,6 @@ export async function testCampaignGovernanceDelivery(
   profile.supports_governance = true;
 
   const testPlanId = `test-delivery-plan-${Date.now()}`;
-  const testMediaBuyId = `test-mb-${Date.now()}`;
   const callerUrl = 'https://test-seller.example';
   const flightStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const flightEnd = new Date(Date.now() + 23 * 24 * 60 * 60 * 1000);
@@ -1503,9 +1501,7 @@ export async function testCampaignGovernanceDelivery(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        binding: 'committed',
         caller: callerUrl,
-        media_buy_id: testMediaBuyId,
         phase: 'delivery',
         planned_delivery: {
           total_budget: 3000,
@@ -1565,9 +1561,7 @@ export async function testCampaignGovernanceDelivery(
     async () =>
       client.executeTask('check_governance', {
         plan_id: testPlanId,
-        binding: 'committed',
         caller: callerUrl,
-        media_buy_id: testMediaBuyId,
         phase: 'delivery',
         governance_context: deliveryGovernanceContext,
         planned_delivery: {
@@ -1743,7 +1737,7 @@ export async function testSellerGovernanceContext(
       'Register governance agent with seller',
       'register_governance',
       async () =>
-        client.executeTask('register_governance', {
+        client.executeCustomTask('register_governance', {
           accounts: [
             {
               account,
@@ -1818,7 +1812,7 @@ export async function testSellerGovernanceContext(
     'Create media buy with governance_context',
     'create_media_buy',
     async () =>
-      client.executeTask('create_media_buy', {
+      client.executeTaskLegacy('create_media_buy', {
         account,
         brand: options.brand || { domain: 'test.example' },
         start_time: flightStart.toISOString(),

@@ -34,11 +34,11 @@ import {
   type SalesCorePlatform,
   type SalesIngestionPlatform,
   type AccountStore,
-  type GetProductsPayload,
+  type GetProductsHandlerResult,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
+import type { GetProductsRequest } from '@adcp/sdk';
 import type {
-  GetProductsRequest,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -117,7 +117,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
      * the eventual products via `publishStatusChange` on
      * `resource_type: 'proposal'`.
      */
-    getProducts: async (req: GetProductsRequest): Promise<GetProductsPayload> => {
+    getProducts: async (req: GetProductsRequest): Promise<GetProductsHandlerResult> => {
       const promotedOffering = (req as { promoted_offering?: string }).promoted_offering ?? '';
       if (/political|cannabis|gambling/i.test(promotedOffering)) {
         throw new AdcpError('POLICY_VIOLATION', {
@@ -135,7 +135,13 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
             product_id: 'prod_primetime_30s',
             name: 'Primetime 30s — M-F 8-11pm',
             description: 'Local broadcast primetime, :30 spots',
-            format_ids: [{ id: 'video_30s', agent_url: 'https://example.com/broadcast-creative-agent/mcp' }],
+            format_options: [
+              {
+                format_option_id: 'video_30s',
+                format_kind: 'video_hosted',
+                params: { duration_ms_exact: 30_000 },
+              },
+            ],
             delivery_type: 'guaranteed',
             publisher_properties: [{ publisher_domain: 'broadcast.example.com', selection_type: 'all' }],
             reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,

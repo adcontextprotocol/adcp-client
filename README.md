@@ -33,7 +33,7 @@ npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
 npm install @adcp/sdk@adcp-3.1   # 8.x beta, AdCP 3.1
 ```
 
-Upgrading from v7? See **[MIGRATION-v8.md](./MIGRATION-v8.md)** — TL;DR is three changes for most adopters; full guide covers wire shape, type shape, and SDK behavior deltas. Moving from 8.0 beta to 8.1? See [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md), plus the inbound webhook recipe at [`docs/recipes/verifying-inbound-webhooks.md`](./docs/recipes/verifying-inbound-webhooks.md).
+Upgrading from v12 to the canonical-creative SDK surface? See [`docs/migration-12-to-13.md`](./docs/migration-12-to-13.md). Older paths: **[MIGRATION-v8.md](./MIGRATION-v8.md)** and [`docs/migration-8.0-to-8.1.md`](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 
@@ -119,6 +119,9 @@ const result = await agent.getProducts({ brief: 'Coffee brands' });
 if (result.status === 'completed') {
   // Agent completed synchronously!
   console.log('✅ Sync completion:', result.data.products.length, 'products');
+  // Products expose canonical format_options[]; legacy named-format refs do not
+  // cross the primary AgentClient boundary.
+  console.log(result.data.products[0]?.format_options[0]?.format_kind);
   // onGetProductsStatusChange handler ALREADY fired with status='completed' ✓
 }
 
@@ -551,16 +554,29 @@ const client = ADCPMultiAgentClient.fromEnv();
 
 ## Available Tools
 
-All AdCP tools with full type safety:
+Primary AdCP tools have typed request and response maps. Less-common or
+extension tools use `executeCustomTask<T>()` explicitly.
 
 **Media Buy Lifecycle:**
 
+The primary client surface speaks canonical creatives: products use
+`format_options[]`, packages select `format_option_refs[]`, and creatives use
+`format_kind` plus an optional `format_option_ref`. The SDK performs negotiated
+legacy-wire translation internally. Migration tooling can opt into the clearly
+named `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`,
+`syncCreativesLegacy()`, `listCreativesLegacy()`, `buildCreativeLegacy()`, and
+`previewCreativeLegacy()` escape hatches. `executeCustomTask()` cannot invoke
+typed primary tasks or legacy creative tools; other less-common standard and
+extension tools intentionally use that explicit raw-task route.
+
 - `getProducts()` - Discover advertising products
-- `listCreativeFormats()` - Get supported creative formats
+- `listCreativeFormatsLegacy()` - Inspect the legacy named-format catalog (migration tooling only)
 - `createMediaBuy()` - Create new media buy
 - `updateMediaBuy()` - Update existing media buy
 - `syncCreatives()` - Upload/sync creative assets
 - `listCreatives()` - List creative assets
+- `buildCreativeLegacy()` - Build through the legacy named-format protocol (migration tooling only)
+- `previewCreativeLegacy()` - Preview through the legacy named-format protocol (migration tooling only)
 - `getMediaBuyDelivery()` - Get delivery performance
 
 **Audience & Targeting:**

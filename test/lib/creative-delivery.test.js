@@ -1,23 +1,23 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { inlineCreativesForPackages } = require('../../dist/lib/index.js');
+const { inlineCreativesForPackages, inlineCreativesForPackagesLegacy } = require('../../dist/lib/index.js');
 const { preflightUpdateMediaBuy } = require('../../dist/lib/media-buy');
 
-const IMAGE_FORMAT = { agent_url: 'https://creative.example.com/', id: 'display_300x250' };
-const VIDEO_FORMAT = { agent_url: 'https://creative.example.com', id: 'video_30s' };
+const IMAGE_FORMAT = { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' };
+const VIDEO_FORMAT = { agent_url: 'https://creative.adcontextprotocol.org', id: 'video_standard_30s' };
 
 const imageCreative = {
   creative_id: 'cre_image',
   name: 'Image',
-  format_id: IMAGE_FORMAT,
+  format_kind: 'image',
   assets: { image: { asset_type: 'image', url: 'https://cdn.example.com/image.png' } },
 };
 
 const videoCreative = {
   creative_id: 'cre_video',
   name: 'Video',
-  format_id: VIDEO_FORMAT,
+  format_kind: 'video_hosted',
   assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video.mp4' } },
 };
 
@@ -38,32 +38,28 @@ describe('inlineCreativesForPackages', () => {
       },
     ];
 
-    const result = inlineCreativesForPackages(packages, [imageCreative, videoCreative]);
+    const result = inlineCreativesForPackagesLegacy(packages, [imageCreative, videoCreative]);
 
     assert.deepEqual(
       result.map(pkg => pkg.creatives?.map(c => c.creative_id)),
       [['cre_image'], ['cre_video']]
     );
+    assert.equal(result[0].creatives[0].format_id.id, IMAGE_FORMAT.id);
+    assert.equal(result[0].creatives[0].format_kind, undefined);
     assert.equal(packages[0].creatives, undefined, 'input packages are not mutated');
   });
 
-  test('projects canonical creatives onto package legacy refs', () => {
+  test('keeps canonical creatives canonical until the client wire boundary', () => {
     const canonical = {
       creative_id: 'cre_canonical_image',
       name: 'Canonical image',
       format_kind: 'image',
       assets: { image: { asset_type: 'image', url: 'https://cdn.example.com/canonical.png' } },
     };
-    const result = inlineCreativesForPackages(
-      [{ package_id: 'pkg_1', format_ids: [{ ...IMAGE_FORMAT, id: 'display_300x250_image' }] }],
-      [canonical]
-    );
+    const result = inlineCreativesForPackages([{ package_id: 'pkg_1', format_kind: 'image' }], [canonical]);
 
-    assert.deepEqual(result[0].creatives[0].format_id, {
-      ...IMAGE_FORMAT,
-      id: 'display_300x250_image',
-    });
-    assert.equal(result[0].creatives[0].format_kind, undefined);
+    assert.equal(result[0].creatives[0].format_id, undefined);
+    assert.equal(result[0].creatives[0].format_kind, 'image');
     assert.equal(canonical.format_kind, 'image', 'input remains canonical');
   });
 
@@ -148,7 +144,7 @@ describe('inlineCreativesForPackages', () => {
     const nativeCreative = {
       creative_id: 'cre_native',
       name: 'Native',
-      format_kind: 'native',
+      format_kind: 'native_in_feed',
       format_option_ref: { scope: 'product', format_option_id: 'native_feed' },
       assets: { title: { asset_type: 'text', content: 'Hello' } },
     };
@@ -161,7 +157,7 @@ describe('inlineCreativesForPackages', () => {
 
     const result = inlineCreativesForPackages(
       [
-        { product_id: 'prod_native', pricing_option_id: 'cpm', budget: 1000, format_kind: 'native' },
+        { product_id: 'prod_native', pricing_option_id: 'cpm', budget: 1000, format_kind: 'native_in_feed' },
         {
           product_id: 'prod_native_feed',
           pricing_option_id: 'cpm',
@@ -184,8 +180,9 @@ describe('inlineCreativesForPackages', () => {
       creative_id: 'cre_image_728x90',
       name: 'Image Leaderboard',
       format_kind: 'image',
-      format_id: { id: 'display_728x90', width: 728, height: 90 },
-      assets: { image: { asset_type: 'image', url: 'https://cdn.example.com/leaderboard.png' } },
+      assets: {
+        image: { asset_type: 'image', url: 'https://cdn.example.com/leaderboard.png', width: 728, height: 90 },
+      },
     };
 
     const result = inlineCreativesForPackages(
@@ -204,11 +201,11 @@ describe('inlineCreativesForPackages', () => {
     assert.equal(result[0].creatives, undefined);
   });
 
-  test('does not let legacy format_id override a conflicting format option reference', () => {
+  test('does not match a conflicting canonical format option reference', () => {
     const nativeStoryCreative = {
       creative_id: 'cre_native_story',
       name: 'Native Story',
-      format_id: IMAGE_FORMAT,
+      format_kind: 'image',
       format_option_ref: { scope: 'product', format_option_id: 'native_story' },
       assets: { title: { asset_type: 'text', content: 'Hello' } },
     };
@@ -219,7 +216,6 @@ describe('inlineCreativesForPackages', () => {
           product_id: 'prod_native_feed',
           pricing_option_id: 'cpm',
           budget: 1000,
-          format_ids: [IMAGE_FORMAT],
           format_option_refs: [{ scope: 'product', format_option_id: 'native_feed' }],
         },
       ],
@@ -234,8 +230,15 @@ describe('inlineCreativesForPackages', () => {
       creative_id: 'cre_video_60s',
       name: 'Video 60s',
       format_kind: 'video_hosted',
-      format_id: { id: 'video_60s', duration_ms: 60000 },
-      assets: { video: { asset_type: 'video', url: 'https://cdn.example.com/video-60s.mp4' } },
+      assets: {
+        video: {
+          asset_type: 'video',
+          url: 'https://cdn.example.com/video-60s.mp4',
+          width: 1920,
+          height: 1080,
+          duration_ms: 60000,
+        },
+      },
     };
 
     const result = inlineCreativesForPackages(
@@ -275,17 +278,41 @@ describe('inlineCreativesForPackages', () => {
   test('throws when explicit assignments do not match package format selectors', () => {
     assert.throws(
       () =>
-        inlineCreativesForPackages([{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }], [imageCreative], {
+        inlineCreativesForPackagesLegacy([{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }], [imageCreative], {
           assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
         }),
       /creative_id "cre_image" does not match package_id "pkg_1" format selectors/
     );
 
-    const ignored = inlineCreativesForPackages([{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }], [imageCreative], {
-      assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
-      onIncompatibleAssignment: 'ignore',
-    });
+    const ignored = inlineCreativesForPackagesLegacy(
+      [{ package_id: 'pkg_1', format_ids: [VIDEO_FORMAT] }],
+      [imageCreative],
+      {
+        assignments: [{ creative_id: 'cre_image', package_id: 'pkg_1' }],
+        onIncompatibleAssignment: 'ignore',
+      }
+    );
     assert.equal(ignored[0].creatives, undefined);
+  });
+
+  test('rejects legacy inputs and wire overrides on the canonical helper', () => {
+    assert.throws(
+      () => inlineCreativesForPackages([{ package_id: 'pkg_1', format_ids: [IMAGE_FORMAT] }], [imageCreative]),
+      /does not accept legacy package format_ids/
+    );
+    assert.throws(
+      () =>
+        inlineCreativesForPackages(
+          [{ package_id: 'pkg_1' }],
+          [{ creative_id: 'cre_legacy', name: 'Legacy', format_id: IMAGE_FORMAT, assets: {} }]
+        ),
+      /does not accept legacy creative format_id/
+    );
+    assert.throws(
+      () =>
+        inlineCreativesForPackages([{ package_id: 'pkg_1' }], [imageCreative], { creativeFormatWireMode: 'legacy' }),
+      /canonical-only/
+    );
   });
 
   test('builds update_media_buy patches that preflight against replace_creative', () => {

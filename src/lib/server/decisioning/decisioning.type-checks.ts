@@ -25,8 +25,8 @@ import type {
   SalesCorePlatform,
   SalesIngestionPlatform,
   ActivateSignalPayload,
-  BuildCreativePayload,
-  BuildCreativeMultiPayload,
+  LegacyBuildCreativePayload,
+  LegacyBuildCreativeMultiPayload,
   CreativeApprovedPayload,
   GetProductsPayload,
   GetProductsHandlerResult,
@@ -38,9 +38,9 @@ import type {
   GetMediaBuysPayload,
   GetAccountFinancialsHandlerResult,
   GetBrandIdentityPayload,
-  GetRightsPayload,
+  LegacyGetRightsPayload,
   ListAccountsHandlerResult,
-  ListCreativeFormatsPayload,
+  SalesLegacyListCreativeFormatsPayload,
   ReportUsageHandlerResult,
   SyncAudiencesPayload,
   SyncAccountsHandlerResult,
@@ -50,7 +50,7 @@ import type {
   SyncGovernanceHandlerResult,
   ListAccountsPayload,
   RightsTerms,
-  UpdateRightsPayload,
+  LegacyUpdateRightsPayload,
   SponsoredIntelligencePlatform,
   AudiencePlatform,
   CreateAdcpServerFromPlatformOptions,
@@ -71,6 +71,7 @@ import {
   definePlatformWithCompliance,
 } from './index';
 import type { ComplyControllerConfig } from '../../testing/comply-controller';
+import type { CanonicalListCreativesResponse } from '../../v2/projection/creative-delivery';
 
 // ── AdcpError construction ────────────────────────────────────────────
 
@@ -433,7 +434,7 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
       media_buy_deliveries: [],
     }),
     getMediaBuys: async () => ({ media_buys: [] }),
-    listCreativeFormats: async () => ({ formats: [] }),
+    listCreativeFormatsLegacy: async () => ({ formats: [] }),
     syncCreatives: async () => [],
   };
   return sales;
@@ -463,6 +464,23 @@ function _sales_platform_handler_results_accept_task_handoff() {
   return sales;
 }
 
+function _get_products_canonical_payload_preserves_cache_scope_invariant() {
+  const withProducts: GetProductsPayload = { products: [], cache_scope: 'account' };
+  const unchanged: GetProductsPayload = { unchanged: true, cache_scope: 'public' };
+  const empty: GetProductsPayload = {};
+
+  // @ts-expect-error Product-bearing responses must always identify their cache scope.
+  const productsWithoutCacheScope: GetProductsPayload = { products: [] };
+  // @ts-expect-error Unchanged wholesale-feed responses must echo their cache scope.
+  const unchangedWithoutCacheScope: GetProductsPayload = { unchanged: true };
+
+  void withProducts;
+  void unchanged;
+  void empty;
+  void productsWithoutCacheScope;
+  void unchangedWithoutCacheScope;
+}
+
 function _signals_platform_handler_results_accept_task_handoff() {
   const signals = defineSignalsPlatform<_SocialMeta>({
     getSignals: async (_req, ctx) => ctx.handoffToTask(async () => ({ signals: [] })),
@@ -481,7 +499,7 @@ const _ok = <T>(value: T): _Result<T, Error> => ({ ok: true, value });
 
 type _AdopterResultPayloadAliases = [
   _Result<GetProductsPayload, Error>,
-  _Result<ListCreativeFormatsPayload, Error>,
+  _Result<SalesLegacyListCreativeFormatsPayload, Error>,
   _Result<CreateMediaBuyPayload, Error>,
   _Result<UpdateMediaBuyPayload, Error>,
   _Result<SyncCreativesPayload, Error>,
@@ -489,13 +507,13 @@ type _AdopterResultPayloadAliases = [
   _Result<ListAccountsPayload, Error>,
   _Result<GetMediaBuysPayload, Error>,
   _Result<GetMediaBuyDeliveryPayload, Error>,
-  _Result<BuildCreativePayload, Error>,
-  _Result<BuildCreativeMultiPayload, Error>,
+  _Result<LegacyBuildCreativePayload, Error>,
+  _Result<LegacyBuildCreativeMultiPayload, Error>,
   _Result<SyncAudiencesPayload, Error>,
   _Result<ActivateSignalPayload, Error>,
   _Result<GetBrandIdentityPayload, Error>,
-  _Result<GetRightsPayload, Error>,
-  _Result<UpdateRightsPayload, Error>,
+  _Result<LegacyGetRightsPayload, Error>,
+  _Result<LegacyUpdateRightsPayload, Error>,
   _Result<CreativeApprovedPayload, Error>,
   _Result<CreateMediaBuyHandlerResult, Error>,
   _Result<SyncCreativesHandlerResult, Error>,
@@ -734,6 +752,45 @@ function _define_platform_with_compliance_rejects_missing_ct() {
 type _opts_no_ct = RequiredOptsFor<_PlatformBase>;
 const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions ? true : false = true;
 
+const _explicit_legacy_handler_options: CreateAdcpServerFromPlatformOptions = {
+  name: 'legacy-handler-fixture',
+  version: '1.0.0',
+  legacyHandlers: { mediaBuy: {} },
+};
+const _primary_looking_raw_handler_options: CreateAdcpServerFromPlatformOptions = {
+  name: 'raw-handler-fixture',
+  version: '1.0.0',
+  // @ts-expect-error Raw protocol handler groups live only under legacyHandlers.
+  mediaBuy: {},
+};
+void _explicit_legacy_handler_options;
+void _primary_looking_raw_handler_options;
+
+function _canonical_sales_read_requests_hide_legacy_identity(): void {
+  const sales: Pick<SalesPlatform, 'getProducts' | 'listCreatives'> = {
+    getProducts: async req => {
+      if (req.fields) {
+        // @ts-expect-error Canonical product discovery fields exclude format_ids.
+        const legacyField: 'format_ids' = req.fields[0];
+        void legacyField;
+      }
+      return { products: [], cache_scope: 'account' };
+    },
+    listCreatives: async req => {
+      if (req.filters) {
+        // @ts-expect-error Canonical creative filters cannot accept format_ids.
+        req.filters.format_ids = [];
+      }
+      return {
+        query_summary: { total_matching: 0, returned: 0 },
+        pagination: { has_more: false },
+        creatives: [],
+      };
+    },
+  };
+  void sales;
+}
+
 // Positive: RequiredOptsFor resolves to require complyTest when P has compliance_testing.
 // Uses ComplyControllerConfig (not object) to assert the exact required type.
 type _opts_with_ct = RequiredOptsFor<_PlatformWithCT>;
@@ -776,8 +833,8 @@ import type {
 // `ctx.account` is `Account<TCtxMeta> | undefined`.
 function _preview_creative_requires_account_narrow(): void {
   defineCreativeBuilderPlatform<{ workspace_id: string }>({
-    buildCreative: async () => ({}) as never,
-    previewCreative: async (_req, ctx) => {
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreativeLegacy: async (_req, ctx) => {
       if (ctx.account == null) {
         return {} as PreviewCreativeResponse;
       }
@@ -792,8 +849,8 @@ function _preview_creative_requires_account_narrow(): void {
 // — this is the regression alarm guarding the no-account contract.
 function _preview_creative_rejects_unnarrowed_access(): void {
   defineCreativeBuilderPlatform<{ workspace_id: string }>({
-    buildCreative: async () => ({}) as never,
-    previewCreative: async (_req, ctx) => {
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreativeLegacy: async (_req, ctx) => {
       // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
       const _ws: string = ctx.account.ctx_metadata.workspace_id;
       void _ws;
@@ -813,8 +870,8 @@ function _preview_creative_rejects_unnarrowed_access(): void {
 // the duplicate and locking the narrow here.
 function _builder_list_creative_formats_requires_account_narrow(): void {
   defineCreativeBuilderPlatform<{ catalog_id: string }>({
-    buildCreative: async () => ({}) as never,
-    listCreativeFormats: async (_req, ctx) => {
+    buildCreativeLegacy: async () => ({}) as never,
+    listCreativeFormatsLegacy: async (_req, ctx) => {
       if (ctx.account == null) {
         return {} as ListCreativeFormatsResponse;
       }
@@ -827,8 +884,8 @@ function _builder_list_creative_formats_requires_account_narrow(): void {
 
 function _builder_list_creative_formats_rejects_unnarrowed_access(): void {
   defineCreativeBuilderPlatform<{ catalog_id: string }>({
-    buildCreative: async () => ({}) as never,
-    listCreativeFormats: async (_req, ctx) => {
+    buildCreativeLegacy: async () => ({}) as never,
+    listCreativeFormatsLegacy: async (_req, ctx) => {
       // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
       const _catalog: string = ctx.account.ctx_metadata.catalog_id;
       void _catalog;
@@ -842,11 +899,11 @@ function _builder_list_creative_formats_rejects_unnarrowed_access(): void {
 // before #1384. Lock the narrow.
 function _ad_server_list_creative_formats_requires_account_narrow(): void {
   defineCreativeAdServerPlatform<{ catalog_id: string }>({
-    buildCreative: async () => ({}) as never,
-    previewCreative: async () => ({}) as PreviewCreativeResponse,
-    listCreatives: async () => ({}) as ListCreativesResponse,
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreativeLegacy: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as CanonicalListCreativesResponse,
     getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
-    listCreativeFormats: async (_req, ctx) => {
+    listCreativeFormatsLegacy: async (_req, ctx) => {
       if (ctx.account == null) {
         return {} as ListCreativeFormatsResponse;
       }
@@ -934,11 +991,11 @@ function _media_buy_delivery_notification_factories_inject_discriminator(): void
 
 function _ad_server_list_creative_formats_rejects_unnarrowed_access(): void {
   defineCreativeAdServerPlatform<{ catalog_id: string }>({
-    buildCreative: async () => ({}) as never,
-    previewCreative: async () => ({}) as PreviewCreativeResponse,
-    listCreatives: async () => ({}) as ListCreativesResponse,
+    buildCreativeLegacy: async () => ({}) as never,
+    previewCreativeLegacy: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as CanonicalListCreativesResponse,
     getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
-    listCreativeFormats: async (_req, ctx) => {
+    listCreativeFormatsLegacy: async (_req, ctx) => {
       // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
       const _catalog: string = ctx.account.ctx_metadata.catalog_id;
       void _catalog;

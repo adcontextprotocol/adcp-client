@@ -16,12 +16,12 @@
 import type { Product, PricingOption } from '../../types/core.generated';
 import type {
   CreateMediaBuyRequest,
-  GetProductsRequest,
   SyncCreativesRequest,
   GetMediaBuyDeliveryRequest,
   GetProductsResponse,
   ListCreativesResponse,
 } from '../../types/tools.generated';
+import type { CanonicalGetProductsRequest } from '../../v2/projection/creative-delivery';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { getOrCreateClient, runStep, resolveBrand, resolveAccount, getOrDiscoverProfile } from '../client';
 import { testDiscovery } from './discovery';
@@ -50,7 +50,7 @@ export async function testErrorHandling(
       'Invalid product_id error response',
       'create_media_buy',
       async () =>
-        client.createMediaBuy({
+        client.createMediaBuyLegacy({
           idempotency_key: `error-test-${Date.now()}`,
           brand_manifest: {
             name: 'Error Test Brand',
@@ -85,7 +85,7 @@ export async function testErrorHandling(
     const { result, step } = await runStep<TaskResult>(
       'Empty request handling',
       'get_products',
-      async () => client.getProducts({} as unknown as GetProductsRequest) as Promise<TaskResult>
+      async () => client.getProducts({} as unknown as CanonicalGetProductsRequest) as Promise<TaskResult>
     );
 
     if (result?.success) {
@@ -106,7 +106,7 @@ export async function testErrorHandling(
       'Invalid format_id error response',
       'sync_creatives',
       async () =>
-        client.syncCreatives({
+        client.syncCreativesLegacy({
           account: resolveAccount(options),
           creatives: [
             {
@@ -195,7 +195,7 @@ export async function testValidation(
       'Invalid pacing enum value',
       'create_media_buy',
       async () =>
-        client.createMediaBuy({
+        client.createMediaBuyLegacy({
           idempotency_key: `validation-test-${Date.now()}`,
           brand_manifest: { name: 'Validation Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -227,7 +227,7 @@ export async function testValidation(
       'Negative budget rejection',
       'create_media_buy',
       async () =>
-        client.createMediaBuy({
+        client.createMediaBuyLegacy({
           idempotency_key: `negative-budget-test-${Date.now()}`,
           brand_manifest: { name: 'Negative Budget Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -258,7 +258,7 @@ export async function testValidation(
       'Invalid creative weight (> 100)',
       'sync_creatives',
       async () =>
-        client.syncCreatives({
+        client.syncCreativesLegacy({
           account: resolveAccount(options),
           creatives: [
             {
@@ -295,7 +295,7 @@ export async function testValidation(
       'Empty creatives array handling',
       'sync_creatives',
       async () =>
-        client.syncCreatives({
+        client.syncCreativesLegacy({
           account: resolveAccount(options),
           creatives: [],
         } as unknown as SyncCreativesRequest) as Promise<TaskResult>
@@ -348,7 +348,7 @@ export async function testPricingEdgeCases(
         buying_mode: 'brief',
         brief: 'Show all products with pricing details',
         brand: resolveBrand(options),
-      } as unknown as GetProductsRequest) as Promise<TaskResult>
+      } as unknown as CanonicalGetProductsRequest) as Promise<TaskResult>
   );
 
   const productsData = productsResult?.data as GetProductsResponse | undefined;
@@ -399,7 +399,7 @@ export async function testPricingEdgeCases(
       'Auction pricing without bid_price',
       'create_media_buy',
       async () =>
-        client.createMediaBuy({
+        client.createMediaBuyLegacy({
           idempotency_key: `auction-no-bid-${Date.now()}`,
           brand_manifest: { name: 'Auction Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -433,7 +433,7 @@ export async function testPricingEdgeCases(
       'Budget below min_spend_per_package',
       'create_media_buy',
       async () =>
-        client.createMediaBuy({
+        client.createMediaBuyLegacy({
           idempotency_key: `under-min-spend-${Date.now()}`,
           brand_manifest: { name: 'Min Spend Test', url: 'https://test.example' },
           start_time: new Date(Date.now() + 86400000).toISOString(),
@@ -484,7 +484,7 @@ export async function testTemporalValidation(
     'End time before start time',
     'create_media_buy',
     async () =>
-      client.createMediaBuy({
+      client.createMediaBuyLegacy({
         idempotency_key: `temporal-test-${Date.now()}`,
         brand_manifest: { name: 'Temporal Test', url: 'https://test.example' },
         start_time: new Date(Date.now() + 604800000).toISOString(), // 7 days from now
@@ -517,7 +517,7 @@ export async function testTemporalValidation(
     'Start time in the past',
     'create_media_buy',
     async () =>
-      client.createMediaBuy({
+      client.createMediaBuyLegacy({
         idempotency_key: `past-start-${Date.now()}`,
         brand_manifest: { name: 'Past Start Test', url: 'https://test.example' },
         start_time: new Date(Date.now() - 86400000).toISOString(), // Yesterday
@@ -575,7 +575,7 @@ export async function testBehaviorAnalysis(
         client.getProducts({
           buying_mode: 'brief',
           brief: 'Show me all available products',
-        } as unknown as GetProductsRequest) as Promise<TaskResult>
+        } as unknown as CanonicalGetProductsRequest) as Promise<TaskResult>
     );
 
     const withoutBrandProducts = (withoutBrand?.data as GetProductsResponse | undefined)?.products;
@@ -595,7 +595,7 @@ export async function testBehaviorAnalysis(
           buying_mode: 'brief',
           brief: 'Looking specifically for podcast audio advertising only',
           brand: resolveBrand(options),
-        } as unknown as GetProductsRequest) as Promise<TaskResult>
+        } as unknown as CanonicalGetProductsRequest) as Promise<TaskResult>
     );
 
     const { result: broadBrief } = await runStep<TaskResult>(
@@ -606,7 +606,7 @@ export async function testBehaviorAnalysis(
           buying_mode: 'brief',
           brief: 'Show all products across all channels and formats',
           brand: resolveBrand(options),
-        } as unknown as GetProductsRequest) as Promise<TaskResult>
+        } as unknown as CanonicalGetProductsRequest) as Promise<TaskResult>
     );
 
     const specificProducts = (specificBrief?.data as GetProductsResponse | undefined)?.products;
@@ -652,7 +652,7 @@ export async function testResponseConsistency(
     const { result, step } = await runStep<TaskResult>(
       'Check list_authorized_properties consistency',
       'list_authorized_properties',
-      async () => client.executeTask('list_authorized_properties', {}) as Promise<TaskResult>
+      async () => client.executeCustomTask('list_authorized_properties', {}) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {

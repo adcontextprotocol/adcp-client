@@ -29,7 +29,7 @@
 
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
-import type { GetProductsRequest } from '../../../types/tools.generated';
+import type { CanonicalGetProductsRequest } from '../../../v2/projection/creative-delivery';
 import type {
   ProposalCapabilities,
   ProposalGetProductsPayload,
@@ -129,14 +129,14 @@ export class MockProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
   }
 
   async getProducts(
-    req: GetProductsRequest,
+    req: CanonicalGetProductsRequest,
     _ctx: RequestContext<Account<TCtxMeta>>
   ): Promise<ProposalGetProductsPayload> {
     return this.forward('/get_products', req);
   }
 
   async refineProducts(
-    req: GetProductsRequest,
+    req: CanonicalGetProductsRequest,
     _ctx: RequestContext<Account<TCtxMeta>>
   ): Promise<ProposalGetProductsPayload> {
     if (!this.capabilities.refine) {

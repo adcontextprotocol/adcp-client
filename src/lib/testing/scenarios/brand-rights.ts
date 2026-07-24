@@ -50,7 +50,7 @@ export async function testBrandRightsFlow(
       'Get brand identity: retrieve brand identity information',
       'get_brand_identity',
       async () =>
-        client.executeTask('get_brand_identity', {
+        client.executeTaskLegacy('get_brand_identity', {
           type: 'get_brand_identity_request',
           request_id: `e2e-brand-id-${Date.now()}`,
           brand_domain: options.brand?.domain ?? 'example.com',
@@ -90,7 +90,7 @@ export async function testBrandRightsFlow(
       'Get rights: query current brand rights',
       'get_rights',
       async () =>
-        client.executeTask('get_rights', {
+        client.executeTaskLegacy('get_rights', {
           type: 'get_rights_request',
           request_id: `e2e-rights-${Date.now()}`,
           brand_domain: options.brand?.domain ?? 'example.com',
@@ -130,7 +130,7 @@ export async function testBrandRightsFlow(
       'Acquire rights: initiate brand rights acquisition',
       'acquire_rights',
       async () =>
-        client.executeTask('acquire_rights', {
+        client.executeTaskLegacy('acquire_rights', {
           type: 'acquire_rights_request',
           request_id: `e2e-acquire-${Date.now()}`,
           brand_domain: options.brand?.domain ?? 'example.com',
@@ -201,7 +201,7 @@ export async function testBrandIdentity(
     'Get brand identity (public access)',
     'get_brand_identity',
     async () =>
-      client.executeTask('get_brand_identity', {
+      client.executeTaskLegacy('get_brand_identity', {
         type: 'get_brand_identity_request',
         request_id: `e2e-brand-pub-${Date.now()}`,
         brand_domain: options.brand?.domain ?? 'example.com',
@@ -235,7 +235,7 @@ export async function testBrandIdentity(
       'Get brand identity (authorized access)',
       'get_brand_identity',
       async () =>
-        client.executeTask('get_brand_identity', {
+        client.executeTaskLegacy('get_brand_identity', {
           type: 'get_brand_identity_request',
           request_id: `e2e-brand-auth-${Date.now()}`,
           brand_domain: options.brand?.domain ?? 'example.com',
@@ -300,7 +300,7 @@ export async function testCreativeApproval(
     'Submit creative for brand approval',
     'creative_approval',
     async () =>
-      client.executeTask('creative_approval', {
+      client.executeCustomTask('creative_approval', {
         type: 'creative_approval_request',
         request_id: `e2e-approval-${Date.now()}`,
         brand_domain: options.brand?.domain ?? 'example.com',

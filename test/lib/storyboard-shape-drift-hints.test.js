@@ -29,13 +29,13 @@ describe('detectShapeDriftHints: bare-array → list-tool wrapper', () => {
     assert.equal(hint.expected_variant, '{ creatives: [...] }');
     assert.equal(hint.instance_path, '');
     assert.match(hint.message, /list_creatives/);
-    assert.match(hint.message, /listCreativesResponse/);
+    assert.match(hint.message, /legacyListCreativesResponse/);
   });
 
   test('get_products bare array → expected_variant names the products wrapper', () => {
     const [hint] = detectShapeDriftHints('get_products', [{ product_id: 'p1' }]);
     assert.equal(hint.expected_variant, '{ products: [...] }');
-    assert.match(hint.message, /productsResponse/);
+    assert.match(hint.message, /legacyProductsResponse/);
   });
 
   test('get_plan_audit_logs bare array → expected_variant names the plans wrapper', () => {
@@ -50,7 +50,7 @@ describe('detectShapeDriftHints: bare-array → list-tool wrapper', () => {
     assert.equal(hint.observed_variant, 'bare_array');
     assert.equal(hint.expected_variant, '{ plans: [...] }');
     assert.equal(hint.instance_path, '');
-    assert.match(hint.message, /getPlanAuditLogsResponse/);
+    assert.match(hint.message, /legacyGetPlanAuditLogsResponse/);
   });
 
   test('unknown tool with bare array → no hint (avoids false positives)', () => {
@@ -177,13 +177,13 @@ describe('detectShapeDriftHints: version-staleness suffix (issue #850)', () => {
     const [hint] = detectShapeDriftHints(
       'build_creative',
       { tag_url: 'https://cdn.example.com/ad.mp3', creative_id: 'c1', media_type: 'audio/mpeg' },
-      '@adcp/client@5.20.0'
+      '@adcp/client@13.1.0'
     );
     assert.ok(hint, 'expected a hint');
     assert.doesNotMatch(hint.message, /Note: your agent reports/);
   });
 
-  test('library_version present, below minimum (e.g. 5.9.0 < 5.14.0) → suffix appended', () => {
+  test('library_version present, below explicit-Legacy helper minimum → suffix appended', () => {
     const [hint] = detectShapeDriftHints(
       'build_creative',
       { tag_url: 'https://cdn.example.com/ad.mp3', creative_id: 'c1', media_type: 'audio/mpeg' },
@@ -191,7 +191,7 @@ describe('detectShapeDriftHints: version-staleness suffix (issue #850)', () => {
     );
     assert.ok(hint, 'expected a hint');
     assert.match(hint.message, /Note: your agent reports @adcp\/client@5\.9\.0/);
-    assert.match(hint.message, /buildCreativeResponse\(\) ships in @adcp\/client ≥5\.14\.0/);
+    assert.match(hint.message, /legacyBuildCreativeResponse\(\) ships in @adcp\/client ≥13\.0\.0/);
     assert.match(hint.message, /Upgrade your SDK dep/);
   });
 
@@ -210,7 +210,7 @@ describe('detectShapeDriftHints: version-staleness suffix (issue #850)', () => {
     const [hint] = detectShapeDriftHints('list_creatives', [{ creative_id: 'c1' }], '@adcp/client@4.16.2');
     assert.ok(hint, 'expected a hint');
     assert.match(hint.message, /Note: your agent reports @adcp\/client@4\.16\.2/);
-    assert.match(hint.message, /listCreativesResponse\(\) ships in @adcp\/client ≥5\.10\.0/);
+    assert.match(hint.message, /legacyListCreativesResponse\(\) ships in @adcp\/client ≥13\.0\.0/);
   });
 
   test('no drift detected → no hints regardless of library_version', () => {

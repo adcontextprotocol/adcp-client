@@ -1,8 +1,11 @@
 ---
-'@adcp/sdk': minor
+'@adcp/sdk': major
 ---
 
-Project canonical creatives onto seller-advertised legacy format references for
-`create_media_buy`, `update_media_buy`, and assignment-scoped
-`sync_creatives`. Add fail-closed projection helpers and preserve canonical
-caller objects without mutation.
+Make canonical creatives the primary SDK contract. Product discovery now drops
+legacy `format_ids` by default, outbound delivery projects canonical creatives
+only at a proven legacy boundary, and modern server platform handlers normalize
+legacy inputs before adopter code runs. Add an explicit custom-format converter
+for seller-owned legacy refs that cannot be mapped by the bundled registry.
+Raw named-format utilities, response builders, v5 handler-bag types, and the
+content-standards adapter now use explicit `Legacy` / `legacy` public names.

@@ -123,6 +123,9 @@ test('e2e: getProducts persists drafts to store after manager returns', async ()
       products: [
         {
           product_id: 'prod_a',
+          name: 'Product A',
+          description: 'Canonical product fixture',
+          format_options: [{ format_kind: 'image', params: {} }],
           implementation_config: { recipe_kind: 'mock', sku: 'a' },
         },
       ],

@@ -347,6 +347,15 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
     const { AgentClient } = require('../../dist/lib/index.js');
     return new AgentClient(agentConfig, { validateFeatures: false });
   }
+  function createMediaBuyParams() {
+    return {
+      account: { account_id: 'test-acc' },
+      brand: { domain: 'example.com' },
+      packages: [],
+      start_time: 'immediate',
+      end_time: '2027-01-01T00:00:00Z',
+    };
+  }
 
   test('different skill in same context does NOT inherit the retained taskId', async () => {
     // Storyboard A's submitted task leaves pendingTask = (taskId=t-A, ctx-shared, name=create_media_buy).
@@ -359,7 +368,7 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-shared', taskId: 'task-B' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
+      await client.executeTask('create_media_buy', createMediaBuyParams());
       assert.strictEqual(client.getPendingTaskId(), 'task-A', 'submitted retains the handle');
       assert.strictEqual(client.getContextId(), 'ctx-shared');
 
@@ -386,10 +395,10 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-hitl', taskId: 'task-hitl' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
+      await client.executeTask('create_media_buy', createMediaBuyParams());
       assert.strictEqual(client.getPendingTaskId(), 'task-hitl');
 
-      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
+      await client.executeTask('create_media_buy', createMediaBuyParams());
 
       assert.strictEqual(stub.captured[1].message.contextId, 'ctx-hitl');
       assert.strictEqual(
@@ -412,7 +421,7 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-1', taskId: 'task-orig' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
+      await client.executeTask('create_media_buy', createMediaBuyParams());
 
       await client.executeTask('get_products', {}, undefined, { taskId: 'task-orig' });
 

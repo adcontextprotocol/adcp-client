@@ -3,10 +3,23 @@
 import type { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentConfig } from '../types';
-import type { MCPWebhookPayload } from '../types/core.generated';
+import type {
+  MCPWebhookPayload,
+  GetBrandIdentityRequest,
+  GetBrandIdentityResponse,
+  GetRightsRequest,
+  GetRightsResponse,
+  AcquireRightsRequest,
+  AcquireRightsResponse,
+  ContextMatchRequest,
+  ContextMatchResponse,
+  IdentityMatchRequest,
+  IdentityMatchResponse,
+} from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
   SingleAgentClient,
+  type CanonicalReadTaskOptions,
   type CreativeDeliveryTaskOptions,
   type SingleAgentClientConfig,
   type SyncCreativesTaskOptions,
@@ -33,6 +46,8 @@ import type {
   GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
+  GetCreativeDeliveryRequest,
+  GetCreativeDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   GetSignalsRequest,
@@ -77,15 +92,44 @@ import type {
   SISendMessageResponse,
   SITerminateSessionRequest,
   SITerminateSessionResponse,
+  CreateContentStandardsResponse,
+  CreateContentStandardsRequest,
+  SyncPlansRequest,
+  SyncPlansResponse,
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
+  ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+  ListTransformersRequest,
+  ListTransformersResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
-import { withFormatOptions } from '../v2/projection/augment-response';
-import type { V2AugmentedProduct } from '../v2/projection/augment-response';
-import type { ProjectionDiagnostic, V1Product } from '../v2/projection/types';
+import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
+import type { V1Product } from '../v2/projection/types';
+import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
+import type {
+  CanonicalCreateMediaBuyRequest,
+  CanonicalCreativeResponse,
+  CanonicalGetProductsRequest,
+  CanonicalGetProductsResponse,
+  CanonicalListCreativesRequest,
+  CanonicalListCreativesResponse,
+  CanonicalProduct,
+  CanonicalSyncCreativesRequest,
+  CanonicalUpdateMediaBuyRequest,
+} from '../v2/projection/creative-delivery';
+import { projectCreativeForDelivery } from '../v2/projection/creative-delivery';
+export type { CanonicalGetProductsResponse } from '../v2/projection/creative-delivery';
+
+export type CanonicalProjectionTaskOptions = TaskOptions & {
+  /** Migration escape hatch for seller-specific legacy refs absent from the bundled registry. */
+  legacyFormatConverter?: LegacyFormatConverter;
+};
 
 /**
- * AdCP 3.1 V2-mental-model envelope attached to `get_products` responses
- * when the SDK auto-projects `format_ids[]` → `format_options[]`.
+ * Projection metadata attached to canonical `get_products` responses.
  *
  * Present whenever projection ran (the default). Adopters reading the
  * V2 surface check `data.projection.diagnostics` to see what didn't
@@ -93,48 +137,30 @@ import type { ProjectionDiagnostic, V1Product } from '../v2/projection/types';
  * `format_options[]` is fully populated (clean catalog match) or was
  * already v2-shaped on the wire.
  */
-export interface GetProductsProjectionEnvelope {
-  /**
-   * Structured diagnostics from the v1→v2 augmentation step
-   * (`source: 'sdk'`, parseable `sdk_id`, normative or SDK-local
-   * `code`). Empty when every product projects cleanly.
-   */
-  diagnostics: ProjectionDiagnostic[];
-}
-
 /**
- * `GetProductsResponse` with `format_options[]` guaranteed on every
- * product (the V2 mental model) and a `projection` envelope carrying
- * any diagnostics from the v1→v2 augmentation step.
- *
- * Returned by `AgentClient.getProducts()` by default. Callers passing
- * `{ project: false }` opt out of projection and receive the raw
- * generated `GetProductsResponse` instead.
+ * @deprecated The primary SDK surface is canonical-only. Use
+ * {@link CanonicalGetProductsResponse}. Raw legacy wire shapes remain
+ * available only through the explicit `getProductsLegacy()` escape hatch.
  */
-export type V2AugmentedGetProductsResponse = Omit<GetProductsResponse, 'products'> & {
-  products: V2AugmentedProduct<V1Product>[];
-  projection: GetProductsProjectionEnvelope;
-};
+export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
 
 /**
  * Type mapping for task names to their response types
  * Enables type-safe generic executeTask() calls
  */
 export type TaskResponseTypeMap = {
-  get_products: GetProductsResponse;
-  list_creative_formats: ListCreativeFormatsResponse;
-  create_media_buy: CreateMediaBuyResponse;
-  update_media_buy: UpdateMediaBuyResponse;
-  sync_creatives: SyncCreativesResponse;
-  list_creatives: ListCreativesResponse;
-  get_media_buys: GetMediaBuysResponse;
-  get_media_buy_delivery: GetMediaBuyDeliveryResponse;
+  get_products: CanonicalGetProductsResponse;
+  create_media_buy: CanonicalCreativeResponse<CreateMediaBuyResponse>;
+  update_media_buy: CanonicalCreativeResponse<UpdateMediaBuyResponse>;
+  sync_creatives: CanonicalCreativeResponse<SyncCreativesResponse>;
+  list_creatives: CanonicalListCreativesResponse;
+  get_media_buys: CanonicalCreativeResponse<GetMediaBuysResponse>;
+  get_media_buy_delivery: CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>;
+  get_creative_delivery: CanonicalCreativeResponse<GetCreativeDeliveryResponse>;
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
   get_signals: GetSignalsResponse;
   activate_signal: ActivateSignalResponse;
   get_adcp_capabilities: GetAdCPCapabilitiesResponse;
-  preview_creative: PreviewCreativeResponse;
-  build_creative: BuildCreativeResponse;
   list_accounts: ListAccountsResponse;
   sync_accounts: SyncAccountsResponse;
   sync_audiences: SyncAudiencesResponse;
@@ -143,20 +169,60 @@ export type TaskResponseTypeMap = {
   update_property_list: UpdatePropertyListResponse;
   list_property_lists: ListPropertyListsResponse;
   delete_property_list: DeletePropertyListResponse;
-  list_content_standards: ListContentStandardsResponse;
-  get_content_standards: GetContentStandardsResponse;
-  calibrate_content: CalibrateContentResponse;
-  validate_content_delivery: ValidateContentDeliveryResponse;
   si_get_offering: SIGetOfferingResponse;
   si_initiate_session: SIInitiateSessionResponse;
   si_send_message: SISendMessageResponse;
   si_terminate_session: SITerminateSessionResponse;
+  get_brand_identity: GetBrandIdentityResponse;
+  sync_plans: SyncPlansResponse;
+  check_governance: CheckGovernanceResponse;
+  report_plan_outcome: ReportPlanOutcomeResponse;
+  get_plan_audit_logs: GetPlanAuditLogsResponse;
+  context_match: ContextMatchResponse;
+  identity_match: IdentityMatchResponse;
 };
 
 /**
  * Valid ADCP task names
  */
 export type AdcpTaskName = keyof TaskResponseTypeMap;
+
+/** Exact request mapping paired with {@link TaskResponseTypeMap}. */
+export type TaskRequestTypeMap = {
+  get_products: CanonicalGetProductsRequest;
+  create_media_buy: MutatingRequestInput<CanonicalCreateMediaBuyRequest>;
+  update_media_buy: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>;
+  sync_creatives: MutatingRequestInput<CanonicalSyncCreativesRequest>;
+  list_creatives: CanonicalListCreativesRequest;
+  get_media_buys: GetMediaBuysRequest;
+  get_media_buy_delivery: GetMediaBuyDeliveryRequest;
+  get_creative_delivery: GetCreativeDeliveryRequest;
+  provide_performance_feedback: MutatingRequestInput<ProvidePerformanceFeedbackRequest>;
+  get_signals: GetSignalsRequest;
+  activate_signal: MutatingRequestInput<ActivateSignalRequest>;
+  get_adcp_capabilities: GetAdCPCapabilitiesRequest;
+  list_accounts: ListAccountsRequest;
+  sync_accounts: MutatingRequestInput<SyncAccountsRequest>;
+  sync_audiences: MutatingRequestInput<SyncAudiencesRequest>;
+  create_property_list: MutatingRequestInput<CreatePropertyListRequest>;
+  get_property_list: GetPropertyListRequest;
+  update_property_list: MutatingRequestInput<UpdatePropertyListRequest>;
+  list_property_lists: ListPropertyListsRequest;
+  delete_property_list: MutatingRequestInput<DeletePropertyListRequest>;
+  si_get_offering: SIGetOfferingRequest;
+  si_initiate_session: MutatingRequestInput<SIInitiateSessionRequest>;
+  si_send_message: MutatingRequestInput<SISendMessageRequest>;
+  si_terminate_session: SITerminateSessionRequest;
+  get_brand_identity: GetBrandIdentityRequest;
+  sync_plans: MutatingRequestInput<SyncPlansRequest>;
+  check_governance: CheckGovernanceRequest;
+  report_plan_outcome: MutatingRequestInput<ReportPlanOutcomeRequest>;
+  get_plan_audit_logs: GetPlanAuditLogsRequest;
+  context_match: ContextMatchRequest;
+  identity_match: IdentityMatchRequest;
+};
+
+export type TaskRequestFor<K extends AdcpTaskName> = TaskRequestTypeMap[K];
 
 /**
  * Configuration for `AgentClient.fromMCPClient()`.
@@ -481,13 +547,9 @@ export class AgentClient {
   /**
    * Discover available advertising products.
    *
-   * By default, response products are augmented with the AdCP 3.1
-   * `format_options[]` declaration (the V2 mental model). When the
-   * seller emitted v1 `format_ids[]`, the SDK projects them via the
-   * AAO canonical-formats catalog so buyers always read the same
-   * V2 shape regardless of wire version. The original `format_ids[]`
-   * is preserved alongside `format_options[]` (additive — 7.x
-   * callers reading `format_ids` keep working).
+   * Response products expose only canonical `format_options[]`, regardless of
+   * the seller's negotiated wire version. The SDK performs any required legacy
+   * translation below this public boundary.
    *
    * Projection diagnostics surface on
    * `result.data.projection.diagnostics` (structured
@@ -495,76 +557,43 @@ export class AgentClient {
    * vocabulary plus three SDK-local codes — see the projection
    * module's `ProjectionDiagnostic` type for the full set).
    *
-   * Pass `{ project: false }` to opt out and receive the raw wire
-   * response unmodified — useful for storyboard / compliance
-   * harnesses asserting exact seller emission. The opt-out narrows
-   * the return type back to `GetProductsResponse` (no `projection`
-   * envelope, no guaranteed `format_options[]`).
-   *
-   * The 8.0 release narrows further by removing `format_ids[]` from
-   * the public Product type entirely.
+   * Protocol tooling that must inspect raw seller emission uses the explicit
+   * deprecated `getProductsLegacy()` method.
    */
   async getProducts(
-    params: GetProductsRequest,
+    params: CanonicalGetProductsRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions & { project?: true }
-  ): Promise<TaskResult<V2AugmentedGetProductsResponse>>;
-  async getProducts(
-    params: GetProductsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions & { project: false }
-  ): Promise<TaskResult<GetProductsResponse>>;
-  async getProducts(
-    params: GetProductsRequest,
-    inputHandler?: InputHandler,
-    options?: TaskOptions & { project?: boolean }
-  ): Promise<TaskResult<GetProductsResponse | V2AugmentedGetProductsResponse>> {
-    const { project, ...sessionOptions } = options ?? {};
+    options?: CanonicalProjectionTaskOptions
+  ): Promise<TaskResult<CanonicalGetProductsResponse>> {
     const result = await this.client.getProducts(params, inputHandler, {
-      ...this.withSession('get_products', sessionOptions),
+      ...options,
+      ...this.withSession('get_products', options),
     });
 
     this.retainSession(result);
-
-    if (project === false) {
-      return result;
-    }
-
-    // Augment on the way out. Only the completed-success branch carries
-    // `data` we can project; failure / intermediate results pass through
-    // unchanged so the discriminated-union narrowing on the caller side
-    // still works.
-    if (result.success && result.status === 'completed' && result.data) {
-      // The generated `GetProductsResponse.products: Product[]` shape is
-      // structurally broader than the projection layer's loose `V1Product`
-      // (which requires `format_ids` and an index signature). We treat the
-      // generated shape as a v1 product on the way through projection — the
-      // augmentation is purely additive and doesn't read the fields the
-      // generated type has but `V1Product` doesn't.
-      const { response, diagnostics } = withFormatOptions(result.data as unknown as { products?: V1Product[] });
-      const augmented: V2AugmentedGetProductsResponse = {
-        ...(response as unknown as Omit<GetProductsResponse, 'products'> & {
-          products: V2AugmentedProduct<V1Product>[];
-        }),
-        projection: { diagnostics },
-      };
-      return {
-        ...result,
-        data: augmented,
-      };
-    }
     return result;
   }
 
-  /**
-   * List available creative formats
-   */
-  async listCreativeFormats(
+  /** @deprecated Explicit raw-wire escape hatch for migration tooling. */
+  async getProductsLegacy(
+    params: GetProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<GetProductsResponse>> {
+    const result = await this.client.getProductsLegacy(params, inputHandler, {
+      ...this.withSession('get_products', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
+
+  /** @deprecated Migration-only access to a legacy named-format catalog. */
+  async listCreativeFormatsLegacy(
     params: ListCreativeFormatsRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
-    const result = await this.client.listCreativeFormats(params, inputHandler, {
+    const result = await this.client.listCreativeFormatsLegacy(params, inputHandler, {
       ...this.withSession('list_creative_formats', options),
     });
 
@@ -573,59 +602,54 @@ export class AgentClient {
     return result;
   }
 
+  /** @deprecated Migration-only access to legacy creative transformer declarations. */
+  async listTransformersLegacy(
+    params: ListTransformersRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListTransformersResponse>> {
+    const result = await this.client.listTransformersLegacy(params, inputHandler, {
+      ...this.withSession('list_transformers', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
+
   /**
    * Create a new media buy.
    *
-   * **3.1+ format-option write flow (preferred at 3.1.0-beta.5+).** After
-   * `getProducts()` returns the V2-augmented response (`format_options[]`
-   * auto-populated), pick declarations by `format_option_id` and use
-   * `packageRefsForFormatOptions` to author the package. The helper emits
-   * BOTH `format_option_refs[]` (the 3.1+ path) AND `format_ids[]`
-   * (legacy named-format dual emission) so a single request works against
-   * both format-option-aware and legacy sellers.
+   * Discover canonical `format_options[]` with `getProducts()`, select a
+   * `format_option_id`, and send only canonical package and creative fields.
+   * Compatibility translation for an older seller happens below this method.
    *
    * ```ts
-   * import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
-   *
    * const { data: { products } } = await agent.getProducts({ brief: '...' });
    * const product = products[0];
+   * const format = product.format_options[0];
    *
    * await agent.createMediaBuy({
    *   packages: [{
    *     package_id: 'pkg-1',
    *     product_id: product.product_id,
    *     pricing_option_id: product.pricing_options[0].pricing_option_id,
-   *     ...packageRefsForFormatOptions(product, ['nytimes_mrec', 'nytimes_video_30s']),
-   *     // ↑ spreads `{ format_option_refs, format_ids? }`
+   *     format_option_refs: [{
+   *       scope: 'product',
+   *       format_option_id: format.format_option_id
+   *     }],
+   *     creatives: [{
+   *       creative_id: 'hero',
+   *       format_kind: format.format_kind,
+   *       format_option_ref: {
+   *         scope: 'product',
+   *         format_option_id: format.format_option_id
+   *       },
+   *       assets: { image: { url: 'https://cdn.example/hero.png' } }
+   *     }],
    *     budget: { currency: 'USD', total: 5000 },
    *   }],
    *   // ...
    * });
    * ```
-   *
-   * The resulting wire payload for the package looks like:
-   *
-   * ```json
-   * {
-   *   "package_id": "pkg-1",
-   *   "product_id": "...",
-   *   "pricing_option_id": "...",
-   *   "format_option_refs": [
-   *     {"scope": "product", "format_option_id": "nytimes_mrec"},
-   *     {"scope": "product", "format_option_id": "nytimes_video_30s"}
-   *   ],
-   *   "format_ids": [
-   *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "display_300x250_image"},
-   *     {"agent_url": "https://creative.adcontextprotocol.org/", "id": "video_standard_30s"}
-   *   ],
-   *   "budget": {"currency": "USD", "total": 5000}
-   * }
-   * ```
-   *
-   * `format_ids` is omitted entirely when every chosen format option is V2-only
-   * (the spec's "neither present" fallback fires for v1 sellers in that case).
-   * Inline canonical creatives are projected automatically when their package
-   * carries one unambiguous seller-owned legacy `format_id`.
    *
    * **Inline creative fallback.** Sellers that do not advertise a creative
    * library (`supportsSyncCreatives(await agent.getCapabilities()) === false`)
@@ -637,29 +661,33 @@ export class AgentClient {
    * assignments for create payloads, give each package a stable key such as
    * `context.buyer_ref`, or pass a custom `packageId` resolver.
    *
-   * For adopters writing strictly to v1 sellers — or for products whose
-   * `format_options[]` entries don't publish `format_option_id` — see the
-   * `legacyFormatIdsFromOptions` / `tryLegacyFormatIdsFromOptions` /
-   * `legacyFormatIdsForFormatOption` helpers in `@adcp/sdk/v2/projection`.
-   *
-   * `packageRefsForFormatOptions` throws `FormatOptionRefsLookupError`
-   * with a normalized `.code` in `{ 'unknown_format_option_id' |
-   * 'format_option_refs_not_published' | 'empty_input' | 'invalid_product' }`
-   * — branch on `.code` to fall back to the `legacy*` helpers when the
-   * product is V1-shape only. See the helper JSDoc for the full
-   * recovery example.
+   * Existing applications that still hold old named-format payloads must opt
+   * into `createMediaBuyLegacy()` explicitly.
    */
   async createMediaBuy(
-    params: MutatingRequestInput<CreateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
-  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+  ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
     const result = await this.client.createMediaBuy(params, inputHandler, {
       ...this.withSession('create_media_buy', options),
     });
 
     this.retainSession(result);
 
+    return result;
+  }
+
+  /** @deprecated Use `createMediaBuy`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  async createMediaBuyLegacy(
+    params: MutatingRequestInput<CreateMediaBuyRequest>,
+    inputHandler?: InputHandler,
+    options?: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<CreateMediaBuyResponse>> {
+    const result = await this.client.createMediaBuyLegacy(params, inputHandler, {
+      ...this.withSession('create_media_buy', options),
+    });
+    this.retainSession(result);
     return result;
   }
 
@@ -672,20 +700,33 @@ export class AgentClient {
    * request. Build the package patch with `inlineCreativesForPackages()` and
    * preflight it with `preflightUpdateMediaBuy(currentBuy, patch)` so
    * `available_actions[]` allows `replace_creative` before dispatch.
-   * Canonical creatives in the patch are projected automatically when the
-   * package carries one unambiguous seller-owned legacy `format_id`.
+   * Use `format_kind` and `format_option_ref` for every creative in the patch;
+   * the SDK handles any negotiated compatibility conversion.
    */
   async updateMediaBuy(
-    params: MutatingRequestInput<UpdateMediaBuyRequest>,
+    params: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>,
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
-  ): Promise<TaskResult<UpdateMediaBuyResponse>> {
+  ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
     const result = await this.client.updateMediaBuy(params, inputHandler, {
       ...this.withSession('update_media_buy', options),
     });
 
     this.retainSession(result);
 
+    return result;
+  }
+
+  /** @deprecated Use `updateMediaBuy`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  async updateMediaBuyLegacy(
+    params: MutatingRequestInput<UpdateMediaBuyRequest>,
+    inputHandler?: InputHandler,
+    options?: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<UpdateMediaBuyResponse>> {
+    const result = await this.client.updateMediaBuyLegacy(params, inputHandler, {
+      ...this.withSession('update_media_buy', options),
+    });
+    this.retainSession(result);
     return result;
   }
 
@@ -702,16 +743,16 @@ export class AgentClient {
    * own idempotency key. If neither capability is advertised, creative upload
    * is not available through this SDK helper surface.
    *
-   * A raw sync request does not carry product declarations. To project
-   * canonical creatives for a legacy-format seller, pass
+   * A sync request does not carry product declarations. When compatibility
+   * translation needs seller selection metadata, pass
    * `options.creativeFormatProjection.selectorContainers` with the routed
    * package/product selectors. Assignments scope each creative to its package.
    */
   async syncCreatives(
-    params: MutatingRequestInput<SyncCreativesRequest>,
+    params: MutatingRequestInput<CanonicalSyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
-  ): Promise<TaskResult<SyncCreativesResponse>> {
+  ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
     const result = await this.client.syncCreatives(params, inputHandler, {
       ...this.withSession('sync_creatives', options),
     });
@@ -721,20 +762,50 @@ export class AgentClient {
     return result;
   }
 
+  /** @deprecated Use `syncCreatives`; this explicit compatibility surface accepts legacy creative `format_id`. */
+  async syncCreativesLegacy(
+    params: MutatingRequestInput<SyncCreativesRequest>,
+    inputHandler?: InputHandler,
+    options?: SyncCreativesTaskOptions
+  ): Promise<TaskResult<SyncCreativesResponse>> {
+    const result = await this.client.syncCreativesLegacy(params, inputHandler, {
+      ...this.withSession('sync_creatives', options),
+    });
+    this.retainSession(result);
+    return result;
+  }
+
   /**
    * List creative assets
    */
   async listCreatives(
-    params: ListCreativesRequest,
+    params: CanonicalListCreativesRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<ListCreativesResponse>> {
+    options?: CanonicalProjectionTaskOptions
+  ): Promise<TaskResult<CanonicalListCreativesResponse>> {
     const result = await this.client.listCreatives(params, inputHandler, {
+      ...options,
       ...this.withSession('list_creatives', options),
     });
 
     this.retainSession(result);
+    return result;
+  }
 
+  /**
+   * Return the unprojected `list_creatives` wire response.
+   *
+   * @deprecated Compatibility-only escape hatch for migration and protocol tooling.
+   */
+  async listCreativesLegacy(
+    params: ListCreativesRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListCreativesResponse>> {
+    const result = await this.client.listCreativesLegacy(params, inputHandler, {
+      ...this.withSession('list_creatives', options),
+    });
+    this.retainSession(result);
     return result;
   }
 
@@ -744,8 +815,8 @@ export class AgentClient {
   async getMediaBuys(
     params: GetMediaBuysRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetMediaBuysResponse>> {
+    options?: CanonicalReadTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<GetMediaBuysResponse>>> {
     const result = await this.client.getMediaBuys(params, inputHandler, {
       ...this.withSession('get_media_buys', options),
     });
@@ -761,14 +832,28 @@ export class AgentClient {
   async getMediaBuyDelivery(
     params: GetMediaBuyDeliveryRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
+    options?: CanonicalReadTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>>> {
     const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
       ...this.withSession('get_media_buy_delivery', options),
     });
 
     this.retainSession(result);
 
+    return result;
+  }
+
+  /** Retrieve canonical creative-level and variant-level delivery metrics. */
+  async getCreativeDelivery(
+    params: GetCreativeDeliveryRequest,
+    inputHandler?: InputHandler,
+    options?: CanonicalProjectionTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<GetCreativeDeliveryResponse>>> {
+    const result = await this.client.getCreativeDelivery(params, inputHandler, {
+      ...options,
+      ...this.withSession('get_creative_delivery', options),
+    });
+    this.retainSession(result);
     return result;
   }
 
@@ -879,30 +964,26 @@ export class AgentClient {
     return this.client.requireSupportedMajor(taskType);
   }
 
-  /**
-   * Preview a creative
-   */
-  async previewCreative(
+  /** @deprecated Migration-only access to legacy `format_id`-based creative preview. */
+  async previewCreativeLegacy(
     params: PreviewCreativeRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<PreviewCreativeResponse>> {
-    const result = await this.client.previewCreative(params, inputHandler, {
+    const result = await this.client.previewCreativeLegacy(params, inputHandler, {
       ...this.withSession('preview_creative', options),
     });
     this.retainSession(result);
     return result;
   }
 
-  /**
-   * Build a creative from format and brand context
-   */
-  async buildCreative(
+  /** @deprecated Migration-only access to legacy `target_format_id`-based creative building. */
+  async buildCreativeLegacy(
     params: MutatingRequestInput<BuildCreativeRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<BuildCreativeResponse>> {
-    const result = await this.client.buildCreative(params, inputHandler, {
+    const result = await this.client.buildCreativeLegacy(params, inputHandler, {
       ...this.withSession('build_creative', options),
     });
     this.retainSession(result);
@@ -1036,12 +1117,12 @@ export class AgentClient {
   /**
    * List content standards
    */
-  async listContentStandards(
+  async listContentStandardsLegacy(
     params: ListContentStandardsRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListContentStandardsResponse>> {
-    const result = await this.client.listContentStandards(params, inputHandler, {
+    const result = await this.client.listContentStandardsLegacy(params, inputHandler, {
       ...this.withSession('list_content_standards', options),
     });
     this.retainSession(result);
@@ -1051,12 +1132,12 @@ export class AgentClient {
   /**
    * Get content standards
    */
-  async getContentStandards(
+  async getContentStandardsLegacy(
     params: GetContentStandardsRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetContentStandardsResponse>> {
-    const result = await this.client.getContentStandards(params, inputHandler, {
+    const result = await this.client.getContentStandardsLegacy(params, inputHandler, {
       ...this.withSession('get_content_standards', options),
     });
     this.retainSession(result);
@@ -1066,12 +1147,12 @@ export class AgentClient {
   /**
    * Calibrate content against standards
    */
-  async calibrateContent(
+  async calibrateContentLegacy(
     params: MutatingRequestInput<CalibrateContentRequest>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<CalibrateContentResponse>> {
-    const result = await this.client.calibrateContent(params, inputHandler, {
+    const result = await this.client.calibrateContentLegacy(params, inputHandler, {
       ...this.withSession('calibrate_content', options),
     });
     this.retainSession(result);
@@ -1081,12 +1162,12 @@ export class AgentClient {
   /**
    * Validate content delivery
    */
-  async validateContentDelivery(
+  async validateContentDeliveryLegacy(
     params: ValidateContentDeliveryRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ValidateContentDeliveryResponse>> {
-    const result = await this.client.validateContentDelivery(params, inputHandler, {
+    const result = await this.client.validateContentDeliveryLegacy(params, inputHandler, {
       ...this.withSession('validate_content_delivery', options),
     });
     this.retainSession(result);
@@ -1382,41 +1463,93 @@ export class AgentClient {
    * ```typescript
    * // ✅ TYPE-SAFE: Automatic response type inference
    * const result = await agent.executeTask('get_products', params);
-   * // result is TaskResult<GetProductsResponse> - no casting needed!
+   * // result is TaskResult<CanonicalGetProductsResponse> - no casting needed!
    *
    * // ✅ CUSTOM TYPES: For non-standard tasks
-   * const customResult = await agent.executeTask<MyCustomResponse>('custom_task', params);
+   * const customResult = await agent.executeCustomTask<MyCustomResponse>('custom_task', params);
    * ```
    */
   async executeTask<K extends AdcpTaskName>(
     taskName: K,
-    params: Record<string, unknown>,
+    params: TaskRequestFor<K>,
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<TaskResponseTypeMap[K]>>;
 
-  /**
-   * Execute a task by name with custom response type
-   */
-  async executeTask<T = unknown>(
+  async executeTask(
     taskName: string,
     params: Record<string, unknown>,
     inputHandler?: InputHandler,
     options?: TaskOptions
-  ): Promise<TaskResult<T>>;
-
-  async executeTask<T = unknown>(
-    taskName: string,
-    params: Record<string, unknown>,
-    inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<T>> {
-    const result = await this.client.executeTask<T>(taskName, params, inputHandler, {
+  ): Promise<TaskResult<unknown>> {
+    switch (taskName) {
+      case 'get_products':
+        return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
+      case 'create_media_buy':
+        return (await this.createMediaBuy(
+          params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+          inputHandler,
+          options
+        )) as TaskResult<unknown>;
+      case 'update_media_buy':
+        return (await this.updateMediaBuy(
+          params as MutatingRequestInput<CanonicalUpdateMediaBuyRequest>,
+          inputHandler,
+          options
+        )) as TaskResult<unknown>;
+      case 'sync_creatives':
+        return (await this.syncCreatives(
+          params as MutatingRequestInput<CanonicalSyncCreativesRequest>,
+          inputHandler,
+          options
+        )) as TaskResult<unknown>;
+      case 'list_creatives':
+        return this.listCreatives(params as CanonicalListCreativesRequest, inputHandler, options);
+      case 'get_media_buys':
+        return this.getMediaBuys(params as GetMediaBuysRequest, inputHandler, options);
+      case 'get_media_buy_delivery':
+        return this.getMediaBuyDelivery(params as GetMediaBuyDeliveryRequest, inputHandler, options);
+      case 'get_creative_delivery':
+        return this.getCreativeDelivery(params as GetCreativeDeliveryRequest, inputHandler, options);
+    }
+    const result = await this.client.executeTaskLegacy(taskName, params, inputHandler, {
       ...this.withSession(taskName, options),
     });
 
     this.retainSession(result);
 
+    return result;
+  }
+
+  /** Execute an extension task that is not part of the standard AdCP task set. */
+  async executeCustomTask<T = unknown>(
+    taskName: string,
+    params: Record<string, unknown>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<T>> {
+    const result = await this.client.executeCustomTask<T>(taskName, params, inputHandler, {
+      ...this.withSession(taskName, options),
+    });
+
+    this.retainSession(result);
+    return result;
+  }
+
+  /**
+   * Explicit raw-task compatibility escape hatch for conformance and migration tooling.
+   * @deprecated Application code should use typed primary methods or `executeTask()`.
+   */
+  async executeTaskLegacy<T = unknown>(
+    taskName: string,
+    params: Record<string, unknown>,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<T>> {
+    const result = await this.client.executeTaskLegacy<T>(taskName, params, inputHandler, {
+      ...this.withSession(taskName, options),
+    });
+    this.retainSession(result);
     return result;
   }
 

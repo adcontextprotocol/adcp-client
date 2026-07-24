@@ -13,7 +13,7 @@ const {
   toCanonicalOnlyProduct,
   toCanonicalOnlyResponse,
   augmentProductWithFormatOptions,
-} = require('../../dist/lib/index.js');
+} = require('../../dist/lib/v2/projection/index.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 // v1-path cases project via the catalog and (for unmappable ids) the
@@ -115,9 +115,9 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
     // Full diagnostic envelope (ProjectionDiagnosticBase contract).
     assert.strictEqual(diag.source, 'sdk');
     assert.match(diag.sdk_id, /^@adcp\/sdk@/);
-    // Indexed field (orphan is format_ids[1]) — matches the v1→v2 path shape.
-    assert.strictEqual(diag.field, 'products[p4].format_ids[1]');
-    assert.deepStrictEqual(diag.error.details.dropped_format_id, { agent_url: 'https://x/', id: 'orphan' });
+    assert.strictEqual(diag.field, 'products[p4].format_options[1]');
+    assert.strictEqual(diag.error.details.resolution_failure, 'unmapped_legacy_format');
+    assert.strictEqual(JSON.stringify(diag).includes('https://x/'), false);
     assert.strictEqual(diag.error.details.product_id, 'p4');
   });
 
@@ -144,13 +144,8 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
     const { diagnostics } = toCanonicalOnlyProduct(v2);
     assert.strictEqual(diagnostics.length, 1, 'the uncovered 728x90 size must be surfaced');
     assert.strictEqual(diagnostics[0].code, 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED');
-    // The diagnostic carries the dimensions so the buyer knows WHICH size was lost.
-    assert.deepStrictEqual(diagnostics[0].error.details.dropped_format_id, {
-      agent_url: 'https://x/',
-      id: 'banner',
-      width: 728,
-      height: 90,
-    });
+    assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'unmapped_legacy_format');
+    assert.strictEqual(JSON.stringify(diagnostics[0]).includes('agent_url'), false);
   });
 
   test('v2-native with empty format_options[] and populated format_ids: flags every dropped ref', () => {
@@ -192,6 +187,18 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
     assert.deepStrictEqual(diagnostics, []);
   });
 
+  test('format-agnostic legacy shape with format_ids:[] is preserved', () => {
+    const response = {
+      products: [{ product_id: 'format-agnostic', name: 'N', description: 'D', format_ids: [] }],
+    };
+    const { response: canonical, diagnostics } = toCanonicalOnlyResponse(response);
+    assert.strictEqual(canonical.products.length, 1);
+    assert.strictEqual(canonical.products[0].product_id, 'format-agnostic');
+    assert.strictEqual('format_ids' in canonical.products[0], false);
+    assert.deepStrictEqual(canonical.products[0].format_options, []);
+    assert.deepStrictEqual(diagnostics, []);
+  });
+
   test('composition: augmentProductWithFormatOptions then toCanonicalOnlyProduct round-trips cleanly', () => {
     // The highest-value real-world path: augment a v1 seller product (adds
     // format_options[] with echoed v1_format_ref, keeps format_ids[]), then
@@ -228,7 +235,8 @@ describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
     };
     const { response: out, diagnostics } = toCanonicalOnlyResponse(response);
     assert.strictEqual(out.adcp_version, '3.1.0', 'response envelope fields preserved');
-    assert.strictEqual(out.products.length, 2);
+    assert.strictEqual(out.products.length, 1, 'unusable products with no canonical formats are omitted');
+    assert.strictEqual(out.products[0].product_id, 'a');
     assert.strictEqual(
       out.products.some(p => 'format_ids' in p),
       false,
@@ -242,5 +250,66 @@ describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
     const { response, diagnostics } = toCanonicalOnlyResponse({ adcp_version: '3.1.0' });
     assert.deepStrictEqual(response.products, []);
     assert.deepStrictEqual(diagnostics, []);
+  });
+
+  test('strips legacy identifiers from nested placement declarations', () => {
+    const { product } = toCanonicalOnlyProduct({
+      product_id: 'nested',
+      name: 'Nested',
+      description: 'Nested placement formats',
+      format_options: [{ format_kind: 'image', params: {} }],
+      placements: [
+        {
+          kind: 'seller_inline',
+          placement_id: 'hero',
+          name: 'Hero',
+          mode: 'targetable',
+          format_ids: [{ agent_url: AAO, id: 'display_300x250_image' }],
+          format_options: [
+            {
+              format_kind: 'image',
+              params: {},
+              v1_format_ref: [{ agent_url: AAO, id: 'display_300x250_image' }],
+            },
+          ],
+        },
+      ],
+    });
+    assert.strictEqual(product.placements[0].format_ids, undefined);
+    assert.strictEqual(product.placements[0].format_options[0].v1_format_ref, undefined);
+    assert.doesNotMatch(JSON.stringify(product), /agent_url|format_id/);
+  });
+
+  test('projects legacy-only nested placements and surfaces unmapped placement diagnostics', () => {
+    const { product, diagnostics } = toCanonicalOnlyProduct({
+      product_id: 'nested-legacy-only',
+      name: 'Nested legacy only',
+      description: 'Every placement ref must convert or diagnose',
+      format_options: [{ format_kind: 'image', params: {} }],
+      placements: [
+        {
+          kind: 'seller_inline',
+          placement_id: 'known',
+          name: 'Known',
+          mode: 'targetable',
+          format_ids: [{ agent_url: AAO, id: 'display_300x250_image' }],
+        },
+        {
+          kind: 'seller_inline',
+          placement_id: 'unknown',
+          name: 'Unknown',
+          mode: 'targetable',
+          format_ids: [{ agent_url: 'https://custom.example/formats', id: 'unmapped_takeover' }],
+        },
+      ],
+    });
+
+    assert.strictEqual(product.placements[0].format_options[0].format_kind, 'image');
+    assert.strictEqual(product.placements[0].format_ids, undefined);
+    assert.strictEqual(product.placements[1].format_ids, undefined);
+    assert.strictEqual(diagnostics.length, 1);
+    assert.match(diagnostics[0].field, /products\[nested-legacy-only\]\.placements\[1\]/);
+    assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+    assert.doesNotMatch(JSON.stringify({ product, diagnostics }), /unmapped_takeover|custom\.example/);
   });
 });

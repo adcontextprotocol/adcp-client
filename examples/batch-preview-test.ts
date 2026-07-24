@@ -5,12 +5,12 @@
  *
  * This example demonstrates:
  * 1. Creating mock products/formats with product_card/format_card manifests
- * 2. Using batchPreviewProducts/batchPreviewFormats to render cards
+ * 2. Using batchPreviewProducts/batchPreviewFormatsLegacy to render cards
  * 3. Caching behavior
  */
 
 import { AdCPClient } from '../src/lib/core/AdCPClient';
-import { batchPreviewProducts, batchPreviewFormats, clearPreviewCache } from '../src/lib/utils/preview-utils';
+import { batchPreviewProducts, batchPreviewFormatsLegacy, clearPreviewCache } from '../src/lib/utils/preview-utils';
 import type { Product, Format } from '../src/lib/types/tools.generated';
 
 // Configuration
@@ -217,7 +217,7 @@ async function main() {
     console.log(`📦 Testing with ${testFormats.length} formats...`);
     const startTime = Date.now();
 
-    const formatPreviews = await batchPreviewFormats(testFormats, creativeAgent);
+    const formatPreviews = await batchPreviewFormatsLegacy(testFormats, creativeAgent);
 
     const elapsed = Date.now() - startTime;
     console.log(`✅ Batch preview completed in ${elapsed}ms\n`);

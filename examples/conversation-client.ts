@@ -180,7 +180,7 @@ async function advancedHandlersExample() {
 
   try {
     console.log('🎯 Testing advanced input handling...');
-    const result = await agent.listCreativeFormats(
+    const result = await agent.listCreativeFormatsLegacy(
       {
         type: 'video',
       },
@@ -239,7 +239,7 @@ async function conversationHistoryExample() {
     });
 
     // Second request in same conversation
-    await agent.listCreativeFormats(
+    await agent.listCreativeFormatsLegacy(
       {
         type: 'display',
       },

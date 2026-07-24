@@ -256,8 +256,8 @@ describe('BroadcastTvSeller — HITL via *Task variants', () => {
         name: 'sync_creatives',
         arguments: {
           creatives: [
-            { creative_id: 'cr_brand', format_id: { id: 'video_30s', agent_url: 'x' }, tags: ['cpg'] },
-            { creative_id: 'cr_pol', format_id: { id: 'video_30s', agent_url: 'x' }, tags: ['Political'] },
+            { creative_id: 'cr_brand', format_kind: 'video_hosted', assets: {}, tags: ['cpg'] },
+            { creative_id: 'cr_pol', format_kind: 'video_hosted', assets: {}, tags: ['Political'] },
           ],
           idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
           account: { account_id: 'acc_1' },

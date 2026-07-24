@@ -39,7 +39,7 @@ function buildImplicitPlatform(overrides = {}) {
             product_id: 'p1',
             name: 'sample',
             description: 'fixture',
-            format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+            format_options: [{ format_kind: 'image', params: {} }],
             delivery_type: 'non_guaranteed',
             publisher_properties: { reportable: true },
             reporting_capabilities: { available_dimensions: ['geo'] },

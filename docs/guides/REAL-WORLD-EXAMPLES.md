@@ -201,7 +201,7 @@ class CampaignPlanningService {
   private async getCreativeFormats(campaign: CampaignPlan, handler: any) {
     console.log('🎨 Analyzing creative format requirements...');
     
-    const results = await this.client.agents(campaign.networks).listCreativeFormats({
+    const results = await this.client.agents(campaign.networks).listCreativeFormatsLegacy({
       type: this.inferCreativeType(campaign.brief),
       placement: 'newsfeed'
     }, handler);

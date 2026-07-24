@@ -6,7 +6,8 @@ import type {
 import type {
   CreateMediaBuyPayload as ServerCreateMediaBuyPayload,
   GetProductsPayload as ServerGetProductsPayload,
-  PreviewCreativePayload as ServerPreviewCreativePayload,
+  LegacyCreateMediaBuyPayload as ServerLegacyCreateMediaBuyPayload,
+  LegacyPreviewCreativePayload as ServerLegacyPreviewCreativePayload,
 } from '../lib/server';
 import type {
   CreateMediaBuyPayload as TypesCreateMediaBuyPayload,
@@ -15,7 +16,7 @@ import type {
 } from '../lib/types';
 import type { CreateMediaBuySuccess } from '../lib/types';
 import type { GetProductsPayload as DecisioningGetProductsPayload } from '../lib/server/decisioning/specialisms/sales';
-import { productsResponse } from '../lib/server';
+import { legacyProductsResponse } from '../lib/server';
 
 const rootCreateMediaBuyPayload: RootCreateMediaBuyPayload = {
   media_buy_id: 'mb_1',
@@ -28,12 +29,17 @@ const serverCreateMediaBuyPayload: ServerCreateMediaBuyPayload = rootCreateMedia
 const typesCreateMediaBuyPayload: TypesCreateMediaBuyPayload = serverCreateMediaBuyPayload;
 const genericPayload: ServerPayload<CreateMediaBuySuccess> = typesCreateMediaBuyPayload;
 void genericPayload;
+// @ts-expect-error Primary server payload packages never expose legacy format_ids.
+void rootCreateMediaBuyPayload.packages[0]?.format_ids;
+declare const legacyCreateMediaBuyPayload: ServerLegacyCreateMediaBuyPayload;
+void legacyCreateMediaBuyPayload.packages[0]?.format_ids;
 
 const rootGetProductsPayload: RootGetProductsPayload = {
   products: [],
   cache_scope: 'account',
 };
 const serverGetProductsPayload: ServerGetProductsPayload = rootGetProductsPayload;
+// @ts-expect-error The explicit protocol-types subpath retains the raw wire product union.
 const typesGetProductsPayload: TypesGetProductsPayload = serverGetProductsPayload;
 void typesGetProductsPayload;
 
@@ -47,7 +53,9 @@ void unchangedServerGetProductsPayload;
 
 declare const publicTypesGetProductsPayload: TypesGetProductsPayload;
 declare const decisioningGetProductsPayload: DecisioningGetProductsPayload;
+// @ts-expect-error DecisioningPlatform is canonical-only; the raw wire alias may contain legacy-only products.
 const decisioningPayloadFromPublicAlias: DecisioningGetProductsPayload = publicTypesGetProductsPayload;
+// @ts-expect-error Generated Product's empty oneOf marker interfaces prevent structural recovery of the canonical arm.
 const publicAliasFromDecisioningPayload: TypesGetProductsPayload = decisioningGetProductsPayload;
 void decisioningPayloadFromPublicAlias;
 void publicAliasFromDecisioningPayload;
@@ -60,10 +68,10 @@ void missingCacheScopeWithProducts;
 const missingCacheScopeWithUnchanged: RootGetProductsPayload = { unchanged: true, wholesale_feed_version: 'wf_v1' };
 void missingCacheScopeWithUnchanged;
 
-// @ts-expect-error productsResponse also enforces cache_scope at the manual builder callsite.
-productsResponse({ products: [] });
+// @ts-expect-error The legacy response builder also enforces cache_scope at the manual builder callsite.
+legacyProductsResponse({ products: [] });
 
-declare const serverPreviewCreativePayload: ServerPreviewCreativePayload;
+declare const serverPreviewCreativePayload: ServerLegacyPreviewCreativePayload;
 const typesPreviewCreativePayload: TypesPreviewCreativePayload = serverPreviewCreativePayload;
 void typesPreviewCreativePayload;
 

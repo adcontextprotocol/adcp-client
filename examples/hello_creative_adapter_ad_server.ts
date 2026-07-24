@@ -466,7 +466,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
      * the creative first (push to upstream) then renders. SWAP for adapters
      * that don't support inline build to throw INVALID_REQUEST instead.
      */
-    buildCreative: async (req: BuildCreativeRequest, ctx): Promise<BuildCreativeSuccess> => {
+    buildCreativeLegacy: async (req: BuildCreativeRequest, ctx): Promise<BuildCreativeSuccess> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const creativeId = (req as { creative_id?: string }).creative_id;
       const creativeManifest = (req as { creative_manifest?: { creative_id?: string; assets?: unknown } })
@@ -540,7 +540,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
      * request doesn't carry `account`. Resolver synthesizes a fallback
      * (KNOWN_PUBLISHERS[0]) so we have tenant context.
      */
-    previewCreative: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
+    previewCreativeLegacy: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
       // No-account narrow: ctx.account is `Account<NetworkMeta> | undefined`
       // per the type. Defensive guard per migration recipe #11.
       const acct = ctx.account as Account<NetworkMeta> | undefined;
@@ -588,7 +588,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       };
     },
 
-    listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {
+    listCreativeFormatsLegacy: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {
       // No-account tool. Use the default workspace's catalog. Production
       // sellers expose a global format catalog or the workspace tied to
       // the API key's principal.

@@ -600,7 +600,7 @@ export async function discoverCreativeFormats(
   const { result, step } = await runStep<TaskResult>(
     'Discover creative formats',
     'list_creative_formats',
-    async () => client.listCreativeFormats({}) as Promise<TaskResult>
+    async () => client.listCreativeFormatsLegacy({}) as Promise<TaskResult>
   );
 
   if (result?.success && result?.data) {

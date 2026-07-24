@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const { readFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
-const { resolveCanonicalFormatKind, canonicalDeclarationFromBareId } = require('../../dist/lib/index.js');
+const { resolveCanonicalFormatKind, canonicalDeclarationFromBareId } = require('../../dist/lib/v2/projection/index.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 

@@ -6,7 +6,7 @@
  * that can be extended or replaced.
  *
  * Usage:
- * - ContentStandardsAdapter: Implement brand safety/suitability evaluation
+ * - LegacyContentStandardsAdapter: Maintain raw content-standard integrations during migration
  * - PropertyListAdapter: Manage buyer-defined property lists
  * - SISessionManager: Handle Sponsored Intelligence conversational sessions
  * - InMemoryImplicitAccountStore: AccountStore for resolution: 'implicit' platforms
@@ -14,12 +14,12 @@
 
 // Content Standards
 export {
-  ContentStandardsAdapter,
-  type IContentStandardsAdapter,
-  type ContentEvaluationResult,
-  ContentStandardsErrorCodes,
-  isContentStandardsError,
-  defaultContentStandardsAdapter,
+  LegacyContentStandardsAdapter,
+  type LegacyIContentStandardsAdapter,
+  type LegacyContentEvaluationResult,
+  LegacyContentStandardsErrorCodes,
+  isLegacyContentStandardsError,
+  legacyDefaultContentStandardsAdapter,
 } from './content-standards-adapter';
 
 // Property Lists

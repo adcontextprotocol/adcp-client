@@ -83,7 +83,7 @@ describe('ctx.input — un-destructured wire envelope on every v6 dispatch', () 
         arguments: {
           account: { account_id: 'acc_1' },
           idempotency_key: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-          creatives: [{ creative_id: 'cr_1', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
           assignments: [{ creative_id: 'cr_1', package_ids: ['pkg_1', 'pkg_2'] }],
           delete_missing: true,
           dry_run: false,

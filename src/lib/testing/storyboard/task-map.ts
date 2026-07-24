@@ -31,8 +31,8 @@ export const TASK_TO_METHOD: Record<string, string> = {
 
   // Creative
   list_creative_formats: 'listCreativeFormats',
-  build_creative: 'buildCreative',
-  preview_creative: 'previewCreative',
+  build_creative: 'buildCreativeLegacy',
+  preview_creative: 'previewCreativeLegacy',
   sync_creatives: 'syncCreatives',
   list_creatives: 'listCreatives',
 

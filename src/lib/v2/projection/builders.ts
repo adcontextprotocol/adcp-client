@@ -11,13 +11,16 @@ import type {
   ImageCarouselFormatDeclaration,
   ImageFormatDeclaration,
   NativeInFeedFormatDeclaration,
-  ProductFormatDeclaration,
   ResponsiveCreativeFormatDeclaration,
   SponsoredPlacementFormatDeclaration,
   VASTVideoFormatDeclaration,
 } from '../../types/tools.generated';
+import type { CanonicalFormatDeclaration as CanonicalBaseFormatDeclaration } from './legacy-metadata';
 
-type WithCommonDeclaration<T> = ProductFormatDeclaration & T;
+type WithCommonDeclaration<T> = CanonicalBaseFormatDeclaration &
+  Omit<T, 'v1_format_ref'> & {
+    v1_format_ref?: never;
+  };
 
 interface CanonicalFormatDeclarationMap {
   image: WithCommonDeclaration<ImageFormatDeclaration>;
@@ -69,7 +72,7 @@ export interface ProductCardDetailedFields {
  * bare string when populating Product.format_ids, ProductFormatDeclaration
  * v1_format_ref, or list_creative_formats filters.
  */
-export function formatRef(
+export function legacyFormatRef(
   agent_url: string,
   id: string,
   fields: Omit<Partial<FormatReferenceStructuredObject>, 'agent_url' | 'id'> & Record<string, unknown> = {}
@@ -77,7 +80,7 @@ export function formatRef(
   return { ...fields, agent_url, id };
 }
 
-export function formatRefs(...refs: FormatReferenceInput[]): FormatReferenceStructuredObject[] {
+export function legacyFormatRefs(...refs: FormatReferenceInput[]): FormatReferenceStructuredObject[] {
   return refs.map(ref => ({ ...ref }));
 }
 
@@ -90,6 +93,11 @@ export function canonicalFormatDeclaration<K extends CanonicalFormatKind>(
   params: CanonicalFormatParams<K>,
   fields: CanonicalFormatDeclarationFields<K> = {} as CanonicalFormatDeclarationFields<K>
 ): CanonicalFormatDeclaration<K> {
+  if (Reflect.has(fields as object, 'v1_format_ref')) {
+    throw new Error(
+      'canonicalFormatDeclaration does not accept legacy routing references; use explicitly named legacy migration helpers outside the canonical surface'
+    );
+  }
   return { ...fields, format_kind, params } as CanonicalFormatDeclaration<K>;
 }
 
@@ -203,8 +211,6 @@ export function productCardDetailed(fields: ProductCardDetailedFields): ProductC
 }
 
 export const CanonicalFormat = {
-  ref: formatRef,
-  refs: formatRefs,
   declaration: canonicalFormatDeclaration,
   image: imageFormatDeclaration,
   html5: html5FormatDeclaration,

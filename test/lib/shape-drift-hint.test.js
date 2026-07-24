@@ -23,7 +23,7 @@ test('build_creative with platform-native tag_url at top level → hint fires', 
   assert.ok(hint, 'expected a hint for platform-native shape');
   assert.match(hint, /platform-native fields at the top level/);
   assert.match(hint, /creative_manifest/);
-  assert.match(hint, /buildCreativeResponse/);
+  assert.match(hint, /legacyBuildCreativeResponse/);
   assert.match(hint, /@adcp\/sdk\/server/);
   // Names which offending fields were found so the reader sees the evidence
   assert.match(hint, /tag_url/);
@@ -93,7 +93,7 @@ test('sync_creatives with top-level creative_id + platform_id + action → hint 
   assert.ok(hint, 'expected a hint for unwrapped per-item sync response');
   assert.match(hint, /single creative's inner shape/);
   assert.match(hint, /creatives: \[\{/);
-  assert.match(hint, /syncCreativesResponse/);
+  assert.match(hint, /legacySyncCreativesResponse/);
   assert.match(hint, /@adcp\/sdk\/server/);
   assert.match(hint, /creative_id/);
 });
@@ -136,7 +136,7 @@ test('sync_creatives with wrong wrapper key { results: [...] } → hint suggests
   assert.ok(hint, 'expected a hint for wrong wrapper key');
   assert.match(hint, /results.*instead of.*creatives/);
   assert.match(hint, /wrong wrapper key/);
-  assert.match(hint, /syncCreativesResponse/);
+  assert.match(hint, /legacySyncCreativesResponse/);
 });
 
 test('sync_creatives with results that do NOT look like creative rows → no hint', () => {
@@ -170,7 +170,7 @@ test('preview_creative with top-level preview_url → hint fires', () => {
   assert.ok(hint, 'expected a hint for unwrapped render fields');
   assert.match(hint, /raw render fields at the top level/);
   assert.match(hint, /previews: \[\{ renders/);
-  assert.match(hint, /previewCreativeResponse/);
+  assert.match(hint, /legacyPreviewCreativeResponse/);
   assert.match(hint, /@adcp\/sdk\/server/);
   assert.match(hint, /preview_url/);
 });
@@ -241,7 +241,7 @@ test('list_creatives with bare array at the root → hint suggests { creatives: 
   assert.ok(hint, 'expected a hint for bare-array list_creatives response');
   assert.match(hint, /bare array at the top level/);
   assert.match(hint, /\{ creatives: \[\.\.\.\] \}/);
-  assert.match(hint, /listCreativesResponse/);
+  assert.match(hint, /legacyListCreativesResponse/);
   assert.match(hint, /@adcp\/sdk\/server/);
 });
 
@@ -251,21 +251,21 @@ test('list_creative_formats with bare array → hint suggests { formats: [...] }
   ]);
   assert.ok(hint);
   assert.match(hint, /\{ formats: \[\.\.\.\] \}/);
-  assert.match(hint, /listCreativeFormatsResponse/);
+  assert.match(hint, /legacyListCreativeFormatsResponse/);
 });
 
 test('list_accounts with bare array → hint suggests { accounts: [...] }', () => {
   const hint = detectShapeDriftHint('list_accounts', [{ account_id: 'a1', name: 'Acme' }]);
   assert.ok(hint);
   assert.match(hint, /\{ accounts: \[\.\.\.\] \}/);
-  assert.match(hint, /listAccountsResponse/);
+  assert.match(hint, /legacyListAccountsResponse/);
 });
 
 test('get_products with bare array → hint suggests { products: [...] }', () => {
   const hint = detectShapeDriftHint('get_products', [{ product_id: 'p1', name: 'Awareness' }]);
   assert.ok(hint);
   assert.match(hint, /\{ products: \[\.\.\.\] \}/);
-  assert.match(hint, /productsResponse/);
+  assert.match(hint, /legacyProductsResponse/);
 });
 
 test('list tools with proper object wrapper → no hint', () => {
@@ -302,28 +302,28 @@ test('get_media_buys with bare array → hint suggests { media_buys: [...] }', (
   const hint = detectShapeDriftHint('get_media_buys', [{ media_buy_id: 'mb1', status: 'active' }]);
   assert.ok(hint);
   assert.match(hint, /\{ media_buys: \[\.\.\.\] \}/);
-  assert.match(hint, /getMediaBuysResponse/);
+  assert.match(hint, /legacyGetMediaBuysResponse/);
 });
 
 test('get_signals with bare array → hint suggests { signals: [...] }', () => {
   const hint = detectShapeDriftHint('get_signals', [{ signal_id: { agent_url: 'x', id: 's1' } }]);
   assert.ok(hint);
   assert.match(hint, /\{ signals: \[\.\.\.\] \}/);
-  assert.match(hint, /getSignalsResponse/);
+  assert.match(hint, /legacyGetSignalsResponse/);
 });
 
 test('list_property_lists with bare array → hint suggests { lists: [...] }', () => {
   const hint = detectShapeDriftHint('list_property_lists', [{ list_id: 'pl1', name: 'Premium inventory' }]);
   assert.ok(hint);
   assert.match(hint, /\{ lists: \[\.\.\.\] \}/);
-  assert.match(hint, /listPropertyListsResponse/);
+  assert.match(hint, /legacyListPropertyListsResponse/);
 });
 
 test('list_collection_lists with bare array → hint suggests { lists: [...] }', () => {
   const hint = detectShapeDriftHint('list_collection_lists', [{ list_id: 'cl1', name: 'News collections' }]);
   assert.ok(hint);
   assert.match(hint, /\{ lists: \[\.\.\.\] \}/);
-  assert.match(hint, /listCollectionListsResponse/);
+  assert.match(hint, /legacyListCollectionListsResponse/);
 });
 
 test('list_content_standards with bare array → hint suggests { standards: [...] }', () => {
@@ -334,7 +334,7 @@ test('list_content_standards with bare array → hint suggests { standards: [...
   const hint = detectShapeDriftHint('list_content_standards', [{ standard_id: 'cs1', name: 'Brand safety' }]);
   assert.ok(hint);
   assert.match(hint, /\{ standards: \[\.\.\.\] \}/);
-  assert.match(hint, /listContentStandardsResponse/);
+  assert.match(hint, /legacyListContentStandardsResponse/);
 });
 
 test('get_plan_audit_logs with bare array → hint suggests { plans: [...] }', () => {
@@ -345,7 +345,7 @@ test('get_plan_audit_logs with bare array → hint suggests { plans: [...] }', (
   const hint = detectShapeDriftHint('get_plan_audit_logs', [{ plan_id: 'plan1', plan_version: 1, status: 'active' }]);
   assert.ok(hint);
   assert.match(hint, /\{ plans: \[\.\.\.\] \}/);
-  assert.match(hint, /getPlanAuditLogsResponse/);
+  assert.match(hint, /legacyGetPlanAuditLogsResponse/);
 });
 
 test('null / primitive payloads → no hint (detector exits cleanly)', () => {

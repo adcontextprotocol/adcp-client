@@ -180,7 +180,7 @@ async function variousOperations() {
 
     // List creative formats
     console.log('2. Listing creative formats...');
-    const formats = await testAgent.listCreativeFormats({});
+    const formats = await testAgent.listCreativeFormatsLegacy({});
     console.log(`   ${formats.success ? '✅' : '❌'} Formats: ${formats.data.formats?.length || 0}`);
 
     // Create a media buy

@@ -3,7 +3,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 // Import the library - in real tests this would be: const { AdCPClient } = require('@adcp/sdk');
-const { AdCPClient, ConfigurationManager } = require('../../dist/lib/index.js');
+const { AdCPClient, ConfigurationManager, SingleAgentClient } = require('../../dist/lib/index.js');
 
 describe('AdCPClient', () => {
   describe('constructor', () => {
@@ -120,8 +120,64 @@ describe('AdCPClient', () => {
       assert.ok(agent);
       // Verify agent has fluent API methods
       assert.ok(typeof agent.getProducts === 'function');
-      assert.ok(typeof agent.listCreativeFormats === 'function');
+      assert.ok(typeof agent.listCreativeFormatsLegacy === 'function');
+      assert.strictEqual(agent.listCreativeFormats, undefined);
+      assert.strictEqual(agent.previewCreative, undefined);
+      assert.strictEqual(agent.buildCreative, undefined);
+      assert.strictEqual(agent.listTransformers, undefined);
+      assert.ok(typeof agent.previewCreativeLegacy === 'function');
+      assert.ok(typeof agent.buildCreativeLegacy === 'function');
+      assert.ok(typeof agent.listTransformersLegacy === 'function');
+      assert.strictEqual(agent.listContentStandards, undefined);
+      assert.strictEqual(agent.getContentStandards, undefined);
+      assert.strictEqual(agent.calibrateContent, undefined);
+      assert.strictEqual(agent.validateContentDelivery, undefined);
+      assert.ok(typeof agent.listContentStandardsLegacy === 'function');
+      assert.ok(typeof agent.getContentStandardsLegacy === 'function');
+      assert.ok(typeof agent.calibrateContentLegacy === 'function');
+      assert.ok(typeof agent.validateContentDeliveryLegacy === 'function');
       assert.ok(typeof agent.createMediaBuy === 'function');
+    });
+
+    test('custom task execution rejects standard and legacy-only AdCP tools before transport', async () => {
+      const config = {
+        id: 'test-agent',
+        name: 'Test Agent',
+        agent_uri: 'https://test.example/mcp',
+        protocol: 'mcp',
+      };
+      const client = new AdCPClient([config]);
+      const agent = client.agent(config.id);
+      const single = new SingleAgentClient(config);
+
+      for (const taskName of [
+        'get_products',
+        'sync_plans',
+        'list_creative_formats',
+        'list_transformers',
+        'preview_creative',
+        'build_creative',
+        'list_content_standards',
+        'get_content_standards',
+        'create_content_standards',
+        'update_content_standards',
+        'calibrate_content',
+        'validate_content_delivery',
+        'get_media_buy_artifacts',
+        'get_creative_features',
+        'get_rights',
+        'acquire_rights',
+        'update_rights',
+      ]) {
+        await assert.rejects(
+          () => agent.executeCustomTask(taskName, {}),
+          /executeCustomTask\(\) cannot execute standard AdCP task/
+        );
+        await assert.rejects(
+          () => single.executeCustomTask(taskName, {}),
+          /executeCustomTask\(\) cannot execute standard AdCP task/
+        );
+      }
     });
 
     test('should return AgentCollection for multiple agents', () => {
@@ -144,7 +200,8 @@ describe('AdCPClient', () => {
       assert.ok(agents);
       // Verify collection has fluent API methods
       assert.ok(typeof agents.getProducts === 'function');
-      assert.ok(typeof agents.listCreativeFormats === 'function');
+      assert.ok(typeof agents.listCreativeFormatsLegacy === 'function');
+      assert.strictEqual(agents.listCreativeFormats, undefined);
     });
 
     test('should return AgentCollection for all agents', () => {

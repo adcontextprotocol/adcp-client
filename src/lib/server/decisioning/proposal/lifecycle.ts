@@ -28,7 +28,8 @@
  */
 
 import { AdcpError } from '../async-outcome';
-import type { GetProductsRequest, Product } from '../../../types/tools.generated';
+import type { Product } from '../../../types/tools.generated';
+import type { CanonicalGetProductsRequest } from '../../../v2/projection/creative-delivery';
 import type { ProposalRecord, ProposalStore } from './store';
 import type { Recipe } from './types';
 
@@ -343,7 +344,7 @@ export interface FinalizeActionRef {
  *
  * @public
  */
-export function detectFinalizeAction(req: GetProductsRequest): FinalizeActionRef | null {
+export function detectFinalizeAction(req: CanonicalGetProductsRequest): FinalizeActionRef | null {
   const refine = (req as { refine?: ReadonlyArray<Record<string, unknown>> }).refine;
   if (!refine || refine.length === 0) return null;
   for (let index = 0; index < refine.length; index++) {

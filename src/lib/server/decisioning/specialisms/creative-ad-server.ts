@@ -39,26 +39,32 @@ import type {
   ListCreativeFormatsResponse,
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
-  CreativeAsset,
   BuildCreativeSuccess,
   BuildCreativeMultiSuccess,
 } from '../../../types/tools.generated';
+import type {
+  CanonicalCreativeAsset,
+  CanonicalCreativeResponse,
+  CanonicalListCreativesRequest,
+  CanonicalListCreativesResponse,
+} from '../../../v2/projection/creative-delivery';
 import type { SyncCreativesRow } from './sales';
 
-type Creative = CreativeAsset;
+type Creative = CanonicalCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export type PreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
-export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
-export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
-export type GetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
-export type BuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
-export type BuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
-export type BuildCreativeReturn =
+export type LegacyPreviewCreativePayload = ServerPayload<PreviewCreativeResponse>;
+export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
+export type GetCreativeDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetCreativeDeliveryResponse>>;
+export type LegacyGetCreativeDeliveryPayload = ServerPayload<GetCreativeDeliveryResponse>;
+export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
+export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
+export type LegacyBuildCreativeReturn =
   | CreativeManifest
   | CreativeManifest[]
-  | BuildCreativePayload
-  | BuildCreativeMultiPayload;
+  | LegacyBuildCreativePayload
+  | LegacyBuildCreativeMultiPayload;
 
 export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   /**
@@ -81,7 +87,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * that lands, slow tag-generation pipelines await in-request; status
    * changes flow via `publishStatusChange`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<BuildCreativeReturn>;
+  buildCreativeLegacy(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyBuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always sync.
@@ -90,7 +96,10 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * does not carry an `account` field; narrow `ctx.account` before reading
    * `ctx_metadata` / `id`. See {@link NoAccountCtx}.
    */
-  previewCreative(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativePayload>;
+  previewCreativeLegacy(
+    req: PreviewCreativeRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<LegacyPreviewCreativePayload>;
 
   /**
    * Format catalog. Optional because adopters who delegate format definitions
@@ -99,10 +108,10 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    *
    * ⚠️  NO-ACCOUNT TOOL. See `previewCreative` note above.
    */
-  listCreativeFormats?(
+  listCreativeFormatsLegacy?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsPayload>;
+  ): Promise<LegacyListCreativeFormatsPayload>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
@@ -124,7 +133,7 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * graph. When `req.include_pricing`, include vendor pricing options
    * on each creative.
    */
-  listCreatives(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
+  listCreatives(req: CanonicalListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
 
   /**
    * Per-creative delivery actuals (impressions, spend, pacing). Sync —

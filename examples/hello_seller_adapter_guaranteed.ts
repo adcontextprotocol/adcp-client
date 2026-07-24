@@ -71,7 +71,7 @@ import {
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
-  type GetProductsPayload,
+  type GetProductsHandlerResult,
   type GetMediaBuyDeliveryPayload,
   type GetMediaBuysPayload,
   type AccountStore,
@@ -80,9 +80,8 @@ import {
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
 import { buildGAMLikeRecipe, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
+import type { CanonicalProduct, GetProductsRequest } from '@adcp/sdk';
 import type {
-  GetProductsRequest,
-  GetProductsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -92,9 +91,6 @@ import type {
   GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
-// `Product` isn't re-exported from `@adcp/sdk/types` (#1254 in the rollup);
-// derive the shape from the response array.
-type Product = NonNullable<GetProductsResponse['products']>[number];
 type AdcpPackage = NonNullable<UpdateMediaBuySuccess['affected_packages']>[number];
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
@@ -118,7 +114,6 @@ const DEFAULT_PRICING_OPTION_ID = 'cpm_guaranteed_fixed';
 // from a worked example.
 const ADCP_LIVE_MODE_AUTH_TOKEN = 'demo-acme-outdoor-live-v1';
 const LIVE_MODE_PROBE_PRINCIPAL = 'compliance-live-mode-probe' as const;
-const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
 assertNoExampleTlds(
@@ -447,8 +442,6 @@ interface NetworkMeta {
   [key: string]: unknown;
 }
 
-const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
-
 /** Project upstream product onto AdCP `Product`. The wire `Product` shape
  *  has many optional fields; we populate only the ones the storyboard
  *  validates plus the bare-minimum required spec fields. Production
@@ -462,9 +455,35 @@ const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
  *  the `sales_guaranteed` storyboard; the recipe is opt-in carrier the
  *  framework reads only when the buyer goes through proposal-mode.
  */
-function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
+function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_options'] {
+  return p.format_ids.map(id => {
+    const durationSeconds = id.match(/(?:^|_)(\d+)s(?:_|$)/)?.[1];
+    if (p.channel === 'video' || p.channel === 'ctv') {
+      return {
+        format_option_id: id,
+        format_kind: 'video_hosted',
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    if (p.channel === 'audio') {
+      return {
+        format_option_id: id,
+        format_kind: 'audio_hosted',
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    const dimensions = id.match(/(?:^|_)(\d+)x(\d+)(?:_|$)/);
+    return {
+      format_option_id: id,
+      format_kind: 'image',
+      params: dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {},
+    };
+  });
+}
+
+function projectProduct(p: UpstreamProduct, publisherDomain: string): CanonicalProduct {
   const recipe = buildGAMLikeRecipe(p);
-  const product: Product = {
+  const product: CanonicalProduct = {
     product_id: p.product_id,
     name: p.name,
     description: `${p.name} — ${p.delivery_type} ${p.channel}`,
@@ -482,7 +501,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
             ? 'streaming_audio'
             : 'display',
     ],
-    format_ids: p.format_ids.map(id => ({ agent_url: FORMAT_AGENT_URL, id })),
+    format_options: canonicalFormatOptions(p),
     delivery_type: p.delivery_type,
     pricing_options: [
       {
@@ -802,7 +821,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
   // level. See `decisioning.type-checks.ts` for the regression-locked
   // patterns.
   sales: SalesCorePlatform<NetworkMeta> & SalesIngestionPlatform<NetworkMeta> = {
-    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsPayload> => {
+    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsHandlerResult> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
       // Storyboard sends buying_mode: 'brief' with a free-text brief —
@@ -819,10 +838,17 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // into `inventoryService` (catalog) + `forecastService.getDeliveryForecast`
       // (per-product forecast). Use the discrete `getForecast` below if
       // your backend can't fold forecast into the catalog response.
-      const briefBudget = (req.filters?.budget_range as { max?: number } | undefined)?.max;
+      const filters = req.filters as
+        | {
+            budget_range?: { max?: number };
+            start_date?: string;
+            end_date?: string;
+          }
+        | undefined;
+      const briefBudget = filters?.budget_range?.max;
       const products = await upstream.listProducts(networkCode, {
-        ...(req.filters?.start_date && { flightStart: req.filters.start_date }),
-        ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
+        ...(filters?.start_date && { flightStart: filters.start_date }),
+        ...(filters?.end_date && { flightEnd: filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
       return {
@@ -1166,15 +1192,9 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const rows: SyncCreativesRow[] = [];
       for (const c of creatives) {
         try {
-          if (!c.format_id) {
-            throw new AdcpError('INVALID_REQUEST', {
-              message: 'format_id required on creative manifest',
-              field: 'format_id',
-            });
-          }
           const created = await upstream.createCreative(networkCode, {
             name: c.name,
-            format_id: c.format_id.id,
+            format_id: c.format_kind,
             advertiser_id: networkCode,
           });
           rows.push({

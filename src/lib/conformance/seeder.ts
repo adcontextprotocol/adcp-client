@@ -167,7 +167,7 @@ async function seedContentStandards({ agent }: SeederContext): Promise<SeederOut
   // enforce beyond the raw schema. A single inline policy is the most
   // portable shape — registry_policy_ids require a pre-existing registry
   // entry on the seller, which we can't assume.
-  const result = await agent.executeTask('create_content_standards', {
+  const result = await agent.executeTaskLegacy('create_content_standards', {
     idempotency_key: generateIdempotencyKey(),
     scope: { languages_any: ['en'] },
     policies: [
@@ -201,7 +201,7 @@ async function seedContentStandards({ agent }: SeederContext): Promise<SeederOut
  */
 async function seedMediaBuy({ agent, brand }: SeederContext): Promise<SeederOutput> {
   const warnings: SeedWarning[] = [];
-  const products = await agent.executeTask('get_products', {
+  const products = await agent.executeTaskLegacy('get_products', {
     brief: 'Conformance fuzzer seed — any product acceptable',
   });
   if (!products.success || products.status !== 'completed' || !products.data) {
@@ -235,7 +235,7 @@ async function seedMediaBuy({ agent, brand }: SeederContext): Promise<SeederOutp
 
   const brandRef: Record<string, string> = { domain: brand.domain };
   if (brand.brand_id) brandRef.brand_id = brand.brand_id;
-  const result = await agent.executeTask('create_media_buy', {
+  const result = await agent.executeTaskLegacy('create_media_buy', {
     idempotency_key: generateIdempotencyKey(),
     account: { brand: brandRef, operator: brand.domain },
     brand: brandRef,
@@ -299,7 +299,7 @@ function summarizeResult(result: {
  */
 async function seedSyncCreatives({ agent, brand }: SeederContext): Promise<SeederOutput> {
   const warnings: SeedWarning[] = [];
-  const formatsResult = await agent.executeTask('list_creative_formats', {});
+  const formatsResult = await agent.executeTaskLegacy('list_creative_formats', {});
   if (!formatsResult.success || formatsResult.status !== 'completed' || !formatsResult.data) {
     return {
       ids: {},
@@ -325,7 +325,7 @@ async function seedSyncCreatives({ agent, brand }: SeederContext): Promise<Seede
   const creativeId = `cf_creative_${UNIQUE_TAG()}`;
   const tag = UNIQUE_TAG();
 
-  const result = await agent.executeTask('sync_creatives', {
+  const result = await agent.executeTaskLegacy('sync_creatives', {
     idempotency_key: generateIdempotencyKey(),
     account: {
       brand: { domain: brand.domain, ...(brand.brand_id ? { brand_id: brand.brand_id } : {}) },

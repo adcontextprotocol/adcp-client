@@ -4,14 +4,14 @@ import { SingleAgentClient } from './SingleAgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions } from './ConversationTypes';
 import type { AgentConfig } from '../types';
-import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type {
   ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse,
   ListCreativesRequest,
   ListCreativesResponse,
   Format,
 } from '../types/tools.generated';
+import type { CanonicalListCreativesRequest, CanonicalListCreativesResponse } from '../v2/projection/creative-delivery';
+import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 
 /**
  * Configuration for CreativeAgentClient
@@ -23,13 +23,21 @@ export interface CreativeAgentClientConfig extends SingleAgentClientConfig {
   protocol?: 'mcp' | 'a2a';
   /** Authentication token if required */
   authToken?: string;
+  /** Migration converter for seller-specific legacy creative references. */
+  legacyFormatConverter?: LegacyFormatConverter;
 }
+
+export type CreativeAgentListTaskOptions = TaskOptions & {
+  /** Convert a seller-specific legacy creative reference that the bundled registry cannot map. */
+  legacyFormatConverter?: LegacyFormatConverter;
+};
 
 /**
  * Creative Agent Client - Specialized client for interacting with creative agents
  *
- * Creative agents provide creative format catalogs and creative assembly services.
- * This client provides a simplified interface for common creative agent operations.
+ * Creative agents provide creative assembly and reusable creative-library services.
+ * Creative-library reads are canonical by default: each creative is identified by
+ * `format_kind` and, when applicable, `format_option_ref`.
  *
  * @example
  * ```typescript
@@ -38,16 +46,16 @@ export interface CreativeAgentClientConfig extends SingleAgentClientConfig {
  *   agentUrl: 'https://creative.adcontextprotocol.org/mcp'
  * });
  *
- * // List available formats
- * const formats = await creativeAgent.listFormats();
- *
- * // Find specific format
- * const banner = formats.find(f => f.format_id.id === 'display_300x250_image');
+ * const { creatives } = await creativeAgent.listCreatives({
+ *   filters: { statuses: ['approved'] }
+ * });
+ * const images = creatives.filter(creative => creative.format_kind === 'image');
  * ```
  */
 export class CreativeAgentClient {
   private client: SingleAgentClient;
   private agentUrl: string;
+  private legacyFormatConverter?: LegacyFormatConverter;
 
   constructor(config: CreativeAgentClientConfig) {
     const agentConfig: AgentConfig = {
@@ -60,17 +68,22 @@ export class CreativeAgentClient {
 
     this.client = new SingleAgentClient(agentConfig, config);
     this.agentUrl = config.agentUrl;
+    this.legacyFormatConverter = config.legacyFormatConverter;
   }
 
   /**
-   * List all available creative formats
+   * List a creative agent's legacy named-format catalog.
+   *
+   * Canonical applications should discover seller-supported declarations through
+   * `AgentClient.getProducts()` and use `format_options[]`. This method exists for
+   * migration tooling that must inspect the old creative-agent catalog.
    *
    * @param params - Optional filtering parameters
    * @returns Promise resolving to array of creative formats
    *
    * @example
    * ```typescript
-   * const formats = await creativeAgent.listFormats();
+   * const formats = await creativeAgent.listFormatsLegacy();
    *
    * // Find by dimensions
    * const banners = formats.filter(f =>
@@ -78,9 +91,11 @@ export class CreativeAgentClient {
    *   f.renders?.[0]?.dimensions?.height === 250
    * );
    * ```
+   *
+   * @deprecated Canonical applications discover `format_options[]` through seller products.
    */
-  async listFormats(params: ListCreativeFormatsRequest = {}): Promise<CreativeFormat[]> {
-    const result = await this.client.listCreativeFormats(params);
+  async listFormatsLegacy(params: ListCreativeFormatsRequest = {}): Promise<LegacyCreativeFormat[]> {
+    const result = await this.client.listCreativeFormatsLegacy(params);
 
     if (!result.success || !result.data) {
       throw new Error(`Failed to list creative formats: ${result.error || 'Unknown error'}`);
@@ -103,11 +118,11 @@ export class CreativeAgentClient {
    * @example
    * ```typescript
    * // Find all 300x250 formats
-   * const mediumRectangles = await creativeAgent.findByDimensions(300, 250);
+   * const mediumRectangles = await creativeAgent.findLegacyByDimensions(300, 250);
    * ```
    */
-  async findByDimensions(width: number, height: number): Promise<CreativeFormat[]> {
-    const allFormats = await this.listFormats();
+  async findLegacyByDimensions(width: number, height: number): Promise<LegacyCreativeFormat[]> {
+    const allFormats = await this.listFormatsLegacy();
     return allFormats.filter(f =>
       f.renders?.some(r => {
         if (!('dimensions' in r) || !r.dimensions) return false;
@@ -125,14 +140,14 @@ export class CreativeAgentClient {
    *
    * @example
    * ```typescript
-   * const format = await creativeAgent.findById('display_300x250_image');
+   * const format = await creativeAgent.findLegacyById('display_300x250_image');
    * if (format) {
    *   console.log(`Found: ${format.name}`);
    * }
    * ```
    */
-  async findById(formatId: string): Promise<CreativeFormat | undefined> {
-    const allFormats = await this.listFormats();
+  async findLegacyById(formatId: string): Promise<LegacyCreativeFormat | undefined> {
+    const allFormats = await this.listFormatsLegacy();
     return allFormats.find(f => f.format_id.id === formatId);
   }
 
@@ -140,7 +155,7 @@ export class CreativeAgentClient {
    * List creatives in the agent's library
    *
    * @param params - Optional filtering, sorting, and pagination parameters
-   * @returns Promise resolving to the list creatives response
+   * @returns Promise resolving to canonical creatives (`format_kind`, never `format_id`)
    *
    * @example
    * ```typescript
@@ -148,14 +163,40 @@ export class CreativeAgentClient {
    *   filters: { statuses: ['approved'], has_variables: true },
    *   include_variables: true
    * });
+   * const imageCreatives = result.creatives.filter(
+   *   creative => creative.format_kind === 'image'
+   * );
    * ```
    */
   async listCreatives(
+    params: CanonicalListCreativesRequest = {},
+    inputHandler?: InputHandler,
+    options?: CreativeAgentListTaskOptions
+  ): Promise<CanonicalListCreativesResponse> {
+    const { legacyFormatConverter, ...taskOptions } = options ?? {};
+    const result = await this.client.listCreatives(params, inputHandler, {
+      ...taskOptions,
+      legacyFormatConverter: legacyFormatConverter ?? this.legacyFormatConverter,
+    });
+
+    if (!result.success || !result.data) {
+      throw new Error(`Failed to list creatives: ${result.error || 'Unknown error'}`);
+    }
+
+    return result.data;
+  }
+
+  /**
+   * Return the unprojected creative-library wire response.
+   *
+   * @deprecated Compatibility-only escape hatch for migration and protocol tooling.
+   */
+  async listCreativesLegacy(
     params: ListCreativesRequest = {},
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<ListCreativesResponse> {
-    const result = await this.client.listCreatives(params, inputHandler, options);
+    const result = await this.client.listCreativesLegacy(params, inputHandler, options);
 
     if (!result.success || !result.data) {
       throw new Error(`Failed to list creatives: ${result.error || 'Unknown error'}`);
@@ -185,7 +226,7 @@ export class CreativeAgentClient {
  * Extends the official Format type from the schema with an additional
  * agent_url field for convenience when working with creative agents.
  */
-export interface CreativeFormat extends Format {
+export interface LegacyCreativeFormat extends Format {
   /** Base URL of the creative agent that provides this format */
   agent_url: string;
 }

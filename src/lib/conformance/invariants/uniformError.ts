@@ -235,7 +235,7 @@ async function capturedProbe(
 ): Promise<ProbeOutcome> {
   try {
     const { captures } = await withRawResponseCapture(async () => {
-      await agent.executeTask(tool, request);
+      await agent.executeTaskLegacy(tool, request);
     }, options);
     const toolCallCapture = lastPostCapture(captures);
     if (!toolCallCapture) {

@@ -17,6 +17,8 @@ export type {
   CapabilityOverlap,
   FinalizeProposalRequest,
   FinalizeProposalSuccess,
+  ProposalGetProductsPayload,
+  LegacyProposalGetProductsPayload,
 } from './types';
 
 export { validateProposalCapabilities } from './types';

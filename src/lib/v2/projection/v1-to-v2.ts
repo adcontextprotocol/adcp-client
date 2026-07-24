@@ -58,12 +58,38 @@ import { forwardLookupByGlob, forwardLookupByStructural } from './registry';
 import { lookupV1Format, type V1FormatDefinition } from './catalog';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
+import { ProductFormatDeclarationSchema } from '../../types/schemas.generated';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
 
 export interface V1ToV2Result {
   v2: V2Product;
   diagnostics: ProjectionDiagnostic[];
+}
+
+/** Context passed to an adopter's seller-specific legacy format converter. */
+export interface LegacyFormatConversionContext {
+  formatId: Readonly<V1FormatId>;
+  productId: string;
+  field: string;
+}
+
+/**
+ * Escape hatch for legacy formats owned by a custom creative agent. The
+ * converter returns the canonical product declaration that the legacy ref
+ * represents. For bespoke shapes, return `format_kind: 'custom'` with both
+ * `format_shape` and an immutable `format_schema` reference.
+ *
+ * The SDK adds the source `formatId` as `v1_format_ref`; converters must not
+ * set `canonical_formats_only: true` because a legacy source is, by
+ * definition, round-trippable to that ref.
+ */
+export type LegacyFormatConverter = (
+  context: LegacyFormatConversionContext
+) => V2ProductFormatDeclaration | null | undefined;
+
+export interface V1ToV2ProjectionOptions {
+  legacyFormatConverter?: LegacyFormatConverter;
 }
 
 /**
@@ -92,6 +118,83 @@ function buildParams(
   return params;
 }
 
+function findLegacyCreativeIdentity(value: unknown, seen = new WeakSet<object>()): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  if (seen.has(value)) return undefined;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findLegacyCreativeIdentity(item, seen);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (/(^|_)(?:format_ids?|v1_format_ref|agent_url)($|_)/.test(key)) {
+      return key;
+    }
+    const nested = findLegacyCreativeIdentity(child, seen);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function projectWithLegacyConverter(
+  fid: V1FormatId,
+  productId: string,
+  field: string,
+  converter: LegacyFormatConverter | undefined
+): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic } | undefined {
+  if (!converter) return undefined;
+  try {
+    const converted = converter({ formatId: { ...fid }, productId, field });
+    if (!converted) return undefined;
+    const forbidden = findLegacyCreativeIdentity(converted);
+    if (forbidden) {
+      throw new Error(`canonical conversion must not return ${forbidden}`);
+    }
+    const completed = { ...converted, v1_format_ref: [fid] };
+    if (completed.canonical_formats_only === true) {
+      throw new Error('a conversion from a legacy format cannot set canonical_formats_only: true');
+    }
+    if (
+      completed.format_kind === 'custom' &&
+      (typeof completed.format_shape !== 'string' ||
+        completed.format_shape.trim().length === 0 ||
+        !completed.format_schema)
+    ) {
+      throw new Error('custom conversions require format_shape and format_schema');
+    }
+    if (
+      completed.format_kind === 'custom' &&
+      (typeof completed.format_option_id !== 'string' || completed.format_option_id.trim().length === 0)
+    ) {
+      throw new Error('custom conversions require format_option_id');
+    }
+    const parsed = ProductFormatDeclarationSchema.safeParse(completed);
+    if (!parsed.success) {
+      throw new Error('converter returned an invalid canonical format declaration');
+    }
+    return { decl: parsed.data as V2ProductFormatDeclaration };
+  } catch {
+    return {
+      diagnostic: {
+        source: 'sdk',
+        sdk_id: SDK_ID,
+        field,
+        code: 'FORMAT_PROJECTION_FAILED',
+        error: {
+          details: {
+            format_kind: 'custom',
+            product_id: productId,
+            resolution_failure: 'custom_converter_failed',
+          },
+        },
+      },
+    };
+  }
+}
+
 /**
  * Project a single v1 `format_id` to a v2 `ProductFormatDeclaration`,
  * or to a diagnostic when no projection is possible.
@@ -99,7 +202,8 @@ function buildParams(
 function projectFormatId(
   fid: V1FormatId,
   productId: string,
-  field: string
+  field: string,
+  options?: V1ToV2ProjectionOptions
 ): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic } {
   const catalogEntry = lookupV1Format(fid);
 
@@ -133,6 +237,8 @@ function projectFormatId(
   // a semantically wrong projection. Symmetric counterpart to
   // CANONICAL_NOT_V1_TRANSLATABLE on the v2→v1 side.
   if (catalogEntry && !catalogEntry.canonical) {
+    const custom = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
+    if (custom) return custom;
     return {
       diagnostic: {
         source: 'sdk',
@@ -182,7 +288,14 @@ function projectFormatId(
     }
   }
 
-  // Step 4: fail-closed. v1 product is invisible on the v2 side.
+  // Step 4: give the adopter one explicit, typed escape hatch for a
+  // seller/creative-agent-owned legacy format. This runs only after all
+  // protocol-owned mappings fail, so a callback cannot override a canonical
+  // AAO mapping accidentally.
+  const custom = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
+  if (custom) return custom;
+
+  // Step 5: fail-closed. v1 product is invisible on the canonical side.
   return {
     diagnostic: {
       source: 'sdk',
@@ -213,15 +326,21 @@ function projectFormatId(
  * @see canonicalDeclarationFromBareId — resolve a single bare format-id
  * string (no surrounding Product) to a declaration or `format_kind`.
  */
-export function projectV1ProductToV2(v1: V1Product): V1ToV2Result {
+export function projectV1ProductToV2(v1: V1Product, options?: V1ToV2ProjectionOptions): V1ToV2Result {
   const format_options: V2ProductFormatDeclaration[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
 
   for (let i = 0; i < v1.format_ids.length; i++) {
     const fid = v1.format_ids[i]!;
     const field = `products[${v1.product_id}].format_ids[${i}]`;
-    const { decl, diagnostic } = projectFormatId(fid, v1.product_id, field);
-    if (decl) format_options.push(decl);
+    const { decl, diagnostic } = projectFormatId(fid, v1.product_id, field, options);
+    if (decl) {
+      format_options.push(
+        typeof decl.format_option_id === 'string' && decl.format_option_id.length > 0
+          ? decl
+          : { ...decl, format_option_id: `migrated_${i + 1}_${decl.format_kind}` }
+      );
+    }
     if (diagnostic) diagnostics.push(diagnostic);
   }
 
