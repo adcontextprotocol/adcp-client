@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
+import { getSchemaDataRoots } from '../internal/schema-data-roots';
 
 export type ResponseVariant = 'sync' | 'submitted' | 'working' | 'input-required';
 export type Direction = 'request' | ResponseVariant;
@@ -239,7 +240,8 @@ function resolveSchemaRoot(version: string): string {
   const externalRoot = externalSchemaRoots.get(key);
   if (externalRoot && existsSync(externalRoot)) return externalRoot;
 
-  const distCandidate = path.join(__dirname, '..', 'schemas-data', key);
+  const { builtSchemasDataRoot, sourceSchemasCacheRoot } = getSchemaDataRoots();
+  const distCandidate = path.join(builtSchemasDataRoot, key);
   if (existsSync(distCandidate)) return distCandidate;
 
   // Published builds carry exact prerelease bundle directories
@@ -247,14 +249,14 @@ function resolveSchemaRoot(version: string): string {
   // alias (`3.1-rc`). Resolve that alias before falling back to source cache.
   const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
   if (releasePrecisionMatch) {
-    const distPrereleaseCandidate = findPrereleaseBundle(path.join(__dirname, '..', 'schemas-data'), key);
+    const distPrereleaseCandidate = findPrereleaseBundle(builtSchemasDataRoot, key);
     if (distPrereleaseCandidate) return distPrereleaseCandidate;
   }
 
   // Source-tree fallback: cache stays exact-version-named, so map the key
   // back to the highest-patch cache directory in the same minor for stable
   // pins. Prereleases need an exact match.
-  const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
+  const cacheRoot = sourceSchemasCacheRoot;
   const exactCandidate = path.join(cacheRoot, version);
   if (existsSync(exactCandidate)) return exactCandidate;
 

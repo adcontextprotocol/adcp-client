@@ -44,9 +44,13 @@ before(() => {
   }
 
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-projection-loader-paths-'));
-  // Mimic node_modules/@adcp/sdk/dist by copying only the dist tree.
-  // Intentionally do NOT copy schemas/cache — that's the bug we're guarding.
+  // Mimic node_modules/@adcp/sdk/ by copying the dist tree plus package.json
+  // (every real npm install ships package.json regardless of the "files"
+  // field — getPackageRoot()'s require.resolve self-reference needs it to
+  // find this package's own root). Intentionally do NOT copy schemas/cache
+  // — that's the bug we're guarding.
   fs.cpSync(SRC_DIST, path.join(tmpRoot, 'dist'), { recursive: true });
+  fs.cpSync(path.join(REPO_ROOT, 'package.json'), path.join(tmpRoot, 'package.json'));
 });
 
 after(() => {

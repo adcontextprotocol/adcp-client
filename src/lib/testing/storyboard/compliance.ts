@@ -16,6 +16,7 @@ import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
+import { getPackageRoot } from '../../internal/package-root';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
 /**
@@ -207,11 +208,6 @@ export interface ResolvedStoryboards {
   not_applicable: NotApplicableStoryboard[];
 }
 
-function getRepoRoot(): string {
-  // Walks from src/lib/testing/storyboard/ (or dist/lib/testing/storyboard/) → package root.
-  return resolve(__dirname, '..', '..', '..', '..');
-}
-
 /**
  * Resolve the compliance cache directory.
  *
@@ -224,7 +220,7 @@ export function getComplianceCacheDir(options: ResolveOptions = {}): string {
   const configured = getConfiguredComplianceDir(options);
   if (configured) return configured;
   const version = options.version || readAdcpVersion();
-  return join(getRepoRoot(), 'compliance', 'cache', version);
+  return join(getPackageRoot(), 'compliance', 'cache', version);
 }
 
 function readAdcpVersion(): string {

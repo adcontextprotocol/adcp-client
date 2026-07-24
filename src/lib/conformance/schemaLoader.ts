@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { ConformanceToolName } from './types';
 import { ADCP_VERSION } from '../version';
 import { resolveBundleKey } from '../validation/schema-loader';
+import { getSchemaDataRoots } from '../internal/schema-data-roots';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -70,10 +71,11 @@ function findBundledDir(options: ConformanceSchemaOptions = {}): string {
 
   const version = options.version ?? ADCP_VERSION;
   const bundleKey = resolveBundleKey(version);
-  const distCandidate = path.resolve(__dirname, '..', 'schemas-data', bundleKey, 'bundled');
+  const { builtSchemasDataRoot, sourceSchemasCacheRoot } = getSchemaDataRoots();
+  const distCandidate = path.join(builtSchemasDataRoot, bundleKey, 'bundled');
   if (fs.existsSync(distCandidate)) return distCandidate;
 
-  const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', version, 'bundled');
+  const srcCandidate = path.join(sourceSchemasCacheRoot, version, 'bundled');
   if (fs.existsSync(srcCandidate)) return srcCandidate;
 
   throw new Error(
