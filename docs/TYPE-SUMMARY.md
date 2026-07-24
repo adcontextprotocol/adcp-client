@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-07-08
-> @adcp/sdk v11.0.0
+> Generated at: 2026-07-24
+> @adcp/sdk v12.0.6
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 

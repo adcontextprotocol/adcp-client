@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
       - name: Check code formatting
         run: npm run format:check
 

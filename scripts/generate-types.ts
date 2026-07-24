@@ -332,6 +332,106 @@ function isRequiredOnlyAnyOf(anyOf: unknown): boolean {
 }
 
 /**
+ * Convert the narrow JSON Schema conditional-required pattern used by
+ * cancellation fees into a discriminated union that TypeScript and Zod can
+ * both preserve.
+ *
+ * json-schema-to-typescript collapses an object carrying
+ * `allOf: [{ if: ..., then: { required: [...] } }]` to an index signature.
+ * Simply dropping the conditionals keeps the fields visible, but loses the
+ * money-path invariant in generated Zod schemas. When every allOf member is a
+ * same-property const check that only adds required fields, expand the enum
+ * values into explicit object branches instead. Anything more expressive is
+ * left untouched for the existing conservative fallback below.
+ */
+export function expandConditionalRequiredDiscriminator(schema: any): any {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  if (schema.type !== 'object' || !schema.properties || !Array.isArray(schema.allOf) || schema.allOf.length === 0) {
+    return schema;
+  }
+
+  let discriminator: string | undefined;
+  const requiredByValue = new Map<unknown, Set<string>>();
+
+  for (const member of schema.allOf) {
+    if (!member || typeof member !== 'object' || Array.isArray(member)) return schema;
+    const memberKeys = Object.keys(member);
+    if (memberKeys.some(key => !['$comment', 'if', 'then'].includes(key)) || !member.if || !member.then) return schema;
+
+    const condition = member.if;
+    const then = member.then;
+    if (!condition || typeof condition !== 'object' || !then || typeof then !== 'object') return schema;
+    if (Object.keys(condition).some(key => !['properties', 'required'].includes(key))) return schema;
+    if (Object.keys(then).some(key => key !== 'required')) return schema;
+    if (!condition.properties || typeof condition.properties !== 'object') return schema;
+
+    const conditionEntries = Object.entries(condition.properties);
+    if (conditionEntries.length !== 1) return schema;
+    const [field, fieldCondition] = conditionEntries[0] as [string, any];
+    if (
+      !fieldCondition ||
+      typeof fieldCondition !== 'object' ||
+      Object.keys(fieldCondition).some(key => key !== 'const')
+    ) {
+      return schema;
+    }
+    if (!Object.prototype.hasOwnProperty.call(fieldCondition, 'const')) return schema;
+    if (!Array.isArray(condition.required) || condition.required.length !== 1 || condition.required[0] !== field) {
+      return schema;
+    }
+    if (
+      !Array.isArray(then.required) ||
+      then.required.length === 0 ||
+      then.required.some((name: unknown) => typeof name !== 'string')
+    ) {
+      return schema;
+    }
+    if (then.required.some((name: string) => !Object.prototype.hasOwnProperty.call(schema.properties, name)))
+      return schema;
+    if (discriminator !== undefined && discriminator !== field) return schema;
+    discriminator = field;
+
+    const valueRequired = requiredByValue.get(fieldCondition.const) ?? new Set<string>();
+    for (const name of then.required as string[]) valueRequired.add(name);
+    requiredByValue.set(fieldCondition.const, valueRequired);
+  }
+
+  if (!discriminator || !Array.isArray(schema.required) || !schema.required.includes(discriminator)) return schema;
+  const discriminatorSchema = schema.properties[discriminator];
+  if (!discriminatorSchema || typeof discriminatorSchema !== 'object' || !Array.isArray(discriminatorSchema.enum))
+    return schema;
+  if (discriminatorSchema.enum.length === 0) return schema;
+  if ([...requiredByValue.keys()].some(value => !discriminatorSchema.enum.includes(value))) return schema;
+
+  const branches = discriminatorSchema.enum.map((value: unknown) => {
+    const branchProperties = {
+      ...schema.properties,
+      [discriminator]: {
+        ...discriminatorSchema,
+        const: value,
+      },
+    };
+    delete branchProperties[discriminator].enum;
+    const branchRequired = [...schema.required, ...(requiredByValue.get(value) ?? [])];
+    const branch: Record<string, unknown> = {
+      type: 'object',
+      properties: branchProperties,
+      required: [...new Set(branchRequired)],
+    };
+    if (schema.additionalProperties !== undefined) branch.additionalProperties = schema.additionalProperties;
+    return branch;
+  });
+
+  const expanded = { ...schema, oneOf: branches };
+  delete expanded.type;
+  delete expanded.properties;
+  delete expanded.required;
+  delete expanded.allOf;
+  delete expanded.additionalProperties;
+  return expanded;
+}
+
+/**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
@@ -342,6 +442,8 @@ export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
+
+  schema = expandConditionalRequiredDiscriminator(schema);
 
   // Rewrite mutual-exclusion `oneOf` patterns (e.g. Format.renders[]) into
   // explicit closed-shape branches before any further processing — see

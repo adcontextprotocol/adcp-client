@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.1.2/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.1.5/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.1.2.
+ * Manifest-derived constants for AdCP 3.1.5.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.1.2/manifest.json` (adcp_version: 3.1.2, generated_at:
- * 2026-07-08T13:55:47.979Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.1.5/manifest.json` (adcp_version: 3.1.5, generated_at:
+ * 2026-07-24T14:33:01.323Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -269,9 +269,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "perform a natural-key check to determine whether the original request succeeded; if no evidence of success, generate a fresh idempotency_key for a new attempt"
   },
   IDEMPOTENCY_IN_FLIGHT: {
-    description: "A prior request with the same `idempotency_key` is still being processed and has not yet produced a cached response. The second request arrived before the first completed. Sellers MAY return this code instead of blocking the second caller until the first finishes — useful when the first call invokes a slow downstream system (SSP, ad server, payment provider). Distinct from IDEMPOTENCY_CONFLICT (different canonical payload — a client bug) and from CONFLICT (concurrent modification of a different resource) — IDEMPOTENCY_IN_FLIGHT is the seller telling the buyer 'your retry was correct but your previous attempt is still running, come back shortly.' Sellers SHOULD populate `error.details.retry_after` (seconds, integer) with a wait hint based on the first request's elapsed time and expected completion. Buyers MUST treat this as transient and MUST NOT mint a fresh `idempotency_key` — minting a new key turns a safe retry into a double-execution race.",
+    description: "A prior request with the same `idempotency_key` is still being processed and has not yet produced a cached response. The second request arrived before the first completed. Sellers MAY return this code instead of blocking the second caller until the first finishes — useful when the first call invokes a slow downstream system (SSP, ad server, payment provider). Distinct from IDEMPOTENCY_CONFLICT (different canonical payload — a client bug) and from CONFLICT (concurrent modification of a different resource) — IDEMPOTENCY_IN_FLIGHT is the seller telling the buyer 'your retry was correct but your previous attempt is still running, come back shortly.' Sellers SHOULD populate top-level `error.retry_after` (seconds) with a wait hint based on the first request's elapsed time and expected completion. Buyers MUST treat this as transient and MUST NOT mint a fresh `idempotency_key` — minting a new key turns a safe retry into a double-execution race.",
     recovery: "transient",
-    suggestion: "wait error.details.retry_after seconds and retry with the SAME idempotency_key — MUST NOT mint a fresh key (turns a safe retry into a double-execution race)"
+    suggestion: "wait top-level error.retry_after seconds and retry with the SAME idempotency_key — MUST NOT mint a fresh key (turns a safe retry into a double-execution race)"
   },
   INVALID_FEED_FORMAT: {
     description: "Catalog feed content does not match the declared feed_format.",
@@ -414,9 +414,9 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "replace verify_agent.agent_url with one from the seller's published accepted_verifiers, drop verify_agent if the embedding is self-verifiable, or re-embed with a verifier the seller accepts"
   },
   RATE_LIMITED: {
-    description: "Request rate exceeded. Retry after the retry_after interval.",
+    description: "Request rate exceeded. Sellers SHOULD populate top-level `error.retry_after` with the number of seconds to wait.",
     recovery: "transient",
-    suggestion: "retry after the retry_after interval"
+    suggestion: "wait top-level error.retry_after seconds when present, then retry"
   },
   READ_ONLY_SCOPE: {
     description: "The caller's scope is read-only; the invoked task would mutate state and was rejected. Distinct from `SCOPE_INSUFFICIENT` (task not in scope at all) — the task is in some scopes this seller supports, just not this caller's.",
