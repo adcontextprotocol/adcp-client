@@ -5414,23 +5414,75 @@ export interface CancellationPolicy {
   /**
    * Fee applied when the notice period is not met.
    */
-  cancellation_fee: {
-    /**
-     * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
-     */
-    type: 'percent_remaining' | 'full_commitment' | 'fixed_fee' | 'none';
-    /**
-     * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
-     * @minimum 0
-     * @maximum 1
-     */
-    rate?: number;
-    /**
-     * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
-     * @minimum 0
-     */
-    amount?: number;
-  };
+  cancellation_fee:
+    | {
+        /**
+         * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+         */
+        type: 'percent_remaining';
+        /**
+         * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+         * @minimum 0
+         * @maximum 1
+         */
+        rate: number;
+        /**
+         * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+         * @minimum 0
+         */
+        amount?: number;
+      }
+    | {
+        /**
+         * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+         */
+        type: 'full_commitment';
+        /**
+         * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+         * @minimum 0
+         * @maximum 1
+         */
+        rate?: number;
+        /**
+         * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+         * @minimum 0
+         */
+        amount?: number;
+      }
+    | {
+        /**
+         * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+         */
+        type: 'fixed_fee';
+        /**
+         * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+         * @minimum 0
+         * @maximum 1
+         */
+        rate?: number;
+        /**
+         * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+         * @minimum 0
+         */
+        amount: number;
+      }
+    | {
+        /**
+         * Fee calculation method. 'percent_remaining': percentage of remaining uncommitted spend. 'full_commitment': buyer owes the full committed budget regardless of delivery. 'fixed_fee': flat monetary amount. 'none': no financial fee (cancellation with notice is free).
+         */
+        type: 'none';
+        /**
+         * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+         * @minimum 0
+         * @maximum 1
+         */
+        rate?: number;
+        /**
+         * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+         * @minimum 0
+         */
+        amount?: number;
+      };
 }
 /**
  * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
@@ -16444,7 +16496,7 @@ export interface SyncCreativesRequest {
    */
   delete_missing?: boolean;
   /**
-   * When true, preview changes without applying them. Returns what would be created/updated/deleted.
+   * When true, rehearse this sync_creatives operation without applying it. Validates the actual trafficking request in the seller's current context, including library upsert semantics, creative IDs, assignments, account-scoped gates, and seller policies, then returns what would be created/updated/deleted. This is distinct from validate_input, which only validates manifest structure against canonical/product format targets.
    */
   dry_run?: boolean;
   validation_mode?: ValidationMode;
@@ -16614,7 +16666,7 @@ export interface SyncCreativesSubmitted {
 
 // validate_input parameters
 /**
- * Request payload for the validate_input task. Lets buyers dry-run a creative manifest against canonical formats and/or specific products before committing to a render. Cheaper than preview_creative (no synthesis cost). Used by build_creative internally to validate inputs before producing output. For genuinely nondeterministic generative platforms (Veo/Sora/Runway-class) where predictive validation is impossible, the platform's own post-synthesis QA loop applies — validate_input is the predictable-case primitive.
+ * Request payload for the validate_input task. Lets buyers preflight a creative manifest against canonical formats and/or specific products before committing to a render or other expensive creative-production step. It validates manifest structure and target format constraints only: slot counts, asset types, parameter ranges, and format-shape constraints. It does not rehearse a seller's library mutation, creative_id upsert semantics, package assignments, account authorization, active-delivery protections, or other trafficking-time gates. When the question is final seller acceptance for a creative that is ready to traffic, call sync_creatives directly; use dry_run: true for a non-mutating rehearsal of that operation. Used by build_creative internally to validate inputs before producing output. For genuinely nondeterministic generative platforms (Veo/Sora/Runway-class) where predictive validation is impossible, the platform's own post-synthesis QA loop applies — validate_input is the predictable-case primitive.
  *
  * The `targets[]` array is a discriminated list of validation targets, mirroring the response shape on `validate-input-result.json#target`. Each entry has a `kind` (canonical | product | third_party_format) plus a kind-specific identifier. Discriminated-by-kind on both sides eliminates a wire-shape mismatch: a previous draft used `format_ids: string[]` for canonical names alongside `product_ids: string[]`, which collided with `Product.format_ids: FormatId[]` ({agent_url, id}) — codegen would emit the same field name with two different types. Discriminated `targets[]` makes the intent explicit and codegen-clean.
  */
@@ -16652,7 +16704,7 @@ export interface ThirdPartyFormatTarget {
 
 // validate_input response
 /**
- * Response payload for the validate_input task. Returns per-target validation results — one entry per format_id or product_id requested. Each result carries a `result_kind` discriminator (`validated_pass` / `validated_fail` / `unvalidatable_nondeterministic`) so callers can branch on three meaningfully different outcomes. The `predicted` field on violations carries the platform's pre-flight estimate (e.g., predicted audio duration from text-length analysis), NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts. For nondeterministic generative platforms (Veo / Sora / Runway-class with `synthesis_nondeterministic: true`), the result_kind is `unvalidatable_nondeterministic` — predictive validation is impossible, the platform's post-synthesis QA loop applies on `build_creative`, and out-of-spec output never reaches this surface (instead `build_creative` returns task_failed with synthesis_failed reason).
+ * Response payload for the validate_input task. Returns per-target manifest validation results — one entry per canonical, product, or third-party target requested. Each result carries a `result_kind` discriminator (`validated_pass` / `validated_fail` / `unvalidatable_nondeterministic`) so callers can branch on three meaningfully different outcomes. A pass means the manifest is structurally valid for that target; it does not mean a later sync_creatives call will be accepted, because trafficking-time gates such as account authorization, creative_id upsert state, package assignments, active-delivery protections, and seller review policy are outside validate_input's scope. The `predicted` field on violations carries the platform's pre-flight estimate (e.g., predicted audio duration from text-length analysis), NOT the actual output — there is no protocol state for orphaned out-of-spec artifacts. For nondeterministic generative platforms (Veo / Sora / Runway-class with `synthesis_nondeterministic: true`), the result_kind is `unvalidatable_nondeterministic` — predictive validation is impossible, the platform's post-synthesis QA loop applies on `build_creative`, and out-of-spec output never reaches this surface (instead `build_creative` returns task_failed with synthesis_failed reason).
  *
  * The `ValidateInputResult` type is split into its own schema (`/schemas/creative/validate-input-result.json`) rather than inlined here because the same per-target shape is intended for reuse by adjacent async-validation surfaces (planned: per-batch result envelopes on `build_creative` async paths, and asynchronous canonical-against-product validation in `sync_creatives`). Producers that only need the synchronous batch shape today MAY treat the split as YAGNI, but the schema reuse anchors the violation/retry shape so downstream surfaces don't drift.
  */
@@ -16709,7 +16761,7 @@ export interface ValidateInputResponse {
 /**
  * Per-target result of a validate_input call. The `result_kind` discriminator (replacing the earlier boolean `ok`) lets buyers distinguish three meaningfully different outcomes:
  *
- * - `validated_pass` — manifest validates cleanly against the target. Buyers can submit with confidence.
+ * - `validated_pass` — manifest is structurally valid against the target. This is not seller trafficking acceptance; use `sync_creatives` or `sync_creatives` with `dry_run: true` for upload/update, account, assignment, policy, and lifecycle gates.
  * - `validated_fail` — manifest is structurally evaluable AND fails specific constraints. `violations[]` enumerates which. Buyers fix and retry.
  * - `unvalidatable_nondeterministic` — predictive validation is impossible because the target's production pipeline is genuinely nondeterministic (Veo / Sora / Runway-class formats with `synthesis_nondeterministic: true`). The platform's own post-synthesis QA loop applies; outcome is unknowable until `build_creative` runs. Buyers MUST plan for the QA-loop semantics: submission may return `task_failed` with a `synthesis_failed` reason if the QA loop exhausts. There is no protocol state for orphaned out-of-spec artifacts.
  *
@@ -23485,7 +23537,7 @@ export interface IdempotencySupported {
    */
   replay_ttl_seconds: number;
   /**
-   * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes `error.details.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
+   * Maximum lifetime in seconds of an in-flight idempotency row before the seller releases it per L1/security.mdx rule 9 (treat the in-flight attempt as failed if the handler does not complete within this bound). Buyer SDKs use this value to compute a retry budget when they see `IDEMPOTENCY_IN_FLIGHT` — cap individual retry waits at this value rather than the much-wider `replay_ttl_seconds` ceiling. Optional in 3.1 (additive declaration); SDKs that don't see the field fall back to rule 9's order-of-magnitude SHOULD heuristic. Required when `supported: true` in 4.0. MUST be no greater than `replay_ttl_seconds` (a bound larger than the replay window is vacuous — any retry past the TTL hits IDEMPOTENCY_EXPIRED regardless of in-flight state); validators MUST enforce this cross-field constraint at the test layer since JSON Schema cannot express field-relative bounds. A buyer that observes top-level `error.retry_after` exceeding this value MAY treat that as a seller bug — the in-flight row cannot legitimately outlive the bound the seller declared.
    * @minimum 1
    * @maximum 604800
    */

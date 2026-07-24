@@ -448,6 +448,35 @@ writeFileSync(__OUT_PATH__, JSON.stringify({ ok, message }));
   assert.equal(result.ok, true, result.message);
 });
 
+test('conditional required fields compile as a discriminated union', () => {
+  const result = runHarness(`
+import { writeFileSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { compile } from 'json-schema-to-typescript';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const schemaPath = join(process.cwd(), 'schemas/cache/${ADCP_VERSION}/core/cancellation-policy.json');
+const root = JSON.parse(readFileSync(schemaPath, 'utf8'));
+
+async function main() {
+  const strict = enforceStrictSchema(JSON.parse(JSON.stringify(root.properties.cancellation_fee)));
+  const ts = await compile(strict, 'CancellationFee', {
+    bannerComment: '',
+    additionalProperties: false,
+    strictIndexSignatures: true,
+  });
+  writeFileSync(__OUT_PATH__, JSON.stringify({ ts, strict }));
+}
+main().catch((err) => { console.error(err); process.exit(1); });
+`);
+
+  assert.strictEqual(result.strict.oneOf.length, 4, 'every fee type must get an explicit branch');
+  assert.ok(!result.strict.allOf, 'conditional allOf must be consumed');
+  assert.match(result.ts, /type:\s*['"]percent_remaining['"][\s\S]*rate:\s*number/);
+  assert.match(result.ts, /type:\s*['"]fixed_fee['"][\s\S]*amount:\s*number/);
+  assert.doesNotMatch(result.ts, /\[k:\s*string\]:\s*unknown/, 'fee type must not collapse to an index signature');
+});
+
 test('compiled oneOf with two broken-pattern variants emits a clean discriminated union', () => {
   // Uses a real cached schema (signal-pricing.json) so the cache resolver
   // path is exercised end-to-end without depending on every $ref the base
