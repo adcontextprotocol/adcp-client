@@ -408,6 +408,141 @@ describe('canonical creative asynchronous boundaries', () => {
     assertCanonical(dispatchedMetadata);
   });
 
+  test('bounds creative task associations with LRU eviction and clears explicit conversation state', () => {
+    const client = makeClient(async () => completedResult());
+
+    for (let index = 0; index <= 10_000; index += 1) {
+      client.rememberCanonicalCreativeTaskAssociation(`association-${index}`, 'get_products', converter);
+    }
+
+    assert.equal(client.canonicalCreativeTaskAssociations.size, 10_000);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('association-0'), false);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('association-10000'), true);
+
+    // Reads touch the LRU position: association-1 survives the next insertion,
+    // while the next-coldest association is evicted.
+    assert.equal(client.canonicalCreativeTaskAssociation('association-1').taskType, 'get_products');
+    client.rememberCanonicalCreativeTaskAssociation('association-10001', 'list_creatives', converter);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('association-1'), true);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('association-2'), false);
+    assert.equal(client.canonicalCreativeTaskAssociations.size, 10_000);
+
+    client.clearConversationHistory('association-1');
+    assert.equal(client.canonicalCreativeTaskAssociations.has('association-1'), false);
+
+    for (let index = 0; index <= 10_000; index += 1) {
+      client.rememberProductPolicyRequestParams(
+        'get_products',
+        { brief: `policy-${index}` },
+        {
+          success: true,
+          status: 'submitted',
+          metadata: metadata('submitted', `policy-${index}`),
+        }
+      );
+    }
+    assert.equal(client.productPolicyRequestParamsByTask.size, 10_000);
+    assert.equal(client.productPolicyRequestParamsByTask.has('policy-0'), false);
+    assert.equal(client.productPolicyRequestParamsByTask.has('policy-10000'), true);
+    assert.equal(client.productPolicyRequestParamsForKey('policy-2').brief, 'policy-2');
+    client.rememberProductPolicyRequestParams(
+      'get_products',
+      { brief: 'policy-10001' },
+      {
+        success: true,
+        status: 'submitted',
+        metadata: metadata('submitted', 'policy-10001'),
+      }
+    );
+    assert.equal(client.productPolicyRequestParamsByTask.has('policy-2'), true);
+    assert.equal(client.productPolicyRequestParamsByTask.has('policy-3'), false);
+    client.clearConversationHistory('policy-10000');
+    assert.equal(client.productPolicyRequestParamsByTask.has('policy-10000'), false);
+  });
+
+  test('retains terminal task associations for post-completion history and task APIs', async () => {
+    const client = makeClient(async () => completedResult());
+    client.rememberCanonicalCreativeTaskAssociation('operation-terminal', 'get_products', converter);
+    client.rememberCanonicalCreativeTaskAssociation('task-terminal', 'get_products', converter);
+
+    const handled = await client.handleWebhook(
+      {
+        idempotency_key: 'terminal-event',
+        operation_id: 'operation-terminal',
+        context_id: 'context-live',
+        task_id: 'task-terminal',
+        task_type: 'get_products',
+        status: 'completed',
+        timestamp: '2026-07-24T12:00:00.000Z',
+        result: legacyProducts(),
+      },
+      'get_products',
+      'operation-terminal'
+    );
+
+    assert.equal(handled, false);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('operation-terminal'), true);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('task-terminal'), true);
+    assert.equal(client.canonicalCreativeTaskAssociations.has('context-live'), true);
+    assert.equal(
+      client.canonicalCreativeTaskAssociation('task-terminal').legacyFormatConverter(legacyFormat).format_kind,
+      'image'
+    );
+
+    client.executor.getConversationHistory = () => [
+      { id: 'm-terminal', role: 'agent', content: legacyProducts(), timestamp: '2026-07-24T12:00:00Z' },
+    ];
+    client.executor.getTaskInfo = async () => ({
+      taskId: 'task-terminal',
+      taskType: 'get_products',
+      status: 'completed',
+      createdAt: 1,
+      updatedAt: 2,
+      result: legacyProducts(),
+    });
+
+    const history = client.getConversationHistory('task-terminal');
+    const taskInfo = await client.getTaskInfo('task-terminal');
+    assert.equal(history[0].content.products[0].format_options[0].format_kind, 'image');
+    assert.equal(taskInfo.result.products[0].format_options[0].format_kind, 'image');
+    assertCanonical(history);
+    assertCanonical(taskInfo);
+
+    const continued = await client.continueConversation('Refine the completed result', 'context-live');
+    assert.equal(continued.data.products[0].format_options[0].format_kind, 'image');
+    assertCanonical(continued);
+  });
+
+  test('learns a webhook context before activity callbacks can continue it', async () => {
+    let client;
+    let continuedFromActivity;
+    client = makeClient(async () => completedResult(), {
+      onActivity: async activity => {
+        continuedFromActivity = await client.continueConversation('Refine immediately', activity.context_id);
+      },
+    });
+    client.rememberCanonicalCreativeTaskAssociation('operation-reentrant', 'get_products', converter);
+    client.rememberCanonicalCreativeTaskAssociation('task-reentrant', 'get_products', converter);
+
+    await client.handleWebhook(
+      {
+        idempotency_key: 'reentrant-event',
+        operation_id: 'operation-reentrant',
+        context_id: 'context-reentrant',
+        task_id: 'task-reentrant',
+        task_type: 'get_products',
+        status: 'completed',
+        timestamp: '2026-07-24T12:00:00.000Z',
+        result: legacyProducts(),
+      },
+      'get_products',
+      'operation-reentrant'
+    );
+
+    assert.equal(continuedFromActivity.data.products[0].format_options[0].format_kind, 'image');
+    assertCanonical(continuedFromActivity);
+  });
+
   test('omits raw causes and identity-bearing messages from canonical webhook failures', async () => {
     const client = makeClient(async () => completedResult());
     const invalidJson = await client.verifyAndParseWebhook({
@@ -502,8 +637,7 @@ describe('canonical creative asynchronous boundaries', () => {
     assert.equal(Object.hasOwn(payloadRoutedFailure, 'cause'), false);
     assertCanonical(payloadRoutedFailure);
 
-    client.canonicalCreativeTaskIds.add('known-canonical-operation');
-    client.canonicalCreativeTaskTypesById.set('known-canonical-operation', 'get_products');
+    client.rememberCanonicalCreativeTaskAssociation('known-canonical-operation', 'get_products');
     const mislabeledKnownTask = await client.verifyAndParseWebhook({
       payload: {
         idempotency_key: 'mislabeled-known-task',
@@ -520,7 +654,7 @@ describe('canonical creative asynchronous boundaries', () => {
     assert.equal(Object.hasOwn(mislabeledKnownTask, 'cause'), false);
     assertCanonical(mislabeledKnownTask);
 
-    client.legacyFormatConvertersByTask.set('known-canonical-operation', converter);
+    client.rememberCanonicalCreativeTaskAssociation('known-canonical-operation', 'get_products', converter);
     const validKnownTask = await client.verifyAndParseWebhook({
       taskType: 'unknown',
       payload: {

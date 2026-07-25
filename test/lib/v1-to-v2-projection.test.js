@@ -86,6 +86,33 @@ describe('v1 → v2 projection — every catalog entry projects', { skip: SKIP_R
     assert.strictEqual(decl.v1_format_ref[0].agent_url, entry.format_id.agent_url);
     assert.strictEqual(decl.v1_format_ref[0].id, entry.format_id.id);
   });
+
+  test('resolves the Optimera AAO legacy host alias without rewriting its source ref', () => {
+    const formatId = { agent_url: 'https://adcontextprotocol.org', id: 'display_image' };
+    const { v2, diagnostics } = projectV1ProductToV2({
+      product_id: 'optimera_display_image',
+      name: 'Optimera display image',
+      description: 'AAO format published under the historical protocol-root URL',
+      format_ids: [formatId],
+    });
+
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(v2.format_options.length, 1);
+    assert.strictEqual(v2.format_options[0].format_kind, 'image');
+    assert.deepStrictEqual(v2.format_options[0].v1_format_ref, [formatId]);
+  });
+
+  test('does not treat arbitrary publisher URLs as AAO aliases', () => {
+    const { v2, diagnostics } = projectV1ProductToV2({
+      product_id: 'publisher_display_image',
+      name: 'Publisher display image',
+      description: 'Same local id under an unrelated owner',
+      format_ids: [{ agent_url: 'https://publisher.example', id: 'display_image' }],
+    });
+
+    assert.strictEqual(v2.format_options.length, 0);
+    assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
+  });
 });
 
 describe(

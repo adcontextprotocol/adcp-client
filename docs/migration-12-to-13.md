@@ -145,7 +145,7 @@ Likewise, handler-bag types on the primary barrels are now
 
 ## Custom legacy formats
 
-The bundled catalog upgrades known legacy refs automatically. For a seller-specific ref, configure `legacyFormatConverter` (or server-side `legacyCreativeFormatConverter`) and return a canonical declaration. Use `format_kind: 'custom'` for a bespoke shape:
+The bundled catalog upgrades known legacy refs automatically, including the historical AAO `https://adcontextprotocol.org/` owner used by early Optimera deployments. That alias is explicit; the SDK does not match an unrelated owner's format by ID alone. For a seller-specific ref, configure `legacyFormatConverter` (or server-side `legacyCreativeFormatConverter`) and return a canonical declaration. Use `format_kind: 'custom'` for a bespoke shape:
 
 ```ts
 const legacyFormatConverter = ({ formatId }) => ({
@@ -160,7 +160,7 @@ const legacyFormatConverter = ({ formatId }) => ({
 });
 ```
 
-An invalid or unmapped ref fails before adopter code receives a partially converted object. For ordinary downgrade, use `packageRefsForFormatOptions()` on the product returned by `getProducts()`. The SDK retains the corresponding legacy ref in private metadata and emits it only when negotiation selects a legacy wire.
+Configure this once as `legacyFormatConverter` on the client to cover canonical discovery, legacy create/update/sync write escape hatches, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. An invalid or unmapped ref fails before adopter code receives a partially converted object. For ordinary downgrade, use `packageRefsForFormatOptions()` on the product returned by `getProducts()`. The SDK retains the corresponding legacy ref in private metadata and emits it only when negotiation selects a legacy wire.
 
 If a canonical custom format must survive persistence or another boundary that discards that private metadata, configure the separate canonical-to-legacy resolver. This is intentionally not the same function as the inbound converter:
 

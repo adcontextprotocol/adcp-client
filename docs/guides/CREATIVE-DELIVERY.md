@@ -152,6 +152,12 @@ the same fail-closed boundary.
 
 ## Custom legacy formats
 
+The bundled AAO catalog recognizes both the current
+`https://creative.adcontextprotocol.org/` owner and the historical
+`https://adcontextprotocol.org/` owner used by early deployments such as
+Optimera. This is an explicit alias; matching never falls back to a format ID
+owned by an unrelated URL.
+
 The bundled registry cannot infer semantics for a seller-specific
 `{ agent_url, id }`. Such an inbound creative fails closed unless a
 `legacyFormatConverter` returns a valid canonical declaration. Bespoke shapes
@@ -171,13 +177,16 @@ const legacyFormatConverter = ({ formatId }) => ({
 });
 ```
 
-Pass it in `AgentClient.getProducts(..., { legacyFormatConverter })`, creative
-delivery task options, or the `legacyCreativeFormatConverter` option on
-`createAdcpServerFromPlatform()`. Modern server platform handlers always
-receive canonical creatives. An invalid explicit conversion is rejected with
-`INVALID_REQUEST`; an unmapped legacy ref without a converter is rejected as
-well. The legacy ref never leaks into adopter code or gets guessed as one of
-the 12 standard canonical kinds.
+Configure it once as `legacyFormatConverter` on `SingleAgentClient`/
+`AgentClient`, or override it for one call in `getProducts()` and creative
+delivery task options. The configured converter applies consistently to
+discovery, `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`,
+`syncCreativesLegacy()`, async continuations, and webhooks. Server adopters use
+the `legacyCreativeFormatConverter` option on `createAdcpServerFromPlatform()`.
+Modern server platform handlers always receive canonical creatives. An invalid
+explicit conversion is rejected with `INVALID_REQUEST`; an unmapped legacy ref
+without a converter is rejected as well. The legacy ref never leaks into
+adopter code or gets guessed as one of the 12 standard canonical kinds.
 
 ### Persisted canonical custom formats on a legacy server wire
 

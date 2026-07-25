@@ -260,6 +260,21 @@ const CANONICAL_CREATIVE_ACTIVITY_TASKS = new Set([
   'get_creative_delivery',
 ]);
 
+/**
+ * Bound task/context state retained for async creative projection and policy.
+ *
+ * A creative task can contribute several aliases (operation, client task,
+ * server task, and conversation context IDs). Ten thousand aliases covers
+ * thousands of concurrent tasks while keeping abandoned tasks from growing a
+ * long-lived client without limit. Map insertion order provides LRU eviction.
+ */
+const TASK_SCOPED_STATE_LIMIT = 10_000;
+
+interface CanonicalCreativeTaskAssociation {
+  taskType: string;
+  legacyFormatConverter?: LegacyFormatConverter;
+}
+
 const canonicalCreativeExecutionStorage = globalAsyncLocalStorage<{
   taskType: string;
   legacyFormatConverter?: LegacyFormatConverter;
@@ -773,7 +788,7 @@ const MCP_WEBHOOK_REQUIRED_FIELDS = ['idempotency_key', 'task_id', 'task_type', 
  * Configuration for SingleAgentClient (and multi-agent client)
  */
 export interface SingleAgentClientConfig extends ConversationConfig {
-  /** Converter for seller-specific legacy creative formats on canonical read/webhook surfaces. */
+  /** Converter for seller-specific legacy creative formats at canonical read, write, and webhook boundaries. */
   legacyFormatConverter?: LegacyFormatConverter;
   /** Resolver for seller-specific canonical formats when a negotiated legacy wire is required. */
   canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
@@ -1137,9 +1152,7 @@ export class SingleAgentClient {
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
   private readonly productPolicyRequestParamsByTask = new Map<string, Record<string, unknown>>();
-  private readonly legacyFormatConvertersByTask = new Map<string, LegacyFormatConverter>();
-  private readonly canonicalCreativeTaskIds = new Set<string>();
-  private readonly canonicalCreativeTaskTypesById = new Map<string, string>();
+  private readonly canonicalCreativeTaskAssociations = new Map<string, CanonicalCreativeTaskAssociation>();
   private readonly resolvedAdcpVersion: string;
 
   constructor(
@@ -1726,7 +1739,7 @@ export class SingleAgentClient {
         typeof payloadRecord?.task_id === 'string' ? payloadRecord.task_id : undefined,
         typeof payloadRecord?.context_id === 'string' ? payloadRecord.context_id : undefined,
       ].flatMap(id => {
-        const taskType = id ? this.canonicalCreativeTaskTypesById.get(id) : undefined;
+        const taskType = this.canonicalCreativeTaskAssociation(id)?.taskType;
         return taskType ? [taskType] : [];
       })
     );
@@ -1850,43 +1863,57 @@ export class SingleAgentClient {
         ? stripLegacyCreativeIdentity(parsed.envelope)
         : parsed.envelope,
     };
-    const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result);
-    const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(
-      canonicalResult as AdCPAsyncResponseData | undefined,
-      metadata
-    );
-    const webhookResult = policyDispatch.result;
-    metadata = policyDispatch.metadata;
+    this.rememberCanonicalCreativeWebhookContext(metadata);
+    try {
+      const canonicalResult = this.canonicalizeWebhookCreativeResult(metadata, parsed.result);
+      const policyDispatch = await this.applyProductPropertyPolicyToWebhookResult(
+        canonicalResult as AdCPAsyncResponseData | undefined,
+        metadata
+      );
+      const webhookResult = policyDispatch.result;
+      metadata = policyDispatch.metadata;
 
-    // Emit activity
-    await this.config.onActivity?.(
-      canonicalCreativeActivity({
-        type: 'webhook_received',
-        operation_id: metadata.operation_id,
-        agent_id: metadata.agent_id,
-        context_id: metadata.context_id,
-        task_id: metadata.task_id,
-        task_type: metadata.task_type,
-        status: metadata.status,
-        payload: canonicalResult,
-        timestamp: metadata.timestamp,
-      })
-    );
+      // Emit activity
+      await this.config.onActivity?.(
+        canonicalCreativeActivity({
+          type: 'webhook_received',
+          operation_id: metadata.operation_id,
+          agent_id: metadata.agent_id,
+          context_id: metadata.context_id,
+          task_id: metadata.task_id,
+          task_type: metadata.task_type,
+          status: metadata.status,
+          payload: canonicalResult,
+          timestamp: metadata.timestamp,
+        })
+      );
 
-    if (policyDispatch.suppressHandler) {
+      if (policyDispatch.suppressHandler) return true;
+
+      // Handle through async handler if configured
+      if (this.asyncHandler) {
+        await this.asyncHandler.handleWebhook({ result: webhookResult, metadata });
+        return true;
+      }
+
+      return false;
+    } finally {
       this.forgetProductPolicyRequestParams(metadata);
-      return true;
     }
+  }
 
-    // Handle through async handler if configured
-    if (this.asyncHandler) {
-      await this.asyncHandler.handleWebhook({ result: webhookResult, metadata });
-      this.forgetProductPolicyRequestParams(metadata);
-      return true;
-    }
-
-    this.forgetProductPolicyRequestParams(metadata);
-    return false;
+  private rememberCanonicalCreativeWebhookContext(metadata: WebhookMetadata): void {
+    if (!metadata.context_id || !CANONICAL_CREATIVE_ACTIVITY_TASKS.has(metadata.task_type)) return;
+    const association =
+      this.canonicalCreativeTaskAssociation(metadata.operation_id) ??
+      this.canonicalCreativeTaskAssociation(metadata.task_id) ??
+      this.canonicalCreativeTaskAssociation(metadata.context_id);
+    if (!association) return;
+    this.rememberCanonicalCreativeTaskAssociation(
+      metadata.context_id,
+      association.taskType,
+      association.legacyFormatConverter
+    );
   }
 
   private canonicalizeWebhookCreativeResult(metadata: WebhookMetadata, result: unknown): unknown {
@@ -2635,9 +2662,38 @@ export class SingleAgentClient {
     ];
     for (const key of keys) {
       if (!key) continue;
-      this.canonicalCreativeTaskIds.add(key);
-      this.canonicalCreativeTaskTypesById.set(key, taskType);
-      if (legacyFormatConverter) this.legacyFormatConvertersByTask.set(key, legacyFormatConverter);
+      this.rememberCanonicalCreativeTaskAssociation(key, taskType, legacyFormatConverter);
+    }
+  }
+
+  private rememberCanonicalCreativeTaskAssociation(
+    key: string,
+    taskType: string,
+    legacyFormatConverter?: LegacyFormatConverter
+  ): void {
+    this.canonicalCreativeTaskAssociations.delete(key);
+    this.canonicalCreativeTaskAssociations.set(key, { taskType, legacyFormatConverter });
+    while (this.canonicalCreativeTaskAssociations.size > TASK_SCOPED_STATE_LIMIT) {
+      const oldest = this.canonicalCreativeTaskAssociations.keys().next().value;
+      if (oldest === undefined) break;
+      this.canonicalCreativeTaskAssociations.delete(oldest);
+    }
+  }
+
+  private canonicalCreativeTaskAssociation(key: string | undefined): CanonicalCreativeTaskAssociation | undefined {
+    if (!key) return undefined;
+    const association = this.canonicalCreativeTaskAssociations.get(key);
+    if (!association) return undefined;
+    // Touch the entry so actively-polled tasks and continued conversations
+    // survive ahead of abandoned associations when the cache reaches its cap.
+    this.canonicalCreativeTaskAssociations.delete(key);
+    this.canonicalCreativeTaskAssociations.set(key, association);
+    return association;
+  }
+
+  private forgetCanonicalCreativeTaskAssociationKeys(keys: Array<string | undefined>): void {
+    for (const key of keys) {
+      if (key) this.canonicalCreativeTaskAssociations.delete(key);
     }
   }
 
@@ -2907,7 +2963,13 @@ export class SingleAgentClient {
     if (options?.contextId) keys.add(options.contextId);
 
     for (const key of keys) {
+      this.productPolicyRequestParamsByTask.delete(key);
       this.productPolicyRequestParamsByTask.set(key, requestParams);
+      while (this.productPolicyRequestParamsByTask.size > TASK_SCOPED_STATE_LIMIT) {
+        const oldest = this.productPolicyRequestParamsByTask.keys().next().value;
+        if (oldest === undefined) break;
+        this.productPolicyRequestParamsByTask.delete(oldest);
+      }
     }
   }
 
@@ -2928,15 +2990,15 @@ export class SingleAgentClient {
       options?.contextId,
     ];
     for (const key of keys) {
-      if (key) this.legacyFormatConvertersByTask.set(key, converter);
+      if (key) this.rememberCanonicalCreativeTaskAssociation(key, taskType, converter);
     }
   }
 
   private legacyFormatConverterForWebhook(metadata: WebhookMetadata): LegacyFormatConverter | undefined {
     return (
-      this.legacyFormatConvertersByTask.get(metadata.operation_id) ??
-      this.legacyFormatConvertersByTask.get(metadata.task_id) ??
-      (metadata.context_id ? this.legacyFormatConvertersByTask.get(metadata.context_id) : undefined) ??
+      this.canonicalCreativeTaskAssociation(metadata.operation_id)?.legacyFormatConverter ??
+      this.canonicalCreativeTaskAssociation(metadata.task_id)?.legacyFormatConverter ??
+      this.canonicalCreativeTaskAssociation(metadata.context_id)?.legacyFormatConverter ??
       this.config.legacyFormatConverter
     );
   }
@@ -3039,11 +3101,20 @@ export class SingleAgentClient {
     return (
       this.executor.getRequestParams(metadata.operation_id) ??
       this.executor.getRequestParams(metadata.task_id) ??
-      this.productPolicyRequestParamsByTask.get(metadata.operation_id) ??
-      this.productPolicyRequestParamsByTask.get(metadata.task_id) ??
-      (metadata.context_id ? this.productPolicyRequestParamsByTask.get(metadata.context_id) : undefined) ??
+      this.productPolicyRequestParamsForKey(metadata.operation_id) ??
+      this.productPolicyRequestParamsForKey(metadata.task_id) ??
+      this.productPolicyRequestParamsForKey(metadata.context_id) ??
       {}
     );
+  }
+
+  private productPolicyRequestParamsForKey(key: string | undefined): Record<string, unknown> | undefined {
+    if (!key) return undefined;
+    const requestParams = this.productPolicyRequestParamsByTask.get(key);
+    if (!requestParams) return undefined;
+    this.productPolicyRequestParamsByTask.delete(key);
+    this.productPolicyRequestParamsByTask.set(key, requestParams);
+    return requestParams;
   }
 
   private async applyProductPropertyPolicyToWebhookResult(
@@ -3453,6 +3524,7 @@ export class SingleAgentClient {
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
     const { legacyFormatConverter, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
+    const effectiveLegacyFormatConverter = legacyFormatConverter ?? this.config.legacyFormatConverter;
     const effectiveCanonicalFormatLegacyResolver =
       canonicalFormatLegacyResolver ?? this.config.canonicalFormatLegacyResolver;
     const hasCreativeFormatData = hasMediaBuyCreativeFormatData(params);
@@ -3514,13 +3586,13 @@ export class SingleAgentClient {
         params,
         wireMode,
         'create_media_buy',
-        legacyFormatConverter,
+        effectiveLegacyFormatConverter,
         effectiveCanonicalFormatLegacyResolver
       ),
       inputHandler,
       taskOptions,
       undefined,
-      legacyFormatConverter,
+      effectiveLegacyFormatConverter,
       params
     );
   }
@@ -3551,6 +3623,7 @@ export class SingleAgentClient {
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
     const { legacyFormatConverter, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
+    const effectiveLegacyFormatConverter = legacyFormatConverter ?? this.config.legacyFormatConverter;
     const effectiveCanonicalFormatLegacyResolver =
       canonicalFormatLegacyResolver ?? this.config.canonicalFormatLegacyResolver;
     const hasCreativeFormatData = hasMediaBuyCreativeFormatData(params);
@@ -3570,13 +3643,13 @@ export class SingleAgentClient {
         params,
         wireMode,
         'update_media_buy',
-        legacyFormatConverter,
+        effectiveLegacyFormatConverter,
         effectiveCanonicalFormatLegacyResolver
       ),
       inputHandler,
       taskOptions,
       undefined,
-      legacyFormatConverter,
+      effectiveLegacyFormatConverter,
       params
     );
   }
@@ -3610,6 +3683,8 @@ export class SingleAgentClient {
       options ?? {};
     const effectiveCanonicalFormatLegacyResolver =
       canonicalFormatLegacyResolver ?? this.config.canonicalFormatLegacyResolver;
+    const effectiveLegacyFormatConverter =
+      creativeFormatProjection?.legacyFormatConverter ?? legacyFormatConverter ?? this.config.legacyFormatConverter;
     this.validateBeforeCreativeCapabilityProbe('sync_creatives', params, taskOptions);
     const wireMode = this.resolveCreativeFormatWireMode(
       'sync_creatives',
@@ -3619,10 +3694,9 @@ export class SingleAgentClient {
       params,
       (creativeFormatProjection?.selectorContainers ?? []) as ReadonlyArray<CreativeFormatSelectorContainer>,
       wireMode,
-      creativeFormatProjection?.legacyFormatConverter ?? legacyFormatConverter,
+      effectiveLegacyFormatConverter,
       effectiveCanonicalFormatLegacyResolver
     );
-    const effectiveLegacyFormatConverter = creativeFormatProjection?.legacyFormatConverter ?? legacyFormatConverter;
     return this.executeAndHandle<SyncCreativesResponse>(
       'sync_creatives',
       'onSyncCreativesStatusChange',
@@ -4572,12 +4646,13 @@ export class SingleAgentClient {
     inputHandler?: InputHandler
   ): Promise<TaskResult<T>> {
     const agent = await this.ensureEndpointDiscovered();
-    const creativeTaskType = this.canonicalCreativeTaskTypesById.get(contextId);
-    if (!creativeTaskType) {
+    const creativeAssociation = this.canonicalCreativeTaskAssociation(contextId);
+    if (!creativeAssociation) {
       return this.executor.executeTask<T>(agent, 'continue_conversation', { message }, inputHandler, { contextId });
     }
 
-    const legacyFormatConverter = this.legacyFormatConvertersByTask.get(contextId) ?? this.config.legacyFormatConverter;
+    const { taskType: creativeTaskType } = creativeAssociation;
+    const legacyFormatConverter = creativeAssociation.legacyFormatConverter ?? this.config.legacyFormatConverter;
     const result = await canonicalCreativeExecutionStorage.run(
       { taskType: creativeTaskType, legacyFormatConverter },
       () =>
@@ -4599,9 +4674,10 @@ export class SingleAgentClient {
    */
   getConversationHistory(taskId: string): Message[] | undefined {
     const history = this.executor.getConversationHistory(taskId);
-    const taskType = this.canonicalCreativeTaskTypesById.get(taskId);
-    if (!taskType) return history;
-    const converter = this.legacyFormatConvertersByTask.get(taskId) ?? this.config.legacyFormatConverter;
+    const association = this.canonicalCreativeTaskAssociation(taskId);
+    if (!association) return history;
+    const { taskType } = association;
+    const converter = association.legacyFormatConverter ?? this.config.legacyFormatConverter;
     return history?.map(message => ({
       ...message,
       content: projectCanonicalCreativeAncillaryValue(message.content, taskType, converter),
@@ -4613,6 +4689,8 @@ export class SingleAgentClient {
    */
   clearConversationHistory(taskId: string): void {
     this.executor.clearConversationHistory(taskId);
+    this.forgetCanonicalCreativeTaskAssociationKeys([taskId]);
+    this.productPolicyRequestParamsByTask.delete(taskId);
   }
 
   // ====== AGENT INFORMATION ======
@@ -4782,7 +4860,9 @@ export class SingleAgentClient {
       .filter(task => task.agent.id === this.agent.id)
       .map(task => {
         if (!CANONICAL_CREATIVE_ACTIVITY_TASKS.has(task.taskName)) return task;
-        const converter = this.legacyFormatConvertersByTask.get(task.taskId) ?? this.config.legacyFormatConverter;
+        const converter =
+          this.canonicalCreativeTaskAssociation(task.taskId)?.legacyFormatConverter ??
+          this.config.legacyFormatConverter;
         return stripLegacyCreativeIdentity({
           ...task,
           params: projectCanonicalCreativeAncillaryValue(task.params, task.taskName, converter),
@@ -4820,7 +4900,8 @@ export class SingleAgentClient {
             task,
             task.taskType,
             undefined,
-            this.legacyFormatConvertersByTask.get(task.taskId) ?? this.config.legacyFormatConverter
+            this.canonicalCreativeTaskAssociation(task.taskId)?.legacyFormatConverter ??
+              this.config.legacyFormatConverter
           )
         : task
     );
@@ -4839,7 +4920,7 @@ export class SingleAgentClient {
           task,
           task.taskType,
           undefined,
-          this.legacyFormatConvertersByTask.get(task.taskId) ?? this.config.legacyFormatConverter
+          this.canonicalCreativeTaskAssociation(task.taskId)?.legacyFormatConverter ?? this.config.legacyFormatConverter
         )
       : task;
   }
@@ -4871,7 +4952,8 @@ export class SingleAgentClient {
               task,
               task.taskType,
               undefined,
-              this.legacyFormatConvertersByTask.get(task.taskId) ?? this.config.legacyFormatConverter
+              this.canonicalCreativeTaskAssociation(task.taskId)?.legacyFormatConverter ??
+                this.config.legacyFormatConverter
             )
           : task
       )
@@ -4896,7 +4978,8 @@ export class SingleAgentClient {
             task,
             task.taskType,
             undefined,
-            this.legacyFormatConvertersByTask.get(task.taskId) ?? this.config.legacyFormatConverter
+            this.canonicalCreativeTaskAssociation(task.taskId)?.legacyFormatConverter ??
+              this.config.legacyFormatConverter
           )
         : task;
     return this.executor.onTaskEvents(this.agent.id, {

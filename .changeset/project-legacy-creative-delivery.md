@@ -9,3 +9,5 @@ legacy inputs before adopter code runs. Add an explicit custom-format converter
 for seller-owned legacy refs that cannot be mapped by the bundled registry.
 Raw named-format utilities, response builders, v5 handler-bag types, and the
 content-standards adapter now use explicit `Legacy` / `legacy` public names.
+The legacy create/update/sync compatibility methods normalize custom formats
+through configured converters at the same fail-closed canonical boundary.

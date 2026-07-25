@@ -22,6 +22,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import { AAO_CANONICAL_AGENT_URL } from './constants';
 
 /**
  * Canonical projection reference (`canonical-projection-ref.json` in the
@@ -85,14 +86,25 @@ interface CatalogIndex {
 let cached: CatalogIndex | null = null;
 
 /**
- * Normalize agent_url for indexing. Adds trailing slash when missing.
+ * Normalize agent_url for indexing. Adds trailing slash when missing and
+ * folds only explicitly known historical AAO hosts into the current host.
  * The AAO publishes the canonical form as `https://creative.adcontextprotocol.org/`
  * (with slash); some v2 fixtures use the no-slash form. Both refer to
- * the same agent; this lookup folds them.
+ * the same agent; this lookup folds them. It deliberately does not fall
+ * back to an id-only lookup: an unrelated publisher may own the same local
+ * format id without declaring the AAO format.
  */
+const AAO_LEGACY_AGENT_URL_ALIASES = new Set([
+  // Early AAO reference implementations, including Optimera's deployed
+  // catalog, used the protocol root before creative.adcontextprotocol.org
+  // became the canonical format-agent host.
+  'https://adcontextprotocol.org/',
+]);
+
 function normalizeAgentUrl(u: string): string {
   if (!u) return u;
-  return u.endsWith('/') ? u : u + '/';
+  const normalized = u.endsWith('/') ? u : u + '/';
+  return AAO_LEGACY_AGENT_URL_ALIASES.has(normalized) ? AAO_CANONICAL_AGENT_URL : normalized;
 }
 
 function indexKey(agentUrl: string, id: string): string {

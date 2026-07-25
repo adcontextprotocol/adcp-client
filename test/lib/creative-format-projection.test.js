@@ -1035,6 +1035,199 @@ describe('creative format delivery projection', () => {
     assert.ok(captured.packages.every(pkg => pkg.format_ids === undefined));
   });
 
+  test('SingleAgentClient uses its configured converter for every legacy write escape hatch', async () => {
+    const configuredConverter = ({ formatId }) =>
+      formatId.id === 'homepage_takeover'
+        ? {
+            format_option_id: 'configured-homepage-takeover',
+            format_kind: 'custom',
+            format_shape: 'multi_placement_takeover',
+            format_schema: {
+              uri: 'https://seller.example/formats/homepage_takeover.json',
+              digest: `sha256:${'a'.repeat(64)}`,
+            },
+            params: {},
+          }
+        : undefined;
+    const client = new SingleAgentClient(
+      {
+        id: 'canonical-custom-seller',
+        name: 'Canonical custom seller',
+        agent_uri: SELLER,
+        protocol: 'mcp',
+      },
+      { legacyFormatConverter: configuredConverter }
+    );
+    client.getCapabilities = async () => ({ features: { canonicalCreatives: true } });
+    const captured = [];
+    client.executeAndHandle = async (task, _handler, params, _input, _options, _transform, converter) => {
+      captured.push({ task, params, converter });
+      return { success: true, status: 'completed', data: {} };
+    };
+
+    const formatId = { agent_url: 'https://seller.example/custom', id: 'homepage_takeover' };
+    const creative = {
+      creative_id: 'legacy-custom-creative',
+      name: 'Legacy custom creative',
+      format_id: formatId,
+      assets: {},
+    };
+    const packageFields = {
+      product_id: 'custom-product',
+      pricing_option_id: 'pricing-1',
+      budget: 1000,
+      format_ids: [formatId],
+      creatives: [creative],
+    };
+
+    await client.createMediaBuyLegacy({
+      account: { account_id: 'test-account' },
+      brand: { domain: 'brand.example' },
+      start_time: 'asap',
+      end_time: '2027-12-31T00:00:00Z',
+      idempotency_key: 'configured-converter-create',
+      packages: [packageFields],
+    });
+    await client.updateMediaBuyLegacy({
+      media_buy_id: 'mb-custom',
+      idempotency_key: 'configured-converter-update',
+      packages: [{ ...packageFields, package_id: 'pkg-custom' }],
+    });
+    await client.syncCreativesLegacy({
+      account: { account_id: 'test-account' },
+      idempotency_key: 'configured-converter-sync',
+      creatives: [creative],
+    });
+
+    assert.deepEqual(
+      captured.map(({ task, params }) => ({
+        task,
+        optionRef:
+          params.packages?.[0]?.format_option_refs?.[0]?.format_option_id ??
+          params.creatives?.[0]?.format_option_ref?.format_option_id,
+      })),
+      [
+        { task: 'create_media_buy', optionRef: 'configured-homepage-takeover' },
+        { task: 'update_media_buy', optionRef: 'configured-homepage-takeover' },
+        { task: 'sync_creatives', optionRef: 'configured-homepage-takeover' },
+      ]
+    );
+    assert.ok(captured.every(({ converter }) => converter === configuredConverter));
+    assert.ok(
+      captured.every(({ params }) => {
+        const item = params.packages?.[0] ?? params.creatives?.[0];
+        return item.format_ids === undefined && item.format_id === undefined;
+      })
+    );
+  });
+
+  test('write converter precedence is sync projection, then per-call, then client default', async () => {
+    const configuredConverter = () => ({
+      format_option_id: 'configured-option',
+      format_kind: 'custom',
+      format_shape: 'configured',
+      format_schema: {
+        uri: 'https://seller.example/formats/configured.json',
+        digest: `sha256:${'a'.repeat(64)}`,
+      },
+      params: {},
+    });
+    const perCallConverter = () => ({
+      format_option_id: 'per-call-option',
+      format_kind: 'custom',
+      format_shape: 'per_call',
+      format_schema: {
+        uri: 'https://seller.example/formats/per-call.json',
+        digest: `sha256:${'b'.repeat(64)}`,
+      },
+      params: {},
+    });
+    const syncProjectionConverter = () => ({
+      format_option_id: 'sync-projection-option',
+      format_kind: 'custom',
+      format_shape: 'sync_projection',
+      format_schema: {
+        uri: 'https://seller.example/formats/sync-projection.json',
+        digest: `sha256:${'c'.repeat(64)}`,
+      },
+      params: {},
+    });
+    const client = new SingleAgentClient(
+      { id: 'converter-precedence', name: 'Converter precedence', agent_uri: SELLER, protocol: 'mcp' },
+      { legacyFormatConverter: configuredConverter }
+    );
+    client.getCapabilities = async () => ({ features: { canonicalCreatives: true } });
+    const captured = [];
+    client.executeAndHandle = async (task, _handler, params, _input, _options, _transform, converter) => {
+      captured.push({ task, params, converter });
+      return { success: true, status: 'completed', data: {} };
+    };
+
+    const formatId = { agent_url: 'https://seller.example/custom', id: 'homepage_takeover' };
+    const packageFields = {
+      product_id: 'custom-product',
+      pricing_option_id: 'pricing-1',
+      budget: 1000,
+      format_ids: [formatId],
+    };
+    const creative = {
+      creative_id: 'legacy-custom-creative',
+      name: 'Legacy custom creative',
+      format_id: formatId,
+      assets: {},
+    };
+    const callOptions = { legacyFormatConverter: perCallConverter };
+
+    await client.createMediaBuyLegacy(
+      {
+        account: { account_id: 'test-account' },
+        brand: { domain: 'brand.example' },
+        start_time: 'asap',
+        end_time: '2027-12-31T00:00:00Z',
+        idempotency_key: 'per-call-create-converter',
+        packages: [packageFields],
+      },
+      undefined,
+      callOptions
+    );
+    await client.updateMediaBuyLegacy(
+      {
+        media_buy_id: 'mb-custom',
+        idempotency_key: 'per-call-update-converter',
+        packages: [{ ...packageFields, package_id: 'pkg-custom' }],
+      },
+      undefined,
+      callOptions
+    );
+    await client.syncCreativesLegacy(
+      {
+        account: { account_id: 'test-account' },
+        idempotency_key: 'sync-projection-converter',
+        creatives: [creative],
+      },
+      undefined,
+      {
+        legacyFormatConverter: perCallConverter,
+        creativeFormatProjection: { legacyFormatConverter: syncProjectionConverter },
+      }
+    );
+
+    assert.deepEqual(
+      captured.map(({ task, params, converter }) => ({
+        task,
+        optionRef:
+          params.packages?.[0]?.format_option_refs?.[0]?.format_option_id ??
+          params.creatives?.[0]?.format_option_ref?.format_option_id,
+        converter,
+      })),
+      [
+        { task: 'create_media_buy', optionRef: 'per-call-option', converter: perCallConverter },
+        { task: 'update_media_buy', optionRef: 'per-call-option', converter: perCallConverter },
+        { task: 'sync_creatives', optionRef: 'sync-projection-option', converter: syncProjectionConverter },
+      ]
+    );
+  });
+
   test('SingleAgentClient detects canonical creative support from the advertised tool schema', async () => {
     const client = new SingleAgentClient({
       id: 'canonical-3.1-seller',

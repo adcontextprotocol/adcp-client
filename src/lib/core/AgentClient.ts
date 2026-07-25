@@ -106,7 +106,6 @@ import type {
   ListTransformersResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
-import { toCanonicalOnlyResponse } from '../v2/projection/augment-response';
 import type { V1Product } from '../v2/projection/types';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
 import type {
@@ -120,7 +119,6 @@ import type {
   CanonicalSyncCreativesRequest,
   CanonicalUpdateMediaBuyRequest,
 } from '../v2/projection/creative-delivery';
-import { projectCreativeForDelivery } from '../v2/projection/creative-delivery';
 export type { CanonicalGetProductsResponse } from '../v2/projection/creative-delivery';
 
 export type CanonicalProjectionTaskOptions = TaskOptions & {

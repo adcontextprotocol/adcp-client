@@ -86,6 +86,35 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
+  test('Optimera legacy AAO discovery becomes canonical through getProducts', async () => {
+    const optimeraResponse = {
+      success: true,
+      products: [
+        {
+          product_id: 'optimera_display',
+          name: 'Optimera display',
+          description: 'Legacy generic display image format',
+          format_ids: [{ agent_url: 'https://adcontextprotocol.org', id: 'display_image' }],
+          pricing_options: PRICING_OPTIONS,
+        },
+      ],
+    };
+    const { agent, close } = await buildMockSeller(optimeraResponse);
+    try {
+      const result = await agent.getProducts({ brief: 'display inventory' });
+
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.data.products.length, 1);
+      assert.strictEqual(result.data.products[0].product_id, 'optimera_display');
+      assert.strictEqual(result.data.products[0].format_options[0].format_kind, 'image');
+      assert.strictEqual(result.data.products[0].format_ids, undefined);
+      assert.deepStrictEqual(result.data.projection.diagnostics, []);
+      assert.doesNotMatch(JSON.stringify(result.data), /agent_url|format_id|resolution_failure/);
+    } finally {
+      await close();
+    }
+  });
+
   test('preserves legacy format-agnostic products represented by format_ids:[]', async () => {
     const response = {
       success: true,
