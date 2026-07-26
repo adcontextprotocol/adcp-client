@@ -4189,6 +4189,7 @@ async function executeStep(
         args: request,
         headers: rawProbeHeaders,
         allowPrivateIp: options.allow_http === true,
+        fetchFn: options.transport?.fetchFn,
       });
       httpResult = probe.httpResult;
       taskResult = probe.taskResult;
@@ -4870,7 +4871,10 @@ async function executeProbeStep(
 ): Promise<StoryboardStepResult> {
   const start = Date.now();
   let httpResult: HttpProbeResult | undefined;
-  const probeOpts = { allowPrivateIp: options.allow_http === true };
+  const probeOpts = {
+    allowPrivateIp: options.allow_http === true,
+    fetchFn: options.transport?.fetchFn,
+  };
   let requestRecordOverride: RunnerRequestRecord | undefined;
 
   if (step.requires_contract) {
@@ -5716,7 +5720,7 @@ function rateLimitTripObservationToProbeResult(
 
 async function probeBrandJwks(
   rawCapabilities: unknown,
-  options: { allowPrivateIp?: boolean }
+  options: { allowPrivateIp?: boolean; fetchFn?: typeof fetch }
 ): Promise<HttpProbeResult> {
   const brandJsonUrl = readBrandJsonUrl(rawCapabilities);
   if (!brandJsonUrl) {
