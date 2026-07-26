@@ -273,29 +273,33 @@ const accounts: AccountStore<NetworkMeta> = {
 // ---------------------------------------------------------------------------
 
 function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_options'] {
-  return p.format_ids.map(id => {
+  const options = p.format_ids.map(id => {
     const durationSeconds = id.match(/(?:^|_)(\d+)s(?:_|$)/)?.[1];
     if (p.channel === 'video' || p.channel === 'ctv') {
       return {
         format_option_id: id,
-        format_kind: 'video_hosted',
+        format_kind: 'video_hosted' as const,
         params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
       };
     }
     if (p.channel === 'audio') {
       return {
         format_option_id: id,
-        format_kind: 'audio_hosted',
+        format_kind: 'audio_hosted' as const,
         params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
       };
     }
     const dimensions = id.match(/(?:^|_)(\d+)x(\d+)(?:_|$)/);
     return {
       format_option_id: id,
-      format_kind: 'image',
+      format_kind: 'image' as const,
       params: dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {},
     };
   });
+  if (options.length === 0) {
+    throw new AdcpError('INVALID_REQUEST', { message: `product ${p.product_id} has no creative formats` });
+  }
+  return [options[0]!, ...options.slice(1)];
 }
 
 function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAMLikeRecipe): CanonicalProduct {
