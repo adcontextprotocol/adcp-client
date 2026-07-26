@@ -398,6 +398,84 @@ describe('creative format delivery projection', () => {
     assert.deepStrictEqual(new Set(sources), new Set(['creative', 'selector']));
   });
 
+  test('downgrades every selected package option while each creative resolves one explicit option', () => {
+    const first = { agent_url: 'https://seller.example/formats', id: 'image_mrec' };
+    const second = { agent_url: 'https://seller.example/formats', id: 'image_leaderboard' };
+    const projected = projectMediaBuyCreativesForDelivery(
+      {
+        packages: [
+          {
+            product_id: 'multi-option-product',
+            format_option_refs: [
+              { scope: 'product', format_option_id: 'mrec' },
+              { scope: 'product', format_option_id: 'leaderboard' },
+            ],
+            creatives: [
+              {
+                creative_id: 'mrec-creative',
+                name: 'MREC',
+                format_kind: 'image',
+                format_option_ref: { scope: 'product', format_option_id: 'mrec' },
+                assets: {},
+              },
+              {
+                creative_id: 'leaderboard-creative',
+                name: 'Leaderboard',
+                format_kind: 'image',
+                format_option_ref: { scope: 'product', format_option_id: 'leaderboard' },
+                assets: {},
+              },
+            ],
+          },
+        ],
+      },
+      'legacy',
+      'create_media_buy',
+      undefined,
+      context => {
+        if (context.source === 'selector') return [first, second, first];
+        const optionId = context.creative.format_option_ref?.format_option_id;
+        return optionId === 'mrec' ? first : optionId === 'leaderboard' ? second : [first, second];
+      }
+    );
+
+    assert.deepStrictEqual(projected.packages[0].format_ids, [first, second]);
+    assert.deepStrictEqual(
+      projected.packages[0].creatives.map(creative => creative.format_id),
+      [first, second]
+    );
+  });
+
+  test('fails closed when a creative in a multi-option package has no unambiguous selection', () => {
+    const refs = [
+      { agent_url: 'https://seller.example/formats', id: 'image_mrec' },
+      { agent_url: 'https://seller.example/formats', id: 'image_leaderboard' },
+    ];
+    assert.throws(
+      () =>
+        projectMediaBuyCreativesForDelivery(
+          {
+            packages: [
+              {
+                product_id: 'multi-option-product',
+                format_option_refs: [
+                  { scope: 'product', format_option_id: 'mrec' },
+                  { scope: 'product', format_option_id: 'leaderboard' },
+                ],
+                creatives: [{ creative_id: 'ambiguous', name: 'Ambiguous', format_kind: 'image', assets: {} }],
+              },
+            ],
+          },
+          'legacy',
+          'create_media_buy',
+          undefined,
+          () => refs
+        ),
+      err =>
+        err instanceof CreativeFormatProjectionError && err.message.includes('invalid or ambiguous creative mapping')
+    );
+  });
+
   const formats = [
     ['image', { agent_url: SELLER, id: 'display_300x250_image', width: 300, height: 250 }],
     ['html5', { agent_url: SELLER, id: 'display_728x90_html', width: 728, height: 90 }],

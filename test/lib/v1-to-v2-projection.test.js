@@ -183,6 +183,240 @@ describe('v1 → v2 projection — fail-closed for fully-unknown formats', { ski
   });
 });
 
+describe('v1 → v2 projection — injected publisher/community catalog snapshots', { skip: SKIP_REASON }, () => {
+  const legacyRef = {
+    agent_url: 'https://formats.publisher.example',
+    id: 'homepage_image',
+    width: 1200,
+    height: 628,
+  };
+  const mirror = {
+    source: 'aao_mirror',
+    publisher_domain: 'publisher.example',
+    formats: [
+      {
+        format_kind: 'image',
+        format_option_id: 'homepage_image',
+        params: { width: 1200, height: 628, slots: [{ asset_group_id: 'image', asset_type: 'image', required: true }] },
+        platform_extensions: [{ uri: 'https://publisher.example/image.json', digest: `sha256:${'a'.repeat(64)}` }],
+        v1_format_ref: [legacyRef],
+      },
+    ],
+  };
+
+  test('uses an exact catalog-authored alias and preserves the full canonical subclass', () => {
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'publisher-homepage',
+        name: 'Publisher homepage',
+        description: 'Publisher-defined canonical image subclass',
+        format_ids: [legacyRef],
+      },
+      { projectionCatalogs: [mirror] }
+    );
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(v2.format_options.length, 1);
+    const option = v2.format_options[0];
+    assert.strictEqual(option.format_kind, 'image');
+    assert.strictEqual(option.format_option_id, 'homepage_image');
+    assert.strictEqual(option.publisher_domain, 'publisher.example');
+    assert.deepStrictEqual(option.params.slots, [{ asset_group_id: 'image', asset_type: 'image', required: true }]);
+    assert.strictEqual(option.platform_extensions[0].uri, 'https://publisher.example/image.json');
+    assert.deepStrictEqual(option.v1_format_ref, [legacyRef]);
+  });
+
+  test('never matches the same local id under an unrelated owner', () => {
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'unrelated',
+        name: 'Unrelated',
+        description: 'Same id, different owner',
+        format_ids: [{ ...legacyRef, agent_url: 'https://unrelated.example' }],
+      },
+      { projectionCatalogs: [mirror] }
+    );
+    assert.deepStrictEqual(v2.format_options, []);
+    assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
+  });
+
+  test('canonicalizes equivalent owner URLs while preserving path and query case', () => {
+    const canonicalUrlMirror = {
+      ...mirror,
+      formats: [
+        {
+          ...mirror.formats[0],
+          v1_format_ref: [
+            {
+              ...legacyRef,
+              agent_url: 'HTTPS://Formats.Publisher.Example:443/TenantA?mode=Prod',
+            },
+          ],
+        },
+      ],
+    };
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'canonical-owner-url',
+        name: 'Canonical owner URL',
+        description: 'Equivalent URL spellings identify the same owner',
+        format_ids: [
+          {
+            ...legacyRef,
+            agent_url: 'https://formats.publisher.example/TenantA/?mode=Prod',
+          },
+        ],
+      },
+      { projectionCatalogs: [canonicalUrlMirror] }
+    );
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(v2.format_options[0].format_option_id, 'homepage_image');
+  });
+
+  test('canonicalizes unreserved percent encoding and ignores URL fragments', () => {
+    const encodedMirror = {
+      ...mirror,
+      formats: [
+        {
+          ...mirror.formats[0],
+          v1_format_ref: [
+            {
+              ...legacyRef,
+              agent_url: 'https://Formats.Publisher.Example:443/%7Eagent#stale-fragment',
+            },
+          ],
+        },
+      ],
+    };
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'canonical-owner-unreserved',
+        name: 'Canonical owner URL',
+        description: 'Protocol-equivalent URL spellings identify the same owner',
+        format_ids: [{ ...legacyRef, agent_url: 'https://formats.publisher.example/~agent' }],
+      },
+      { projectionCatalogs: [encodedMirror] }
+    );
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(v2.format_options[0].format_option_id, 'homepage_image');
+  });
+
+  test('keeps owner paths, queries, and dimensional variants distinct', () => {
+    const scopedMirror = {
+      ...mirror,
+      formats: [
+        {
+          ...mirror.formats[0],
+          v1_format_ref: [
+            {
+              ...legacyRef,
+              agent_url: 'https://formats.publisher.example/TenantA?mode=Prod',
+            },
+          ],
+        },
+      ],
+    };
+    for (const formatId of [
+      { ...legacyRef, agent_url: 'https://formats.publisher.example/tenanta?mode=Prod' },
+      { ...legacyRef, agent_url: 'https://formats.publisher.example/TenantA?mode=prod' },
+      {
+        ...legacyRef,
+        width: 728,
+        height: 90,
+        agent_url: 'https://formats.publisher.example/TenantA?mode=Prod',
+      },
+    ]) {
+      const { v2, diagnostics } = projectV1ProductToV2(
+        {
+          product_id: 'distinct-owner-variant',
+          name: 'Distinct owner variant',
+          description: 'Owner paths, queries, and dimensions are identity-bearing',
+          format_ids: [formatId],
+        },
+        { projectionCatalogs: [scopedMirror] }
+      );
+      assert.deepStrictEqual(v2.format_options, []);
+      assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
+    }
+  });
+
+  test('compiles an immutable snapshot index unaffected by later caller mutation', () => {
+    const mutableRef = { ...legacyRef };
+    const mutableDeclaration = {
+      ...mirror.formats[0],
+      format_option_id: 'compiled-homepage',
+      params: structuredClone(mirror.formats[0].params),
+      v1_format_ref: [mutableRef],
+    };
+    const mutableSnapshots = [{ ...mirror, formats: [mutableDeclaration] }];
+    const input = {
+      product_id: 'immutable-snapshot',
+      name: 'Immutable snapshot',
+      description: 'Catalog compilation snapshots caller-owned data',
+      format_ids: [{ ...legacyRef }],
+    };
+
+    const first = projectV1ProductToV2(input, { projectionCatalogs: mutableSnapshots });
+    assert.strictEqual(first.v2.format_options[0].format_option_id, 'compiled-homepage');
+
+    mutableDeclaration.format_option_id = 'mutated-homepage';
+    mutableDeclaration.format_kind = 'video_hosted';
+    mutableRef.agent_url = 'https://mutated.example';
+    mutableDeclaration.params.width = 1;
+
+    const second = projectV1ProductToV2(input, { projectionCatalogs: mutableSnapshots });
+    assert.deepStrictEqual(second.diagnostics, []);
+    assert.strictEqual(second.v2.format_options[0].format_option_id, 'compiled-homepage');
+    assert.strictEqual(second.v2.format_options[0].format_kind, 'image');
+    assert.strictEqual(second.v2.format_options[0].params.width, 1200);
+
+    const mutatedOwner = projectV1ProductToV2(
+      { ...input, format_ids: [{ ...legacyRef, agent_url: 'https://mutated.example' }] },
+      { projectionCatalogs: mutableSnapshots }
+    );
+    assert.deepStrictEqual(mutatedOwner.v2.format_options, []);
+  });
+
+  test('canonical_formats_only declarations never become legacy mappings', () => {
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'canonical-only',
+        name: 'Canonical only',
+        description: 'Public availability is not a legacy alias',
+        format_ids: [legacyRef],
+      },
+      {
+        projectionCatalogs: [
+          {
+            ...mirror,
+            formats: [{ ...mirror.formats[0], canonical_formats_only: true }],
+          },
+        ],
+      }
+    );
+    assert.deepStrictEqual(v2.format_options, []);
+    assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
+  });
+
+  test('uses snapshot order as publisher-over-mirror precedence', () => {
+    const publisher = {
+      ...mirror,
+      source: 'publisher',
+      formats: [{ ...mirror.formats[0], format_option_id: 'publisher-homepage' }],
+    };
+    const { v2, diagnostics } = projectV1ProductToV2(
+      {
+        product_id: 'precedence',
+        name: 'Precedence',
+        description: 'Direct publisher wins',
+        format_ids: [legacyRef],
+      },
+      { projectionCatalogs: [publisher, mirror] }
+    );
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(v2.format_options[0].format_option_id, 'publisher-homepage');
+  });
+});
+
 describe('v1 → v2 projection — every-catalog-entry coverage report', { skip: SKIP_REASON }, () => {
   test('emit per-canonical coverage', () => {
     const catalog = loadCatalog();

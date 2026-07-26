@@ -24,6 +24,7 @@ import type { V1Product, V1FormatId, V2ProductFormatDeclaration, ProjectionDiagn
 import { projectV1ProductToV2 } from './v1-to-v2';
 import type { V1ToV2ProjectionOptions } from './v1-to-v2';
 import { LIBRARY_VERSION } from '../../version';
+import { canonicalize as canonicalizeJson } from '../../utils/jcs';
 import { concealLegacyFormatRefs } from './legacy-metadata';
 import type { CanonicalFormatDeclaration } from './legacy-metadata';
 
@@ -32,8 +33,160 @@ const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
 function canonicalDiagnostic(diagnostic: ProjectionDiagnostic): ProjectionDiagnostic {
   return {
     ...diagnostic,
-    field: diagnostic.field.replace(/\.format_ids\[(\d+)\]/g, '.format_options[$1]'),
+    // A source `format_ids[i]` index is not an index into the projected
+    // `format_options[]`: earlier source refs may have failed while later refs
+    // projected successfully. Point at the canonical collection instead of
+    // claiming that a successful projected option is the failing value.
+    field: diagnostic.field.replace(/\.format_ids\[\d+\]/g, '.format_options'),
   };
+}
+
+/** Protocol Error shape used for portable response-level projection advisories. */
+export interface CanonicalProjectionError {
+  code: ProjectionDiagnostic['code'];
+  message: string;
+  field: string;
+  recovery: 'correctable';
+  source: 'sdk';
+  sdk_id: string;
+  details: ProjectionDiagnostic['error']['details'];
+}
+
+function projectionErrorMessage(code: ProjectionDiagnostic['code']): string {
+  switch (code) {
+    case 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE':
+      return 'Product has no format declaration representable on the canonical-only surface';
+    case 'FORMAT_PROJECTION_FAILED':
+      return 'Legacy creative format could not be projected to a canonical declaration';
+    case 'FORMAT_DECLARATION_V1_AMBIGUOUS':
+      return 'Canonical creative format has no unambiguous legacy declaration';
+    case 'FORMAT_DECLARATION_V1_NOT_APPLICABLE':
+      return 'Canonical-only creative format cannot be represented on a legacy format path';
+    case 'CANONICAL_NOT_V1_TRANSLATABLE':
+      return 'Canonical creative format has no legacy representation';
+    case 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE':
+      return 'Canonical multi-size format has incomplete legacy coverage';
+    case 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED':
+      return 'Redundant legacy creative identity has no canonical counterpart';
+  }
+}
+
+/** Flatten the projector's internal diagnostic into the protocol `Error` shape. */
+export function projectionDiagnosticToError(diagnostic: ProjectionDiagnostic): CanonicalProjectionError {
+  return {
+    code: diagnostic.code,
+    message: projectionErrorMessage(diagnostic.code),
+    field: diagnostic.field,
+    recovery: 'correctable',
+    source: diagnostic.source,
+    sdk_id: diagnostic.sdk_id,
+    details: diagnostic.error.details,
+  } as CanonicalProjectionError;
+}
+
+function canonicalFormatsUnavailableForProduct(
+  product: V1Product,
+  reason: Extract<ProjectionDiagnostic, { code: 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE' }>['error']['details']['reason']
+): ProjectionDiagnostic {
+  return {
+    source: 'sdk',
+    sdk_id: SDK_ID,
+    field: `products[${product.product_id}].format_options`,
+    code: 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE',
+    error: {
+      details: {
+        product_id: product.product_id,
+        reason,
+      },
+    },
+  };
+}
+
+function errorIdentity(value: Record<string, unknown>): string | undefined {
+  if (typeof value.code !== 'string' || typeof value.field !== 'string') return undefined;
+  try {
+    return `${value.code}\u0000${value.field}\u0000${canonicalizeJson(value.details ?? null)}`;
+  } catch {
+    // Preserve unreadable third-party errors instead of falsely deduplicating.
+    return undefined;
+  }
+}
+
+function mergeProjectionErrors(existing: unknown, diagnostics: readonly ProjectionDiagnostic[]): unknown[] {
+  const merged = Array.isArray(existing) ? [...existing] : [];
+  const seen = new Set<string>();
+  for (const value of merged) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    const key = errorIdentity(record);
+    if (key) seen.add(key);
+  }
+  for (const diagnostic of diagnostics) {
+    const error = projectionDiagnosticToError(diagnostic) as unknown as Record<string, unknown>;
+    const key = errorIdentity(error)!;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(error);
+  }
+  return merged;
+}
+
+function remapExistingProductErrors(
+  existing: unknown,
+  originalToOutputIndex: ReadonlyMap<number, number | undefined>,
+  products: readonly V1Product[]
+): unknown {
+  if (!Array.isArray(existing)) return existing;
+  return existing.map(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const record = value as Record<string, unknown>;
+    let issuesChanged = false;
+    const issues = Array.isArray(record.issues)
+      ? record.issues.map(issue => {
+          if (!issue || typeof issue !== 'object' || Array.isArray(issue)) return issue;
+          const issueRecord = issue as Record<string, unknown>;
+          if (typeof issueRecord.pointer !== 'string') return issue;
+          const pointerMatch = /^\/products\/(\d+)(\/.*)?$/.exec(issueRecord.pointer);
+          if (!pointerMatch) return issue;
+          const originalIssueIndex = Number(pointerMatch[1]);
+          if (!originalToOutputIndex.has(originalIssueIndex)) return issue;
+          const outputIssueIndex = originalToOutputIndex.get(originalIssueIndex);
+          issuesChanged = true;
+          return {
+            ...issueRecord,
+            pointer:
+              outputIssueIndex === undefined ? '/products' : `/products/${outputIssueIndex}${pointerMatch[2] ?? ''}`,
+          };
+        })
+      : record.issues;
+    const withIssues = issuesChanged ? { ...record, issues } : record;
+    if (typeof record.field !== 'string') return issuesChanged ? withIssues : value;
+    const match = /^products\[(\d+)\](.*)$/.exec(record.field);
+    if (!match) return issuesChanged ? withIssues : value;
+    const originalIndex = Number(match[1]);
+    if (!originalToOutputIndex.has(originalIndex)) return issuesChanged ? withIssues : value;
+    const outputIndex = originalToOutputIndex.get(originalIndex);
+    if (outputIndex !== undefined) {
+      return { ...withIssues, field: `products[${outputIndex}]${match[2] ?? ''}` };
+    }
+    const productId = products[originalIndex]?.product_id;
+    const details =
+      record.details && typeof record.details === 'object' && !Array.isArray(record.details)
+        ? { ...(record.details as Record<string, unknown>) }
+        : {};
+    if (typeof productId === 'string' && details.product_id === undefined) details.product_id = productId;
+    return { ...withIssues, field: 'products', ...(Object.keys(details).length > 0 ? { details } : {}) };
+  });
+}
+
+function hasEmptyPlacementFormatOptions(product: CanonicalOnlyProduct<V1Product>): boolean {
+  const placements = (product as Record<string, unknown>).placements;
+  if (!Array.isArray(placements)) return false;
+  return placements.some(value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const options = (value as Record<string, unknown>).format_options;
+    return Array.isArray(options) && options.length === 0;
+  });
 }
 
 /**
@@ -257,7 +410,7 @@ export function toCanonicalOnlyProduct<P extends V1Product>(
           diagnostics.push({
             source: 'sdk',
             sdk_id: SDK_ID,
-            field: `products[${product.product_id}].format_options[${k}]`,
+            field: `products[${product.product_id}].format_options`,
             code: 'LEGACY_FORMAT_ID_DROPPED_UNMAPPED',
             error: {
               details: {
@@ -324,37 +477,80 @@ export function toCanonicalOnlyProduct<P extends V1Product>(
  * alongside the response's existing `errors[]`.
  *
  * Response-level counterpart to {@link toCanonicalOnlyProduct}; same
- * never-silently-lose-a-product guarantee, aggregated across products. An
- * unmappable legacy product remains present with `format_options: []` and a
- * projection diagnostic rather than disappearing from discovery. The
- * canonical-only sibling of {@link withFormatOptions} (which is additive and
- * preserves `format_ids[]`).
+ * fail-closed guarantee, aggregated across products. A wholly unmappable
+ * legacy product cannot be represented as a canonical Product because the
+ * protocol requires `format_options` to contain at least one declaration. It
+ * is therefore omitted from the canonical list and surfaced through the
+ * response's portable `errors[]` plus the SDK convenience diagnostics. A
+ * partially mappable product remains with its mapped options and advisories
+ * for the refs that could not be projected.
  */
 export function toCanonicalOnlyResponse<R extends { products?: V1Product[] }>(
   response: R,
   options?: V1ToV2ProjectionOptions
 ): {
-  response: Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[] };
+  response: Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[]; errors?: unknown[] };
   diagnostics: ProjectionDiagnostic[];
 } {
   if (!Array.isArray(response?.products)) {
     return {
-      response: { ...response, products: [] } as Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[] },
+      response: { ...response, products: [] } as Omit<R, 'products'> & {
+        products: CanonicalOnlyProduct<V1Product>[];
+        errors?: unknown[];
+      },
       diagnostics: [],
     };
   }
   const out: CanonicalOnlyProduct<V1Product>[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
-  for (const p of response.products) {
-    const { product, diagnostics: d } = toCanonicalOnlyProduct(p, options);
+  const originalToOutputIndex = new Map<number, number | undefined>();
+  for (let productIndex = 0; productIndex < response.products.length; productIndex++) {
+    const p = response.products[productIndex]!;
+    const { product, diagnostics: rawDiagnostics } = toCanonicalOnlyProduct(p, options);
+    const hasEmptyPlacement = hasEmptyPlacementFormatOptions(product);
+    const keep = product.format_options.length > 0 && !hasEmptyPlacement;
+    const outputIndex = keep ? out.length : undefined;
+    originalToOutputIndex.set(productIndex, outputIndex);
+    const d = rawDiagnostics.map(diagnostic => ({
+      ...diagnostic,
+      field: keep ? diagnostic.field.replace(/^products\[[^\]]+\]/, `products[${outputIndex}]`) : 'products',
+      error: keep
+        ? diagnostic.error
+        : {
+            details: {
+              ...diagnostic.error.details,
+              product_id: p.product_id,
+            },
+          },
+    })) as ProjectionDiagnostic[];
+    if (!keep && d.length === 0) {
+      const reason = hasEmptyPlacement
+        ? 'nested_placement_format_list_empty'
+        : Array.isArray((p as Record<string, unknown>).format_options)
+          ? 'canonical_format_list_empty'
+          : Array.isArray(p.format_ids)
+            ? 'legacy_format_list_empty'
+            : 'missing_format_declaration';
+      d.push({
+        ...canonicalFormatsUnavailableForProduct(p, reason),
+        field: 'products',
+      });
+    }
     diagnostics.push(...d);
-    // Preserve discovery cardinality even when every legacy ref failed to
-    // project. `format_options: []` is canonical and the diagnostic tells the
-    // buyer why the product is not currently selectable without a converter.
-    out.push(product);
+    if (keep) out.push(product);
   }
+  const remappedExistingErrors = remapExistingProductErrors(
+    (response as { errors?: unknown }).errors,
+    originalToOutputIndex,
+    response.products
+  );
+  const errors = mergeProjectionErrors(remappedExistingErrors, diagnostics);
   return {
-    response: { ...response, products: out } as Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[] },
+    response: {
+      ...response,
+      products: out,
+      ...(errors.length > 0 ? { errors } : {}),
+    } as Omit<R, 'products'> & { products: CanonicalOnlyProduct<V1Product>[]; errors?: unknown[] },
     diagnostics,
   };
 }

@@ -80,7 +80,7 @@ export type CanonicalFormatLegacyResolutionContext =
   | CanonicalCreativeFormatLegacyResolutionContext
   | CanonicalSelectorFormatLegacyResolutionContext;
 
-/** Explicit canonical → legacy escape hatch for seller-owned custom formats. */
+/** Explicit canonical → legacy resolver for persisted routes the SDK cannot safely infer. */
 export type CanonicalFormatLegacyResolver = (
   context: CanonicalFormatLegacyResolutionContext
 ) => V1FormatId | readonly V1FormatId[] | null | undefined;

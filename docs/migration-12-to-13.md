@@ -145,6 +145,15 @@ Likewise, handler-bag types on the primary barrels are now
 
 ## Custom legacy formats
 
+The projector accepts pre-resolved `projectionCatalogs` for publisher-hosted
+and AAO community catalogs. Supply them in most-specific-first order; exact
+catalog-authored `v1_format_ref` aliases run before the bundled AAO catalog.
+Projection stays synchronous and deterministic—catalog fetching, SSRF policy,
+ETag/TTL caching, and mirror selection happen outside the pure projector.
+Matching always includes the normalized owner URL, ID, and dimensional
+discriminators. A matching `format_option_id` alone is never enough, and a
+`canonical_formats_only` declaration never becomes a legacy alias.
+
 The bundled catalog upgrades known legacy refs automatically, including the historical AAO `https://adcontextprotocol.org/` owner used by early Optimera deployments. That alias is explicit; the SDK does not match an unrelated owner's format by ID alone. For a seller-specific ref, configure `legacyFormatConverter` (or server-side `legacyCreativeFormatConverter`) and return a canonical declaration. Use `format_kind: 'custom'` for a bespoke shape:
 
 ```ts
@@ -160,9 +169,9 @@ const legacyFormatConverter = ({ formatId }) => ({
 });
 ```
 
-Configure this once as `legacyFormatConverter` on the client to cover canonical discovery, legacy create/update/sync write escape hatches, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. An invalid conversion is rejected before adopter code receives a partially converted object. On discovery, a product whose legacy refs are all unmappable remains in `getProducts().data.products` with `format_options: []`; the reason appears in `data.projection.diagnostics`. This preserves the seller's product list without guessing a canonical format. Use `getProductsLegacy()` when migration tooling needs the original refs. For ordinary downgrade, use `packageRefsForFormatOptions()` on a product with mapped format options. The SDK retains the corresponding legacy ref in private metadata and emits it only when negotiation selects a legacy wire.
+Configure this once as `legacyFormatConverter` on the client to cover canonical discovery, legacy create/update/sync write escape hatches, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. An invalid conversion is rejected before adopter code receives a partially converted object. On discovery, partially mappable products remain with their mapped canonical options and sanitized `FORMAT_PROJECTION_FAILED` entries in `data.errors`. A product with no canonical option is omitted from the canonical product list because the protocol requires `format_options` to contain at least one declaration; its sanitized non-fatal error remains in `data.errors`. A valid legacy `format_ids: []` product uses `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` with `reason: 'legacy_format_list_empty'`, not `FORMAT_PROJECTION_FAILED`. `data.projection.diagnostics` mirrors SDK-local detail for convenience, but `errors[]` is the portable, multi-hop surface. Use `getProductsLegacy()` when migration tooling needs the original refs or the complete legacy product list. For ordinary downgrade, use `packageRefsForFormatOptions()` on a product with mapped format options. The SDK retains the corresponding legacy ref in private metadata and emits it only when negotiation selects a legacy wire.
 
-If a canonical custom format must survive persistence or another boundary that discards that private metadata, configure the separate canonical-to-legacy resolver. This is intentionally not the same function as the inbound converter:
+During one client lifetime, a bounded private route cache preserves exact product-option downgrade routing even when the canonical product is serialized and parsed again. Account-scoped create/update/get-media-buy results also bind returned package IDs to exact routes across synchronous, polling, deferred, and webhook completion. Multiple packages assigned to one creative must resolve to the same legacy ref set. A process restart cannot reconstruct an arbitrary legacy owner from canonical kind/params. Re-run product and media-buy reads that carry enough selector context or configure the separate canonical-to-legacy resolver. An accountless update/sync never consumes a tenant-scoped cached route based only on package ID; include account scope or configure the resolver. This is intentionally not the same function as the inbound converter:
 
 ```ts
 const canonicalFormatLegacyResolver = context => {

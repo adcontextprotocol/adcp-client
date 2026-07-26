@@ -5,7 +5,7 @@
 //
 // Mocks the seller via an in-process MCP server, exercises both the
 // default-projection and opt-out paths, and checks:
-//   - format_options[] is populated on every product by default
+//   - every returned product has at least one canonical format_options entry
 //   - format_ids[] is removed from the primary SDK surface
 //   - projection.diagnostics surfaces on result.data.projection
 //   - getProductsLegacy() returns the raw wire shape
@@ -26,7 +26,7 @@ const { AgentClient, packageRefsForFormatOptions } = require('../../dist/lib/ind
  */
 const PRICING_OPTIONS = [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }];
 
-async function buildMockSeller(getProductsResponse) {
+async function buildMockSeller(getProductsResponse, clientConfig = {}) {
   const server = new McpServer({ name: 'autowire-test', version: '1.0.0' });
   server.registerTool(
     'get_products',
@@ -40,7 +40,10 @@ async function buildMockSeller(getProductsResponse) {
   await server.connect(serverTransport);
   const mcpClient = new Client({ name: 'test-client', version: '1.0.0' });
   await mcpClient.connect(clientTransport);
-  const agent = AgentClient.fromMCPClient(mcpClient, { validation: { responses: 'off' } });
+  const agent = AgentClient.fromMCPClient(mcpClient, {
+    validation: { responses: 'off' },
+    ...clientConfig,
+  });
   return {
     agent,
     close: async () => {
@@ -115,7 +118,55 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
-  test('preserves legacy format-agnostic products represented by format_ids:[]', async () => {
+  test('configured publisher catalog snapshot upgrades an exact legacy alias without exposing it', async () => {
+    const legacyRef = {
+      agent_url: 'https://formats.publisher.example',
+      id: 'homepage_image',
+      width: 1200,
+      height: 628,
+    };
+    const response = {
+      success: true,
+      products: [
+        {
+          product_id: 'publisher-homepage',
+          name: 'Publisher homepage',
+          description: 'Seller-owned canonical subclass',
+          format_ids: [legacyRef],
+          pricing_options: PRICING_OPTIONS,
+        },
+      ],
+    };
+    const projectionCatalogs = [
+      {
+        source: 'aao_mirror',
+        publisher_domain: 'publisher.example',
+        formats: [
+          {
+            format_kind: 'image',
+            format_option_id: 'homepage_image',
+            params: { width: 1200, height: 628 },
+            v1_format_ref: [legacyRef],
+          },
+        ],
+      },
+    ];
+    const { agent, close } = await buildMockSeller(response, { projectionCatalogs });
+    try {
+      const result = await agent.getProducts({ brief: 'publisher inventory' });
+      assert.strictEqual(result.data.products.length, 1);
+      const option = result.data.products[0].format_options[0];
+      assert.strictEqual(option.format_kind, 'image');
+      assert.strictEqual(option.publisher_domain, 'publisher.example');
+      assert.strictEqual(option.format_option_id, 'homepage_image');
+      assert.deepStrictEqual(result.data.projection.diagnostics, []);
+      assert.doesNotMatch(JSON.stringify(result.data), /formats\.publisher\.example|agent_url|v1_format_ref/);
+    } finally {
+      await close();
+    }
+  });
+
+  test('omits valid format-agnostic legacy products with an honest portable error', async () => {
     const response = {
       success: true,
       products: [
@@ -132,11 +183,13 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     try {
       const result = await agent.getProducts({ brief: 'test' });
       assert.strictEqual(result.success, true);
-      assert.strictEqual(result.data.products.length, 1);
-      assert.strictEqual(result.data.products[0].product_id, 'format-agnostic');
-      assert.deepStrictEqual(result.data.products[0].format_options, []);
-      assert.strictEqual(result.data.products[0].format_ids, undefined);
-      assert.deepStrictEqual(result.data.projection.diagnostics, []);
+      assert.deepStrictEqual(result.data.products, []);
+      assert.strictEqual(result.data.projection.diagnostics.length, 1);
+      assert.strictEqual(result.data.errors.length, 1);
+      assert.strictEqual(result.data.errors[0].code, 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE');
+      assert.strictEqual(result.data.errors[0].details.product_id, 'format-agnostic');
+      assert.strictEqual(result.data.errors[0].details.reason, 'legacy_format_list_empty');
+      assert.strictEqual(result.data.errors[0].error, undefined);
     } finally {
       await close();
     }
@@ -175,7 +228,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
-  test('projection diagnostics surface when a format_id has no v2 mapping', async () => {
+  test('wholly unmappable products are omitted and surface portable projection errors', async () => {
     const partial = {
       success: true,
       products: [
@@ -191,15 +244,17 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     const { agent, close } = await buildMockSeller(partial);
     try {
       const result = await agent.getProducts({ brief: 'test' });
-      assert.strictEqual(result.data.products.length, 1);
-      assert.strictEqual(result.data.products[0].product_id, 'mystery');
-      assert.deepStrictEqual(result.data.products[0].format_options, []);
-      assert.strictEqual(result.data.products[0].format_ids, undefined);
+      assert.deepStrictEqual(result.data.products, []);
       assert.strictEqual(result.data.projection.diagnostics.length, 1);
       const d = result.data.projection.diagnostics[0];
       assert.strictEqual(d.source, 'sdk');
       assert.strictEqual(d.code, 'FORMAT_PROJECTION_FAILED');
-      assert.ok(d.field.includes('mystery'));
+      assert.strictEqual(d.field, 'products');
+      assert.strictEqual(result.data.errors.length, 1);
+      assert.strictEqual(result.data.errors[0].code, 'FORMAT_PROJECTION_FAILED');
+      assert.strictEqual(result.data.errors[0].source, 'sdk');
+      assert.strictEqual(result.data.errors[0].details.product_id, 'mystery');
+      assert.doesNotMatch(JSON.stringify(result.data.errors), /obscure\.example|unknown_format_xyz|agent_url/);
     } finally {
       await close();
     }
@@ -253,8 +308,8 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           {
             product_id: 'legacy-mcp-product',
             name: 'Legacy MCP Product',
-            description: 'Legacy named-format fixture',
-            format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+            description: 'Seller-owned legacy named-format fixture',
+            format_ids: [{ agent_url: 'https://seller.example/formats', id: 'homepage_takeover' }],
             pricing_options: PRICING_OPTIONS,
           },
         ],
@@ -302,13 +357,40 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       agentName: 'Legacy MCP',
       validation: { responses: 'off' },
       onActivity: activity => activities.push(activity),
+      legacyFormatConverter: ({ formatId }) =>
+        formatId.agent_url === 'https://seller.example/formats' && formatId.id === 'homepage_takeover'
+          ? {
+              format_kind: 'custom',
+              format_option_id: 'homepage-takeover',
+              format_shape: 'homepage_takeover',
+              format_schema: {
+                uri: 'https://seller.example/schemas/homepage-takeover.json',
+                digest: `sha256:${'a'.repeat(64)}`,
+              },
+              params: {},
+            }
+          : undefined,
     });
 
     try {
-      const products = await agent.getProducts({ buying_mode: 'brief', brief: 'Display' });
+      const products = await agent.getProducts({
+        buying_mode: 'brief',
+        brief: 'Display',
+        account: { account_id: 'acct-mcp' },
+      });
       const product = products.data.products[0];
       const selectedFormats = packageRefsForFormatOptions(product, [product.format_options[0].format_option_id]);
-      const creative = { creative_id: 'creative-mcp', name: 'Canonical image', format_kind: 'image', assets: {} };
+      const persistedProduct = JSON.parse(JSON.stringify(product));
+      const persistedSelectedFormats = packageRefsForFormatOptions(persistedProduct, [
+        persistedProduct.format_options[0].format_option_id,
+      ]);
+      const creative = {
+        creative_id: 'creative-mcp',
+        name: 'Canonical custom creative',
+        format_kind: 'custom',
+        format_option_ref: persistedSelectedFormats.format_option_refs[0],
+        assets: {},
+      };
       const result = await agent.createMediaBuy({
         account: { account_id: 'acct-mcp' },
         brand: { domain: 'buyer.example' },
@@ -320,7 +402,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
             product_id: product.product_id,
             pricing_option_id: 'po_cpm',
             budget: 1000,
-            ...selectedFormats,
+            ...persistedSelectedFormats,
             creatives: [creative],
           },
         ],
@@ -346,15 +428,15 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       assert.strictEqual(updated.success, true);
       assert.strictEqual(synced.success, true);
       assert.strictEqual(capturedCreate.packages[0].format_option_refs, undefined);
-      assert.strictEqual(capturedCreate.packages[0].format_ids[0].id, 'display_300x250_image');
+      assert.strictEqual(capturedCreate.packages[0].format_ids[0].id, 'homepage_takeover');
       assert.strictEqual(capturedCreate.packages[0].creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedCreate.packages[0].creatives[0].format_id.id, 'display_300x250_image');
+      assert.strictEqual(capturedCreate.packages[0].creatives[0].format_id.id, 'homepage_takeover');
       assert.strictEqual(capturedUpdate.packages[0].format_option_refs, undefined);
-      assert.strictEqual(capturedUpdate.packages[0].format_ids[0].id, 'display_300x250_image');
+      assert.strictEqual(capturedUpdate.packages[0].format_ids[0].id, 'homepage_takeover');
       assert.strictEqual(capturedUpdate.packages[0].creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedUpdate.packages[0].creatives[0].format_id.id, 'display_300x250_image');
+      assert.strictEqual(capturedUpdate.packages[0].creatives[0].format_id.id, 'homepage_takeover');
       assert.strictEqual(capturedSync.creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedSync.creatives[0].format_id.id, 'display_300x250_image');
+      assert.strictEqual(capturedSync.creatives[0].format_id.id, 'homepage_takeover');
 
       const creativeActivityJson = JSON.stringify(
         activities.filter(activity =>
@@ -362,6 +444,148 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
         )
       );
       assert.doesNotMatch(creativeActivityJson, /"(?:format_id|format_ids|v1_format_ref|agent_url|_message)"\s*:/);
+    } finally {
+      await mcp.close();
+      await server.close();
+    }
+  });
+
+  test('official MCP transport applies the configured converter to every legacy write escape hatch', async () => {
+    const captured = {};
+    const calls = { create: 0, update: 0, sync: 0 };
+    const server = new McpServer({ name: 'canonical-mcp', version: '1.0.0' });
+    server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
+      content: [{ type: 'text', text: '{}' }],
+      structuredContent: {
+        adcp: { major_versions: [3] },
+        supported_protocols: ['media_buy'],
+        media_buy: { features: { canonical_creatives: true } },
+      },
+    }));
+    server.registerTool('create_media_buy', { inputSchema: { packages: z.array(z.any()) } }, async args => {
+      calls.create++;
+      captured.create = args;
+      return {
+        content: [{ type: 'text', text: '{}' }],
+        structuredContent: { media_buy_id: 'mb-canonical-mcp', status: 'pending_creatives', packages: [] },
+      };
+    });
+    server.registerTool(
+      'update_media_buy',
+      { inputSchema: { media_buy_id: z.string(), packages: z.array(z.any()).optional() } },
+      async args => {
+        calls.update++;
+        captured.update = args;
+        return {
+          content: [{ type: 'text', text: '{}' }],
+          structuredContent: { media_buy_id: args.media_buy_id, status: 'pending_creatives', packages: [] },
+        };
+      }
+    );
+    server.registerTool(
+      'sync_creatives',
+      { inputSchema: { creatives: z.array(z.any()), assignments: z.array(z.any()).optional() } },
+      async args => {
+        calls.sync++;
+        captured.sync = args;
+        return {
+          content: [{ type: 'text', text: '{}' }],
+          structuredContent: { creatives: [] },
+        };
+      }
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcp = new Client({ name: 'canonical-mcp-client', version: '1.0.0' });
+    await mcp.connect(clientTransport);
+    const converter = ({ formatId }) =>
+      formatId.agent_url === 'https://seller.example/formats' && formatId.id === 'homepage_takeover'
+        ? {
+            format_kind: 'custom',
+            format_option_id: 'homepage-takeover',
+            format_shape: 'homepage_takeover',
+            format_schema: {
+              uri: 'https://seller.example/schemas/homepage-takeover.json',
+              digest: `sha256:${'b'.repeat(64)}`,
+            },
+            params: {},
+          }
+        : undefined;
+    const agent = AgentClient.fromMCPClient(mcp, {
+      agentName: 'Canonical MCP',
+      validation: { responses: 'off' },
+      legacyFormatConverter: converter,
+    });
+    const legacyRef = { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' };
+    const legacyCreative = {
+      creative_id: 'legacy-custom',
+      name: 'Legacy custom',
+      format_id: legacyRef,
+      assets: {},
+    };
+
+    try {
+      await agent.createMediaBuyLegacy({
+        account: { account_id: 'acct-canonical' },
+        brand: { domain: 'buyer.example' },
+        start_time: 'asap',
+        end_time: '2027-12-31T00:00:00Z',
+        packages: [
+          {
+            buyer_ref: 'pkg-custom',
+            product_id: 'custom-product',
+            pricing_option_id: 'po_cpm',
+            budget: 1000,
+            format_ids: [legacyRef],
+            creatives: [legacyCreative],
+          },
+        ],
+      });
+      await agent.updateMediaBuyLegacy({
+        media_buy_id: 'mb-canonical-mcp',
+        packages: [{ package_id: 'pkg-custom', format_ids: [legacyRef], creatives: [legacyCreative] }],
+      });
+      await agent.syncCreativesLegacy({
+        account: { account_id: 'acct-canonical' },
+        creatives: [legacyCreative],
+        assignments: [{ creative_id: legacyCreative.creative_id, package_id: 'pkg-custom' }],
+      });
+
+      for (const params of [captured.create, captured.update]) {
+        assert.strictEqual(params.packages[0].format_ids, undefined);
+        assert.strictEqual(params.packages[0].format_option_refs[0].format_option_id, 'homepage-takeover');
+        assert.strictEqual(params.packages[0].creatives[0].format_id, undefined);
+        assert.strictEqual(params.packages[0].creatives[0].format_kind, 'custom');
+      }
+      assert.strictEqual(captured.sync.creatives[0].format_id, undefined);
+      assert.strictEqual(captured.sync.creatives[0].format_kind, 'custom');
+      assert.deepStrictEqual(calls, { create: 1, update: 1, sync: 1 });
+
+      const invalidAgent = AgentClient.fromMCPClient(mcp, {
+        agentName: 'Invalid converter MCP',
+        validation: { responses: 'off' },
+        legacyFormatConverter: () => {
+          throw new Error('converter must fail before dispatch');
+        },
+      });
+      await assert.rejects(() =>
+        invalidAgent.createMediaBuyLegacy({
+          account: { account_id: 'acct-canonical' },
+          brand: { domain: 'buyer.example' },
+          start_time: 'asap',
+          end_time: '2027-12-31T00:00:00Z',
+          packages: [
+            {
+              product_id: 'custom-product',
+              pricing_option_id: 'po_cpm',
+              budget: 1000,
+              format_ids: [legacyRef],
+              creatives: [legacyCreative],
+            },
+          ],
+        })
+      );
+      assert.strictEqual(calls.create, 1, 'invalid configured conversion must not dispatch create_media_buy');
     } finally {
       await mcp.close();
       await server.close();

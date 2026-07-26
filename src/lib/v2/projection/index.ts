@@ -109,6 +109,11 @@ export {
 } from './write-side';
 
 export type { V1FormatId, V2ProductFormatDeclaration, V2Product, V1Product, ProjectionDiagnostic } from './types';
+export {
+  legacyFormatConverterFromCatalogSnapshots,
+  type ProjectionCatalogSnapshot,
+  type ProjectionCatalogSource,
+} from './catalog-snapshot';
 
 export {
   loadCatalog,

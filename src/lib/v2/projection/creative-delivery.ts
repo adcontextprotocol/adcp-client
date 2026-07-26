@@ -55,9 +55,10 @@ export type CanonicalPackageRequest = DistributiveOmit<
   creatives?: CanonicalCreativeAsset[];
   format_ids?: never;
 };
+export type NonEmptyCanonicalFormatDeclarations = [CanonicalFormatDeclaration, ...CanonicalFormatDeclaration[]];
 export type CanonicalPlacement = Omit<CanonicalCreativeResponse<Placement>, 'format_ids' | 'format_options'> & {
   format_ids?: never;
-  format_options?: CanonicalFormatDeclaration[];
+  format_options?: NonEmptyCanonicalFormatDeclarations;
 };
 export type CanonicalProduct = Omit<
   CanonicalCreativeResponse<Product>,
@@ -65,7 +66,7 @@ export type CanonicalProduct = Omit<
 > & {
   product_id: string;
   format_ids?: never;
-  format_options: CanonicalFormatDeclaration[];
+  format_options: NonEmptyCanonicalFormatDeclarations;
   placements?: CanonicalPlacement[];
 };
 type CanonicalGetProductsField = Exclude<NonNullable<GetProductsRequest['fields']>[number], 'format_ids'>;
@@ -888,11 +889,35 @@ function projectPackageSelectors(
         )
       );
       if (!everyOptionMapped || selectedCandidates.length === 0) {
-        throw new CreativeFormatProjectionError(
-          operation,
-          '(package selector)',
-          'canonical format_option_refs have no complete legacy representation; retrieve the product again and use packageRefsForFormatOptions()'
-        );
+        let resolved: V1FormatId[] | undefined;
+        try {
+          if (!containerOptsOutOfLegacy(pkg as CreativeFormatSelectorContainer)) {
+            resolved = resolveCanonicalFormatLegacyRefs(canonicalFormatLegacyResolver, {
+              source: 'selector',
+              selector: pkg as Record<string, unknown>,
+              operation,
+              field: '(package selector)',
+            });
+          }
+        } catch (error) {
+          if (!(error instanceof CanonicalFormatLegacyResolutionError)) throw error;
+          throw new CreativeFormatProjectionError(
+            operation,
+            '(package selector)',
+            'canonical format legacy resolver returned an invalid or ambiguous package mapping'
+          );
+        }
+        if (!resolved) {
+          throw new CreativeFormatProjectionError(
+            operation,
+            '(package selector)',
+            'canonical format_option_refs have no complete legacy representation; re-run getProducts() or configure canonicalFormatLegacyResolver for persisted selections'
+          );
+        }
+        next.format_ids = resolved;
+        delete next.format_option_refs;
+        delete next.format_kind;
+        return next;
       }
       next.format_ids = dedupeLegacyRefs(selectedCandidates.map(candidate => candidate.ref));
       delete next.format_option_refs;

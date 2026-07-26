@@ -420,7 +420,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     ]);
   });
 
-  it('preserves format-agnostic products across canonical and nested 3.0 response projection', async () => {
+  it('rejects format-agnostic modern products while preserving nested 3.0 response projection', async () => {
     const base = buildPlatform();
     let modernProduct = {
       product_id: 'format-agnostic-legacy',
@@ -454,9 +454,10 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
           arguments: { account: { account_id: 'acc_test' }, brief: `format agnostic ${index}` },
         },
       });
-      assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-      assert.deepStrictEqual(result.structuredContent.products[0].format_options, []);
-      assert.strictEqual(result.structuredContent.products[0].format_ids, undefined);
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+      assert.strictEqual(result.structuredContent.adcp_error.field, 'products');
+      assert.match(result.structuredContent.adcp_error.message, /cannot be represented canonically/);
     }
 
     const legacyServer = createAdcpServerFromPlatform(

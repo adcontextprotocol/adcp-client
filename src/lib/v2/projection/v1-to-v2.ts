@@ -59,6 +59,7 @@ import { lookupV1Format, type V1FormatDefinition } from './catalog';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
 import { ProductFormatDeclarationSchema } from '../../types/schemas.generated';
+import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapshot } from './catalog-snapshot';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
 
@@ -90,6 +91,8 @@ export type LegacyFormatConverter = (
 
 export interface V1ToV2ProjectionOptions {
   legacyFormatConverter?: LegacyFormatConverter;
+  /** Pre-resolved exact-owner publisher/community catalogs, highest precedence first. */
+  projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
 }
 
 /**
@@ -205,6 +208,18 @@ function projectFormatId(
   field: string,
   options?: V1ToV2ProjectionOptions
 ): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic } {
+  // A publisher/community catalog carrying an explicit v1_format_ref is the
+  // most specific authoritative pairing. Public availability or a matching
+  // format_option_id alone is not enough: canonical_formats_only declarations
+  // and declarations without an alias do not participate here.
+  const catalogSnapshot = projectWithLegacyConverter(
+    fid,
+    productId,
+    field,
+    legacyFormatConverterFromCatalogSnapshots(options?.projectionCatalogs)
+  );
+  if (catalogSnapshot) return catalogSnapshot;
+
   const catalogEntry = lookupV1Format(fid);
 
   // Step 1: v1 catalog has an explicit `canonical` annotation. Always

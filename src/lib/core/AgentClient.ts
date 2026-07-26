@@ -108,6 +108,7 @@ import type {
 import type { MutatingRequestInput } from '../utils/idempotency';
 import type { V1Product } from '../v2/projection/types';
 import type { LegacyFormatConverter } from '../v2/projection/v1-to-v2';
+import type { ProjectionCatalogSnapshot } from '../v2/projection/catalog-snapshot';
 import type {
   CanonicalCreateMediaBuyRequest,
   CanonicalCreativeResponse,
@@ -124,14 +125,16 @@ export type { CanonicalGetProductsResponse } from '../v2/projection/creative-del
 export type CanonicalProjectionTaskOptions = TaskOptions & {
   /** Migration escape hatch for seller-specific legacy refs absent from the bundled registry. */
   legacyFormatConverter?: LegacyFormatConverter;
+  /** Pre-resolved exact-owner publisher/community catalogs, highest precedence first. */
+  projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
 };
 
 /**
  * Projection metadata attached to canonical `get_products` responses.
  *
- * Present whenever projection ran (the default). Adopters reading the
- * V2 surface check `data.projection.diagnostics` to see what didn't
- * project cleanly; absence of diagnostics means every product's
+ * Present whenever projection ran (the default). Portable projection
+ * advisories are added to the standard `data.errors[]` array; this envelope
+ * is a convenience view for SDK-local inspection. Absence of diagnostics means every product's
  * `format_options[]` is fully populated (clean catalog match) or was
  * already v2-shaped on the wire.
  */
@@ -243,6 +246,9 @@ export type InProcessAgentClientConfig = Pick<
   | 'validation'
   | 'governance'
   | 'onActivity'
+  | 'legacyFormatConverter'
+  | 'projectionCatalogs'
+  | 'canonicalFormatLegacyResolver'
   | 'validateFeatures'
   | 'requireV3ForMutations'
   | 'allowV2'
@@ -549,8 +555,8 @@ export class AgentClient {
    * the seller's negotiated wire version. The SDK performs any required legacy
    * translation below this public boundary.
    *
-   * Projection diagnostics surface on
-   * `result.data.projection.diagnostics` (structured
+   * Projection failures surface portably on `result.data.errors[]` and are
+   * also mirrored on `result.data.projection.diagnostics` (structured
    * `source: 'sdk'` markers; codes mirror the spec's error-code
    * vocabulary plus three SDK-local codes — see the projection
    * module's `ProjectionDiagnostic` type for the full set).

@@ -31,6 +31,14 @@ const SKIP_REASON =
     : 'requires the vendored AAO catalog + a v1-canonical-mapping registry (run npm run build:lib)';
 
 const AAO = 'https://creative.adcontextprotocol.org/';
+const REPORTING_CAPABILITIES = {
+  available_reporting_frequencies: ['daily'],
+  expected_delay_minutes: 60,
+  timezone: 'UTC',
+  supports_webhooks: false,
+  available_metrics: ['impressions'],
+  date_range_support: 'date_range',
+};
 
 describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
   test('v1-shaped product: drops format_ids, adds format_options, no loss for mappable ids', () => {
@@ -115,7 +123,7 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
     // Full diagnostic envelope (ProjectionDiagnosticBase contract).
     assert.strictEqual(diag.source, 'sdk');
     assert.match(diag.sdk_id, /^@adcp\/sdk@/);
-    assert.strictEqual(diag.field, 'products[p4].format_options[1]');
+    assert.strictEqual(diag.field, 'products[p4].format_options');
     assert.strictEqual(diag.error.details.resolution_failure, 'unmapped_legacy_format');
     assert.strictEqual(JSON.stringify(diag).includes('https://x/'), false);
     assert.strictEqual(diag.error.details.product_id, 'p4');
@@ -187,16 +195,20 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
     assert.deepStrictEqual(diagnostics, []);
   });
 
-  test('format-agnostic legacy shape with format_ids:[] is preserved', () => {
+  test('valid format-agnostic format_ids:[] product is omitted with an honest portable error', () => {
     const response = {
       products: [{ product_id: 'format-agnostic', name: 'N', description: 'D', format_ids: [] }],
     };
     const { response: canonical, diagnostics } = toCanonicalOnlyResponse(response);
-    assert.strictEqual(canonical.products.length, 1);
-    assert.strictEqual(canonical.products[0].product_id, 'format-agnostic');
-    assert.strictEqual('format_ids' in canonical.products[0], false);
-    assert.deepStrictEqual(canonical.products[0].format_options, []);
-    assert.deepStrictEqual(diagnostics, []);
+    assert.deepStrictEqual(canonical.products, []);
+    assert.strictEqual(diagnostics.length, 1);
+    assert.strictEqual(canonical.errors.length, 1);
+    assert.strictEqual(canonical.errors[0].code, 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE');
+    assert.strictEqual(canonical.errors[0].source, 'sdk');
+    assert.strictEqual(canonical.errors[0].details.product_id, 'format-agnostic');
+    assert.strictEqual(canonical.errors[0].details.reason, 'legacy_format_list_empty');
+    assert.strictEqual(canonical.errors[0].error, undefined, 'protocol Error details are top-level');
+    assert.match(canonical.errors[0].message, /canonical-only surface/);
   });
 
   test('composition: augmentProductWithFormatOptions then toCanonicalOnlyProduct round-trips cleanly', () => {
@@ -220,25 +232,36 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
 });
 
 describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
-  test('drops format_ids, retains unmappable products, aggregates diagnostics, and preserves the envelope', () => {
+  test('drops format_ids, omits wholly unmappable products, and augments portable errors', async () => {
     const response = {
       adcp_version: '3.1.0',
       products: [
-        { product_id: 'a', name: 'N', description: 'D', format_ids: [{ agent_url: AAO, id: 'display_300x250_image' }] },
+        {
+          product_id: 'a',
+          name: 'N',
+          description: 'D',
+          publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+          delivery_type: 'non_guaranteed',
+          pricing_options: [{ pricing_option_id: 'po', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
+          reporting_capabilities: REPORTING_CAPABILITIES,
+          format_ids: [{ agent_url: AAO, id: 'display_300x250_image' }],
+        },
         {
           product_id: 'b',
           name: 'N',
           description: 'D',
+          publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
+          delivery_type: 'non_guaranteed',
+          pricing_options: [{ pricing_option_id: 'po', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
+          reporting_capabilities: REPORTING_CAPABILITIES,
           format_ids: [{ agent_url: 'https://bespoke.example/', id: 'nope' }],
         },
       ],
     };
     const { response: out, diagnostics } = toCanonicalOnlyResponse(response);
     assert.strictEqual(out.adcp_version, '3.1.0', 'response envelope fields preserved');
-    assert.strictEqual(out.products.length, 2, 'canonical discovery preserves every seller-returned product');
+    assert.strictEqual(out.products.length, 1, 'only protocol-valid canonical products remain');
     assert.strictEqual(out.products[0].product_id, 'a');
-    assert.strictEqual(out.products[1].product_id, 'b');
-    assert.deepStrictEqual(out.products[1].format_options, []);
     assert.strictEqual(
       out.products.some(p => 'format_ids' in p),
       false,
@@ -246,7 +269,109 @@ describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
     );
     assert.strictEqual(diagnostics.length, 1, 'the one unmappable ref is surfaced');
     assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
-    assert.ok(diagnostics[0].field.includes('b'));
+    assert.strictEqual(diagnostics[0].field, 'products');
+    assert.strictEqual(out.errors.length, 1);
+    assert.strictEqual(out.errors[0].code, 'FORMAT_PROJECTION_FAILED');
+    assert.strictEqual(out.errors[0].details.product_id, 'b');
+    assert.strictEqual(out.errors[0].error, undefined);
+    const { ProductSchema } = await import('../../dist/lib/types/schemas.generated.js');
+    assert.ok(out.products.every(product => ProductSchema.safeParse(product).success));
+  });
+
+  test('retains partially mappable products, preserves seller errors, and deduplicates projection errors', () => {
+    const duplicate = {
+      code: 'FORMAT_PROJECTION_FAILED',
+      message: 'Already observed upstream',
+      field: 'products[0].format_options',
+      details: {
+        format_kind: 'custom',
+        product_id: 'mixed',
+        resolution_failure: 'no_match',
+      },
+    };
+    const materiallyDifferent = {
+      code: 'FORMAT_PROJECTION_FAILED',
+      message: 'Different failure at the same field',
+      field: 'products[0].format_options',
+      details: {
+        format_kind: 'custom',
+        product_id: 'mixed',
+        resolution_failure: 'custom_converter_failed',
+      },
+    };
+    const response = {
+      errors: [duplicate, materiallyDifferent],
+      products: [
+        {
+          product_id: 'mixed',
+          name: 'Mixed',
+          description: 'One known and one custom legacy ref',
+          format_ids: [
+            { agent_url: AAO, id: 'display_300x250_image' },
+            { agent_url: 'https://bespoke.example/', id: 'nope' },
+          ],
+        },
+      ],
+    };
+    const { response: out, diagnostics } = toCanonicalOnlyResponse(response);
+    assert.strictEqual(out.products.length, 1);
+    assert.strictEqual(out.products[0].format_options.length, 1);
+    assert.strictEqual(diagnostics.length, 1);
+    assert.deepStrictEqual(
+      out.errors,
+      [duplicate, materiallyDifferent],
+      'only details-equivalent entries dedupe; materially different failures survive'
+    );
+  });
+
+  test('remaps kept-product pointers after earlier omissions and uses collection pointers for dropped products', () => {
+    const response = {
+      errors: [
+        {
+          code: 'SELLER_DROP',
+          message: 'drop',
+          field: 'products[0].name',
+          issues: [{ pointer: '/products/0/name', message: 'drop' }],
+        },
+        {
+          code: 'SELLER_KEEP',
+          message: 'keep',
+          field: 'products[1].name',
+          issues: [{ pointer: '/products/1/name', message: 'keep' }],
+        },
+      ],
+      products: [
+        {
+          product_id: 'dropped',
+          name: 'Dropped',
+          description: 'No canonical mapping',
+          format_ids: [{ agent_url: 'https://bespoke.example/', id: 'drop_me' }],
+        },
+        {
+          product_id: 'partial',
+          name: 'Partial',
+          description: 'One canonical mapping remains',
+          format_ids: [
+            { agent_url: AAO, id: 'display_300x250_image' },
+            { agent_url: 'https://bespoke.example/', id: 'keep_diagnostic' },
+          ],
+        },
+      ],
+    };
+    const { response: out, diagnostics } = toCanonicalOnlyResponse(response);
+    assert.deepStrictEqual(
+      out.products.map(product => product.product_id),
+      ['partial']
+    );
+    assert.strictEqual(diagnostics[0].field, 'products');
+    assert.strictEqual(diagnostics[0].error.details.product_id, 'dropped');
+    assert.strictEqual(diagnostics[1].field, 'products[0].format_options');
+    assert.strictEqual(diagnostics[1].error.details.product_id, 'partial');
+    assert.strictEqual(out.errors[0].field, 'products');
+    assert.strictEqual(out.errors[0].issues[0].pointer, '/products');
+    assert.strictEqual(out.errors[0].details.product_id, 'dropped');
+    assert.strictEqual(out.errors[1].field, 'products[0].name');
+    assert.strictEqual(out.errors[1].issues[0].pointer, '/products/0/name');
   });
 
   test('response with no products array: empty products, no diagnostics', () => {

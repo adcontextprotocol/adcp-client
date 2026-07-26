@@ -138,9 +138,21 @@ selected product provides one unambiguous ref. Ambiguous or unavailable mappings
 Use `packageRefsForFormatOptions(product, selectedIds)` when authoring package
 selectors. It returns only canonical `format_option_refs`. The SDK carries any
 legacy downgrade material in module-private weak storage, which survives package
-object spread but is absent from JSON, reflection, and public types. Standard formats can usually
-be recovered from the bundled registry after serialization. Seller-owned custom formats require
-the explicit canonical-to-legacy resolver described below; do not persist agent URLs in canonical
+object spread but is absent from JSON, reflection, and public types. A bounded,
+per-client route cache also lets a product selected after a JSON round trip
+downgrade during the same client lifetime. The registry deliberately does not
+guess a legacy identity from `format_kind + params`. Account-scoped
+create/update/get-media-buy completions also learn exact package routes,
+including polling, deferred, and webhook completions. A creative assigned to
+multiple packages downgrades only when every package resolves to the same
+legacy ref set.
+
+After a process restart, re-run product and media-buy reads that carry enough
+selector context or configure the explicit canonical-to-legacy resolver below.
+An accountless write never consumes a tenant-scoped cached package route based
+only on `package_id`; include the account or configure the resolver so that
+case fails cleanly instead of risking cross-tenant delivery. This applies to
+standard and custom formats alike; do not persist agent URLs in canonical
 application objects.
 
 The primary `createMediaBuy()`, `updateMediaBuy()`, and `syncCreatives()`
@@ -151,6 +163,24 @@ explicit `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`, and
 the same fail-closed boundary.
 
 ## Custom legacy formats
+
+Publisher and AAO community catalogs can participate without making network
+I/O part of the pure projector. Resolve and validate the catalog first, then
+configure immutable snapshots in precedence order (publisher before mirror):
+
+```ts
+const client = new AgentClient(agent, {
+  projectionCatalogs: [publisherSnapshot, communityMirrorSnapshot],
+});
+```
+
+Only an exact, URL-sensitive `v1_format_ref` authorizes legacy-to-canonical
+projection. A public declaration with the same `format_option_id` is not an
+alias by itself, and `canonical_formats_only: true` explicitly forbids using
+that declaration as a legacy mapping. This matters for the public Snap mirror:
+`https://creative.adcontextprotocol.org/translated/snap/adagents.json` makes
+Snap's canonical publisher formats publicly discoverable, but its current
+canonical-only entries do not authorize guessed Snapchat legacy tuples.
 
 The bundled AAO catalog recognizes both the current
 `https://creative.adcontextprotocol.org/` owner and the historical
@@ -186,17 +216,28 @@ the `legacyCreativeFormatConverter` option on `createAdcpServerFromPlatform()`.
 Modern server platform handlers always receive canonical creatives. An invalid
 explicit conversion is rejected with `INVALID_REQUEST`; an unmapped legacy ref
 without a converter is never guessed as one of the 12 standard canonical
-kinds. Discovery retains that product with `format_options: []` and a
-`projection.diagnostics` entry; `getProductsLegacy()` remains available to
-migration tooling that needs the original ref. The legacy ref never leaks into
-canonical adopter code.
+kinds. Discovery keeps partially mapped products and adds sanitized errors for
+the missing options. A wholly unmappable product is omitted from the canonical
+list because canonical `format_options` has `minItems: 1`; its non-fatal
+`FORMAT_PROJECTION_FAILED` remains in `errors[]`. That standard error array is
+the portable surface across agent hops; `projection.diagnostics` is an SDK
+convenience view. `getProductsLegacy()` remains available to migration tooling
+that needs the original ref or complete legacy product list. The legacy ref
+never leaks into canonical adopter code.
 
-### Persisted canonical custom formats on a legacy server wire
+Legacy `format_ids: []` is a valid format-agnostic product, not a failed
+mapping. Because the canonical surface cannot emit the schema-invalid
+`format_options: []`, it omits that product and reports
+`CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` with
+`reason: 'legacy_format_list_empty'`. Use `getProductsLegacy()` when a
+migration workflow needs to preserve format-agnostic legacy products.
+
+### Persisted canonical formats on a legacy server wire
 
 `legacyCreativeFormatConverter` handles legacy input. The reverse direction
 uses the separate `canonicalFormatLegacyResolver` option. This is necessary
-when a canonical custom product has crossed a JSON/database boundary and its
-SDK-private downgrade metadata is intentionally gone:
+for any standard or custom format when a new client process has only canonical
+database state and its SDK-private downgrade route is intentionally gone:
 
 ```ts
 createAdcpServerFromPlatform(platform, {
