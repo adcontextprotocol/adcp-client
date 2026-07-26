@@ -220,7 +220,7 @@ describe('toCanonicalOnlyProduct', { skip: SKIP_REASON }, () => {
 });
 
 describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
-  test('drops format_ids on every product, aggregates diagnostics, preserves response envelope', () => {
+  test('drops format_ids, retains unmappable products, aggregates diagnostics, and preserves the envelope', () => {
     const response = {
       adcp_version: '3.1.0',
       products: [
@@ -235,8 +235,10 @@ describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
     };
     const { response: out, diagnostics } = toCanonicalOnlyResponse(response);
     assert.strictEqual(out.adcp_version, '3.1.0', 'response envelope fields preserved');
-    assert.strictEqual(out.products.length, 1, 'unusable products with no canonical formats are omitted');
+    assert.strictEqual(out.products.length, 2, 'canonical discovery preserves every seller-returned product');
     assert.strictEqual(out.products[0].product_id, 'a');
+    assert.strictEqual(out.products[1].product_id, 'b');
+    assert.deepStrictEqual(out.products[1].format_options, []);
     assert.strictEqual(
       out.products.some(p => 'format_ids' in p),
       false,
@@ -244,6 +246,7 @@ describe('toCanonicalOnlyResponse', { skip: SKIP_REASON }, () => {
     );
     assert.strictEqual(diagnostics.length, 1, 'the one unmappable ref is surfaced');
     assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+    assert.ok(diagnostics[0].field.includes('b'));
   });
 
   test('response with no products array: empty products, no diagnostics', () => {

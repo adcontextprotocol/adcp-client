@@ -324,9 +324,11 @@ export function toCanonicalOnlyProduct<P extends V1Product>(
  * alongside the response's existing `errors[]`.
  *
  * Response-level counterpart to {@link toCanonicalOnlyProduct}; same
- * never-silently-lose-a-format guarantee, aggregated across products. The
- * canonical-only sibling of {@link withFormatOptions} (which is additive
- * and preserves `format_ids[]`).
+ * never-silently-lose-a-product guarantee, aggregated across products. An
+ * unmappable legacy product remains present with `format_options: []` and a
+ * projection diagnostic rather than disappearing from discovery. The
+ * canonical-only sibling of {@link withFormatOptions} (which is additive and
+ * preserves `format_ids[]`).
  */
 export function toCanonicalOnlyResponse<R extends { products?: V1Product[] }>(
   response: R,
@@ -346,13 +348,9 @@ export function toCanonicalOnlyResponse<R extends { products?: V1Product[] }>(
   for (const p of response.products) {
     const { product, diagnostics: d } = toCanonicalOnlyProduct(p, options);
     diagnostics.push(...d);
-    if (product.format_options.length === 0) {
-      // A format-agnostic product is already canonical: it has no legacy
-      // identity to translate, so preserve it with `format_options: []`.
-      // Only omit products whose actual legacy refs failed conversion.
-      if (d.length === 0 && (!Array.isArray(p.format_ids) || p.format_ids.length === 0)) out.push(product);
-      continue;
-    }
+    // Preserve discovery cardinality even when every legacy ref failed to
+    // project. `format_options: []` is canonical and the diagnostic tells the
+    // buyer why the product is not currently selectable without a converter.
     out.push(product);
   }
   return {

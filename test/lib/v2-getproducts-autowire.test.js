@@ -191,7 +191,10 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     const { agent, close } = await buildMockSeller(partial);
     try {
       const result = await agent.getProducts({ brief: 'test' });
-      assert.deepStrictEqual(result.data.products, []);
+      assert.strictEqual(result.data.products.length, 1);
+      assert.strictEqual(result.data.products[0].product_id, 'mystery');
+      assert.deepStrictEqual(result.data.products[0].format_options, []);
+      assert.strictEqual(result.data.products[0].format_ids, undefined);
       assert.strictEqual(result.data.projection.diagnostics.length, 1);
       const d = result.data.projection.diagnostics[0];
       assert.strictEqual(d.source, 'sdk');

@@ -185,8 +185,11 @@ discovery, `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`,
 the `legacyCreativeFormatConverter` option on `createAdcpServerFromPlatform()`.
 Modern server platform handlers always receive canonical creatives. An invalid
 explicit conversion is rejected with `INVALID_REQUEST`; an unmapped legacy ref
-without a converter is rejected as well. The legacy ref never leaks into
-adopter code or gets guessed as one of the 12 standard canonical kinds.
+without a converter is never guessed as one of the 12 standard canonical
+kinds. Discovery retains that product with `format_options: []` and a
+`projection.diagnostics` entry; `getProductsLegacy()` remains available to
+migration tooling that needs the original ref. The legacy ref never leaks into
+canonical adopter code.
 
 ### Persisted canonical custom formats on a legacy server wire
 
