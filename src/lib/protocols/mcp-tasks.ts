@@ -30,7 +30,7 @@ type CallToolResponse = {
 };
 
 interface MCPTaskProtocolOptions {
-  transport?: { maxResponseBytes?: number };
+  transport?: { maxResponseBytes?: number; fetchFn?: typeof fetch; requestTimeoutMs?: number };
   onTransportActivity?: TransportActivityHandler;
   transportActivityContext?: {
     agentId: string;
@@ -192,6 +192,7 @@ export async function callMCPToolWithTasks(
     signingContext?: AgentSigningContext;
     signal?: AbortSignal;
     requestTimeoutMs?: number;
+    fetchFn?: typeof fetch;
   }
 ): Promise<unknown> {
   // Keep the public debug-log contract identical across modern and legacy
@@ -224,6 +225,7 @@ export async function callMCPToolWithTasks(
     ...(options?.signingContext && { signingContext: options.signingContext }),
     ...(options?.signal && { signal: options.signal }),
     ...(options?.requestTimeoutMs !== undefined && { requestTimeoutMs: options.requestTimeoutMs }),
+    ...(options?.fetchFn && { fetchFn: options.fetchFn }),
   });
   if (modernAttempt.handled) {
     debugLogs.push({
@@ -262,7 +264,7 @@ export async function callMCPToolWithTasks(
               options?.signal,
               options?.requestTimeoutMs
             ),
-          undefined,
+          options?.fetchFn,
           { signal: options?.signal, requestTimeoutMs: options?.requestTimeoutMs }
         );
       })
@@ -576,15 +578,24 @@ export async function listMCPTasks(
         onTransportActivity: options.onTransportActivity,
       },
       () =>
-        withCachedConnection(agentUrl, authToken, authHeaders, debugLogs, 'tasks/list', async client => {
-          const result = await client.experimental.tasks.listTasks();
-          debugLogs.push({
-            type: 'info',
-            message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
-            timestamp: new Date().toISOString(),
-          });
-          return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
-        })
+        withCachedConnection(
+          agentUrl,
+          authToken,
+          authHeaders,
+          debugLogs,
+          'tasks/list',
+          async client => {
+            const result = await client.experimental.tasks.listTasks();
+            debugLogs.push({
+              type: 'info',
+              message: `MCP Tasks: listTasks returned ${result.tasks.length} tasks`,
+              timestamp: new Date().toISOString(),
+            });
+            return result.tasks.map((task: any) => mapMCPTaskToTaskInfo(task));
+          },
+          options.transport?.fetchFn,
+          { requestTimeoutMs: options.transport?.requestTimeoutMs }
+        )
     )
   );
 }

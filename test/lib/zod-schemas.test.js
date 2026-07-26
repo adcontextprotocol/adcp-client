@@ -46,6 +46,24 @@ describe('Zod Schema Validation', () => {
     );
   });
 
+  test('CancellationPolicySchema enforces fee values by fee type', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const policy = cancellation_fee => ({
+      notice_period: { interval: 30, unit: 'days' },
+      cancellation_fee,
+    });
+
+    assert.ok(schemas.CancellationPolicySchema.safeParse(policy({ type: 'percent_remaining', rate: 0.5 })).success);
+    assert.ok(!schemas.CancellationPolicySchema.safeParse(policy({ type: 'percent_remaining' })).success);
+    assert.ok(schemas.CancellationPolicySchema.safeParse(policy({ type: 'fixed_fee', amount: 250 })).success);
+    assert.ok(!schemas.CancellationPolicySchema.safeParse(policy({ type: 'fixed_fee' })).success);
+    assert.ok(schemas.CancellationPolicySchema.safeParse(policy({ type: 'full_commitment' })).success);
+    assert.ok(schemas.CancellationPolicySchema.safeParse(policy({ type: 'none' })).success);
+  });
+
   test('Trusted Match request schemas reject unexpected privacy-boundary fields', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

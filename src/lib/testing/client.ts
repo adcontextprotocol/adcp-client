@@ -31,6 +31,9 @@ interface TestClientVersionOptions {
   wireAdcpVersion?: string;
   versionEnvelope: VersionEnvelopeMode;
   authMode?: string;
+  fetchFn?: typeof fetch;
+  maxResponseBytes?: number;
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -194,6 +197,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
     ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
     ...(options.userAgent && { userAgent: options.userAgent }),
+    ...(options.transport && { transport: options.transport }),
   });
 
   const client = multiClient.agent('test');
@@ -204,6 +208,13 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
       ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
       versionEnvelope: options.versionEnvelope ?? 'auto',
       ...(authMode !== undefined && { authMode }),
+      ...(options.transport?.fetchFn && { fetchFn: options.transport.fetchFn }),
+      ...(options.transport?.maxResponseBytes !== undefined && {
+        maxResponseBytes: options.transport.maxResponseBytes,
+      }),
+      ...(options.transport?.requestTimeoutMs !== undefined && {
+        requestTimeoutMs: options.transport.requestTimeoutMs,
+      }),
     } satisfies TestClientVersionOptions,
     enumerable: false,
   });
@@ -247,7 +258,11 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
   ];
   const expectedAuthMode = authReuseMode(effectiveOptions);
   if (!meta) {
-    return effectiveOptions.adcpVersion === undefined && effectiveOptions.versionEnvelope === undefined;
+    return (
+      effectiveOptions.adcpVersion === undefined &&
+      effectiveOptions.versionEnvelope === undefined &&
+      effectiveOptions.transport === undefined
+    );
   }
   const expectedAdcpVersion = effectiveOptions.adcpVersion ?? ADCP_VERSION;
   const expectedWireAdcpVersion = effectiveOptions.wireAdcpVersion;
@@ -256,7 +271,10 @@ function testClientMatchesVersionOptions(client: TestClient, options: TestOption
     meta.adcpVersion === expectedAdcpVersion &&
     meta.wireAdcpVersion === expectedWireAdcpVersion &&
     meta.versionEnvelope === expectedVersionEnvelope &&
-    meta.authMode === expectedAuthMode
+    meta.authMode === expectedAuthMode &&
+    meta.fetchFn === effectiveOptions.transport?.fetchFn &&
+    meta.maxResponseBytes === effectiveOptions.transport?.maxResponseBytes &&
+    meta.requestTimeoutMs === effectiveOptions.transport?.requestTimeoutMs
   );
 }
 

@@ -41,6 +41,7 @@ interface A2ACallContext {
   got401Ref: { value: boolean };
   signal?: AbortSignal;
   requestTimeoutMs?: number;
+  fetchFn?: typeof fetch;
 }
 
 const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
@@ -67,8 +68,9 @@ const pendingA2AClients = new Map<string, Promise<InstanceType<typeof A2AClient>
  * credentials share a single cached A2AClient — single-CLI-process safe,
  * multi-tenant SDK consumer not safe.
  *
- * `customHeaders` also feed the key so tenant/routing headers cannot reuse
- * a card/client discovered for another caller.
+ * `customHeaders` also feed the key so tenant/routing headers cannot reuse a
+ * card/client discovered for another caller. Scoped fetch calls bypass this
+ * cache entirely (see `getOrCreateA2AClient`).
  */
 function a2aCacheKey(
   agentUrl: string,
@@ -195,7 +197,7 @@ const CANCEL_TIMEOUT_MS = 5000;
  * @param agent     The agent config (used for URL, auth token, signing).
  * @param taskId    The server-assigned A2A Task.id to cancel.
  */
-export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise<void> {
+export async function cancelA2ATask(agent: AgentConfig, taskId: string, fetchFn?: typeof fetch): Promise<void> {
   // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
   // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
   // would POST `tasks/cancel` JSON-RPC at an MCP endpoint and 404. The
@@ -257,7 +259,8 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
   // the `tasks/cancel` membership. The over-sign default stays as the
   // fallback for spec-silent sellers (3.0.x and earlier).
   if (agent.request_signing) {
-    const upstream: FetchLike = (input, ini) => fetch(input as RequestInfo, ini);
+    const upstream: FetchLike = (input, ini) =>
+      fetchFn ? fetchFn(input as RequestInfo | URL, ini) : fetch(input as RequestInfo, ini);
     if (isInlineSigningConfig(agent.request_signing)) {
       const signed = createSigningFetch(upstream, toSignerKey(agent.request_signing));
       await signed(agentUrl, init);
@@ -270,7 +273,7 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
     }
   }
 
-  await fetch(agentUrl, init);
+  await (fetchFn ?? fetch)(agentUrl, init);
 }
 
 async function getOrCreateA2AClient(
@@ -280,8 +283,13 @@ async function getOrCreateA2AClient(
   bypassCache = false
 ): Promise<InstanceType<typeof A2AClient>> {
   const signingContext = signingContextStorage.getStore();
+  const fetchFn = callContextStorage.getStore()?.fetchFn;
   const cacheKey = a2aCacheKey(agentUrl, authToken, signingContext?.cacheKey, customHeaders);
-  if (bypassCache) {
+  // Scoped fetchers often carry request/tenant-specific egress policy. Keep
+  // those calls one-shot so neither agent-card discovery nor a client created
+  // under one policy can be reused by another caller, and so short-lived
+  // closure identities do not grow the global cache without bound.
+  if (bypassCache || fetchFn) {
     return createA2AClient(agentUrl, authToken);
   }
   const cached = a2aClientCache.get(cacheKey);
@@ -344,7 +352,10 @@ function buildFetchImpl(authToken: string | undefined) {
   // Innermost wrapper: enforce response body size cap from the active
   // `responseSizeLimitStorage` slot. Pass-through when no slot is set.
   const networkFetch = wrapFetchWithTransportDiagnostics(
-    wrapFetchWithSizeLimit((input, init) => fetch(input as any, init))
+    wrapFetchWithSizeLimit((input, init) => {
+      const scopedFetch = callContextStorage.getStore()?.fetchFn;
+      return scopedFetch ? scopedFetch(input, init) : fetch(input as any, init);
+    })
   );
 
   // Inner fetch handles auth/header injection and 401 detection. If the
@@ -481,7 +492,8 @@ export async function callA2ATool(
   signingContext?: AgentSigningContext,
   session?: A2ASessionIds,
   signal?: AbortSignal,
-  requestTimeoutMs?: number
+  requestTimeoutMs?: number,
+  fetchFn?: typeof fetch
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -496,6 +508,7 @@ export async function callA2ATool(
         got401Ref: { value: false },
         signal,
         requestTimeoutMs,
+        fetchFn,
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
@@ -652,8 +665,8 @@ async function callA2AToolImpl(
       // policy) would otherwise leave consumers chasing OAuth metadata that
       // doesn't exist. Matches the MCP discovery throw site in
       // `SingleAgentClient.discoverMCPEndpoint`.
-      const challenge = await probeAuthChallenge(agentUrl);
-      const oauthMetadata = await discoverOAuthMetadata(agentUrl);
+      const challenge = await probeAuthChallenge(agentUrl, { fetchFn: context.fetchFn });
+      const oauthMetadata = await discoverOAuthMetadata(agentUrl, { fetch: context.fetchFn });
       throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined, undefined, challenge ?? undefined);
     }
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## 12.1.1
+
+### Patch Changes
+
+- 34c4fc0: Thread scoped fetch implementations through high-level AdCP clients, OAuth refresh, discovery, MCP/A2A calls, and compliance/storyboard runners.
+
+## 12.1.0
+
+### Minor Changes
+
+- 3d7b4b2: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.5.
+
+  Cancellation policy schemas now faithfully represent the existing documented requirement that `percent_remaining` fees include `rate` and `fixed_fee` fees include `amount`. Generated TypeScript and Zod schemas preserve these conditions as a discriminated union.
+
+  This intentionally ships as a minor SDK update because it corrects the machine-readable representation rather than introducing new protocol semantics: conformant payloads remain unchanged. TypeScript code that constructed nonconformant fee variants without the documented value field will require a targeted update, and the runtime Zod schema now rejects those variants.
+
+  The update also incorporates the 3.1.5 protocol documentation and compatibility metadata corrections, and verifies signed protocol bundles with Cosign during generated-file CI checks.
+
+### Patch Changes
+
+- ca6c4aa: Fix `sync-schemas` crashes with `EXDEV` in Docker overlayfs builds by falling back to copy-and-delete for directory moves, and preserve the original error in fallback diagnostics.
+
 ## 12.0.6
 
 ### Patch Changes

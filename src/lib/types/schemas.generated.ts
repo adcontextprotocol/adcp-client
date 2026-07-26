@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-07-08T16:14:21.799Z
+// Generated at: 2026-07-24T21:00:03.543Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -715,11 +715,23 @@ export const PerformanceStandardSchema = z.object({
 
 export const CancellationPolicySchema = z.object({
     notice_period: DurationSchema,
-    cancellation_fee: z.object({
-        type: z.union([z.literal("percent_remaining"), z.literal("full_commitment"), z.literal("fixed_fee"), z.literal("none")]),
-        rate: z.number().min(0).max(1).optional(),
-        amount: z.number().min(0).optional()
-    }).passthrough()
+    cancellation_fee: z.union([z.object({
+            type: z.literal("percent_remaining"),
+            rate: z.number().min(0).max(1),
+            amount: z.number().min(0).optional()
+        }).passthrough(), z.object({
+            type: z.literal("full_commitment"),
+            rate: z.number().min(0).max(1).optional(),
+            amount: z.number().min(0).optional()
+        }).passthrough(), z.object({
+            type: z.literal("fixed_fee"),
+            rate: z.number().min(0).max(1).optional(),
+            amount: z.number().min(0)
+        }).passthrough(), z.object({
+            type: z.literal("none"),
+            rate: z.number().min(0).max(1).optional(),
+            amount: z.number().min(0).optional()
+        }).passthrough()])
 }).passthrough();
 
 export const DataProviderSignalSelectorSchema = z.union([z.object({
