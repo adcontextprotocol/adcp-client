@@ -1,5 +1,11 @@
 # Changelog
 
+## 12.1.1
+
+### Patch Changes
+
+- 34c4fc0: Thread scoped fetch implementations through high-level AdCP clients, OAuth refresh, discovery, MCP/A2A calls, and compliance/storyboard runners.
+
 ## 12.1.0
 
 ### Minor Changes
