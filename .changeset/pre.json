@@ -1,0 +1,10 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "@adcp/sdk": "12.1.1",
+    "@adcp/client": "6.0.0",
+    "@adcp/eslint-plugin": "0.1.6"
+  },
+  "changesets": []
+}
