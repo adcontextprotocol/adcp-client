@@ -23,3 +23,7 @@ Bundled AgenticAdvertising.org catalog aliases now cover deployed static,
 HTML5, hosted-video, and 30-second audio legacy IDs; fixed dimensions and
 durations are recovered from catalog-authored requirements and contradictions
 fail closed.
+One catalog snapshot can now configure both legacy-to-canonical discovery and
+canonical-to-legacy delivery through `projectionAdaptersFromCatalogSnapshots`,
+including persisted selections that no longer carry private in-memory routing
+metadata.

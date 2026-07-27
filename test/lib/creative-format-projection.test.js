@@ -11,6 +11,7 @@ const {
   stripLegacyCreativeIdentity,
   CreativeFormatCapabilityError,
   packageRefsForFormatOptions,
+  projectionAdaptersFromCatalogSnapshots,
 } = require('../../dist/lib/v2/projection/index.js');
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
 const {
@@ -993,6 +994,123 @@ describe('creative format delivery projection', () => {
       captured.map(request => (request.packages?.[0]?.creatives ?? request.creatives).map(item => item.format_id?.id)),
       [['display_300x250_image'], ['display_300x250_image'], ['display_300x250_image']]
     );
+  });
+
+  test('one persisted catalog adapter routes create, update, and sync to the exact legacy seller ref', async () => {
+    const legacyRef = {
+      agent_url: 'https://formats.vox.example/mcp',
+      id: 'vox_mrec_html',
+      width: 300,
+      height: 250,
+    };
+    const adapters = projectionAdaptersFromCatalogSnapshots([
+      {
+        source: 'configured',
+        publisher_domain: 'vox.example',
+        formats: [
+          {
+            format_kind: 'display_tag',
+            format_option_id: 'vox_mrec_html',
+            params: { width: 300, height: 250 },
+            v1_format_ref: [legacyRef],
+          },
+        ],
+      },
+    ]);
+    const clientConfig = {
+      id: 'legacy-catalog-seller',
+      name: 'Legacy catalog seller',
+      agent_uri: SELLER,
+      protocol: 'mcp',
+    };
+    const discoveryClient = new SingleAgentClient(clientConfig, adapters);
+    discoveryClient.executeAndHandle = async (_task, _handler, _params, _input, _options, transform) => {
+      const legacyResponse = {
+        products: [
+          {
+            product_id: 'vox-product',
+            name: 'Vox homepage',
+            description: 'Legacy catalog seller product',
+            format_ids: [legacyRef],
+          },
+        ],
+      };
+      return { success: true, status: 'completed', data: transform(legacyResponse) };
+    };
+    const discovery = await discoveryClient.getProducts({ brief: 'Vox homepage' });
+    assert.strictEqual(discovery.data.products[0].format_options[0].format_kind, 'display_tag');
+    assert.strictEqual(discovery.data.products[0].format_ids, undefined);
+
+    // Persisting the public product deliberately removes SDK-private route
+    // metadata. Every write below also uses a fresh client instance.
+    const persistedProduct = JSON.parse(JSON.stringify(discovery.data.products[0]));
+    const selected = packageRefsForFormatOptions(persistedProduct, [
+      {
+        publisher_domain: 'vox.example',
+        format_option_id: 'vox_mrec_html',
+      },
+    ]);
+    const selector = JSON.parse(JSON.stringify({ package_id: 'pkg-vox', ...selected }));
+    const creative = JSON.parse(
+      JSON.stringify({
+        creative_id: 'creative-vox',
+        name: 'Vox MREC tag',
+        format_kind: 'display_tag',
+        format_option_ref: {
+          scope: 'publisher',
+          publisher_domain: 'vox.example',
+          format_option_id: 'vox_mrec_html',
+        },
+        assets: {},
+      })
+    );
+
+    const captured = [];
+    const freshClient = () => {
+      const client = new SingleAgentClient(clientConfig, adapters);
+      client.getCapabilities = async () => ({ features: { canonicalCreatives: false } });
+      client.executeAndHandle = async (_task, _handler, params) => {
+        captured.push(params);
+        return { success: true, status: 'completed', data: {} };
+      };
+      return client;
+    };
+
+    await freshClient().createMediaBuy({
+      account: { account_id: 'test-account' },
+      brand: { domain: 'brand.example' },
+      start_time: 'asap',
+      end_time: '2027-12-31T00:00:00Z',
+      idempotency_key: 'catalog-create-projection-1',
+      packages: [
+        {
+          ...selector,
+          product_id: 'vox-product',
+          budget: 1000,
+          pricing_option_id: 'pricing-1',
+          creatives: [creative],
+        },
+      ],
+    });
+    await freshClient().updateMediaBuy({
+      idempotency_key: 'catalog-update-projection-1',
+      media_buy_id: 'mb-vox',
+      packages: [{ ...selector, creatives: [creative] }],
+    });
+    await freshClient().syncCreatives({
+      account: { account_id: 'test-account' },
+      idempotency_key: 'catalog-sync-projection-1',
+      creatives: [creative],
+      assignments: [{ creative_id: creative.creative_id, package_id: selector.package_id }],
+    });
+
+    for (const request of captured) {
+      const projectedCreative = request.packages?.[0]?.creatives?.[0] ?? request.creatives?.[0];
+      assert.deepStrictEqual(projectedCreative.format_id, legacyRef);
+      assert.strictEqual(projectedCreative.format_kind, undefined);
+    }
+    assert.deepStrictEqual(captured[0].packages[0].format_ids, [legacyRef]);
+    assert.deepStrictEqual(captured[1].packages[0].format_ids, [legacyRef]);
   });
 
   test('SingleAgentClient downgrades persisted canonical custom formats through the explicit resolver', async () => {

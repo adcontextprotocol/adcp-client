@@ -171,6 +171,54 @@ const legacyFormatConverter = ({ formatId }) => ({
 
 Configure this once as `legacyFormatConverter` on the client to cover canonical discovery, legacy create/update/sync write escape hatches, async continuations, and webhooks. A per-call converter overrides the configured default; `syncCreatives()` gives its projection-specific converter highest precedence. An invalid conversion is rejected before adopter code receives a partially converted object. On discovery, partially mappable products remain with their mapped canonical options and sanitized `FORMAT_PROJECTION_FAILED` entries in `data.errors`. A product with no canonical option is omitted from the canonical product list because the protocol requires `format_options` to contain at least one declaration; its sanitized non-fatal error remains in `data.errors`. A valid legacy `format_ids: []` product uses `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` with `reason: 'legacy_format_list_empty'`, not `FORMAT_PROJECTION_FAILED`. `data.projection.diagnostics` mirrors SDK-local detail for convenience, but `errors[]` is the portable, multi-hop surface. Use `getProductsLegacy()` when migration tooling needs the original refs or the complete legacy product list. For ordinary downgrade, use `packageRefsForFormatOptions()` on a product with mapped format options. The SDK retains the corresponding legacy ref in private metadata and emits it only when negotiation selects a legacy wire.
 
+For a fixed set of temporary seller adapters, prefer one declarative catalog over
+separate forward and reverse callbacks. `projectionAdaptersFromCatalogSnapshots`
+turns exact catalog-authored `v1_format_ref` pairs into client configuration for
+both discovery upgrade and persisted canonical-to-legacy delivery downgrade:
+
+```ts
+import { packageRefsForFormatOptions, projectionAdaptersFromCatalogSnapshots } from '@adcp/sdk';
+
+const voxAdapters = projectionAdaptersFromCatalogSnapshots([
+  {
+    source: 'configured',
+    publisher_domain: 'vox.example',
+    formats: [
+      {
+        format_kind: 'display_tag',
+        format_option_id: 'vox_mrec_html',
+        params: { width: 300, height: 250 },
+        v1_format_ref: [
+          {
+            agent_url: 'https://formats.vox.example/mcp',
+            id: 'vox_mrec_html',
+            width: 300,
+            height: 250,
+          },
+        ],
+      },
+    ],
+  },
+]);
+
+const client = new AgentClient(agent, voxAdapters);
+
+const selected = packageRefsForFormatOptions(product, [
+  { publisher_domain: 'vox.example', format_option_id: 'vox_mrec_html' },
+]);
+```
+
+The generated reverse resolver uses stable `format_option_id` references and
+works after JSON or process boundaries. It never makes a `canonical_formats_only`
+declaration legacy-compatible, never returns a partial multi-option mapping, and
+fails closed on duplicate aliases at the same precedence tier. The convenience
+helper intentionally accepts only publisher-scoped, one-canonical-option-to-one-
+legacy-ref routes. A multi-size option must be split into stable option IDs, or
+handled by a custom durable resolver that can narrow from canonical params. This
+is the recommended shape for short-lived owner-specific adapters while a seller
+moves to canonical declarations; remove the catalog entry when the seller
+migration is complete.
+
 During one client lifetime, a bounded private route cache preserves exact product-option downgrade routing even when the canonical product is serialized and parsed again. Account-scoped create/update/get-media-buy results also bind returned package IDs to exact routes across synchronous, polling, deferred, and webhook completion. Multiple packages assigned to one creative must resolve to the same legacy ref set. A process restart cannot reconstruct an arbitrary legacy owner from canonical kind/params. Re-run product and media-buy reads that carry enough selector context or configure the separate canonical-to-legacy resolver. An accountless update/sync never consumes a tenant-scoped cached route based only on package ID; include account scope or configure the resolver. This is intentionally not the same function as the inbound converter:
 
 ```ts

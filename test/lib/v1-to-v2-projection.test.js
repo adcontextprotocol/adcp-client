@@ -239,7 +239,7 @@ describe('v1 → v2 projection — injected publisher/community catalog snapshot
     assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
   });
 
-  test('canonicalizes equivalent owner URLs while preserving path and query case', () => {
+  test('canonicalizes host and default port while preserving trailing slash, path, and query identity', () => {
     const canonicalUrlMirror = {
       ...mirror,
       formats: [
@@ -254,7 +254,7 @@ describe('v1 → v2 projection — injected publisher/community catalog snapshot
         },
       ],
     };
-    const { v2, diagnostics } = projectV1ProductToV2(
+    const slashMismatch = projectV1ProductToV2(
       {
         product_id: 'canonical-owner-url',
         name: 'Canonical owner URL',
@@ -268,8 +268,20 @@ describe('v1 → v2 projection — injected publisher/community catalog snapshot
       },
       { projectionCatalogs: [canonicalUrlMirror] }
     );
-    assert.deepStrictEqual(diagnostics, []);
-    assert.strictEqual(v2.format_options[0].format_option_id, 'homepage_image');
+    assert.deepStrictEqual(slashMismatch.v2.format_options, []);
+    assert.strictEqual(slashMismatch.diagnostics[0].error.details.resolution_failure, 'no_match');
+
+    const equivalent = projectV1ProductToV2(
+      {
+        product_id: 'canonical-owner-url',
+        name: 'Canonical owner URL',
+        description: 'Equivalent URL spellings identify the same owner',
+        format_ids: [{ ...legacyRef, agent_url: 'https://formats.publisher.example/TenantA?mode=Prod' }],
+      },
+      { projectionCatalogs: [canonicalUrlMirror] }
+    );
+    assert.deepStrictEqual(equivalent.diagnostics, []);
+    assert.strictEqual(equivalent.v2.format_options[0].format_option_id, 'homepage_image');
   });
 
   test('canonicalizes unreserved percent encoding and ignores URL fragments', () => {

@@ -169,10 +169,24 @@ I/O part of the pure projector. Resolve and validate the catalog first, then
 configure immutable snapshots in precedence order (publisher before mirror):
 
 ```ts
-const client = new AgentClient(agent, {
-  projectionCatalogs: [publisherSnapshot, communityMirrorSnapshot],
-});
+import { projectionAdaptersFromCatalogSnapshots } from '@adcp/sdk';
+
+const projectionCatalogs = [publisherSnapshot, communityMirrorSnapshot];
+const client = new AgentClient(
+  agent,
+  projectionAdaptersFromCatalogSnapshots(projectionCatalogs)
+);
 ```
+
+That helper configures both directions from the same catalog data: exact legacy
+refs upgrade during discovery, and stable `format_option_id` selections resolve
+back to the catalog-authored legacy refs for create/update/sync after process or
+JSON boundaries. It accepts only publisher-scoped, one-to-one routes and checks
+the canonical kind and overlapping params before downgrading. Split multi-size
+routes into stable option IDs or use a custom durable resolver that narrows from
+canonical params. This is preferable to maintaining two hand-written callbacks
+for temporary seller migrations. If an application needs custom reverse logic,
+it can still configure `canonicalFormatLegacyResolver` directly.
 
 Only an exact, URL-sensitive `v1_format_ref` authorizes legacy-to-canonical
 projection. A public declaration with the same `format_option_id` is not an

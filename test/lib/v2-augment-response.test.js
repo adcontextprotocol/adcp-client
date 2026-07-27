@@ -3,7 +3,7 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+const { existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 

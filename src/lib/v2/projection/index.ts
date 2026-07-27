@@ -111,6 +111,9 @@ export {
 export type { V1FormatId, V2ProductFormatDeclaration, V2Product, V1Product, ProjectionDiagnostic } from './types';
 export {
   legacyFormatConverterFromCatalogSnapshots,
+  canonicalFormatLegacyResolverFromCatalogSnapshots,
+  projectionAdaptersFromCatalogSnapshots,
+  type ProjectionCatalogAdapters,
   type ProjectionCatalogSnapshot,
   type ProjectionCatalogSource,
 } from './catalog-snapshot';
