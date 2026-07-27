@@ -23,6 +23,7 @@ import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
+import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
 
 /**
  * Canonical projection reference (`canonical-projection-ref.json` in the
@@ -59,6 +60,15 @@ export interface V1FormatDefinition {
   description?: string;
   type?: string;
   accepts_parameters?: string[];
+  renders?: Array<{
+    role?: string;
+    dimensions?: {
+      width?: number;
+      height?: number;
+      [k: string]: unknown;
+    };
+    [k: string]: unknown;
+  }>;
   assets?: Array<{
     item_type?: string;
     asset_id?: string;
@@ -101,14 +111,15 @@ const AAO_LEGACY_AGENT_URL_ALIASES = new Set([
   'https://adcontextprotocol.org/',
 ]);
 
-function normalizeAgentUrl(u: string): string {
-  if (!u) return u;
-  const normalized = u.endsWith('/') ? u : u + '/';
-  return AAO_LEGACY_AGENT_URL_ALIASES.has(normalized) ? AAO_CANONICAL_AGENT_URL : normalized;
+function normalizeAgentUrl(u: string): string | undefined {
+  const canonical = canonicalizeAgentUrl(u);
+  if (canonical === null) return undefined;
+  return AAO_LEGACY_AGENT_URL_ALIASES.has(canonical) ? AAO_CANONICAL_AGENT_URL : canonical;
 }
 
-function indexKey(agentUrl: string, id: string): string {
-  return `${normalizeAgentUrl(agentUrl)}::${id}`;
+function indexKey(agentUrl: string, id: string): string | undefined {
+  const normalized = normalizeAgentUrl(agentUrl);
+  return normalized === undefined ? undefined : `${normalized}::${id}`;
 }
 
 /**
@@ -155,7 +166,8 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
       const byKey = new Map<string, V1FormatDefinition>();
       for (const entry of raw) {
         if (entry?.format_id?.agent_url && entry?.format_id?.id) {
-          byKey.set(indexKey(entry.format_id.agent_url, entry.format_id.id), entry);
+          const key = indexKey(entry.format_id.agent_url, entry.format_id.id);
+          if (key !== undefined) byKey.set(key, entry);
         }
       }
       cached = { byKey, entries: raw };
@@ -179,7 +191,8 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
  */
 export function lookupV1Format(formatId: V1FormatId, explicitPath?: string): V1FormatDefinition | undefined {
   const catalog = loadCatalog(explicitPath);
-  return catalog.byKey.get(indexKey(formatId.agent_url, formatId.id));
+  const key = indexKey(formatId.agent_url, formatId.id);
+  return key === undefined ? undefined : catalog.byKey.get(key);
 }
 
 /** Test hook: reset the memoized catalog. */
@@ -232,6 +245,7 @@ export function findCatalogEntryByCanonicalAndSize(
 ): V1FormatDefinition | undefined {
   const catalog = loadCatalog(options?.explicitPath);
   const normalizedAgentUrl = normalizeAgentUrl(agentUrl);
+  if (normalizedAgentUrl === undefined) return undefined;
   for (const entry of catalog.entries) {
     if (entry.canonical?.kind !== canonical) continue;
     if (!entry.format_id?.id || !entry.format_id?.agent_url) continue;

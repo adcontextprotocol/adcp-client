@@ -155,6 +155,10 @@ export type ProjectionDiagnostic =
        *     possible"; this signals "no v2 form yet."
        *   - `no_match` — v1→v2 direction, format not in catalog or
        *     registry, no structural match.
+       *   - `invalid_format_id_parameters` — the legacy ref carries
+       *     malformed dimensional or duration discriminators.
+       *   - `catalog_requirement_conflict` — catalog-authored fixed
+       *     requirements are internally ambiguous or contradict the ref.
        */
       code: 'FORMAT_PROJECTION_FAILED';
       error: {
@@ -166,7 +170,9 @@ export type ProjectionDiagnostic =
             | 'no_registry_match'
             | 'catalog_lacks_canonical_annotation'
             | 'no_match'
-            | 'custom_converter_failed';
+            | 'custom_converter_failed'
+            | 'invalid_format_id_parameters'
+            | 'catalog_requirement_conflict';
           converter_error?: string;
         };
       };

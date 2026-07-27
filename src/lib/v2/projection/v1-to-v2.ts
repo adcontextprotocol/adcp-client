@@ -63,6 +63,8 @@ import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapsh
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
 
+class CatalogRequirementConflict extends Error {}
+
 export interface V1ToV2Result {
   v2: V2Product;
   diagnostics: ProjectionDiagnostic[];
@@ -109,15 +111,115 @@ function buildParams(
   catalogEntry?: V1FormatDefinition
 ): Record<string, unknown> {
   const params: Record<string, unknown> = { ...registryParams };
+
+  // Catalog-authored fixed requirements are normative projection inputs.
+  // Prefer the primary render dimensions when there is exactly one fixed
+  // size; otherwise accept one unambiguous width/height pair from the asset
+  // requirements. A fixed duration is equally safe only when min === max.
+  // Never guess from a name, a range, or conflicting requirements.
+  const fixedSizes = new Map<string, { width: number; height: number }>();
+  let hasUnsupportedSizeRequirement = false;
+  for (const render of catalogEntry?.renders ?? []) {
+    const width = render.dimensions?.width;
+    const height = render.dimensions?.height;
+    if (width === undefined && height === undefined) continue;
+    if (
+      typeof width === 'number' &&
+      Number.isInteger(width) &&
+      width > 0 &&
+      typeof height === 'number' &&
+      Number.isInteger(height) &&
+      height > 0
+    ) {
+      fixedSizes.set(`${width}x${height}`, { width, height });
+    } else hasUnsupportedSizeRequirement = true;
+  }
+  for (const asset of catalogEntry?.assets ?? []) {
+    const width = asset.requirements?.width;
+    const height = asset.requirements?.height;
+    const minWidth = asset.requirements?.min_width;
+    const maxWidth = asset.requirements?.max_width;
+    const minHeight = asset.requirements?.min_height;
+    const maxHeight = asset.requirements?.max_height;
+    if (minWidth !== undefined || maxWidth !== undefined || minHeight !== undefined || maxHeight !== undefined) {
+      if (
+        typeof minWidth === 'number' &&
+        Number.isInteger(minWidth) &&
+        minWidth > 0 &&
+        minWidth === maxWidth &&
+        typeof minHeight === 'number' &&
+        Number.isInteger(minHeight) &&
+        minHeight > 0 &&
+        minHeight === maxHeight
+      ) {
+        fixedSizes.set(`${minWidth}x${minHeight}`, { width: minWidth, height: minHeight });
+      } else {
+        hasUnsupportedSizeRequirement = true;
+      }
+    }
+    if (width === undefined && height === undefined) continue;
+    if (
+      typeof width === 'number' &&
+      Number.isInteger(width) &&
+      width > 0 &&
+      typeof height === 'number' &&
+      Number.isInteger(height) &&
+      height > 0
+    ) {
+      fixedSizes.set(`${width}x${height}`, { width, height });
+    } else hasUnsupportedSizeRequirement = true;
+  }
+  if (fixedSizes.size > 1 || hasUnsupportedSizeRequirement) {
+    throw new CatalogRequirementConflict('catalog contains conflicting fixed dimensions');
+  }
+  if (fixedSizes.size === 1) {
+    const fixedSize = fixedSizes.values().next().value;
+    if (fixedSize) {
+      if (
+        (typeof fid.width === 'number' && fid.width !== fixedSize.width) ||
+        (typeof fid.height === 'number' && fid.height !== fixedSize.height)
+      ) {
+        throw new CatalogRequirementConflict('format id conflicts with catalog dimensions');
+      }
+      params.width = fixedSize.width;
+      params.height = fixedSize.height;
+    }
+  }
+
+  const fixedDurations = new Set<number>();
+  let hasRangedDuration = false;
+  for (const asset of catalogEntry?.assets ?? []) {
+    const min = asset.requirements?.min_duration_ms;
+    const max = asset.requirements?.max_duration_ms;
+    if (min === undefined && max === undefined) continue;
+    if (
+      (min !== undefined && (typeof min !== 'number' || !Number.isInteger(min) || min <= 0)) ||
+      (max !== undefined && (typeof max !== 'number' || !Number.isInteger(max) || max <= 0)) ||
+      (typeof min === 'number' && typeof max === 'number' && min > max)
+    ) {
+      throw new CatalogRequirementConflict('catalog contains invalid duration requirements');
+    }
+    if (typeof min === 'number' && min === max) fixedDurations.add(min);
+    else hasRangedDuration = true;
+  }
+  if (fixedDurations.size > 1 || hasRangedDuration) {
+    throw new CatalogRequirementConflict('catalog contains conflicting fixed durations');
+  }
+  if (fixedDurations.size === 1) {
+    const fixedDuration = fixedDurations.values().next().value;
+    if (fixedDuration !== undefined) {
+      if (typeof fid.duration_ms === 'number' && fid.duration_ms !== fixedDuration) {
+        throw new CatalogRequirementConflict('format id conflicts with catalog duration');
+      }
+      params.duration_ms_exact = fixedDuration;
+    }
+  }
+
+  // Inline discriminators narrow parameterized catalog templates. Concrete
+  // catalog defaults were checked for contradictions above.
   if (typeof fid.width === 'number') params.width = fid.width;
   if (typeof fid.height === 'number') params.height = fid.height;
   if (typeof fid.duration_ms === 'number') params.duration_ms_exact = fid.duration_ms;
-  // Catalog entries occasionally pin codec/format requirements at the
-  // asset level. Surface them when present and unambiguous, but don't
-  // try to compose the full v2 param shape — that's caller territory.
-  if (catalogEntry?.accepts_parameters) {
-    params.accepts_parameters = catalogEntry.accepts_parameters;
-  }
   return params;
 }
 
@@ -208,6 +310,31 @@ function projectFormatId(
   field: string,
   options?: V1ToV2ProjectionOptions
 ): { decl?: V2ProductFormatDeclaration; diagnostic?: ProjectionDiagnostic } {
+  const hasWidth = fid.width !== undefined;
+  const hasHeight = fid.height !== undefined;
+  const invalidDimensions =
+    hasWidth !== hasHeight ||
+    (hasWidth && (!Number.isInteger(fid.width) || fid.width! <= 0)) ||
+    (hasHeight && (!Number.isInteger(fid.height) || fid.height! <= 0));
+  const invalidDuration = fid.duration_ms !== undefined && (!Number.isInteger(fid.duration_ms) || fid.duration_ms <= 0);
+  if (invalidDimensions || invalidDuration) {
+    return {
+      diagnostic: {
+        source: 'sdk',
+        sdk_id: SDK_ID,
+        field,
+        code: 'FORMAT_PROJECTION_FAILED',
+        error: {
+          details: {
+            format_kind: 'custom',
+            product_id: productId,
+            resolution_failure: 'invalid_format_id_parameters',
+          },
+        },
+      },
+    };
+  }
+
   // A publisher/community catalog carrying an explicit v1_format_ref is the
   // most specific authoritative pairing. Public availability or a matching
   // format_option_id alone is not enough: canonical_formats_only declarations
@@ -230,7 +357,27 @@ function projectFormatId(
   // native projects with extended slot set; etc.).
   if (catalogEntry?.canonical) {
     const projection = catalogEntry.canonical;
-    const params = buildParams(fid, {}, catalogEntry);
+    let params: Record<string, unknown>;
+    try {
+      params = buildParams(fid, {}, catalogEntry);
+    } catch (error) {
+      if (!(error instanceof CatalogRequirementConflict)) throw error;
+      return {
+        diagnostic: {
+          source: 'sdk',
+          sdk_id: SDK_ID,
+          field,
+          code: 'FORMAT_PROJECTION_FAILED',
+          error: {
+            details: {
+              format_kind: projection.kind,
+              product_id: productId,
+              resolution_failure: 'catalog_requirement_conflict',
+            },
+          },
+        },
+      };
+    }
     if (projection.asset_source) params.asset_source = projection.asset_source;
     if (projection.slots_override) params.slots = projection.slots_override;
     return {

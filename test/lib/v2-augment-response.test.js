@@ -3,10 +3,12 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, existsSync } = require('node:fs');
+const { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { withFormatOptions, augmentProductWithFormatOptions } = require('../../dist/lib/v2/projection/index.js');
+const { loadCatalog, _resetCatalogCache } = require('../../dist/lib/v2/projection/catalog.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 const SKIP_REASON = existsSync(CATALOG_PATH)
@@ -64,6 +66,171 @@ describe('augmentProductWithFormatOptions', { skip: SKIP_REASON }, () => {
     assert.strictEqual(diagnostics.length, 1);
     assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
     assert.strictEqual(diagnostics[0].source, 'sdk');
+  });
+
+  test('fails closed when inline discriminators contradict fixed catalog requirements', () => {
+    for (const formatId of [
+      {
+        agent_url: 'https://creative.adcontextprotocol.org/',
+        id: 'display_320x50_html',
+        width: 728,
+        height: 90,
+      },
+      {
+        agent_url: 'https://creative.adcontextprotocol.org/',
+        id: 'audio_30s',
+        duration_ms: 15000,
+      },
+    ]) {
+      const { product, diagnostics } = augmentProductWithFormatOptions({
+        product_id: `conflict_${formatId.id}`,
+        name: 'n',
+        description: 'd',
+        format_ids: [formatId],
+      });
+      assert.deepStrictEqual(product.format_options, []);
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+      assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'catalog_requirement_conflict');
+    }
+  });
+
+  test('projects parameterized generic aliases from inline discriminators', () => {
+    for (const [formatId, kind, expectedParams] of [
+      [
+        {
+          agent_url: 'https://creative.adcontextprotocol.org/',
+          id: 'display_static',
+          width: 320,
+          height: 50,
+        },
+        'image',
+        { width: 320, height: 50 },
+      ],
+      [
+        {
+          agent_url: 'https://creative.adcontextprotocol.org/',
+          id: 'video_hosted',
+          duration_ms: 30000,
+        },
+        'video_hosted',
+        { duration_ms_exact: 30000 },
+      ],
+    ]) {
+      const { product, diagnostics } = augmentProductWithFormatOptions({
+        product_id: `parameterized_${formatId.id}`,
+        name: 'n',
+        description: 'd',
+        format_ids: [formatId],
+      });
+      assert.deepStrictEqual(diagnostics, []);
+      assert.strictEqual(product.format_options.length, 1);
+      assert.strictEqual(product.format_options[0].format_kind, kind);
+      assert.deepStrictEqual(product.format_options[0].params, expectedParams);
+    }
+  });
+
+  test('fails closed on malformed inline discriminators', () => {
+    for (const formatId of [
+      {
+        agent_url: 'https://creative.adcontextprotocol.org/',
+        id: 'display_static',
+        width: 320,
+      },
+      {
+        agent_url: 'https://creative.adcontextprotocol.org/',
+        id: 'display_static',
+        width: 0,
+        height: 50,
+      },
+      {
+        agent_url: 'https://creative.adcontextprotocol.org/',
+        id: 'video_hosted',
+        duration_ms: 0,
+      },
+    ]) {
+      const { product, diagnostics } = augmentProductWithFormatOptions({
+        product_id: `malformed_${formatId.id}`,
+        name: 'n',
+        description: 'd',
+        format_ids: [formatId],
+      });
+      assert.deepStrictEqual(product.format_options, []);
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+      assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'invalid_format_id_parameters');
+    }
+  });
+
+  test('fails closed when a catalog entry contains conflicting fixed requirements', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'adcp-conflicting-catalog-'));
+    const catalogPath = path.join(dir, 'catalog.json');
+    writeFileSync(
+      catalogPath,
+      JSON.stringify([
+        {
+          format_id: {
+            agent_url: 'https://creative.adcontextprotocol.org/',
+            id: 'conflicting_display',
+          },
+          canonical: { kind: 'html5' },
+          renders: [
+            { role: 'primary', dimensions: { width: 320, height: 50 } },
+            { role: 'alternate', dimensions: { width: 728, height: 90 } },
+          ],
+        },
+        {
+          format_id: {
+            agent_url: 'https://creative.adcontextprotocol.org/',
+            id: 'conflicting_audio',
+          },
+          canonical: { kind: 'audio_hosted' },
+          assets: [
+            { requirements: { min_duration_ms: 30000, max_duration_ms: 30000 } },
+            { requirements: { min_duration_ms: 15000, max_duration_ms: 30000 } },
+          ],
+        },
+        {
+          format_id: {
+            agent_url: 'https://creative.adcontextprotocol.org/',
+            id: 'partial_dimensions',
+          },
+          canonical: { kind: 'html5' },
+          assets: [{ requirements: { width: 320 } }],
+        },
+        {
+          format_id: {
+            agent_url: 'https://creative.adcontextprotocol.org/',
+            id: 'fractional_duration',
+          },
+          canonical: { kind: 'audio_hosted' },
+          assets: [{ requirements: { min_duration_ms: 30000.5, max_duration_ms: 30000.5 } }],
+        },
+      ])
+    );
+    _resetCatalogCache();
+    loadCatalog(catalogPath);
+    try {
+      for (const id of ['conflicting_display', 'conflicting_audio', 'partial_dimensions', 'fractional_duration']) {
+        const { product, diagnostics } = augmentProductWithFormatOptions({
+          product_id: `catalog_${id}`,
+          name: 'n',
+          description: 'd',
+          format_ids: [
+            {
+              agent_url: 'https://creative.adcontextprotocol.org/',
+              id,
+            },
+          ],
+        });
+        assert.deepStrictEqual(product.format_options, []);
+        assert.strictEqual(diagnostics.length, 1);
+        assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'catalog_requirement_conflict');
+      }
+    } finally {
+      _resetCatalogCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

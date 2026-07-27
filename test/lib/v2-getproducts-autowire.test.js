@@ -97,7 +97,10 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           product_id: 'optimera_display',
           name: 'Optimera display',
           description: 'Legacy generic display image format',
-          format_ids: [{ agent_url: 'https://adcontextprotocol.org', id: 'display_image' }],
+          format_ids: [
+            { agent_url: 'https://adcontextprotocol.org', id: 'display_image' },
+            { agent_url: 'https://creative.adcontextprotocol.org', id: 'display_320x50_html' },
+          ],
           pricing_options: PRICING_OPTIONS,
         },
       ],
@@ -109,7 +112,11 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       assert.strictEqual(result.success, true);
       assert.strictEqual(result.data.products.length, 1);
       assert.strictEqual(result.data.products[0].product_id, 'optimera_display');
+      assert.strictEqual(result.data.products[0].format_options.length, 2);
       assert.strictEqual(result.data.products[0].format_options[0].format_kind, 'image');
+      assert.strictEqual(result.data.products[0].format_options[1].format_kind, 'html5');
+      assert.strictEqual(result.data.products[0].format_options[1].params.width, 320);
+      assert.strictEqual(result.data.products[0].format_options[1].params.height, 50);
       assert.strictEqual(result.data.products[0].format_ids, undefined);
       assert.deepStrictEqual(result.data.projection.diagnostics, []);
       assert.doesNotMatch(JSON.stringify(result.data), /agent_url|format_id|resolution_failure/);

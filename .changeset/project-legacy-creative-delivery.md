@@ -19,3 +19,7 @@ and surface sanitized non-fatal errors in the protocol `errors[]` array. A
 valid legacy format-agnostic `format_ids: []` response uses the distinct
 `CANONICAL_PRODUCT_FORMATS_UNAVAILABLE` advisory rather than pretending a
 catalog lookup failed.
+Bundled AgenticAdvertising.org catalog aliases now cover deployed static,
+HTML5, hosted-video, and 30-second audio legacy IDs; fixed dimensions and
+durations are recovered from catalog-authored requirements and contradictions
+fail closed.
