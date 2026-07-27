@@ -278,14 +278,20 @@ const CANONICAL_CREATIVE_ACTIVITY_TASKS = new Set([
  * A creative task can contribute several aliases (operation, client task,
  * server task, and conversation context IDs). Ten thousand aliases covers
  * thousands of concurrent tasks while keeping abandoned tasks from growing a
- * long-lived client without limit. Map insertion order provides LRU eviction.
+ * long-lived client without limit. Associations retain only converters and a
+ * frozen account/package routing projection—never creative assets or webhook
+ * credentials. Map insertion order provides LRU eviction.
  */
 const TASK_SCOPED_STATE_LIMIT = 10_000;
 
 interface CanonicalCreativeTaskAssociation {
   taskType: string;
   legacyFormatConverter?: LegacyFormatConverter;
-  canonicalRequest?: unknown;
+  routingSnapshot?: CanonicalCreativeRoutingSnapshot;
+}
+
+interface ProductPolicyRequestState {
+  request?: Readonly<Record<string, unknown>>;
 }
 
 type CanonicalLegacyOptionRef =
@@ -306,6 +312,112 @@ type CanonicalLegacyRoute =
       packageId: string;
       refs: readonly V1FormatId[];
     };
+
+interface CanonicalPackageRouteSelectorSnapshot {
+  readonly package_id?: string;
+  readonly product_id?: string;
+  readonly format_option_refs?: readonly CanonicalLegacyOptionRef[];
+}
+
+interface CanonicalCreativeRoutingSnapshot {
+  readonly account: Readonly<Record<string, unknown>>;
+  readonly packages?: readonly CanonicalPackageRouteSelectorSnapshot[];
+  readonly new_packages?: readonly CanonicalPackageRouteSelectorSnapshot[];
+}
+
+const CANONICAL_PACKAGE_ROUTE_TASKS = new Set(['create_media_buy', 'update_media_buy', 'get_media_buys']);
+const canonicalCreativeRoutingSnapshots = new WeakSet<object>();
+
+function canonicalAccountRoutingSnapshot(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const account = value as Record<string, unknown>;
+  if (typeof account.account_id === 'string') return Object.freeze({ account_id: account.account_id });
+  if (
+    !account.brand ||
+    typeof account.brand !== 'object' ||
+    Array.isArray(account.brand) ||
+    typeof account.operator !== 'string'
+  ) {
+    return undefined;
+  }
+  const sourceBrand = account.brand as Record<string, unknown>;
+  if (typeof sourceBrand.domain !== 'string') return undefined;
+  const brand = Object.freeze({
+    domain: sourceBrand.domain,
+    ...(typeof sourceBrand.brand_id === 'string' ? { brand_id: sourceBrand.brand_id } : {}),
+  });
+  return Object.freeze({
+    brand,
+    operator: account.operator,
+    ...(typeof account.sandbox === 'boolean' ? { sandbox: account.sandbox } : {}),
+  });
+}
+
+function canonicalOptionRefRoutingSnapshot(value: unknown): CanonicalLegacyOptionRef | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const ref = value as Record<string, unknown>;
+  if (typeof ref.format_option_id !== 'string') return undefined;
+  if (ref.scope === 'publisher' || typeof ref.publisher_domain === 'string') {
+    if (typeof ref.publisher_domain !== 'string') return undefined;
+    return Object.freeze({
+      scope: 'publisher' as const,
+      publisher_domain: ref.publisher_domain,
+      format_option_id: ref.format_option_id,
+    });
+  }
+  return Object.freeze({ scope: 'product' as const, format_option_id: ref.format_option_id });
+}
+
+function canonicalPackageRouteSelectorSnapshot(value: unknown): CanonicalPackageRouteSelectorSnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const selector = value as Record<string, unknown>;
+  const formatOptionRefs = Array.isArray(selector.format_option_refs)
+    ? selector.format_option_refs
+        .map(canonicalOptionRefRoutingSnapshot)
+        .filter((ref): ref is CanonicalLegacyOptionRef => ref !== undefined)
+    : [];
+  const snapshot = {
+    ...(typeof selector.package_id === 'string' ? { package_id: selector.package_id } : {}),
+    ...(typeof selector.product_id === 'string' ? { product_id: selector.product_id } : {}),
+    ...(formatOptionRefs.length > 0 ? { format_option_refs: Object.freeze(formatOptionRefs) } : {}),
+  };
+  return Object.keys(snapshot).length > 0 ? Object.freeze(snapshot) : undefined;
+}
+
+function canonicalCreativeRoutingSnapshot(
+  taskType: string,
+  request: unknown
+): CanonicalCreativeRoutingSnapshot | undefined {
+  if (
+    !CANONICAL_PACKAGE_ROUTE_TASKS.has(taskType) ||
+    !request ||
+    typeof request !== 'object' ||
+    Array.isArray(request)
+  ) {
+    return undefined;
+  }
+  if (canonicalCreativeRoutingSnapshots.has(request)) {
+    return request as CanonicalCreativeRoutingSnapshot;
+  }
+  const record = request as Record<string, unknown>;
+  const account = canonicalAccountRoutingSnapshot(record.account);
+  if (!account) return undefined;
+  const packageSnapshots = (key: 'packages' | 'new_packages'): readonly CanonicalPackageRouteSelectorSnapshot[] =>
+    Object.freeze(
+      (Array.isArray(record[key]) ? record[key] : [])
+        .map(canonicalPackageRouteSelectorSnapshot)
+        .filter((selector): selector is CanonicalPackageRouteSelectorSnapshot => selector !== undefined)
+    );
+  const packages = packageSnapshots('packages');
+  const newPackages = packageSnapshots('new_packages');
+  const snapshot = Object.freeze({
+    account,
+    ...(packages.length > 0 ? { packages } : {}),
+    ...(newPackages.length > 0 ? { new_packages: newPackages } : {}),
+  });
+  canonicalCreativeRoutingSnapshots.add(snapshot);
+  return snapshot;
+}
 
 const canonicalCreativeExecutionStorage = globalAsyncLocalStorage<{
   taskType: string;
@@ -1126,6 +1238,15 @@ function propertyListReferenceFromRequest(params: Record<string, unknown>): Prop
   };
 }
 
+function productPolicyRequestSnapshot(requestParams: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  const account = canonicalAccountRoutingSnapshot(requestParams.account);
+  const propertyList = propertyListReferenceFromRequest(requestParams);
+  return Object.freeze({
+    ...(account ? { account } : {}),
+    ...(propertyList ? { property_list: Object.freeze(propertyList) } : {}),
+  });
+}
+
 function hasProductPropertyPolicyRules(policy: BuyerPropertyPolicy): boolean {
   return Boolean(
     policy.allowedDomains?.length ||
@@ -1189,7 +1310,7 @@ export class SingleAgentClient {
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
-  private readonly productPolicyRequestParamsByTask = new Map<string, Record<string, unknown>>();
+  private readonly productPolicyRequestParamsByTask = new Map<string, ProductPolicyRequestState>();
   private readonly canonicalCreativeTaskAssociations = new Map<string, CanonicalCreativeTaskAssociation>();
   private readonly canonicalLegacyRoutes = new Map<string, CanonicalLegacyRoute>();
   private readonly resolvedAdcpVersion: string;
@@ -1255,7 +1376,11 @@ export class SingleAgentClient {
 
   private canonicalAccountScope(account: unknown): string {
     if (account === undefined) return 'none';
-    return canonicalizeJson(account);
+    // Account-scoped route identity is the account id or the protocol's
+    // natural key (brand + operator + sandbox). Per-call BrandReference
+    // overrides are not identity and must not make a live request differ from
+    // the minimal snapshot retained for an async completion.
+    return canonicalizeJson(canonicalAccountRoutingSnapshot(account) ?? account);
   }
 
   private canonicalLegacyRouteKey(
@@ -1492,11 +1617,13 @@ export class SingleAgentClient {
     // future media_buy_id-bound key) retaining this route could cross tenants.
     if (account === undefined) return;
     const accountScope = this.canonicalAccountScope(account);
-    const requestPackages = Array.isArray(requestRecord?.packages)
-      ? requestRecord.packages.filter((value): value is Record<string, unknown> =>
-          Boolean(value && typeof value === 'object' && !Array.isArray(value))
-        )
-      : [];
+    const requestPackages = ['packages', 'new_packages'].flatMap(key =>
+      Array.isArray(requestRecord?.[key])
+        ? requestRecord[key].filter((value): value is Record<string, unknown> =>
+            Boolean(value && typeof value === 'object' && !Array.isArray(value))
+          )
+        : []
+    );
     const responsePackages: Record<string, unknown>[] = [];
     const visit = (value: unknown, depth = 0): void => {
       if (depth > 8 || !value || typeof value !== 'object') return;
@@ -1506,7 +1633,7 @@ export class SingleAgentClient {
       }
       const record = value as Record<string, unknown>;
       if (typeof record.package_id === 'string') responsePackages.push(record);
-      for (const key of ['packages', 'media_buys']) {
+      for (const key of ['packages', 'affected_packages', 'media_buys']) {
         if (record[key] !== undefined) visit(record[key], depth + 1);
       }
     };
@@ -2306,6 +2433,11 @@ export class SingleAgentClient {
 
       return false;
     } finally {
+      this.executor.observeExternalTaskStatus(
+        metadata.operation_id,
+        metadata.status as import('./ConversationTypes').TaskStatus,
+        metadata.rawHTTPPayload
+      );
       this.forgetProductPolicyRequestParams(metadata);
     }
   }
@@ -2321,7 +2453,7 @@ export class SingleAgentClient {
       metadata.context_id,
       association.taskType,
       association.legacyFormatConverter,
-      association.canonicalRequest
+      association.routingSnapshot
     );
   }
 
@@ -2359,7 +2491,7 @@ export class SingleAgentClient {
       this.canonicalCreativeTaskAssociation(metadata.task_id) ??
       this.canonicalCreativeTaskAssociation(metadata.context_id);
     if (metadata.status === 'completed') {
-      this.rememberCanonicalPackageRoutesForTask(taskType, canonical, association?.canonicalRequest);
+      this.rememberCanonicalPackageRoutesForTask(taskType, canonical, association?.routingSnapshot);
     }
     return canonical;
   }
@@ -2815,26 +2947,27 @@ export class SingleAgentClient {
       result.data = this.normalizeResponseToV3(taskType, result.data) as T;
     }
 
-    result = this.wrapProductPolicySubmittedContinuation(result, taskType, normalizedParams);
-    this.rememberProductPolicyRequestParams(taskType, normalizedParams, result, options);
+    result = this.wrapProductPolicySubmittedContinuation(result, taskType, normalizedParams, options);
+    if (result.status === 'working') {
+      this.rememberProductPolicyRequestParams(taskType, normalizedParams, result, options);
+    }
     this.rememberLegacyFormatConverter(taskType, legacyFormatConverter, result, options);
     result = await this.applyProductPropertyPolicy(result, taskType, normalizedParams);
 
     if (CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType)) {
+      // The full canonical request is needed only while the protocol activity
+      // callback runs above. Async/terminal state retains a frozen routing-only
+      // projection so creative assets and webhook credentials are not pinned.
+      const routingSnapshot = canonicalCreativeRoutingSnapshot(taskType, canonicalRequest ?? normalizedParams);
       result = this.canonicalizeCreativeTaskResult(result, taskType, transformCompletedResponse, legacyFormatConverter);
       result = this.wrapCanonicalCreativeContinuations(
         result,
         taskType,
         transformCompletedResponse,
         legacyFormatConverter,
-        canonicalRequest ?? normalizedParams
+        routingSnapshot
       );
-      this.rememberCanonicalCreativeTaskIds(
-        result,
-        taskType,
-        legacyFormatConverter,
-        canonicalRequest ?? normalizedParams
-      );
+      this.rememberCanonicalCreativeTaskIds(result, taskType, legacyFormatConverter, routingSnapshot);
     } else if (result.status === 'completed' && result.success && result.data && transformCompletedResponse) {
       result = { ...result, data: transformCompletedResponse(result.data) };
     }
@@ -3031,8 +3164,9 @@ export class SingleAgentClient {
     taskType: string,
     transform?: (data: T) => T,
     legacyFormatConverter?: LegacyFormatConverter,
-    canonicalRequest?: unknown
+    routingRequest?: unknown
   ): TaskResult<T> {
+    const routingSnapshot = canonicalCreativeRoutingSnapshot(taskType, routingRequest);
     if (result.submitted) {
       const submitted = result.submitted;
       result = {
@@ -3049,7 +3183,7 @@ export class SingleAgentClient {
               legacyFormatConverter
             );
             if (canonical.status === 'completed' && canonical.result !== undefined) {
-              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.result, canonicalRequest);
+              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.result, routingSnapshot);
             }
             return canonical;
           },
@@ -3064,15 +3198,15 @@ export class SingleAgentClient {
               legacyFormatConverter
             );
             if (canonical.success && canonical.status === 'completed' && canonical.data !== undefined) {
-              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.data, canonicalRequest);
+              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.data, routingSnapshot);
             }
-            this.rememberCanonicalCreativeTaskIds(canonical, taskType, legacyFormatConverter, canonicalRequest);
+            this.rememberCanonicalCreativeTaskIds(canonical, taskType, legacyFormatConverter, routingSnapshot);
             return this.wrapCanonicalCreativeContinuations(
               canonical,
               taskType,
               transform,
               legacyFormatConverter,
-              canonicalRequest
+              routingSnapshot
             );
           },
         },
@@ -3090,15 +3224,15 @@ export class SingleAgentClient {
             );
             const canonical = this.canonicalizeCreativeTaskResult(resumed, taskType, transform, legacyFormatConverter);
             if (canonical.success && canonical.status === 'completed' && canonical.data !== undefined) {
-              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.data, canonicalRequest);
+              this.rememberCanonicalPackageRoutesForTask(taskType, canonical.data, routingSnapshot);
             }
-            this.rememberCanonicalCreativeTaskIds(canonical, taskType, legacyFormatConverter, canonicalRequest);
+            this.rememberCanonicalCreativeTaskIds(canonical, taskType, legacyFormatConverter, routingSnapshot);
             return this.wrapCanonicalCreativeContinuations(
               canonical,
               taskType,
               transform,
               legacyFormatConverter,
-              canonicalRequest
+              routingSnapshot
             );
           },
         },
@@ -3111,8 +3245,9 @@ export class SingleAgentClient {
     result: TaskResult<T>,
     taskType: string,
     legacyFormatConverter?: LegacyFormatConverter,
-    canonicalRequest?: unknown
+    routingRequest?: unknown
   ): void {
+    const routingSnapshot = canonicalCreativeRoutingSnapshot(taskType, routingRequest);
     const keys = [
       result.metadata.taskId,
       result.metadata.contextId,
@@ -3121,7 +3256,7 @@ export class SingleAgentClient {
     ];
     for (const key of keys) {
       if (!key) continue;
-      this.rememberCanonicalCreativeTaskAssociation(key, taskType, legacyFormatConverter, canonicalRequest);
+      this.rememberCanonicalCreativeTaskAssociation(key, taskType, legacyFormatConverter, routingSnapshot);
     }
   }
 
@@ -3132,15 +3267,14 @@ export class SingleAgentClient {
     canonicalRequest?: unknown
   ): void {
     const previous = this.canonicalCreativeTaskAssociations.get(key);
+    const routingSnapshot = canonicalCreativeRoutingSnapshot(taskType, canonicalRequest);
+    const effectiveRoutingSnapshot =
+      routingSnapshot ?? (previous?.taskType === taskType ? previous.routingSnapshot : undefined);
     this.canonicalCreativeTaskAssociations.delete(key);
     this.canonicalCreativeTaskAssociations.set(key, {
       taskType,
       legacyFormatConverter,
-      ...(canonicalRequest !== undefined
-        ? { canonicalRequest }
-        : previous?.canonicalRequest !== undefined
-          ? { canonicalRequest: previous.canonicalRequest }
-          : {}),
+      ...(effectiveRoutingSnapshot ? { routingSnapshot: effectiveRoutingSnapshot } : {}),
     });
     while (this.canonicalCreativeTaskAssociations.size > TASK_SCOPED_STATE_LIMIT) {
       const oldest = this.canonicalCreativeTaskAssociations.keys().next().value;
@@ -3421,6 +3555,20 @@ export class SingleAgentClient {
     result: TaskResult<T>,
     options?: TaskOptions
   ): void {
+    this.rememberProductPolicyRequestState(
+      taskType,
+      { request: productPolicyRequestSnapshot(requestParams) },
+      result,
+      options
+    );
+  }
+
+  private rememberProductPolicyRequestState<T>(
+    taskType: string,
+    requestState: ProductPolicyRequestState,
+    result: TaskResult<T>,
+    options?: TaskOptions
+  ): void {
     if (taskType !== 'get_products') return;
     if (result.status !== 'submitted' && result.status !== 'working') return;
 
@@ -3428,12 +3576,13 @@ export class SingleAgentClient {
     if (result.metadata.taskId) keys.add(result.metadata.taskId);
     if (result.metadata.contextId) keys.add(result.metadata.contextId);
     if (result.metadata.serverTaskId) keys.add(result.metadata.serverTaskId);
+    if (result.submitted?.taskId) keys.add(result.submitted.taskId);
     if (options?.taskId) keys.add(options.taskId);
     if (options?.contextId) keys.add(options.contextId);
 
     for (const key of keys) {
       this.productPolicyRequestParamsByTask.delete(key);
-      this.productPolicyRequestParamsByTask.set(key, requestParams);
+      this.productPolicyRequestParamsByTask.set(key, requestState);
       while (this.productPolicyRequestParamsByTask.size > TASK_SCOPED_STATE_LIMIT) {
         const oldest = this.productPolicyRequestParamsByTask.keys().next().value;
         if (oldest === undefined) break;
@@ -3473,7 +3622,22 @@ export class SingleAgentClient {
   }
 
   private forgetProductPolicyRequestParams(metadata: WebhookMetadata): void {
-    this.forgetProductPolicyRequestParamKeys([metadata.operation_id, metadata.task_id, metadata.context_id]);
+    const aliases = [metadata.operation_id, metadata.task_id, metadata.context_id];
+    const states = new Set(
+      aliases
+        .filter((key): key is string => key !== undefined)
+        .map(key => this.productPolicyRequestParamsByTask.get(key))
+        .filter((value): value is ProductPolicyRequestState => value !== undefined)
+    );
+    for (const state of states) state.request = undefined;
+    this.forgetProductPolicyRequestParamKeys(aliases);
+    if (states.size === 0) return;
+    // All aliases for one request share the same immutable snapshot. A webhook
+    // may name only operation/task/context, so remove any caller-supplied A2A
+    // aliases that point at that same snapshot as well.
+    for (const [key, state] of this.productPolicyRequestParamsByTask) {
+      if (states.has(state)) this.productPolicyRequestParamsByTask.delete(key);
+    }
   }
 
   private forgetProductPolicyRequestParamKeys(keys: Array<string | undefined>): void {
@@ -3486,40 +3650,64 @@ export class SingleAgentClient {
   private wrapProductPolicySubmittedContinuation<T>(
     result: TaskResult<T>,
     taskType: string,
-    requestParams: Record<string, unknown>
+    requestParams: Record<string, unknown>,
+    options?: TaskOptions
   ): TaskResult<T> {
     if (taskType !== 'get_products' || result.status !== 'submitted' || !result.submitted) return result;
 
     const submitted = result.submitted;
+    const policyState: { request?: Readonly<Record<string, unknown>> } = {
+      request: productPolicyRequestSnapshot(requestParams),
+    };
+    this.rememberProductPolicyRequestState(taskType, policyState, result, options);
+    const retainedKeys = [
+      result.metadata.taskId,
+      result.metadata.contextId,
+      result.metadata.serverTaskId,
+      submitted.taskId,
+      options?.taskId,
+      options?.contextId,
+    ];
     result.submitted = {
       ...submitted,
       track: async transport => {
         const taskInfo = await submitted.track(transport);
-        const processed = await this.applyProductPropertyPolicyToTaskInfo(taskInfo, taskType, requestParams);
-        if (['completed', 'failed', 'rejected', 'canceled'].includes(processed.status)) {
-          this.forgetProductPolicyRequestParamKeys([
-            result.metadata.taskId,
-            result.metadata.serverTaskId,
-            processed.taskId,
-          ]);
+        const terminal = ['completed', 'failed', 'rejected', 'canceled'].includes(taskInfo.status);
+        try {
+          return await this.applyProductPropertyPolicyToTaskInfo(
+            taskInfo,
+            taskType,
+            (policyState.request ?? {}) as Record<string, unknown>
+          );
+        } finally {
+          if (terminal) {
+            policyState.request = undefined;
+            this.forgetProductPolicyRequestParamKeys([...retainedKeys, taskInfo.taskId]);
+          }
         }
-        return processed;
       },
       waitForCompletion: async (pollInterval, signal) => {
         let completed = await submitted.waitForCompletion(pollInterval, signal);
         if (completed.success && completed.data) {
           completed.data = this.normalizeResponseToV3(taskType, completed.data) as T;
         }
-        const processed = await this.applyProductPropertyPolicy(completed, taskType, requestParams);
-        if (processed.status === 'completed' || processed.status === 'failed') {
-          this.forgetProductPolicyRequestParamKeys([
-            result.metadata.taskId,
-            result.metadata.serverTaskId,
-            processed.metadata.taskId,
-            processed.metadata.serverTaskId,
-          ]);
+        const terminal = completed.status === 'completed' || completed.status === 'failed';
+        try {
+          return await this.applyProductPropertyPolicy(
+            completed,
+            taskType,
+            (policyState.request ?? {}) as Record<string, unknown>
+          );
+        } finally {
+          if (terminal) {
+            policyState.request = undefined;
+            this.forgetProductPolicyRequestParamKeys([
+              ...retainedKeys,
+              completed.metadata.taskId,
+              completed.metadata.serverTaskId,
+            ]);
+          }
         }
-        return processed;
       },
     };
 
@@ -3579,11 +3767,11 @@ export class SingleAgentClient {
 
   private productPolicyRequestParamsForKey(key: string | undefined): Record<string, unknown> | undefined {
     if (!key) return undefined;
-    const requestParams = this.productPolicyRequestParamsByTask.get(key);
-    if (!requestParams) return undefined;
+    const state = this.productPolicyRequestParamsByTask.get(key);
+    if (!state?.request) return undefined;
     this.productPolicyRequestParamsByTask.delete(key);
-    this.productPolicyRequestParamsByTask.set(key, requestParams);
-    return requestParams;
+    this.productPolicyRequestParamsByTask.set(key, state);
+    return state.request as Record<string, unknown>;
   }
 
   private async applyProductPropertyPolicyToWebhookResult(
@@ -3927,6 +4115,7 @@ export class SingleAgentClient {
       legacyFormatConverter,
       projectionCatalogs ?? this.config.projectionCatalogs
     );
+    const account = canonicalAccountRoutingSnapshot(params.account);
     return this.executeAndHandle<CanonicalGetProductsResponse>(
       'get_products',
       'onGetProductsStatusChange',
@@ -3941,7 +4130,7 @@ export class SingleAgentClient {
         const authoritativeProducts = Array.isArray((data as unknown as { products?: unknown[] }).products)
           ? (data as unknown as { products: unknown[] }).products
           : response.products;
-        this.rememberCanonicalProductRoutes(response.products, params.account, authoritativeProducts);
+        this.rememberCanonicalProductRoutes(response.products, account, authoritativeProducts);
         const { _message: _dropLegacyMessage, ...canonical } = response as typeof response & { _message?: unknown };
         void _dropLegacyMessage;
         return { ...canonical, projection: { diagnostics } } as CanonicalGetProductsResponse;
@@ -5069,8 +5258,10 @@ export class SingleAgentClient {
         result.data = this.normalizeResponseToV3(taskName, result.data) as T;
       }
 
-      result = this.wrapProductPolicySubmittedContinuation(result, taskName, normalizedParams);
-      this.rememberProductPolicyRequestParams(taskName, normalizedParams, result, options);
+      result = this.wrapProductPolicySubmittedContinuation(result, taskName, normalizedParams, options);
+      if (result.status === 'working') {
+        this.rememberProductPolicyRequestParams(taskName, normalizedParams, result, options);
+      }
       result = await this.applyProductPropertyPolicy(result, taskName, normalizedParams);
 
       return result;
@@ -5198,14 +5389,14 @@ export class SingleAgentClient {
       canonical,
       creativeTaskType,
       legacyFormatConverter,
-      creativeAssociation.canonicalRequest
+      creativeAssociation.routingSnapshot
     );
     return this.wrapCanonicalCreativeContinuations(
       canonical,
       creativeTaskType,
       undefined,
       legacyFormatConverter,
-      creativeAssociation.canonicalRequest
+      creativeAssociation.routingSnapshot
     );
   }
 

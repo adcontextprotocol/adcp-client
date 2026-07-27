@@ -80,6 +80,33 @@ describe('canonical legacy route cache', () => {
     assert.equal(c.cachedCanonicalLegacyRefs(selector('p', 'opt'), { account_id: 'acct-b' }), undefined);
   });
 
+  test('uses only natural-key account identity when requests carry brand overrides', () => {
+    const c = client();
+    const fullAccount = {
+      brand: {
+        domain: 'brand.example',
+        brand_id: 'subbrand',
+        industries: ['IAB1'],
+        data_subject_contestation: { email: 'privacy@brand.example' },
+        brand_kit_override: { tagline: `large-${'x'.repeat(32 * 1024)}` },
+      },
+      operator: 'agency.example',
+      sandbox: true,
+    };
+    const identity = {
+      brand: { domain: 'brand.example', brand_id: 'subbrand' },
+      operator: 'agency.example',
+      sandbox: true,
+    };
+    c.rememberCanonicalProductRoutes(
+      [{ product_id: 'p', format_options: [canonicalOption('opt', 'natural-key')] }],
+      fullAccount
+    );
+
+    assert.equal(c.canonicalAccountScope(fullAccount), c.canonicalAccountScope(identity));
+    assert.equal(c.cachedCanonicalLegacyRefs(selector('p', 'opt'), identity)[0].id, 'natural-key');
+  });
+
   test('per-call resolver wins, then cache, then configured resolver', () => {
     const configured = () => ({ agent_url: 'https://formats.example', id: 'configured' });
     const override = () => ({ agent_url: 'https://formats.example', id: 'per-call' });
@@ -246,6 +273,69 @@ describe('canonical legacy route cache', () => {
       )[0].id,
       'legacy-opt'
     );
+  });
+
+  test('learns update routes from new_packages and affected_packages across polling and webhooks', async () => {
+    const c = client();
+    const account = { account_id: 'acct-update' };
+    const request = {
+      account,
+      new_packages: [
+        {
+          product_id: 'p',
+          format_option_refs: [{ scope: 'product', format_option_id: 'opt' }],
+        },
+      ],
+    };
+    c.rememberCanonicalProductRoutes(
+      [{ product_id: 'p', format_options: [canonicalOption('opt', 'legacy-update')] }],
+      account
+    );
+    const wrapped = c.wrapCanonicalCreativeContinuations(
+      {
+        success: true,
+        status: 'submitted',
+        metadata: { taskId: 'update-poll', taskName: 'update_media_buy', status: 'submitted' },
+        submitted: {
+          taskId: 'update-poll',
+          track: async () => ({ taskId: 'update-poll', taskType: 'update_media_buy', status: 'working' }),
+          waitForCompletion: async () => ({
+            success: true,
+            status: 'completed',
+            data: { media_buy_id: 'mb', affected_packages: [{ package_id: 'pkg-update-poll', product_id: 'p' }] },
+            metadata: { taskId: 'update-poll', taskName: 'update_media_buy', status: 'completed' },
+          }),
+        },
+      },
+      'update_media_buy',
+      undefined,
+      undefined,
+      request
+    );
+    await wrapped.submitted.waitForCompletion();
+
+    const packageContext = packageId => ({
+      source: 'selector',
+      selector: { package_id: packageId },
+      operation: 'update_media_buy',
+      field: packageId,
+    });
+    assert.equal(c.cachedCanonicalLegacyRefs(packageContext('pkg-update-poll'), account)[0].id, 'legacy-update');
+
+    c.rememberCanonicalCreativeTaskAssociation('update-webhook', 'update_media_buy', undefined, request);
+    c.canonicalizeWebhookCreativeResult(
+      {
+        operation_id: 'update-webhook',
+        task_id: 'seller-update-webhook',
+        agent_id: agent.id,
+        task_type: 'update_media_buy',
+        status: 'completed',
+        timestamp: new Date().toISOString(),
+        protocol: 'mcp',
+      },
+      { media_buy_id: 'mb', affected_packages: [{ package_id: 'pkg-update-webhook', product_id: 'p' }] }
+    );
+    assert.equal(c.cachedCanonicalLegacyRefs(packageContext('pkg-update-webhook'), account)[0].id, 'legacy-update');
   });
 
   test('bounds route memory with LRU eviction', () => {

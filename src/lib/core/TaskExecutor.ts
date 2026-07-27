@@ -389,6 +389,18 @@ export class TaskExecutor {
   }
 
   /**
+   * Reconcile a push-delivered terminal status with the local runner task.
+   * Submitted task state is already compacted after dispatch; this schedules
+   * the same short final-status retention used by synchronous completions.
+   *
+   * @internal
+   */
+  observeExternalTaskStatus(taskId: string, status: TaskStatus, result?: unknown): void {
+    if (!['completed', 'failed', 'rejected', 'canceled'].includes(status)) return;
+    this.updateTaskStatus(taskId, status, result);
+  }
+
+  /**
    * Run the configured pre-send schema check against the user-facing request
    * shape. Callers invoke this on the unadapted (v3) params before any wire
    * adaptation runs, so the validator sees the same object the caller wrote.
@@ -581,11 +593,15 @@ export class TaskExecutor {
         const isBlocking = true;
 
         if (govResult.status === 'denied' && isBlocking) {
-          return attachMatch(this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs));
+          const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+          this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
+          return attachMatch(denied);
         }
 
         if (govResult.status === 'conditions' && !govResult.conditionsApplied && isBlocking) {
-          return attachMatch(this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs));
+          const denied = this.buildGovernanceResult<T>(govResult, taskId, taskName, agent, startTime, debugLogs);
+          this.updateTaskStatus(taskId, 'governance-denied', undefined, denied.error);
+          return attachMatch(denied);
         }
 
         // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
@@ -707,6 +723,12 @@ export class TaskExecutor {
         }
       }
 
+      if (
+        ['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(result.status) &&
+        this.activeTasks.get(taskId)?.status !== result.status
+      ) {
+        this.updateTaskStatus(taskId, result.status as TaskStatus, result.data, result.error);
+      }
       return attachMatch(result);
     } catch (error) {
       if (isAbortOrTimeoutError(error)) {
@@ -714,6 +736,7 @@ export class TaskExecutor {
           (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
           (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
         }
+        this.updateTaskStatus(taskId, 'aborted', undefined, error instanceof Error ? error.message : String(error));
         throw error;
       }
 
@@ -728,7 +751,9 @@ export class TaskExecutor {
           governanceResult.governanceContext
         );
       }
-      return attachMatch(this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime));
+      const failed = this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
+      this.updateTaskStatus(taskId, 'failed', undefined, failed.error);
+      return attachMatch(failed);
     }
   }
 
@@ -1107,6 +1132,15 @@ export class TaskExecutor {
   ): Promise<TaskResult<T>> {
     // Extract any data that came with the working response
     const partialData = this.extractResponseData(initialResponse, debugLogs, taskName);
+    const metadata = this.buildMetadata({
+      taskId,
+      taskName,
+      agent,
+      startTime,
+      status: 'working',
+      response: initialResponse,
+    });
+    this.compactIntermediateTaskState(taskId, 'working');
 
     // Return working status immediately - this is a valid intermediate state
     // Callers can use the taskId to poll for completion or set up webhooks
@@ -1114,14 +1148,7 @@ export class TaskExecutor {
       success: true, // The task is progressing, not failed
       status: 'working',
       data: partialData,
-      metadata: this.buildMetadata({
-        taskId,
-        taskName,
-        agent,
-        startTime,
-        status: 'working',
-        response: initialResponse,
-      }),
+      metadata,
       conversation: messages,
       debug_logs: debugLogs,
     };
@@ -1172,6 +1199,11 @@ export class TaskExecutor {
     // grepping debug logs can pinpoint the seller-side spec violation.
     const extractedServerTaskId = this.responseParser.getTaskId(response);
     const serverTaskId = extractedServerTaskId ?? taskId;
+    // Snapshot only what continuations need. Referencing `options.transport`
+    // inside either closure would retain the entire per-call options object,
+    // including unrelated adopter metadata, for as long as the continuation
+    // remains reachable.
+    const pollingTransport = options.transport;
     if (!extractedServerTaskId) {
       debugLogs.push({
         type: 'warning',
@@ -1189,28 +1221,61 @@ export class TaskExecutor {
     const submitted: SubmittedContinuation<T> = {
       taskId: serverTaskId,
       webhookUrl,
-      track: (transport?: import('../protocols').TransportOptions) =>
-        this.getTaskStatus(agent, serverTaskId, transport ?? options.transport),
-      waitForCompletion: (pollInterval = 60000, signal?: AbortSignal) =>
-        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport, signal),
+      track: async (transport?: import('../protocols').TransportOptions) => {
+        const task = await this.getTaskStatus(agent, serverTaskId, transport ?? pollingTransport);
+        if (['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
+          this.updateTaskStatus(taskId, task.status as TaskStatus, task.result, task.error);
+        }
+        return task;
+      },
+      waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal) => {
+        const completed = await this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, pollingTransport, signal);
+        this.updateTaskStatus(
+          taskId,
+          completed.status === 'completed' ? 'completed' : 'failed',
+          completed.data,
+          completed.error
+        );
+        return completed;
+      },
     };
+
+    const metadata = this.buildMetadata({
+      taskId,
+      taskName,
+      agent,
+      startTime,
+      status: 'submitted',
+      response,
+    });
+    this.compactIntermediateTaskState(taskId, 'submitted');
 
     return {
       success: true, // The task is progressing, not failed
       status: 'submitted',
       submitted,
       data: partialData,
-      metadata: this.buildMetadata({
-        taskId,
-        taskName,
-        agent,
-        startTime,
-        status: 'submitted',
-        response,
-      }),
+      metadata,
       conversation: messages,
       debug_logs: debugLogs,
     };
+  }
+
+  /**
+   * A working/submitted response carries everything needed to poll externally.
+   * Keeping the original request in activeTasks after dispatch would pin
+   * inline assets, webhook credentials, conversation payloads, and per-call
+   * options for an unbounded amount of time while the seller works. Retain
+   * only lifecycle metadata and the separately tracked idempotency key.
+   */
+  private compactIntermediateTaskState(taskId: string, status: 'working' | 'submitted'): void {
+    const task = this.activeTasks.get(taskId);
+    if (!task) return;
+    task.status = status;
+    task.params = undefined;
+    task.messages = [];
+    task.options = {};
+    delete task.pendingInput;
   }
 
   /**
@@ -1718,18 +1783,42 @@ export class TaskExecutor {
       throw new Error(`Deferred task not found: ${token}`);
     }
 
-    // Continue task with the provided input (no handler for resumed deferred tasks)
-    const resumed = await this.continueTaskWithInput<T>(
-      state.agent,
-      state.taskId,
-      state.taskName,
-      state.params,
-      state.contextId,
-      input,
-      state.messages,
-      undefined // No handler for deferred tasks - input was provided by human
-    );
-    return attachMatch(resumed);
+    try {
+      // Continue task with the provided input (no handler for resumed deferred tasks)
+      const resumed = await this.continueTaskWithInput<T>(
+        state.agent,
+        state.taskId,
+        state.taskName,
+        state.params,
+        state.contextId,
+        input,
+        state.messages,
+        undefined // No handler for deferred tasks - input was provided by human
+      );
+      const remainsPaused = ['input-required', 'auth-required', 'deferred'].includes(resumed.status);
+      if (
+        ['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(resumed.status) &&
+        this.activeTasks.get(state.taskId)?.status !== resumed.status
+      ) {
+        this.updateTaskStatus(state.taskId, resumed.status as TaskStatus, resumed.data, resumed.error);
+      }
+      if (!remainsPaused) {
+        await this.config.deferredStorage.delete(token);
+      }
+      return attachMatch(resumed);
+    } catch (error) {
+      // A thrown continuation failure is terminal for this deferred token.
+      // Release both persistence and the in-memory request payload before the
+      // error escapes to the caller.
+      this.updateTaskStatus(state.taskId, 'failed', undefined, error instanceof Error ? error.message : String(error));
+      try {
+        await this.config.deferredStorage.delete(token);
+      } catch {
+        // Local request compaction above is the safety boundary. Preserve the
+        // original continuation/delete error if external cleanup also fails.
+      }
+      throw error;
+    }
   }
 
   /**
@@ -2156,7 +2245,14 @@ export class TaskExecutor {
 
       // If task is finished, remove from active tasks after a delay.
       // unref() ensures this timer doesn't prevent the process from exiting.
-      if (['completed', 'failed', 'rejected', 'canceled'].includes(status)) {
+      if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(status)) {
+        // Keep lifecycle metadata briefly for status inspection, but release
+        // request/conversation/options immediately. These may contain inline
+        // creative assets and webhook or transport credentials.
+        task.params = undefined;
+        task.messages = [];
+        task.options = {};
+        delete task.pendingInput;
         setTimeout(() => {
           this.activeTasks.delete(taskId);
         }, 30000).unref(); // Keep for 30 seconds for final status checks

@@ -32,3 +32,8 @@ its own creative-agent URL; collisions and contradictory inline parameters
 still fail closed. Generated option IDs are stable across seller array
 reordering, and same-client reverse delivery retains the original seller tuple;
 process-boundary delivery still requires a durable catalog adapter or resolver.
+Async creative-task associations retain one shared frozen account/package
+routing snapshot across task aliases. Submitted executor state and asynchronous
+product-policy state are compacted to the minimum lifecycle, routing, and
+policy fields, and terminal deferred continuations release their persisted
+request state, so inline assets and webhook credentials are not retained.

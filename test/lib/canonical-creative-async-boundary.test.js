@@ -1,7 +1,8 @@
-const { describe, test } = require('node:test');
+const { describe, test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { SingleAgentClient } = require('../../dist/lib/core/SingleAgentClient.js');
+const { TaskExecutor, ProtocolClient } = require('../../dist/lib/index.js');
 const { packageRefsForFormatOptions, toCanonicalOnlyResponse } = require('../../dist/lib/v2/projection');
 
 const agentConfig = {
@@ -433,7 +434,15 @@ describe('canonical creative asynchronous boundaries', () => {
     for (let index = 0; index <= 10_000; index += 1) {
       client.rememberProductPolicyRequestParams(
         'get_products',
-        { brief: `policy-${index}` },
+        {
+          account: { account_id: `account-${index}` },
+          property_list: {
+            agent_url: 'https://lists.example/mcp',
+            list_id: `policy-${index}`,
+            auth_token: `list-token-${index}`,
+          },
+          push_notification_config: { authentication: { credentials: `webhook-secret-${index}` } },
+        },
         {
           success: true,
           status: 'submitted',
@@ -444,10 +453,18 @@ describe('canonical creative asynchronous boundaries', () => {
     assert.equal(client.productPolicyRequestParamsByTask.size, 10_000);
     assert.equal(client.productPolicyRequestParamsByTask.has('policy-0'), false);
     assert.equal(client.productPolicyRequestParamsByTask.has('policy-10000'), true);
-    assert.equal(client.productPolicyRequestParamsForKey('policy-2').brief, 'policy-2');
+    assert.deepEqual(client.productPolicyRequestParamsForKey('policy-2'), {
+      account: { account_id: 'account-2' },
+      property_list: {
+        agent_url: 'https://lists.example/mcp',
+        list_id: 'policy-2',
+        auth_token: 'list-token-2',
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(client.productPolicyRequestParamsForKey('policy-2')), /webhook-secret/);
     client.rememberProductPolicyRequestParams(
       'get_products',
-      { brief: 'policy-10001' },
+      { property_list: { agent_url: 'https://lists.example/mcp', list_id: 'policy-10001' } },
       {
         success: true,
         status: 'submitted',
@@ -458,6 +475,271 @@ describe('canonical creative asynchronous boundaries', () => {
     assert.equal(client.productPolicyRequestParamsByTask.has('policy-3'), false);
     client.clearConversationHistory('policy-10000');
     assert.equal(client.productPolicyRequestParamsByTask.has('policy-10000'), false);
+  });
+
+  test('retains routing snapshots only for package-route tasks', () => {
+    const client = makeClient(async () => completedResult());
+    const request = {
+      account: { account_id: 'acct-routing' },
+      packages: [
+        {
+          package_id: 'pkg-routing',
+          product_id: 'product-routing',
+          format_option_refs: [{ scope: 'product', format_option_id: 'image-routing' }],
+          creatives: [{ assets: { hero: { data: 'must-not-be-retained' } } }],
+        },
+      ],
+      reporting_webhook: { authentication: { credentials: 'must-not-be-retained' } },
+    };
+
+    for (const taskType of ['create_media_buy', 'update_media_buy', 'get_media_buys']) {
+      client.rememberCanonicalCreativeTaskAssociation(`routing-${taskType}`, taskType, undefined, request);
+      const association = client.canonicalCreativeTaskAssociations.get(`routing-${taskType}`);
+      assert.deepEqual(association.routingSnapshot, {
+        account: { account_id: 'acct-routing' },
+        packages: [
+          {
+            package_id: 'pkg-routing',
+            product_id: 'product-routing',
+            format_option_refs: [{ scope: 'product', format_option_id: 'image-routing' }],
+          },
+        ],
+      });
+      assert.doesNotMatch(JSON.stringify(association), /must-not-be-retained|creatives|reporting_webhook/);
+    }
+
+    for (const taskType of [
+      'get_products',
+      'sync_creatives',
+      'list_creatives',
+      'get_media_buy_delivery',
+      'get_creative_delivery',
+    ]) {
+      client.rememberCanonicalCreativeTaskAssociation(`no-routing-${taskType}`, taskType, undefined, request);
+      assert.strictEqual(
+        client.canonicalCreativeTaskAssociations.get(`no-routing-${taskType}`).routingSnapshot,
+        undefined
+      );
+    }
+
+    const refs = Array.from({ length: 500 }, (_, index) => ({
+      scope: 'product',
+      format_option_id: `large-option-${index}`,
+    }));
+    client.rememberCanonicalCreativeTaskIds(
+      {
+        success: true,
+        status: 'submitted',
+        metadata: {
+          ...metadata('submitted', 'routing-operation'),
+          contextId: 'routing-context',
+          serverTaskId: 'routing-server',
+          taskName: 'create_media_buy',
+        },
+        submitted: { taskId: 'routing-submitted' },
+      },
+      'create_media_buy',
+      undefined,
+      {
+        account: { account_id: 'acct-shared' },
+        packages: [{ product_id: 'large-product', format_option_refs: refs }],
+      }
+    );
+    const shared = client.canonicalCreativeTaskAssociations.get('routing-operation').routingSnapshot;
+    for (const key of ['routing-context', 'routing-server', 'routing-submitted']) {
+      assert.strictEqual(client.canonicalCreativeTaskAssociations.get(key).routingSnapshot, shared);
+    }
+  });
+
+  test('compacts submitted TaskExecutor state before returning continuations', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const request = {
+      account: { account_id: 'acct-task-state' },
+      creatives: [{ assets: { hero: { data: `inline-task-state-${'x'.repeat(128 * 1024)}` } } }],
+      reporting_webhook: { authentication: { credentials: 'task-state-webhook-secret' } },
+    };
+    try {
+      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+          return {
+            task_id: 'seller-task-state',
+            task_type: 'create_media_buy',
+            protocol: 'media-buy',
+            status: 'completed',
+            created_at: '2026-07-27T12:00:00.000Z',
+            updated_at: '2026-07-27T12:00:01.000Z',
+            result: { media_buy_id: 'mb-task-state', packages: [] },
+          };
+        }
+        return { status: 'submitted', task_id: 'seller-task-state' };
+      });
+      const executor = new TaskExecutor({ validation: { requests: 'off', responses: 'off' } });
+      const result = await executor.executeTask(agentConfig, 'create_media_buy', request, undefined, {
+        metadata: { credential: 'task-option-secret' },
+      });
+      const active = executor.getActiveTasks();
+      assert.equal(active.length, 1);
+      assert.equal(active[0].status, 'submitted');
+      assert.equal(active[0].params, undefined);
+      assert.deepEqual(active[0].messages, []);
+      assert.deepEqual(active[0].options, {});
+      assert.doesNotMatch(
+        JSON.stringify(active),
+        /inline-task-state|task-state-webhook-secret|task-option-secret|reporting_webhook|assets/
+      );
+
+      const completed = await result.submitted.waitForCompletion(1);
+      assert.equal(completed.status, 'completed');
+      assert.equal(executor.getActiveTasks()[0].status, 'completed');
+      assert.equal(executor.getActiveTasks()[0].params, undefined);
+
+      ProtocolClient.callTool = mock.fn(async () => ({ status: 'working', task_id: 'seller-working-state' }));
+      const workingExecutor = new TaskExecutor({ validation: { requests: 'off', responses: 'off' } });
+      const working = await workingExecutor.executeTask(agentConfig, 'create_media_buy', request, undefined, {
+        metadata: { credential: 'working-option-secret' },
+      });
+      assert.equal(working.status, 'working');
+      const workingState = workingExecutor.getActiveTasks()[0];
+      assert.equal(workingState.status, 'working');
+      assert.equal(workingState.params, undefined);
+      assert.deepEqual(workingState.messages, []);
+      assert.deepEqual(workingState.options, {});
+      assert.doesNotMatch(
+        JSON.stringify(workingState),
+        /inline-task-state|task-state-webhook-secret|working-option-secret|reporting_webhook|assets/
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
+  test('clears every product-policy alias after terminal continuation delivery', async () => {
+    const client = makeClient(async () => completedResult());
+    const options = { taskId: 'policy-caller-task', contextId: 'policy-caller-context' };
+    const request = {
+      account: { account_id: 'policy-account' },
+      property_list: {
+        agent_url: 'https://lists.example/mcp',
+        list_id: 'policy-list',
+        auth_token: 'policy-auth-token',
+      },
+      push_notification_config: { authentication: { credentials: 'policy-webhook-secret' } },
+    };
+    let result = {
+      success: true,
+      status: 'submitted',
+      metadata: {
+        ...metadata('submitted', 'policy-runner-task'),
+        contextId: 'policy-result-context',
+        serverTaskId: 'policy-server-task',
+      },
+      submitted: {
+        taskId: 'policy-submitted-task',
+        track: async () => ({ taskId: 'policy-submitted-task', taskType: 'get_products', status: 'working' }),
+        waitForCompletion: async () => ({
+          success: false,
+          status: 'failed',
+          error: 'seller failed',
+          metadata: metadata('failed', 'policy-completed-task'),
+        }),
+      },
+    };
+    result = client.wrapProductPolicySubmittedContinuation(result, 'get_products', request, options);
+    const aliases = [
+      'policy-runner-task',
+      'policy-result-context',
+      'policy-server-task',
+      'policy-submitted-task',
+      'policy-caller-task',
+      'policy-caller-context',
+    ];
+    for (const key of aliases) assert.equal(client.productPolicyRequestParamsByTask.has(key), true);
+    assert.doesNotMatch(JSON.stringify([...client.productPolicyRequestParamsByTask.values()]), /policy-webhook-secret/);
+
+    await result.submitted.waitForCompletion();
+    for (const key of aliases) assert.equal(client.productPolicyRequestParamsByTask.has(key), false);
+  });
+
+  test('clears deferred request state after terminal resume', async () => {
+    const originalCallTool = ProtocolClient.callTool;
+    const stored = new Map();
+    const storage = {
+      get: async key => stored.get(key),
+      set: async (key, value) => stored.set(key, value),
+      delete: async key => stored.delete(key),
+      has: async key => stored.has(key),
+    };
+    let continuing = false;
+    try {
+      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+        if (taskName === 'continue_task') {
+          continuing = true;
+          return { status: 'completed', data: { media_buy_id: 'mb-deferred', packages: [] } };
+        }
+        return {
+          status: 'input-required',
+          question: 'Approve this media buy?',
+          field: 'approval',
+          contextId: 'deferred-context',
+        };
+      });
+      const executor = new TaskExecutor({
+        deferredStorage: storage,
+        validation: { requests: 'off', responses: 'off' },
+      });
+      const request = {
+        creatives: [{ assets: { hero: { data: `deferred-inline-${'x'.repeat(128 * 1024)}` } } }],
+        reporting_webhook: { authentication: { credentials: 'deferred-webhook-secret' } },
+      };
+      const deferred = await executor.executeTask(agentConfig, 'create_media_buy', request, async () => ({
+        defer: true,
+        token: 'deferred-token',
+      }));
+      assert.equal(deferred.status, 'deferred');
+      assert.equal(stored.has('deferred-token'), true);
+      assert.match(JSON.stringify(stored.get('deferred-token')), /deferred-webhook-secret/);
+
+      const resumed = await deferred.deferred.resume('approved');
+      assert.equal(continuing, true);
+      assert.equal(resumed.status, 'completed');
+      assert.equal(stored.has('deferred-token'), false);
+      const active = executor.getActiveTasks()[0];
+      assert.equal(active.status, 'completed');
+      assert.equal(active.params, undefined);
+      assert.deepEqual(active.messages, []);
+      assert.doesNotMatch(JSON.stringify(active), /deferred-inline|deferred-webhook-secret|reporting_webhook|assets/);
+
+      const rejectingStored = new Map();
+      const rejectingStorage = {
+        get: async key => rejectingStored.get(key),
+        set: async (key, value) => rejectingStored.set(key, value),
+        delete: async () => {
+          throw new Error('deferred delete failed');
+        },
+        has: async key => rejectingStored.has(key),
+      };
+      const rejectingExecutor = new TaskExecutor({
+        deferredStorage: rejectingStorage,
+        validation: { requests: 'off', responses: 'off' },
+      });
+      const rejectingDeferred = await rejectingExecutor.executeTask(
+        agentConfig,
+        'create_media_buy',
+        request,
+        async () => ({ defer: true, token: 'rejecting-deferred-token' })
+      );
+      await assert.rejects(rejectingDeferred.deferred.resume('approved'), /deferred delete failed/);
+      const rejectingActive = rejectingExecutor.getActiveTasks()[0];
+      assert.equal(rejectingActive.status, 'failed');
+      assert.equal(rejectingActive.params, undefined);
+      assert.deepEqual(rejectingActive.messages, []);
+      assert.doesNotMatch(
+        JSON.stringify(rejectingActive),
+        /deferred-inline|deferred-webhook-secret|reporting_webhook|assets/
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
   });
 
   test('retains terminal task associations for post-completion history and task APIs', async () => {
@@ -901,6 +1183,8 @@ describe('canonical creative asynchronous boundaries', () => {
 
   test('onActivity observes the original canonical custom request across a legacy downgrade', async () => {
     const customLegacyFormat = { agent_url: 'https://seller.example/custom-formats', id: 'homepage_takeover' };
+    const inlineAssetPayload = `inline-secret-asset-${'x'.repeat(128 * 1024)}`;
+    const webhookCredential = 'terminal-cache-webhook-credential';
     const canonicalProduct = toCanonicalOnlyResponse(
       {
         products: [
@@ -957,6 +1241,11 @@ describe('canonical creative asynchronous boundaries', () => {
       start_time: 'asap',
       end_time: '2027-12-31T00:00:00Z',
       idempotency_key: 'custom-activity-idempotency',
+      reporting_webhook: {
+        url: 'https://buyer.example/reporting',
+        authentication: { schemes: ['HMAC-SHA256'], credentials: webhookCredential },
+        reporting_frequency: 'daily',
+      },
       packages: [
         {
           product_id: 'custom-product',
@@ -969,7 +1258,15 @@ describe('canonical creative asynchronous boundaries', () => {
               name: 'Custom activity creative',
               format_kind: 'custom',
               format_option_ref: selected.format_option_refs[0],
-              assets: {},
+              assets: {
+                hero: {
+                  asset_type: 'image',
+                  url: 'https://cdn.example.com/hero.png',
+                  width: 300,
+                  height: 250,
+                  alt_text: inlineAssetPayload,
+                },
+              },
             },
           ],
         },
@@ -981,5 +1278,28 @@ describe('canonical creative asynchronous boundaries', () => {
     assert.equal(observed.format_kind, 'custom');
     assert.strictEqual(observed.format_id, undefined);
     assertCanonical(activities);
+
+    for (const key of ['runner-task', 'seller-task']) {
+      const association = client.canonicalCreativeTaskAssociations.get(key);
+      assert.ok(association, `expected terminal association for ${key}`);
+      assert.strictEqual(association.canonicalRequest, undefined);
+      assert.deepEqual(association.routingSnapshot, {
+        account: { account_id: 'activity-account' },
+        packages: [
+          {
+            product_id: 'custom-product',
+            format_option_refs: [{ scope: 'product', format_option_id: 'homepage-takeover' }],
+          },
+        ],
+      });
+      const retained = JSON.stringify(association);
+      assert.doesNotMatch(retained, /terminal-cache-webhook-credential|inline-secret-asset|reporting_webhook|assets/);
+      assert.equal(Object.isFrozen(association.routingSnapshot), true);
+      assert.equal(Object.isFrozen(association.routingSnapshot.account), true);
+      assert.equal(Object.isFrozen(association.routingSnapshot.packages), true);
+      assert.equal(Object.isFrozen(association.routingSnapshot.packages[0]), true);
+      assert.equal(Object.isFrozen(association.routingSnapshot.packages[0].format_option_refs), true);
+      assert.equal(Object.isFrozen(association.routingSnapshot.packages[0].format_option_refs[0]), true);
+    }
   });
 });
