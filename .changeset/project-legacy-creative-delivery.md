@@ -27,3 +27,8 @@ One catalog snapshot can now configure both legacy-to-canonical discovery and
 canonical-to-legacy delivery through `projectionAdaptersFromCatalogSnapshots`,
 including persisted selections that no longer carry private in-memory routing
 metadata.
+Uniquely AAO-published legacy IDs also upgrade when a deployed seller emitted
+its own creative-agent URL; collisions and contradictory inline parameters
+still fail closed. Generated option IDs are stable across seller array
+reordering, and same-client reverse delivery retains the original seller tuple;
+process-boundary delivery still requires a durable catalog adapter or resolver.

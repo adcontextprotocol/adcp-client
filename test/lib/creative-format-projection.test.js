@@ -312,9 +312,8 @@ describe('creative format delivery projection', () => {
     );
 
     assert.strictEqual(projected.packages[0].format_ids, undefined);
-    assert.deepStrictEqual(projected.packages[0].format_option_refs, [
-      { scope: 'product', format_option_id: 'migrated_1_image' },
-    ]);
+    assert.strictEqual(projected.packages[0].format_option_refs[0].scope, 'product');
+    assert.match(projected.packages[0].format_option_refs[0].format_option_id, /^migrated_[a-f0-9]{32}$/);
   });
 
   test('canonicalizes custom legacy-only package selectors through the converter', () => {
@@ -1224,10 +1223,8 @@ describe('creative format delivery projection', () => {
       }
     );
 
-    assert.deepStrictEqual(
-      captured.packages.map(pkg => pkg.format_option_refs[0].format_option_id),
-      ['migrated_1_image', 'homepage-takeover']
-    );
+    assert.match(captured.packages[0].format_option_refs[0].format_option_id, /^migrated_[a-f0-9]{32}$/);
+    assert.strictEqual(captured.packages[1].format_option_refs[0].format_option_id, 'homepage-takeover');
     assert.ok(captured.packages.every(pkg => pkg.format_ids === undefined));
   });
 

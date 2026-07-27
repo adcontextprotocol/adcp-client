@@ -109,9 +109,8 @@ test('official MCP legacy buyer is canonicalized before modern server handlers',
 
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.ok(observedCreate, 'platform create handler was invoked');
-    assert.deepStrictEqual(observedCreate.packages[0].format_option_refs, [
-      { scope: 'product', format_option_id: 'migrated_1_image' },
-    ]);
+    assert.strictEqual(observedCreate.packages[0].format_option_refs[0].scope, 'product');
+    assert.match(observedCreate.packages[0].format_option_refs[0].format_option_id, /^migrated_[a-f0-9]{32}$/);
     assert.deepStrictEqual(observedCreate.packages[1].format_option_refs, [
       { scope: 'product', format_option_id: 'homepage-takeover' },
     ]);

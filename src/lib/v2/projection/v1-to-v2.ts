@@ -55,15 +55,37 @@ import type {
   CanonicalFormatKind,
 } from './types';
 import { forwardLookupByGlob, forwardLookupByStructural } from './registry';
-import { lookupV1Format, type V1FormatDefinition } from './catalog';
+import { lookupUniqueV1FormatById, lookupV1Format, type V1FormatDefinition } from './catalog';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
 import { LIBRARY_VERSION } from '../../version';
 import { ProductFormatDeclarationSchema } from '../../types/schemas.generated';
 import { legacyFormatConverterFromCatalogSnapshots, type ProjectionCatalogSnapshot } from './catalog-snapshot';
+import { canonicalizeAgentUrl } from '../../discovery/resolve-agent-properties';
+import { isLikelyPrivateUrl } from '../../net/address-guards';
+import { createHmac } from 'crypto';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
+const MIGRATED_OPTION_ID_KEY = 'adcp:v1-format-option-id:v1';
 
 class CatalogRequirementConflict extends Error {}
+
+/**
+ * Give an unnamed projected option a stable, opaque identity derived from the
+ * complete legacy tuple. Positional IDs are unsafe: a seller reordering its
+ * `format_ids` array could otherwise make a persisted canonical selection
+ * resolve to a different legacy format on the next discovery refresh.
+ */
+function migratedFormatOptionId(fid: V1FormatId): string {
+  const identity = JSON.stringify([
+    fid.agent_url,
+    fid.id,
+    fid.width ?? null,
+    fid.height ?? null,
+    fid.duration_ms ?? null,
+  ]);
+  const digest = createHmac('sha256', MIGRATED_OPTION_ID_KEY).update(identity).digest('hex').slice(0, 32);
+  return `migrated_${digest}`;
+}
 
 export interface V1ToV2Result {
   v2: V2Product;
@@ -95,6 +117,8 @@ export interface V1ToV2ProjectionOptions {
   legacyFormatConverter?: LegacyFormatConverter;
   /** Pre-resolved exact-owner publisher/community catalogs, highest precedence first. */
   projectionCatalogs?: readonly ProjectionCatalogSnapshot[];
+  /** @internal Filesystem-isolated catalog fixture used by projector tests. */
+  _catalogPath?: string;
 }
 
 /**
@@ -347,7 +371,31 @@ function projectFormatId(
   );
   if (catalogSnapshot) return catalogSnapshot;
 
-  const catalogEntry = lookupV1Format(fid);
+  // Prefer the protocol-correct composite identity. During the legacy
+  // migration, deployed sellers have also copied AAO standard IDs while
+  // putting their own creative-agent URL in the tuple. Treat that as an
+  // inbound alias only when the AAO catalog publishes exactly one entry for
+  // the bare ID. `buildParams` below still rejects contradictory inline
+  // dimensions/duration, and the emitted v1_format_ref preserves `fid` so a
+  // legacy write routes back to the seller rather than the AAO host.
+  const exactCatalogEntry = lookupV1Format(fid, options?._catalogPath);
+  const canonicalAgentUrl = canonicalizeAgentUrl(fid.agent_url);
+  const mayUseUniqueAlias =
+    canonicalAgentUrl !== null &&
+    new URL(canonicalAgentUrl).protocol === 'https:' &&
+    !isLikelyPrivateUrl(canonicalAgentUrl);
+  const uniqueAliasEntry =
+    exactCatalogEntry === undefined && mayUseUniqueAlias
+      ? lookupUniqueV1FormatById(fid.id, options?._catalogPath)
+      : undefined;
+  if (uniqueAliasEntry) {
+    // A caller-authored converter is more specific than this compatibility
+    // heuristic. Returning undefined opts into the AAO bare-ID fallback;
+    // invalid/throwing converter output fails closed and is never bypassed.
+    const explicit = projectWithLegacyConverter(fid, productId, field, options?.legacyFormatConverter);
+    if (explicit) return explicit;
+  }
+  const catalogEntry = exactCatalogEntry ?? uniqueAliasEntry;
 
   // Step 1: v1 catalog has an explicit `canonical` annotation. Always
   // object-shaped per `canonical-projection-ref.json`: required `kind`,
@@ -500,7 +548,7 @@ export function projectV1ProductToV2(v1: V1Product, options?: V1ToV2ProjectionOp
       format_options.push(
         typeof decl.format_option_id === 'string' && decl.format_option_id.length > 0
           ? decl
-          : { ...decl, format_option_id: `migrated_${i + 1}_${decl.format_kind}` }
+          : { ...decl, format_option_id: migratedFormatOptionId(fid) }
       );
     }
     if (diagnostic) diagnostics.push(diagnostic);
@@ -522,10 +570,10 @@ export interface BareFormatIdResolveOptions {
    * {@link V1FormatId} for resolution. Defaults to the canonical AAO host
    * (`https://creative.adcontextprotocol.org/`) — the publisher of every
    * AAO catalog id, and the source of essentially all bare ids persisted
-   * before the `{ agent_url, id }` convention. Override only when the bare
-   * id was minted under a different agent's catalog — for an AAO catalog id,
-   * leave this unset; passing a non-AAO `agentUrl` won't match the AAO-keyed
-   * catalog and resolves to `null`.
+   * before the `{ agent_url, id }` convention. When an exact ID has one
+   * unique AAO-published meaning, a valid non-AAO `agentUrl` is accepted as
+   * a legacy owner alias and is preserved in `v1_format_ref`. Unknown or
+   * colliding IDs still resolve to `null`.
    */
   agentUrl?: string;
 

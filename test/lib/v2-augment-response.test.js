@@ -8,7 +8,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { withFormatOptions, augmentProductWithFormatOptions } = require('../../dist/lib/v2/projection/index.js');
-const { loadCatalog, _resetCatalogCache } = require('../../dist/lib/v2/projection/catalog.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 const SKIP_REASON = existsSync(CATALOG_PATH)
@@ -208,27 +207,27 @@ describe('augmentProductWithFormatOptions', { skip: SKIP_REASON }, () => {
         },
       ])
     );
-    _resetCatalogCache();
-    loadCatalog(catalogPath);
     try {
       for (const id of ['conflicting_display', 'conflicting_audio', 'partial_dimensions', 'fractional_duration']) {
-        const { product, diagnostics } = augmentProductWithFormatOptions({
-          product_id: `catalog_${id}`,
-          name: 'n',
-          description: 'd',
-          format_ids: [
-            {
-              agent_url: 'https://creative.adcontextprotocol.org/',
-              id,
-            },
-          ],
-        });
+        const { product, diagnostics } = augmentProductWithFormatOptions(
+          {
+            product_id: `catalog_${id}`,
+            name: 'n',
+            description: 'd',
+            format_ids: [
+              {
+                agent_url: 'https://creative.adcontextprotocol.org/',
+                id,
+              },
+            ],
+          },
+          { _catalogPath: catalogPath }
+        );
         assert.deepStrictEqual(product.format_options, []);
         assert.strictEqual(diagnostics.length, 1);
         assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'catalog_requirement_conflict');
       }
     } finally {
-      _resetCatalogCache();
       rmSync(dir, { recursive: true, force: true });
     }
   });

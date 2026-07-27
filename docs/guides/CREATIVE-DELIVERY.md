@@ -188,10 +188,11 @@ canonical params. This is preferable to maintaining two hand-written callbacks
 for temporary seller migrations. If an application needs custom reverse logic,
 it can still configure `canonicalFormatLegacyResolver` directly.
 
-Only an exact, URL-sensitive `v1_format_ref` authorizes legacy-to-canonical
-projection. A public declaration with the same `format_option_id` is not an
-alias by itself, and `canonical_formats_only: true` explicitly forbids using
-that declaration as a legacy mapping. This matters for the public Snap mirror:
+For injected publisher/community catalogs, only an exact, URL-sensitive
+`v1_format_ref` authorizes legacy-to-canonical projection. A public declaration
+with the same `format_option_id` is not an alias by itself, and
+`canonical_formats_only: true` explicitly forbids using that declaration as a
+legacy mapping. This matters for the public Snap mirror:
 `https://creative.adcontextprotocol.org/translated/snap/adagents.json` makes
 Snap's canonical publisher formats publicly discoverable, but its current
 canonical-only entries do not authorize guessed Snapchat legacy tuples.
@@ -199,8 +200,17 @@ canonical-only entries do not authorize guessed Snapchat legacy tuples.
 The bundled AAO catalog recognizes both the current
 `https://creative.adcontextprotocol.org/` owner and the historical
 `https://adcontextprotocol.org/` owner used by early deployments such as
-Optimera. This is an explicit alias; matching never falls back to a format ID
-owned by an unrelated URL.
+Optimera. For inbound legacy discovery it also recognizes an exact bare ID
+with one unique AAO-published meaning, covering sellers that copied AAO IDs
+but emitted their own creative-agent URL. Duplicate IDs and contradictory
+inline dimensions or duration fail closed, and the seller's original tuple is
+preserved by the bounded same-client route cache for legacy delivery. Generated
+option IDs are stable across seller array reordering. After a process boundary,
+configure a durable catalog adapter or reverse resolver; canonical data cannot
+reconstruct an arbitrary owner. Projection is semantic normalization only: it
+does not fetch or authorize the source URL, and later network contact remains
+subject to the SDK's normal HTTPS and SSRF policy. This fallback never applies
+to a bespoke ID.
 
 The bundled registry cannot infer semantics for a seller-specific
 `{ agent_url, id }`. Such an inbound creative fails closed unless a

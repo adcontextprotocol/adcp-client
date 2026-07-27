@@ -11,8 +11,10 @@
  * format projects to. This is the spec's resolution-order step 2 —
  * "seller-asserted on the v1 file" — applied to AAO-published v1 formats.
  *
- * Loader is keyed by `agent_url` (with trailing-slash normalization) +
- * `format_id.id`. Same scope as the v2→v1 registry: AAO catalog only.
+ * Primary lookup is keyed by `agent_url` (with trailing-slash normalization) +
+ * `format_id.id`. The inbound migration path may also use an exact bare ID
+ * when it has one unique meaning in the AAO catalog; the source owner is
+ * preserved for reverse delivery. Same scope as the v2→v1 registry: AAO catalog only.
  * Seller-specific catalogs (from a publisher's
  * `list_creative_formats`) are out of scope for the prototype — the
  * full 8.0 enablement would fetch them via an `AgentClient` injected
@@ -90,19 +92,21 @@ export interface V1FormatDefinition {
 interface CatalogIndex {
   /** Keyed by `<normalized-agent-url>::<id>` for O(1) lookup. */
   byKey: Map<string, V1FormatDefinition>;
+  /** Exact bare IDs with one AAO-published meaning; `null` marks a collision. */
+  byUniqueId: Map<string, V1FormatDefinition | null>;
   entries: V1FormatDefinition[];
 }
 
-let cached: CatalogIndex | null = null;
+const cachedByPath = new Map<string, CatalogIndex>();
 
 /**
  * Normalize agent_url for indexing. Adds trailing slash when missing and
  * folds only explicitly known historical AAO hosts into the current host.
  * The AAO publishes the canonical form as `https://creative.adcontextprotocol.org/`
  * (with slash); some v2 fixtures use the no-slash form. Both refer to
- * the same agent; this lookup folds them. It deliberately does not fall
- * back to an id-only lookup: an unrelated publisher may own the same local
- * format id without declaring the AAO format.
+ * the same agent; this lookup folds them. This composite-identity lookup
+ * never ignores ownership. The separate unique-bare-ID compatibility lookup
+ * is fail-closed on collisions and never changes this index.
  */
 const AAO_LEGACY_AGENT_URL_ALIASES = new Set([
   // Early AAO reference implementations, including Optimera's deployed
@@ -141,8 +145,6 @@ function indexKey(agentUrl: string, id: string): string | undefined {
  *                     fallback resolution.
  */
 export function loadCatalog(explicitPath?: string): CatalogIndex {
-  if (cached) return cached;
-
   const candidates = explicitPath
     ? [explicitPath]
     : [
@@ -162,16 +164,22 @@ export function loadCatalog(explicitPath?: string): CatalogIndex {
 
   for (const file of candidates) {
     if (existsSync(file)) {
+      const cached = cachedByPath.get(file);
+      if (cached) return cached;
       const raw = JSON.parse(readFileSync(file, 'utf-8')) as V1FormatDefinition[];
       const byKey = new Map<string, V1FormatDefinition>();
+      const byUniqueId = new Map<string, V1FormatDefinition | null>();
       for (const entry of raw) {
         if (entry?.format_id?.agent_url && entry?.format_id?.id) {
           const key = indexKey(entry.format_id.agent_url, entry.format_id.id);
           if (key !== undefined) byKey.set(key, entry);
+          if (byUniqueId.has(entry.format_id.id)) byUniqueId.set(entry.format_id.id, null);
+          else byUniqueId.set(entry.format_id.id, entry);
         }
       }
-      cached = { byKey, entries: raw };
-      return cached;
+      const compiled = { byKey, byUniqueId, entries: raw };
+      cachedByPath.set(file, compiled);
+      return compiled;
     }
   }
 
@@ -195,9 +203,21 @@ export function lookupV1Format(formatId: V1FormatId, explicitPath?: string): V1F
   return key === undefined ? undefined : catalog.byKey.get(key);
 }
 
+/**
+ * Resolve an AAO-published bare ID only when the bundled catalog gives that
+ * ID exactly one meaning. This is an inbound legacy compatibility seam for
+ * sellers that copied an AAO standard ID but incorrectly emitted their own
+ * creative-agent URL. It never rewrites the source ref, so a later downgrade
+ * returns the seller's original owner tuple. Duplicate IDs fail closed.
+ */
+export function lookupUniqueV1FormatById(id: string, explicitPath?: string): V1FormatDefinition | undefined {
+  const match = loadCatalog(explicitPath).byUniqueId.get(id);
+  return match ?? undefined;
+}
+
 /** Test hook: reset the memoized catalog. */
 export function _resetCatalogCache(): void {
-  cached = null;
+  cachedByPath.clear();
 }
 
 /**

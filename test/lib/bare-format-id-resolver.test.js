@@ -85,13 +85,8 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     }
   });
 
-  test('deployed aliases stay owner-scoped after URL canonicalization', () => {
-    for (const agentUrl of [
-      'https://user@creative.adcontextprotocol.org/',
-      'https://creative.adcontextprotocol.org/catalog',
-      'https://creative.adcontextprotocol.org/?tenant=other',
-      'https://unrelated.example/',
-    ]) {
+  test('unique bare-id aliases still require a valid HTTP agent URL', () => {
+    for (const agentUrl of ['https://user@creative.adcontextprotocol.org/', 'ftp://creative.adcontextprotocol.org/']) {
       assert.strictEqual(resolveCanonicalFormatKind('display_320x50_html', { agentUrl }), null, agentUrl);
     }
   });
@@ -111,11 +106,15 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     assert.strictEqual(resolveCanonicalFormatKind(''), null);
   });
 
-  test('a non-AAO agentUrl does not match the AAO catalog — null, never a fabricated kind', () => {
-    // The catalog is AAO-keyed. Lifting a bare id under a foreign
-    // agent_url finds no entry and falls through to the (literal-free)
-    // registry → null.
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }), null);
+  test('a non-AAO owner still resolves an exact, uniquely AAO-published standard id', () => {
+    assert.strictEqual(
+      resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }),
+      'image'
+    );
+    assert.strictEqual(
+      resolveCanonicalFormatKind('totally_made_up_format', { agentUrl: 'https://example.com/' }),
+      null
+    );
   });
 
   test('assetType disambiguates an under-specified bare id to its catalog variant', () => {

@@ -125,6 +125,37 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
+  test('Vox AAO standard ids under the seller host become canonical through getProducts', async () => {
+    const voxRef = {
+      agent_url: 'https://salesagent.voxmedia.com/mcp',
+      id: 'display_300x250_image',
+    };
+    const { agent, close } = await buildMockSeller({
+      success: true,
+      products: [
+        {
+          product_id: 'vox-mrec',
+          name: 'Vox MREC',
+          description: 'AAO standard ID emitted under the Vox seller host',
+          format_ids: [voxRef],
+          pricing_options: PRICING_OPTIONS,
+        },
+      ],
+    });
+    try {
+      const result = await agent.getProducts({ brief: 'Vox display inventory' });
+      const option = result.data.products[0].format_options[0];
+
+      assert.strictEqual(option.format_kind, 'image');
+      assert.strictEqual(option.params.width, 300);
+      assert.strictEqual(option.params.height, 250);
+      assert.deepStrictEqual(result.data.projection.diagnostics, []);
+      assert.doesNotMatch(JSON.stringify(result.data), /salesagent\.voxmedia\.com|agent_url|format_id/);
+    } finally {
+      await close();
+    }
+  });
+
   test('configured publisher catalog snapshot upgrades an exact legacy alias without exposing it', async () => {
     const legacyRef = {
       agent_url: 'https://formats.publisher.example',
@@ -294,11 +325,15 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     }
   });
 
-  test('official MCP transport downgrades canonical package and creative selectors for a legacy seller', async () => {
+  test('Vox bare-id discovery round-trips its exact seller tuple through every legacy write', async () => {
     let capturedCreate;
     let capturedUpdate;
     let capturedSync;
     const activities = [];
+    const voxRef = {
+      agent_url: 'https://salesagent.voxmedia.com/mcp',
+      id: 'display_300x250_image',
+    };
     const server = new McpServer({ name: 'legacy-mcp', version: '1.0.0' });
     server.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => ({
       content: [{ type: 'text', text: '{}' }],
@@ -315,8 +350,8 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
           {
             product_id: 'legacy-mcp-product',
             name: 'Legacy MCP Product',
-            description: 'Seller-owned legacy named-format fixture',
-            format_ids: [{ agent_url: 'https://seller.example/formats', id: 'homepage_takeover' }],
+            description: 'AAO standard ID emitted under the Vox seller host',
+            format_ids: [voxRef],
             pricing_options: PRICING_OPTIONS,
           },
         ],
@@ -364,19 +399,6 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       agentName: 'Legacy MCP',
       validation: { responses: 'off' },
       onActivity: activity => activities.push(activity),
-      legacyFormatConverter: ({ formatId }) =>
-        formatId.agent_url === 'https://seller.example/formats' && formatId.id === 'homepage_takeover'
-          ? {
-              format_kind: 'custom',
-              format_option_id: 'homepage-takeover',
-              format_shape: 'homepage_takeover',
-              format_schema: {
-                uri: 'https://seller.example/schemas/homepage-takeover.json',
-                digest: `sha256:${'a'.repeat(64)}`,
-              },
-              params: {},
-            }
-          : undefined,
     });
 
     try {
@@ -393,8 +415,8 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       ]);
       const creative = {
         creative_id: 'creative-mcp',
-        name: 'Canonical custom creative',
-        format_kind: 'custom',
+        name: 'Canonical Vox image creative',
+        format_kind: 'image',
         format_option_ref: persistedSelectedFormats.format_option_refs[0],
         assets: {},
       };
@@ -435,15 +457,15 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
       assert.strictEqual(updated.success, true);
       assert.strictEqual(synced.success, true);
       assert.strictEqual(capturedCreate.packages[0].format_option_refs, undefined);
-      assert.strictEqual(capturedCreate.packages[0].format_ids[0].id, 'homepage_takeover');
+      assert.deepStrictEqual(capturedCreate.packages[0].format_ids[0], voxRef);
       assert.strictEqual(capturedCreate.packages[0].creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedCreate.packages[0].creatives[0].format_id.id, 'homepage_takeover');
+      assert.deepStrictEqual(capturedCreate.packages[0].creatives[0].format_id, voxRef);
       assert.strictEqual(capturedUpdate.packages[0].format_option_refs, undefined);
-      assert.strictEqual(capturedUpdate.packages[0].format_ids[0].id, 'homepage_takeover');
+      assert.deepStrictEqual(capturedUpdate.packages[0].format_ids[0], voxRef);
       assert.strictEqual(capturedUpdate.packages[0].creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedUpdate.packages[0].creatives[0].format_id.id, 'homepage_takeover');
+      assert.deepStrictEqual(capturedUpdate.packages[0].creatives[0].format_id, voxRef);
       assert.strictEqual(capturedSync.creatives[0].format_kind, undefined);
-      assert.strictEqual(capturedSync.creatives[0].format_id.id, 'homepage_takeover');
+      assert.deepStrictEqual(capturedSync.creatives[0].format_id, voxRef);
 
       const creativeActivityJson = JSON.stringify(
         activities.filter(activity =>
