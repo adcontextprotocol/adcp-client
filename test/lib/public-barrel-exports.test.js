@@ -16,11 +16,14 @@ test('public barrels expose canonical format and payload helper types', () => {
     `
 import {
   CanonicalFormat,
+  FormatAsset,
   createLazyBackend,
   ensureGetProductsCacheScope,
+  getFormatAssets,
   resolveTaskState,
   type CanonicalFormatParams,
   type EffectiveTaskState,
+  type FormatAssetsInput,
   type GetProductsResponse,
   type ManagerRevalidationRequest,
   type ManagerRevalidationResponse,
@@ -32,7 +35,7 @@ import {
 import type {
   LazyBackendFactory,
   LazyBackendOptions,
-  ListCreativeFormatsPayload,
+  LegacyListCreativeFormatsPayload,
   SyncCreativesPayload as ServerSyncCreativesPayload,
 } from '@adcp/sdk/server';
 import {
@@ -67,12 +70,21 @@ const built = CanonicalFormat.nativeInFeed(
 const builtKind: 'native_in_feed' = built.format_kind;
 const mediaBuyShape = CreateMediaBuyRequestSchema.shape;
 
+const formatAssetsInput: FormatAssetsInput = {
+  assets: [FormatAsset.image({ asset_id: 'hero', required: true })],
+};
+const inspectedAssets = getFormatAssets(formatAssetsInput);
+// @ts-expect-error Structural asset helpers do not expose raw named-format identity.
+void formatAssetsInput.format_id;
+// @ts-expect-error Returned slots do not expose raw named-format identity.
+void inspectedAssets[0]?.format_id;
+
 const syncError: SyncCreativesPayload = {
   errors: [{ code: 'INVALID_REQUEST', message: 'invalid creative batch' }],
 };
 const serverSyncError: ServerSyncCreativesPayload = syncError;
 
-const acceptsListPayload = (_payload: ListCreativeFormatsPayload) => {};
+const acceptsListPayload = (_payload: LegacyListCreativeFormatsPayload) => {};
 acceptsListPayload({ formats: [] });
 
 const authErrors = [new AuthMissingError(), new AuthInvalidError(), new AuthRequiredError()];
@@ -121,13 +133,19 @@ const required: RequireCacheScopeWhenProducts<{ products: unknown[]; cache_scope
 const normalizeGeneratedResponse = (response: GetProductsResponse) => ensureGetProductsCacheScope(response);
 void normalizeGeneratedResponse;
 
-const generatedResponse = { status: 'completed', products: [], cache_scope: 'public' } satisfies GetProductsResponse;
+const generatedResponse = {
+  status: 'completed',
+  products: [],
+  cache_scope: 'public',
+  projection: { diagnostics: [] },
+} satisfies GetProductsResponse;
 const generatedScoped = ensureGetProductsCacheScope(generatedResponse);
 const generatedScope: 'public' | 'account' = generatedScoped.cache_scope;
 
 const generatedMissingScope = ensureGetProductsCacheScope({
   status: 'completed',
   products: [],
+  projection: { diagnostics: [] },
 } satisfies Omit<GetProductsResponse, 'cache_scope'>);
 const generatedInjectedScope: 'public' | 'account' = generatedMissingScope.cache_scope;
 
@@ -144,6 +162,7 @@ const acceptsTypesPlacement = (_placement: TypesPlacement) => {};
 void typedNative;
 void builtKind;
 void mediaBuyShape;
+void inspectedAssets;
 void serverSyncError;
 void authErrors;
 void lazyBackend;
@@ -212,4 +231,21 @@ test('schema exports stay behind @adcp/sdk/schemas', () => {
   assert.ok(schemas.TOOL_REQUEST_SCHEMAS.create_media_buy);
   assert.ok(schemas.TOOL_RESPONSE_SCHEMAS.create_media_buy);
   assert.ok(schemas.SyncCreativesItemSchema);
+});
+
+test('raw creative and v5 helper values require explicit Legacy names', () => {
+  const root = require('../../dist/lib/index.js');
+  const server = require('../../dist/lib/server/index.js');
+
+  assert.strictEqual(root.STANDARD_FORMATS, undefined);
+  assert.strictEqual(root.batchPreviewFormats, undefined);
+  assert.strictEqual(root.ContentStandardsAdapter, undefined);
+  assert.strictEqual(root.productsResponse, undefined);
+  assert.strictEqual(server.productsResponse, undefined);
+
+  assert.ok(Array.isArray(root.LEGACY_STANDARD_FORMATS));
+  assert.strictEqual(typeof root.batchPreviewFormatsLegacy, 'function');
+  assert.strictEqual(typeof root.LegacyContentStandardsAdapter, 'function');
+  assert.strictEqual(typeof root.legacyProductsResponse, 'function');
+  assert.strictEqual(typeof server.legacyProductsResponse, 'function');
 });

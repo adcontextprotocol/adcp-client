@@ -67,9 +67,7 @@ import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../type
 import type {
   GetProductsRequest,
   GetProductsResponse,
-  CreateMediaBuyRequest,
   CreateMediaBuySuccess,
-  UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
   GetMediaBuysRequest,
   GetMediaBuysResponse,
@@ -89,20 +87,38 @@ import type {
   SyncEventSourcesSuccess,
   SyncCreativesError,
   SyncCreativesSuccess,
-  CreativeAsset,
 } from '../../../types/tools.generated';
+import type {
+  CanonicalCreativeAsset,
+  CanonicalCreateMediaBuyRequest,
+  CanonicalCreativeResponse,
+  CanonicalGetProductsRequest,
+  CanonicalListCreativesRequest,
+  CanonicalListCreativesResponse,
+  CanonicalProduct,
+  CanonicalUpdateMediaBuyRequest,
+} from '../../../v2/projection/creative-delivery';
 
-type Creative = CreativeAsset;
+type Creative = CanonicalCreativeAsset;
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export type GetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
-export type CreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
-export type UpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
-export type GetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
-export type GetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
+type CanonicalGetProductsPayload = Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & {
+  products?: CanonicalProduct[];
+};
+export type GetProductsPayload = RequireCacheScopeWhenProducts<CanonicalGetProductsPayload>;
+export type CreateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<CreateMediaBuySuccess>>;
+export type UpdateMediaBuyPayload = ServerPayload<CanonicalCreativeResponse<UpdateMediaBuySuccess>>;
+export type GetMediaBuyDeliveryPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>>;
+export type GetMediaBuysPayload = ServerPayload<CanonicalCreativeResponse<GetMediaBuysResponse>>;
 export type ProvidePerformanceFeedbackPayload = ServerPayload<ProvidePerformanceFeedbackSuccess>;
-export type ListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
-export type ListCreativesPayload = ServerPayload<ListCreativesResponse>;
+export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormatsResponse>;
+export type ListCreativesPayload = ServerPayload<CanonicalListCreativesResponse>;
+export type LegacyGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
+export type LegacyCreateMediaBuyPayload = ServerPayload<CreateMediaBuySuccess>;
+export type LegacyUpdateMediaBuyPayload = ServerPayload<UpdateMediaBuySuccess>;
+export type LegacyGetMediaBuyDeliveryPayload = ServerPayload<GetMediaBuyDeliveryResponse>;
+export type LegacyGetMediaBuysPayload = ServerPayload<GetMediaBuysResponse>;
+export type LegacyListCreativesPayload = ServerPayload<ListCreativesResponse>;
 export type SyncCreativesSuccessPayload = ServerPayload<SyncCreativesSuccess>;
 export type SyncCreativesErrorPayload = ServerPayload<SyncCreativesError>;
 export type SyncCreativesPayload = SyncCreativesSuccessPayload | SyncCreativesErrorPayload;
@@ -152,7 +168,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // the current catalog view instead of turning wholesale discovery into a
   // long-running operation.
   /** Catalog discovery: return products directly or hand off curated discovery to a background task. */
-  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsHandlerResult>;
+  getProducts?(req: CanonicalGetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsHandlerResult>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
 
@@ -202,7 +218,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  createMediaBuy?(req: CreateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<CreateMediaBuyHandlerResult>;
+  createMediaBuy?(req: CanonicalCreateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<CreateMediaBuyHandlerResult>;
 
   // ── update_media_buy: unified hybrid shape
   /**
@@ -213,7 +229,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    */
   updateMediaBuy?(
     buyId: string,
-    patch: UpdateMediaBuyRequest,
+    patch: CanonicalUpdateMediaBuyRequest,
     ctx: Ctx<TCtxMeta>
   ): Promise<UpdateMediaBuyHandlerResult>;
 
@@ -365,10 +381,10 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   //
   // ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. See
   // `providePerformanceFeedback` note above.
-  listCreativeFormats?(
+  listCreativeFormatsLegacy?(
     req: ListCreativeFormatsRequest,
     ctx: NoAccountCtx<TCtxMeta>
-  ): Promise<ListCreativeFormatsPayload>;
+  ): Promise<LegacyListCreativeFormatsPayload>;
 
   // ── list_creatives: sync only ───────────────────────────────────────
   // Read tool — buyers query the seller's creative library. Optional
@@ -376,7 +392,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // `creative_agents` declared in capabilities; ad-server-style sales
   // platforms implement directly. Note: also lives on `CreativeAdServerPlatform.listCreatives`
   // for the standalone-creative-agent shape.
-  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
+  listCreatives?(req: CanonicalListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesPayload>;
 
   // ── sync_catalogs: sync only ────────────────────────────────────────
   // Retail-media catalog sync. Buyers push product catalogs (SKUs, ASINs,
@@ -443,7 +459,7 @@ export type SalesIngestionPlatform<TCtxMeta = Record<string, unknown>> = Pick<
   | 'syncCatalogs'
   | 'syncEventSources'
   | 'logEvent'
-  | 'listCreativeFormats'
+  | 'listCreativeFormatsLegacy'
   | 'listCreatives'
   | 'providePerformanceFeedback'
 >;

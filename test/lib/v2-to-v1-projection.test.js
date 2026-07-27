@@ -34,6 +34,93 @@ const SKIP_REASON = REGISTRY_EXISTS
   ? false
   : 'requires a 3.1+ schemas/cache/<beta>/ — only present in workspaces with a local 3.1-beta sync';
 
+function customProduct(overrides = {}) {
+  return {
+    product_id: 'persisted_custom',
+    name: 'Persisted custom',
+    description: 'Canonical custom product without hidden legacy metadata',
+    format_options: [
+      {
+        format_kind: 'custom',
+        format_option_id: 'homepage-takeover',
+        format_shape: 'takeover',
+        format_schema: {
+          uri: 'https://seller.example/formats/homepage_takeover.json',
+          digest: `sha256:${'a'.repeat(64)}`,
+        },
+        params: {},
+        ...overrides,
+      },
+    ],
+  };
+}
+
+describe('v2 → v1 projection — explicit canonical legacy resolver', () => {
+  test('resolves a persisted canonical custom declaration without WeakMap metadata', () => {
+    const contexts = [];
+    const { v1, diagnostics } = projectV2ProductToV1(customProduct(), {
+      canonicalFormatLegacyResolver: context => {
+        contexts.push(context);
+        return { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' };
+      },
+    });
+    assert.deepStrictEqual(v1.format_ids, [{ agent_url: 'https://seller.example/formats', id: 'homepage_takeover' }]);
+    assert.deepStrictEqual(diagnostics, []);
+    assert.strictEqual(contexts[0].source, 'product');
+    assert.strictEqual(contexts[0].declaration.format_option_id, 'homepage-takeover');
+  });
+
+  test('invalid resolver output fails closed with a projection diagnostic', () => {
+    let getterReads = 0;
+    const invalid = {};
+    Object.defineProperty(invalid, 'agent_url', {
+      enumerable: true,
+      get: () => {
+        getterReads++;
+        return 'https://seller.example/formats';
+      },
+    });
+    invalid.id = 'homepage_takeover';
+    const { v1, diagnostics } = projectV2ProductToV1(customProduct(), {
+      canonicalFormatLegacyResolver: () => invalid,
+    });
+    assert.deepStrictEqual(v1.format_ids, []);
+    assert.strictEqual(diagnostics.length, 1);
+    assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+    assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'custom_converter_failed');
+    assert.strictEqual(getterReads, 0);
+
+    const accessorArray = [];
+    Object.defineProperty(accessorArray, '0', {
+      enumerable: true,
+      get: () => {
+        getterReads++;
+        return { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' };
+      },
+    });
+    accessorArray.length = 1;
+    const arrayResult = projectV2ProductToV1(customProduct(), {
+      canonicalFormatLegacyResolver: () => accessorArray,
+    });
+    assert.deepStrictEqual(arrayResult.v1.format_ids, []);
+    assert.strictEqual(arrayResult.diagnostics[0].error.details.resolution_failure, 'custom_converter_failed');
+    assert.strictEqual(getterReads, 0);
+  });
+
+  test('canonical_formats_only is an absolute opt-out and never invokes the resolver', () => {
+    let calls = 0;
+    const { v1, diagnostics } = projectV2ProductToV1(customProduct({ canonical_formats_only: true }), {
+      canonicalFormatLegacyResolver: () => {
+        calls++;
+        return { agent_url: 'https://seller.example/formats', id: 'must_not_emit' };
+      },
+    });
+    assert.strictEqual(calls, 0);
+    assert.deepStrictEqual(v1.format_ids, []);
+    assert.strictEqual(diagnostics[0].code, 'FORMAT_DECLARATION_V1_NOT_APPLICABLE');
+  });
+});
+
 function loadFixtures() {
   return readdirSync(FIXTURE_DIR)
     .filter(f => f.endsWith('.json'))

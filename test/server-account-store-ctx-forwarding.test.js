@@ -360,6 +360,7 @@ describe('Issue #1310 — accounts.list receives ResolveContext', () => {
         creatives: [
           {
             creative_id: 'cr_boost_1',
+            format_kind: 'custom',
             assets: [{ asset_type: 'url', url: 'https://www.tiktok.com/@acme/video/123' }],
           },
         ],

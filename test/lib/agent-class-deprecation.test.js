@@ -28,10 +28,10 @@ describe('Agent class deprecation warning', () => {
           warnings.push(w.message);
         }
       });
-      const { Agent } = require('./dist/lib');
-      new Agent({ id: 'a', name: 'a', agent_uri: 'https://x', protocol: 'mcp' }, null);
-      new Agent({ id: 'b', name: 'b', agent_uri: 'https://x', protocol: 'mcp' }, null);
-      new Agent({ id: 'c', name: 'c', agent_uri: 'https://x', protocol: 'mcp' }, null);
+      const { LegacyAgent } = require('./dist/lib');
+      new LegacyAgent({ id: 'a', name: 'a', agent_uri: 'https://x', protocol: 'mcp' }, null);
+      new LegacyAgent({ id: 'b', name: 'b', agent_uri: 'https://x', protocol: 'mcp' }, null);
+      new LegacyAgent({ id: 'c', name: 'c', agent_uri: 'https://x', protocol: 'mcp' }, null);
       // 'warning' is emitted async; wait one tick before reporting.
       setImmediate(() => {
         console.log(JSON.stringify({ count: warnings.length }));
@@ -56,9 +56,9 @@ describe('Agent class deprecation warning', () => {
         if (calls === 1) throw new Error('synthetic emit failure');
         return original.apply(this, arguments);
       };
-      const { Agent } = require('./dist/lib');
-      new Agent({ id: 'a', name: 'a', agent_uri: 'https://x', protocol: 'mcp' }, null);
-      new Agent({ id: 'b', name: 'b', agent_uri: 'https://x', protocol: 'mcp' }, null);
+      const { LegacyAgent } = require('./dist/lib');
+      new LegacyAgent({ id: 'a', name: 'a', agent_uri: 'https://x', protocol: 'mcp' }, null);
+      new LegacyAgent({ id: 'b', name: 'b', agent_uri: 'https://x', protocol: 'mcp' }, null);
       console.log(JSON.stringify({ calls }));
     `;
     const { stdout, status } = runIsolated(script);

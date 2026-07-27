@@ -170,6 +170,158 @@ import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes
 import type { Product } from '../../../types/tools.generated';
 import { normalizeErrors } from '../../normalize-errors';
 import { redactCredentialPatterns } from '../../redact';
+import {
+  CreativeFormatProjectionError,
+  projectCreativeForDelivery,
+  projectMediaBuyCreativesForDelivery,
+  stripLegacyCreativeIdentity,
+} from '../../../v2/projection/creative-delivery';
+import type { LegacyFormatConverter } from '../../../v2/projection/v1-to-v2';
+import type {
+  CanonicalCreativeAsset,
+  CanonicalCreateMediaBuyRequest,
+  CanonicalGetProductsRequest,
+  CanonicalListCreativesRequest,
+  CanonicalUpdateMediaBuyRequest,
+} from '../../../v2/projection/creative-delivery';
+import { toCanonicalOnlyResponse } from '../../../v2/projection/augment-response';
+import {
+  CanonicalFormatLegacyResolutionError,
+  projectV2ProductToV1,
+  resolveCanonicalFormatLegacyRefs,
+} from '../../../v2/projection/v2-to-v1';
+import type { CanonicalFormatLegacyResolver } from '../../../v2/projection/v2-to-v1';
+import type { V1Product, V2Product } from '../../../v2/projection/types';
+import { legacyFormatRefsForDeclaration } from '../../../v2/projection/legacy-metadata';
+import { ADCP_VERSION } from '../../../version';
+
+function supportsCanonicalCreativeCapability(version: unknown): boolean {
+  if (typeof version !== 'string') return false;
+  const match = /^v?(\d+)\.(\d+)(?:\.|-|$)/.exec(version.trim());
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 3 || (major === 3 && minor >= 1);
+}
+
+function requiresCanonicalCreativeWire(version: unknown): boolean {
+  if (typeof version !== 'string') return false;
+  const match = /^v?(\d+)\.(\d+)(?:\.|-|$)/.exec(version.trim());
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 3 || (major === 3 && minor >= 2);
+}
+
+type CreativeWireEvidence = 'canonical' | 'legacy' | 'mixed' | 'unknown';
+
+/**
+ * AdCP 3.1 is a dual-format transition release. Infer the caller's format
+ * dialect from data-only request fields without invoking getters or custom
+ * serialization hooks. Ambiguous 3.1 reads use the modern framework's
+ * canonical default; legacy buyers can select the compatibility projection
+ * with an actual legacy field such as `fields: ['format_ids']`.
+ */
+function creativeWireEvidenceForRequest(request: unknown): CreativeWireEvidence {
+  let canonical = false;
+  let legacy = false;
+  const seen = new WeakSet<object>();
+
+  // Raw-wire migration tooling uses a namespaced extension because read
+  // requests such as get_products and list_creatives can otherwise be
+  // structurally ambiguous. Read it through data descriptors only so the
+  // negotiation path retains the same no-application-code guarantee as the
+  // recursive scanner below.
+  if (request !== null && typeof request === 'object') {
+    const ext = Object.getOwnPropertyDescriptor(request, 'ext');
+    if (ext && 'value' in ext && ext.value !== null && typeof ext.value === 'object') {
+      const adcp = Object.getOwnPropertyDescriptor(ext.value, 'adcp');
+      if (adcp && 'value' in adcp && adcp.value !== null && typeof adcp.value === 'object') {
+        const wire = Object.getOwnPropertyDescriptor(adcp.value, 'creative_wire');
+        if (wire && 'value' in wire) {
+          if (wire.value === 'canonical') canonical = true;
+          if (wire.value === 'legacy') legacy = true;
+        }
+      }
+    }
+  }
+
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    const arrayValue = Array.isArray(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable || !('value' in descriptor)) continue;
+      const child = descriptor.value;
+      // Conversation/context payloads can legitimately quote a previous
+      // response in the opposite dialect. They are not negotiation signals
+      // for the current tool call. The same applies to arbitrary extensions.
+      if (key === 'context' || key === 'ext') continue;
+      if (/(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key)) legacy = true;
+      if (
+        key === 'format_kind' ||
+        key === 'format_options' ||
+        key === 'format_option_ref' ||
+        key === 'format_option_refs'
+      ) {
+        canonical = true;
+      }
+      // Inspect array entries through their own data descriptors. Never use
+      // iteration here: an Array subclass or ordinary array can install a
+      // user-controlled Symbol.iterator, and dialect detection must not run
+      // application code.
+      if (arrayValue && typeof child === 'string') {
+        if (child === 'format_id' || child === 'format_ids') legacy = true;
+        if (child === 'format_kind' || child === 'format_options' || child === 'format_option_ref') canonical = true;
+      }
+      visit(child);
+    }
+  };
+
+  visit(request);
+  if (canonical && legacy) return 'mixed';
+  if (canonical) return 'canonical';
+  if (legacy) return 'legacy';
+  return 'unknown';
+}
+
+function creativeWireModeForRequest(
+  ctx: HandlerContext<Account>,
+  fallback: 'canonical' | 'legacy',
+  request?: unknown
+): 'canonical' | 'legacy' {
+  if (ctx.servedAdcpVersion === undefined) return fallback;
+  if (!supportsCanonicalCreativeCapability(ctx.servedAdcpVersion)) return 'legacy';
+  if (requiresCanonicalCreativeWire(ctx.servedAdcpVersion)) return 'canonical';
+
+  const evidence = creativeWireEvidenceForRequest(request);
+  // Transitional 3.1 product/package envelopes may deliberately carry both
+  // dialects. Prefer canonical output in that case; the semantic request
+  // projector still rejects an individual creative that claims conflicting
+  // format_id + format_kind identities.
+  if (evidence === 'canonical' || evidence === 'mixed') return 'canonical';
+  if (evidence === 'legacy') return 'legacy';
+  return fallback;
+}
+
+function parseAdcpRelease(version: unknown): readonly [number, number, number] | undefined {
+  if (typeof version !== 'string') return undefined;
+  const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-|$)/.exec(version.trim());
+  if (!match) return undefined;
+  return [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+}
+
+function compareAdcpReleases(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number]
+): number {
+  for (let index = 0; index < left.length; index++) {
+    const delta = left[index]! - right[index]!;
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (v === null || typeof v !== 'object') return false;
@@ -211,6 +363,530 @@ function mergeCapabilityOverride<T extends object>(adopter: T | null | undefined
 function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow {
   if (row?.errors == null) return row;
   return { ...row, errors: normalizeErrors(row.errors) } as TRow;
+}
+
+function asCanonicalServerResponse<T>(response: T): T {
+  return stripLegacyCreativeIdentity(response) as T;
+}
+
+function ownEnumerableDataRecord(value: object, operation: string): Record<string, unknown> | undefined {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const entries = Object.entries(descriptors).filter(([, descriptor]) => descriptor.enumerable);
+  if (entries.length === 0) return undefined;
+  const record: Record<string, unknown> = {};
+  for (const [key, descriptor] of entries) {
+    if (!('value' in descriptor)) {
+      throw new CreativeFormatProjectionError(
+        operation,
+        `(response:${key})`,
+        'enumerable accessors cannot cross the creative format boundary safely'
+      );
+    }
+    record[key] = descriptor.value;
+  }
+  return record;
+}
+
+function assertSafeSemanticPayload(value: unknown, operation: string): void {
+  const active = new WeakSet<object>();
+  const visited = new WeakSet<object>();
+
+  const visit = (current: unknown, path: string): void => {
+    if (current === null || typeof current !== 'object') return;
+    if (Array.isArray(current) && Object.getPrototypeOf(current) !== Array.prototype) {
+      throw new CreativeFormatProjectionError(
+        operation,
+        `(payload:${path})`,
+        'array subclasses cannot cross the creative format boundary safely'
+      );
+    }
+    for (let owner: object | null = current; owner !== null; owner = Object.getPrototypeOf(owner)) {
+      const toJSON = Object.getOwnPropertyDescriptor(owner, 'toJSON');
+      if (!toJSON) continue;
+      if (!('value' in toJSON) || typeof toJSON.value === 'function') {
+        throw new CreativeFormatProjectionError(
+          operation,
+          `(payload:${path}.toJSON)`,
+          'custom or accessor toJSON hooks cannot cross the creative format boundary safely'
+        );
+      }
+    }
+    if (active.has(current)) {
+      throw new CreativeFormatProjectionError(
+        operation,
+        `(payload:${path})`,
+        'cyclic values cannot cross the creative format boundary'
+      );
+    }
+    if (visited.has(current)) return;
+    active.add(current);
+    try {
+      const descriptors = Object.getOwnPropertyDescriptors(current);
+      for (const [key, descriptor] of Object.entries(descriptors)) {
+        if (!('value' in descriptor)) {
+          throw new CreativeFormatProjectionError(
+            operation,
+            `(payload:${path}.${key})`,
+            'accessors cannot cross the creative format boundary safely'
+          );
+        }
+        if (!descriptor.enumerable) continue;
+        visit(descriptor.value, `${path}.${key}`);
+      }
+    } finally {
+      active.delete(current);
+    }
+    visited.add(current);
+  };
+
+  visit(value, '$');
+}
+
+function projectResponseCreativeIdentities(
+  value: unknown,
+  operation: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
+  wireMode: 'canonical' | 'legacy',
+  selectorContainer: Record<string, unknown> = {}
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map(item =>
+      projectResponseCreativeIdentities(
+        item,
+        operation,
+        legacyFormatConverter,
+        canonicalFormatLegacyResolver,
+        wireMode,
+        selectorContainer
+      )
+    );
+  }
+  if (value === null || typeof value !== 'object') return value;
+
+  const inspectedRecord = ownEnumerableDataRecord(value, operation);
+  if (inspectedRecord === undefined) return value;
+  // Preserve plain-object identity so SDK-private WeakMap metadata on
+  // canonical declarations survives the downgrade path. Non-plain records
+  // are copied into a data-only shape so prototype behavior cannot reach the
+  // wire.
+  const dataRecord = isPlainObject(value) ? value : inspectedRecord;
+  let projected: Record<string, unknown> = dataRecord;
+  const isProduct =
+    typeof projected.product_id === 'string' &&
+    ('name' in projected || 'description' in projected) &&
+    (Array.isArray(projected.format_ids) || Array.isArray(projected.format_options));
+  if (isProduct) {
+    if (wireMode === 'canonical') {
+      const canonical = toCanonicalOnlyResponse(
+        { products: [projected as unknown as V1Product] },
+        { legacyFormatConverter }
+      );
+      if (canonical.diagnostics.length > 0 || canonical.response.products.length !== 1) {
+        throw new CreativeFormatProjectionError(
+          operation,
+          `(product:${String(projected.product_id)})`,
+          'legacy product formats in the platform response have no complete canonical representation'
+        );
+      }
+      projected = canonical.response.products[0] as unknown as Record<string, unknown>;
+    } else if (Array.isArray(projected.format_options)) {
+      const legacy = projectV2ProductToV1(projected as unknown as V2Product, { canonicalFormatLegacyResolver });
+      if (legacy.diagnostics.length > 0 || (legacy.v1.format_ids.length === 0 && projected.format_options.length > 0)) {
+        throw new CreativeFormatProjectionError(
+          operation,
+          `(product:${String(projected.product_id)})`,
+          'canonical product formats in the platform response have no complete legacy representation'
+        );
+      }
+      projected = legacy.v1 as unknown as Record<string, unknown>;
+    }
+  } else if (
+    (typeof projected.package_id === 'string' || typeof projected.product_id === 'string') &&
+    (Array.isArray(projected.format_ids) ||
+      Array.isArray(projected.format_option_refs) ||
+      typeof projected.format_kind === 'string')
+  ) {
+    projected = (
+      projectMediaBuyCreativesForDelivery(
+        { packages: [projected] },
+        wireMode,
+        'create_media_buy',
+        legacyFormatConverter,
+        canonicalFormatLegacyResolver
+      ) as { packages: Record<string, unknown>[] }
+    ).packages[0]!;
+  }
+
+  if (
+    typeof projected.creative_id === 'string' &&
+    (projected.format_id !== undefined || typeof projected.format_kind === 'string')
+  ) {
+    projected = projectCreativeForDelivery(
+      projected as unknown as import('../../../types/tools.generated').CreativeAsset,
+      selectorContainer,
+      wireMode,
+      operation,
+      legacyFormatConverter,
+      canonicalFormatLegacyResolver
+    ) as unknown as Record<string, unknown>;
+  }
+
+  const nextSelector =
+    Array.isArray(projected.format_ids) ||
+    Array.isArray(projected.format_options) ||
+    Array.isArray(projected.format_option_refs)
+      ? projected
+      : selectorContainer;
+  let changed = projected !== value;
+  const next: Record<string, unknown> = { ...projected };
+  for (const [key, child] of Object.entries(projected)) {
+    const childProjected = projectResponseCreativeIdentities(
+      child,
+      operation,
+      legacyFormatConverter,
+      canonicalFormatLegacyResolver,
+      wireMode,
+      nextSelector
+    );
+    if (childProjected !== child) {
+      next[key] = childProjected;
+      changed = true;
+    }
+  }
+  return changed ? next : projected;
+}
+
+function asCanonicalSemanticServerResponse<T>(
+  response: T,
+  operation: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+): T {
+  try {
+    assertSafeSemanticPayload(response, operation);
+    return asCanonicalServerResponse(
+      projectResponseCreativeIdentities(
+        response,
+        operation,
+        legacyFormatConverter,
+        canonicalFormatLegacyResolver,
+        'canonical'
+      )
+    ) as T;
+  } catch (error) {
+    if (!(error instanceof CreativeFormatProjectionError)) throw error;
+    throw new AdcpError('INVALID_REQUEST', {
+      message: `${operation} platform response contains a legacy creative format that cannot be represented canonically.`,
+      field: 'response',
+      suggestion:
+        'Return canonical format_kind values, or configure legacyCreativeFormatConverter for custom legacy formats.',
+    });
+  }
+}
+
+function asSemanticServerResponseForWire<T>(
+  response: T,
+  operation: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
+  wireMode: 'canonical' | 'legacy'
+): T {
+  if (wireMode === 'canonical') {
+    return attachCanonicalCustomFormatWireRefs(
+      asCanonicalSemanticServerResponse(response, operation, legacyFormatConverter, canonicalFormatLegacyResolver),
+      canonicalFormatLegacyResolver,
+      operation
+    );
+  }
+  try {
+    assertSafeSemanticPayload(response, operation);
+    return projectResponseCreativeIdentities(
+      response,
+      operation,
+      legacyFormatConverter,
+      canonicalFormatLegacyResolver,
+      'legacy'
+    ) as T;
+  } catch (error) {
+    if (!(error instanceof CreativeFormatProjectionError)) throw error;
+    throw new AdcpError('INVALID_REQUEST', {
+      message: `${operation} platform response contains a canonical creative format that cannot be represented on the configured legacy wire.`,
+      field: 'response',
+      suggestion:
+        'Return an explicit legacy mapping for the canonical format, or configure this server for AdCP 3.1 or newer.',
+    });
+  }
+}
+
+type LegacyIdentityContext = 'agent' | 'signal' | 'list' | 'default';
+
+function legacyIdentityContext(ownerKey?: string): LegacyIdentityContext {
+  if (typeof ownerKey !== 'string') return 'default';
+  if (ownerKey === 'signal_id' || ownerKey === 'signal_ids') return 'signal';
+  if (/(^|_)(?:property_lists?|collection_lists?)($|_)/.test(ownerKey)) return 'list';
+  if (
+    !/(^|_)(?:creative|format|legacy|placement)($|_)/.test(ownerKey) &&
+    /(^|_)(?:agents?|agent_details|agent_info)($|_)/.test(ownerKey)
+  ) {
+    return 'agent';
+  }
+  return 'default';
+}
+
+function allowsNonCreativeAgentUrl(owner: Record<string, unknown>, context: LegacyIdentityContext): boolean {
+  return (
+    context === 'agent' ||
+    (context === 'list' && typeof owner.list_id === 'string') ||
+    (context === 'signal' && owner.source === 'agent')
+  );
+}
+
+interface LegacyIdentityScanSeen {
+  agent: WeakSet<object>;
+  signal: WeakSet<object>;
+  list: WeakSet<object>;
+  default: WeakSet<object>;
+}
+
+function findLegacyCreativeIdentity(
+  value: unknown,
+  seen: LegacyIdentityScanSeen = {
+    agent: new WeakSet<object>(),
+    signal: new WeakSet<object>(),
+    list: new WeakSet<object>(),
+    default: new WeakSet<object>(),
+  },
+  ownerKey?: string
+): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const owner = value as Record<string, unknown>;
+  const context = legacyIdentityContext(ownerKey);
+  const policySeen = seen[context];
+  if (policySeen.has(value)) return undefined;
+  policySeen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findLegacyCreativeIdentity(item, seen, ownerKey);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  for (const [key, child] of Object.entries(owner)) {
+    if (/(^|_)(?:format_ids?|v1_format_ref)($|_)/.test(key)) return key;
+    if (
+      key === 'agent_url' &&
+      (typeof owner.id === 'string' || typeof owner.list_id === 'string') &&
+      !allowsNonCreativeAgentUrl(owner, context)
+    ) {
+      return key;
+    }
+    const nested = findLegacyCreativeIdentity(child, seen, key);
+    if (nested) return nested;
+  }
+  return undefined;
+}
+
+function asCanonicalSemanticServerRequest<T>(
+  request: T,
+  operation: string,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): T {
+  try {
+    assertSafeSemanticPayload(request, operation);
+    const projected = projectResponseCreativeIdentities(
+      request,
+      operation,
+      legacyFormatConverter,
+      undefined,
+      'canonical'
+    ) as T;
+    const forbidden = findLegacyCreativeIdentity(projected);
+    if (forbidden) {
+      throw new CreativeFormatProjectionError(
+        operation,
+        '(request extension)',
+        `legacy creative identity ${forbidden} has no recognized canonical container`
+      );
+    }
+    return projected;
+  } catch (error) {
+    if (!(error instanceof CreativeFormatProjectionError)) throw error;
+    throw new AdcpError('INVALID_REQUEST', {
+      message: `${operation} request contains a legacy creative format that cannot be represented canonically.`,
+      field: 'request',
+      suggestion:
+        'Send canonical format_kind values, or configure legacyCreativeFormatConverter for custom legacy formats.',
+    });
+  }
+}
+
+function asCanonicalGetProductsRequest(request: Record<string, unknown>): CanonicalGetProductsRequest {
+  if (!Array.isArray(request['fields'])) return request as CanonicalGetProductsRequest;
+  const fields = [
+    ...new Set(
+      request['fields'].flatMap(field =>
+        field === 'format_ids' ? ['format_options'] : typeof field === 'string' ? [field] : []
+      )
+    ),
+  ] as CanonicalGetProductsRequest['fields'];
+  return { ...request, fields } as CanonicalGetProductsRequest;
+}
+
+function asCanonicalListCreativesRequest(
+  request: Record<string, unknown>,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): CanonicalListCreativesRequest {
+  const filters =
+    request['filters'] !== null && typeof request['filters'] === 'object' && !Array.isArray(request['filters'])
+      ? (request['filters'] as Record<string, unknown>)
+      : undefined;
+  const legacyFormatIds = filters?.['format_ids'];
+  if (Array.isArray(legacyFormatIds) && legacyFormatIds.length > 0) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'list_creatives legacy format_ids filters are unavailable on the canonical platform surface.',
+      field: 'filters.format_ids',
+      suggestion: 'Filter by canonical creative fields, or use an explicit legacy wire handler during migration.',
+    });
+  }
+  const { format_ids: _dropLegacyFormatIds, ...canonicalFilters } = filters ?? {};
+  void _dropLegacyFormatIds;
+  const withoutLegacyFilter = filters === undefined ? request : { ...request, filters: canonicalFilters };
+  const projected = asCanonicalSemanticServerRequest(
+    withoutLegacyFilter,
+    'list_creatives',
+    legacyFormatConverter
+  ) as Record<string, unknown>;
+  if (!Array.isArray(projected['fields'])) return projected as CanonicalListCreativesRequest;
+  const fields = [
+    ...new Set(
+      projected['fields'].flatMap(field =>
+        field === 'format_id' ? ['format_kind'] : typeof field === 'string' ? [field] : []
+      )
+    ),
+  ] as CanonicalListCreativesRequest['fields'];
+  return { ...projected, fields } as CanonicalListCreativesRequest;
+}
+
+function asCanonicalProductResponse<T extends { products?: unknown[] }>(
+  response: T,
+  legacyFormatConverter: LegacyFormatConverter | undefined
+): T {
+  try {
+    assertSafeSemanticPayload(response, 'get_products');
+  } catch (error) {
+    if (!(error instanceof CreativeFormatProjectionError)) throw error;
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'get_products platform response cannot be represented safely at the canonical boundary.',
+      field: 'response',
+      suggestion: 'Return an acyclic data-only product response without enumerable accessors.',
+    });
+  }
+  const projected = toCanonicalOnlyResponse(response as T & { products?: V1Product[] }, {
+    legacyFormatConverter,
+  });
+  if (projected.diagnostics.length > 0) {
+    const first = projected.diagnostics[0]!;
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'get_products returned a legacy format that cannot be represented canonically.',
+      field: first.field,
+      suggestion: 'Declare canonical format_options or configure legacyCreativeFormatConverter for the legacy format.',
+    });
+  }
+  return asCanonicalServerResponse(projected.response) as T;
+}
+
+function attachCanonicalCustomFormatWireRefs<T>(
+  value: T,
+  canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
+  operation: string
+): T {
+  const visit = (current: unknown): unknown => {
+    if (Array.isArray(current)) return current.map(visit);
+    if (current === null || typeof current !== 'object') return current;
+    const record = current as Record<string, unknown>;
+    const hasFormatDeclarations = Array.isArray(record.format_options);
+    const declarationOwner =
+      typeof record.product_id === 'string'
+        ? record.product_id
+        : typeof record.placement_id === 'string'
+          ? record.placement_id
+          : '(response)';
+    let projected = record;
+    if (hasFormatDeclarations) {
+      const formatOptions = (record.format_options as unknown[]).map((value, index) => {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+        const declaration = value as Record<string, unknown>;
+        if (declaration.format_kind !== 'custom' || declaration.canonical_formats_only === true) return declaration;
+        let refs = [...legacyFormatRefsForDeclaration(declaration)];
+        if (refs.length === 0) {
+          try {
+            refs =
+              resolveCanonicalFormatLegacyRefs(canonicalFormatLegacyResolver, {
+                source: 'product',
+                declaration:
+                  declaration as unknown as import('../../../v2/projection/types').V2ProductFormatDeclaration,
+                productId: declarationOwner,
+                field: `${declarationOwner}.format_options[${index}]`,
+              }) ?? [];
+          } catch (error) {
+            if (!(error instanceof CanonicalFormatLegacyResolutionError)) throw error;
+            throw new CreativeFormatProjectionError(
+              operation,
+              `(format owner:${declarationOwner})`,
+              'canonical format legacy resolver returned an invalid custom declaration mapping'
+            );
+          }
+        }
+        if (refs.length === 0) {
+          throw new CreativeFormatProjectionError(
+            operation,
+            `(format owner:${declarationOwner})`,
+            'custom canonical declaration must set canonical_formats_only or provide an explicit legacy mapping'
+          );
+        }
+        return { ...declaration, v1_format_ref: refs.map(ref => ({ ...ref })) };
+      });
+      projected = { ...record, format_options: formatOptions };
+    }
+    let changed = projected !== record;
+    const next: Record<string, unknown> = { ...projected };
+    for (const [key, child] of Object.entries(projected)) {
+      if (hasFormatDeclarations && key === 'format_options') continue;
+      const visited = visit(child);
+      if (visited !== child) {
+        next[key] = visited;
+        changed = true;
+      }
+    }
+    return changed ? next : projected;
+  };
+  return visit(value) as T;
+}
+
+function asProductResponseForWire<T extends { products?: unknown[] }>(
+  canonicalResponse: T,
+  wireMode: 'canonical' | 'legacy',
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver
+): T {
+  if (wireMode === 'canonical') {
+    return attachCanonicalCustomFormatWireRefs(canonicalResponse, canonicalFormatLegacyResolver, 'get_products');
+  }
+  if (!Array.isArray(canonicalResponse.products)) return canonicalResponse;
+  const products = canonicalResponse.products.map(product => {
+    const projected = projectV2ProductToV1(product as V2Product, { canonicalFormatLegacyResolver });
+    if (projected.diagnostics.length > 0) {
+      const first = projected.diagnostics[0]!;
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'get_products returned a canonical format that cannot be represented on the configured legacy wire.',
+        field: first.field,
+        suggestion:
+          'Add an explicit legacy format mapping to the canonical declaration, or configure this server for AdCP 3.1 or newer.',
+      });
+    }
+    return projected.v1;
+  });
+  return { ...canonicalResponse, products } as T;
 }
 
 /**
@@ -397,12 +1073,33 @@ export interface DecisioningObservabilityHooks {
   onStatusChangePublish?(info: { accountId: string; resourceType: string; resourceId: string }): void;
 }
 
+export type LegacyDecisioningHandlerGroups = Pick<
+  AdcpServerConfig,
+  'mediaBuy' | 'creative' | 'governance' | 'brandRights'
+>;
+
 export interface CreateAdcpServerFromPlatformOptions extends Omit<
   AdcpServerConfig,
-  'resolveAccount' | 'capabilities' | 'name' | 'version'
+  'resolveAccount' | 'capabilities' | 'name' | 'version' | 'mediaBuy' | 'creative' | 'governance' | 'brandRights'
 > {
   name: string;
   version: string;
+  /**
+   * Explicit compatibility seam for raw protocol handlers that have not yet
+   * migrated to canonical DecisioningPlatform methods. Wire support remains
+   * available through AdCP 3.x, but raw creative identity must never look like
+   * a primary platform hook.
+   */
+  legacyHandlers?: LegacyDecisioningHandlerGroups;
+  /**
+   * Convert seller/creative-agent-specific legacy format refs before modern
+   * platform handlers run. Known AAO formats are normalized automatically;
+   * an unmapped ref is rejected unless this callback returns a canonical
+   * declaration (normally `format_kind: 'custom'` + shape/schema).
+   */
+  legacyCreativeFormatConverter?: LegacyFormatConverter;
+  /** Resolve persisted canonical custom formats when this server emits a legacy wire response. */
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
   /**
    * Override the framework's task registry. Useful for tests that want to
    * pre-seed task records or assert on them across multiple servers.
@@ -436,7 +1133,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 
   /**
    * Merge-seam collision behavior. When an adopter-supplied custom handler
-   * (e.g. `opts.mediaBuy.getMediaBuys`) collides with a platform-derived
+   * (e.g. `opts.legacyHandlers.mediaBuy.getMediaBuys`) collides with a platform-derived
    * handler (e.g. `platform.sales.getMediaBuys`), the platform-derived one
    * wins per-key and the adopter override is silently shadowed.
    *
@@ -755,12 +1452,12 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   //
   //     createAdcpServerFromPlatform(platform, {
   //       name: 'Adapter', version: '1.0.0',
-  //       mediaBuy: {
+  //       legacyHandlers: { mediaBuy: {
   //         // platform.sales already wires get_products / create / update /
   //         // sync_creatives / get_media_buy_delivery; fill the rest:
   //         getMediaBuys: async (params, ctx) => myDb.queryBuys(params),
   //         providePerformanceFeedback: async (params, ctx) => ack(params),
-  //       },
+  //       } },
   //       eventTracking: {
   //         // platform.audiences wires sync_audiences; fill the trio:
   //         syncEventSources: async (params, ctx) => ...,
@@ -855,6 +1552,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   opts: RequiredOptsFor<P>
 ): DecisioningAdcpServer {
   validatePlatform(platform);
+  // Runtime-only compatibility for pre-13 JavaScript/config objects. The
+  // public type exposes these raw handler groups only under legacyHandlers;
+  // retaining the hidden fallback avoids turning a type migration into an
+  // abrupt wire-support break for untyped deployments.
+  const runtimeLegacyOptions = opts as typeof opts & Partial<LegacyDecisioningHandlerGroups>;
+  const legacyHandlers: LegacyDecisioningHandlerGroups = {
+    mediaBuy: opts.legacyHandlers?.mediaBuy ?? runtimeLegacyOptions.mediaBuy,
+    creative: opts.legacyHandlers?.creative ?? runtimeLegacyOptions.creative,
+    governance: opts.legacyHandlers?.governance ?? runtimeLegacyOptions.governance,
+    brandRights: opts.legacyHandlers?.brandRights ?? runtimeLegacyOptions.brandRights,
+  };
 
   // Specialism→required-tools coverage check (adcp-client#1299).
   //
@@ -1055,6 +1763,36 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     fc != null ||
     targeting != null ||
     supportsProposals !== undefined;
+  // App `version` / capability `build_version` are deployment metadata and
+  // never negotiate protocol behavior. Only the configured AdCP schema pin
+  // determines whether this server may advertise the 3.1 feature bit (3.2+
+  // makes canonical creatives part of the release contract itself).
+  const configuredAdcpVersion = opts.adcpVersion ?? ADCP_VERSION;
+  const configuredRelease = parseAdcpRelease(configuredAdcpVersion);
+  if (!configuredRelease) {
+    throw new PlatformConfigError(
+      `Configured AdCP version '${configuredAdcpVersion}' is not a valid release identifier`
+    );
+  }
+  for (const advertisedVersion of platform.capabilities.supported_versions ?? []) {
+    const advertisedRelease = parseAdcpRelease(advertisedVersion);
+    if (!advertisedRelease) {
+      throw new PlatformConfigError(
+        `capabilities.supported_versions contains invalid release identifier '${advertisedVersion}'`
+      );
+    }
+    if (compareAdcpReleases(advertisedRelease, configuredRelease) > 0) {
+      throw new PlatformConfigError(
+        `capabilities.supported_versions advertises AdCP ${advertisedVersion}, newer than the configured server schema ${configuredAdcpVersion}`
+      );
+    }
+  }
+  const canonicalCreativeCapability = supportsCanonicalCreativeCapability(configuredAdcpVersion);
+  // createAdcpServerFromPlatform is the modern, canonical SDK boundary and
+  // advertises canonicalCreatives for every capable release. In transitional
+  // 3.1, concrete legacy request fields still select the legacy projection;
+  // an otherwise ambiguous read follows the capability the server advertises.
+  const defaultCreativeWireMode = canonicalCreativeCapability ? 'canonical' : 'legacy';
   const mediaBuyOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['media_buy']>> = {
     ...(hasSalesPlatform && {
       buying_modes: supportsProposals ? (['brief', 'refine'] as const) : (['brief'] as const),
@@ -1066,13 +1804,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(fc != null && { frequency_capping: fc }),
     ...(targeting != null && { execution: { targeting } }),
     ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
-    ...(hasMediaBuyProjection && {
-      features: {
-        ...(at != null && { audience_targeting: true }),
-        ...(ct != null && { conversion_tracking: true }),
-        ...(cs != null && { content_standards: true }),
-      },
-    }),
+    features: {
+      ...(canonicalCreativeCapability && { canonical_creatives: true }),
+      ...(at != null && { audience_targeting: true }),
+      ...(ct != null && { conversion_tracking: true }),
+      ...(cs != null && { content_standards: true }),
+    },
   };
 
   if (process.env.NODE_ENV !== 'production') {
@@ -1216,50 +1953,49 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   //  - overrides: adopter-declared overrides merged before framework's
   //               per-domain blocks so framework-derived blocks remain
   //               authoritative on the keys the projection engine handles.
-  const adopterFeatures = platform.capabilities.features;
+  // This framework canonicalizes every creative before adopter handlers run,
+  // but the feature bit exists only in canonical-capable protocol schemas.
+  // Strip an adopter claim on a 3.0 pin instead of leaking a future feature
+  // into a legacy capability response.
+  const { canonicalCreatives: _adopterCanonicalCreatives, ...adopterFeatureBase } =
+    platform.capabilities.features ?? {};
+  void _adopterCanonicalCreatives;
+  const adopterFeatures = {
+    ...adopterFeatureBase,
+    ...(canonicalCreativeCapability && { canonicalCreatives: true }),
+  };
   const adopterCreative = platform.capabilities.creative;
   const adopterAccount = platform.capabilities.account;
   const adopterOverrides = platform.capabilities.overrides;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
-  const hasAdopterPassthroughs =
-    adopterFeatures !== undefined ||
-    adopterCreative !== undefined ||
-    adopterAccount !== undefined ||
-    adopterOverrides !== undefined ||
-    adopterSupportedVersions !== undefined;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
 
-  const projectedCapabilitiesConfig =
-    hasOverridesObject || hasSpecialisms || hasAdopterPassthroughs
-      ? {
-          ...(hasSpecialisms && {
-            specialisms: [...platformSpecialisms] as NonNullable<GetAdCPCapabilitiesResponse['specialisms']>,
-          }),
-          ...(claimsSignedSpecialism && { request_signing: { supported: true as const } }),
-          ...(adopterFeatures !== undefined && { features: adopterFeatures }),
-          ...(adopterCreative !== undefined && { creative: adopterCreative }),
-          ...(adopterAccount !== undefined && { account: adopterAccount }),
-          ...(adopterSupportedVersions !== undefined && {
-            supported_versions: [...adopterSupportedVersions],
-          }),
-          ...(hasOverridesObject && {
-            overrides: {
-              ...(adopterOverrides ?? {}),
-              ...(hasMediaBuyProjection && {
-                media_buy: mergeCapabilityOverride(adopterOverrides?.media_buy, mediaBuyOverrides),
-              }),
-              ...(hasBrandProjection && {
-                brand: mergeCapabilityOverride(adopterOverrides?.brand, brandOverrides),
-              }),
-              ...(hasAccountProjection && {
-                account: mergeCapabilityOverride(adopterOverrides?.account, accountOverrides),
-              }),
-              ...(hasComplianceTestingProjection &&
-                complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
-            },
-          }),
-        }
-      : undefined;
+  const projectedCapabilitiesConfig = {
+    ...(hasSpecialisms && {
+      specialisms: [...platformSpecialisms] as NonNullable<GetAdCPCapabilitiesResponse['specialisms']>,
+    }),
+    ...(claimsSignedSpecialism && { request_signing: { supported: true as const } }),
+    features: adopterFeatures,
+    ...(adopterCreative !== undefined && { creative: adopterCreative }),
+    ...(adopterAccount !== undefined && { account: adopterAccount }),
+    ...(adopterSupportedVersions !== undefined && {
+      supported_versions: [...adopterSupportedVersions],
+    }),
+    ...(hasOverridesObject && {
+      overrides: {
+        ...(adopterOverrides ?? {}),
+        media_buy: mergeCapabilityOverride(adopterOverrides?.media_buy, mediaBuyOverrides),
+        ...(hasBrandProjection && {
+          brand: mergeCapabilityOverride(adopterOverrides?.brand, brandOverrides),
+        }),
+        ...(hasAccountProjection && {
+          account: mergeCapabilityOverride(adopterOverrides?.account, accountOverrides),
+        }),
+        ...(hasComplianceTestingProjection &&
+          complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
+      },
+    }),
+  };
 
   // Per-server `ctxFor` closure; threads the effective ctx-metadata store
   // (explicit > pooled > none) into `buildRequestContext` so handlers see
@@ -1429,7 +2165,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // See `CreateAdcpServerFromPlatformOptions` JSDoc for the migration-seam
     // contract.
     mediaBuy: mergeHandlers(
-      opts.mediaBuy,
+      legacyHandlers.mediaBuy,
       buildMediaBuyHandlers(
         platform,
         taskRegistry,
@@ -1443,13 +2179,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         ctxFor,
         effectiveCtxMetadata,
         opts.mediaBuyStore,
-        opts.proposalStore
+        opts.proposalStore,
+        opts.legacyCreativeFormatConverter,
+        opts.canonicalFormatLegacyResolver,
+        defaultCreativeWireMode
       ),
       'mediaBuy',
       mergeOpts
     ),
     creative: mergeHandlers(
-      opts.creative,
+      legacyHandlers.creative,
       buildCreativeHandlers(
         platform,
         taskRegistry,
@@ -1460,7 +2199,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
           autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
         },
-        ctxFor
+        ctxFor,
+        opts.legacyCreativeFormatConverter,
+        opts.canonicalFormatLegacyResolver,
+        defaultCreativeWireMode
       ),
       'creative',
       mergeOpts
@@ -1495,10 +2237,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'sponsoredIntelligence',
       mergeOpts
     ),
-    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
+    governance: mergeHandlers(
+      legacyHandlers.governance,
+      buildGovernanceHandlers(platform, ctxFor),
+      'governance',
+      mergeOpts
+    ),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
     brandRights: mergeHandlers(
-      opts.brandRights,
+      legacyHandlers.brandRights,
       buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
       'brandRights',
       mergeOpts
@@ -2400,7 +3147,7 @@ function mergeHandlers<T extends object>(
       const shouldLog = opts.mode !== 'log-once' || !mergeSeamLoggedKeys.has(dedupeKey);
 
       const message =
-        `[adcp/decisioning] opts.${domain}.{${collisions.join(', ')}} ` +
+        `[adcp/decisioning] opts.legacyHandlers.${domain}.{${collisions.join(', ')}} ` +
         `${collisions.length === 1 ? 'is' : 'are'} shadowed by platform-derived handlers. ` +
         `The merge seam is for tools the platform doesn't model yet — once a tool has a native ` +
         `platform method, move the logic there and remove the opts override.`;
@@ -3461,7 +4208,8 @@ async function hydratePackagesWithProducts(
   store: CtxMetadataStore | undefined,
   accountId: string | undefined,
   packages: unknown[] | undefined,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  legacyFormatConverter: LegacyFormatConverter | undefined
 ): Promise<void> {
   if (!store || !accountId || !packages || packages.length === 0) return;
   const refs: Array<{ kind: 'product'; id: string }> = [];
@@ -3487,7 +4235,18 @@ async function hydratePackagesWithProducts(
     if (typeof productId !== 'string') continue;
     const entry = entries.get(`product:${productId}`);
     if (!entry?.resource || typeof entry.resource !== 'object') continue;
-    const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+    let hydrated: Record<string, unknown>;
+    try {
+      hydrated = asCanonicalSemanticServerRequest(entry.resource, 'hydrate_product', legacyFormatConverter) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      logger.warn(
+        `[adcp/decisioning] auto-hydrate product:${productId} skipped: stored creative format has no canonical representation`
+      );
+      continue;
+    }
     if (entry.value !== null && entry.value !== undefined) {
       hydrated['ctx_metadata'] = entry.value;
     }
@@ -3576,7 +4335,8 @@ async function hydrateSingleResource(
   id: string | undefined,
   attachField: string,
   target: unknown,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  legacyFormatConverter?: LegacyFormatConverter
 ): Promise<void> {
   if (!store || !accountId || !id || target == null || typeof target !== 'object') return;
   let entry: { value: unknown; resource?: unknown } | undefined;
@@ -3588,7 +4348,22 @@ async function hydrateSingleResource(
     return;
   }
   if (!entry?.resource || typeof entry.resource !== 'object') return;
-  const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+  let hydrated: Record<string, unknown>;
+  if (legacyFormatConverter !== undefined || kind === 'media_buy' || kind === 'package' || kind === 'creative') {
+    try {
+      hydrated = asCanonicalSemanticServerRequest(entry.resource, `hydrate_${kind}`, legacyFormatConverter) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      logger.warn(
+        `[adcp/decisioning] auto-hydrate ${kind}:${id} skipped: stored creative format has no canonical representation`
+      );
+      return;
+    }
+  } else {
+    hydrated = { ...(entry.resource as Record<string, unknown>) };
+  }
   if (entry.value !== null && entry.value !== undefined) {
     hydrated['ctx_metadata'] = entry.value;
   }
@@ -3732,7 +4507,8 @@ async function hydrateForTool(
   accountId: string | undefined,
   toolName: string,
   params: unknown,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  legacyFormatConverter?: LegacyFormatConverter
 ): Promise<void> {
   if (!store || !accountId || params == null || typeof params !== 'object') return;
   const fields = TOOL_ENTITY_FIELDS[toolName];
@@ -3744,7 +4520,7 @@ async function hydrateForTool(
     const kind = ENTITY_TO_RESOURCE_KIND[xEntity];
     if (!kind) continue; // Unknown entity — graceful skip; don't break unknown verbs.
     const attachField = deriveAttachField(toolName, field);
-    await hydrateSingleResource(store, accountId, kind, id, attachField, params, logger);
+    await hydrateSingleResource(store, accountId, kind, id, attachField, params, logger, legacyFormatConverter);
   }
 }
 
@@ -4011,7 +4787,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
   mediaBuyStore: MediaBuyStore | undefined,
-  proposalStore: import('../proposal').ProposalStore | undefined
+  proposalStore: import('../proposal').ProposalStore | undefined,
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
+  creativeWireMode: 'canonical' | 'legacy'
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   const proposalManager = (platform as { proposalManager?: import('../proposal').ProposalManager }).proposalManager;
@@ -4025,18 +4804,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   // upstream owns bidding (`sales-social`) skip them entirely. The
   // dispatcher mirrors that with conditional spreads — we don't register
   // a wire handler when the platform method is absent, so the merge seam
-  // (`opts.mediaBuy.X`) can supply it OR the framework returns
+  // (`opts.legacyHandlers.mediaBuy.X`) can supply it OR the framework returns
   // `METHOD_NOT_FOUND` from `tools/list` for the unsupported tool.
   return {
     ...((sales?.getProducts || proposalManager) && {
       getProducts: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        const canonicalParams = asCanonicalGetProductsRequest(params as unknown as Record<string, unknown>);
         const reqCtx = ctxFor(ctx, params);
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
         if (proposalManager && proposalStore) {
           const intercept = await maybeInterceptFinalize({
-            request: params,
+            request: canonicalParams,
             manager: proposalManager,
             store: proposalStore,
             ctx: reqCtx as unknown as { account: { id: string } },
@@ -4106,9 +4887,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // Refine routing per Python's _select_proposal_method:
             // refine_products iff buying_mode='refine' AND
             // capabilities.refine AND the manager implements it.
-            type GetProductsPayload = RequireCacheScopeWhenProducts<
-              ServerPayload<import('../../../types/tools.generated').GetProductsResponse>
-            >;
+            type GetProductsPayload = import('../specialisms/sales').GetProductsPayload;
             let result: GetProductsPayload | TaskHandoff<GetProductsPayload>;
             if (proposalManager) {
               const useRefine =
@@ -4116,12 +4895,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 proposalManager.capabilities.refine === true &&
                 typeof proposalManager.refineProducts === 'function';
               result = useRefine
-                ? await proposalManager.refineProducts!(params, reqCtx as never)
-                : await proposalManager.getProducts(params, reqCtx as never);
+                ? await proposalManager.refineProducts!(canonicalParams, reqCtx as never)
+                : await proposalManager.getProducts(canonicalParams, reqCtx as never);
             } else {
-              result = await sales!.getProducts!(params, reqCtx);
+              result = (await sales!.getProducts!(canonicalParams, reqCtx)) as unknown as
+                | GetProductsPayload
+                | TaskHandoff<GetProductsPayload>;
             }
             const projectProducts = async (terminalResult: GetProductsPayload) => {
+              const canonicalResult = asCanonicalProductResponse(terminalResult, legacyFormatConverter);
               // Auto-store products: persist each Product's wire shape +
               // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
               // calls referencing product_id can hydrate the full Product
@@ -4130,13 +4912,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 ctxMetadataStore,
                 reqCtx.account?.id,
                 'product',
-                (terminalResult as { products?: readonly unknown[] })?.products,
+                (canonicalResult as { products?: readonly unknown[] })?.products,
                 'product_id',
                 logger
               );
               // v1.5 seam: persist proposals[] as DRAFT records (with
               // typed recipes pulled from Product.implementation_config)
               // so subsequent finalize / create_media_buy can hydrate.
+              // Read recipes from the adopter's original semantic result,
+              // before wire sanitization turns Set-backed capability overlap
+              // into transport-safe data. Recipes are internal state and never
+              // cross the buyer-facing response boundary.
               if (proposalStore) {
                 await maybePersistDraftAfterGetProducts({
                   response: terminalResult,
@@ -4144,7 +4930,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   ctx: reqCtx as unknown as { account: { id: string } },
                 });
               }
-              return terminalResult;
+              return asProductResponseForWire(
+                canonicalResult,
+                responseWireMode,
+                canonicalFormatLegacyResolver
+              ) as unknown as import('../../../types/tools.generated').GetProductsResponse;
             };
             const isHandoff = isTaskHandoff<GetProductsPayload>(result);
             if (buyingMode === 'wholesale' && isHandoff) {
@@ -4192,6 +4982,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.createMediaBuy && {
       createMediaBuy: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        params = asCanonicalSemanticServerRequest(params, 'create_media_buy', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
         // Auto-hydrate: walk `params.packages`, attach the full Product object
         // (including `ctx_metadata`) at `pkg.product`. Publisher reads
@@ -4201,7 +4993,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           ctxMetadataStore,
           reqCtx.account?.id,
           (params as { packages?: unknown[] })?.packages,
-          logger
+          logger,
+          legacyFormatConverter
         );
         // v1.5 seam: when the request carries a proposal_id, reserve
         // the proposal (atomic CAS COMMITTED → CONSUMING), validate
@@ -4227,7 +5020,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             });
             let result: Awaited<ReturnType<NonNullable<typeof sales.createMediaBuy>>>;
             try {
-              result = await sales!.createMediaBuy!(params, reqCtx);
+              result = await sales!.createMediaBuy!(params as unknown as CanonicalCreateMediaBuyRequest, reqCtx);
             } catch (err) {
               // Adapter rejected — roll back the reservation so the buyer
               // can retry without PROPOSAL_NOT_COMMITTED blocking them.
@@ -4273,7 +5066,13 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               result,
               async r => {
                 await persistTargetingOverlayFromCreate(mediaBuyStore, reqCtx.account?.id, params, r, logger);
-                return r;
+                return asSemanticServerResponseForWire(
+                  r,
+                  'create_media_buy',
+                  legacyFormatConverter,
+                  canonicalFormatLegacyResolver,
+                  responseWireMode
+                );
               }
             );
           },
@@ -4284,6 +5083,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.updateMediaBuy && {
       updateMediaBuy: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        params = asCanonicalSemanticServerRequest(params, 'update_media_buy', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
         // `media_buy_id` is required on the wire schema, but `validation: 'off'`
         // mode skips the schema parse — guard at the seam so platform code can
@@ -4300,7 +5101,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // at `req.media_buy`. Publisher reads `req.media_buy.ctx_metadata?.gam`
         // directly — no separate lookup. Misses are silent; publisher falls
         // back to its own DB. Schema-driven via `x-entity` (#1109).
-        await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_media_buy', params, logger);
+        await hydrateForTool(
+          ctxMetadataStore,
+          reqCtx.account?.id,
+          'update_media_buy',
+          params,
+          logger,
+          legacyFormatConverter
+        );
         // v1.5 seam: hydrate ctx.recipes via reverse-index so the adapter's
         // updateMediaBuy can apply the same recipe that drove createMediaBuy.
         // Re-validates capability overlap on any packages-shaped patch
@@ -4321,7 +5129,11 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
-            const result = await sales!.updateMediaBuy!(media_buy_id, params, reqCtx);
+            const result = await sales!.updateMediaBuy!(
+              media_buy_id,
+              params as unknown as CanonicalUpdateMediaBuyRequest,
+              reqCtx
+            );
             return routeIfHandoff(
               taskRegistry,
               {
@@ -4348,7 +5160,13 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                   params,
                   logger
                 );
-                return r;
+                return asSemanticServerResponseForWire(
+                  r,
+                  'update_media_buy',
+                  legacyFormatConverter,
+                  canonicalFormatLegacyResolver,
+                  responseWireMode
+                );
               }
             );
           },
@@ -4358,8 +5176,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     syncCreatives: async (params, ctx) => {
+      const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+      params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
       const reqCtx = ctxFor(ctx, params);
-      const creatives = params.creatives ?? [];
+      const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
       if (!sales?.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this sales platform',
@@ -4384,7 +5204,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               logger,
             },
             result,
-            rows => ({ creatives: rows.map(normalizeRowErrors) })
+            rows =>
+              asSemanticServerResponseForWire(
+                { creatives: rows.map(normalizeRowErrors) },
+                'sync_creatives',
+                legacyFormatConverter,
+                canonicalFormatLegacyResolver,
+                responseWireMode
+              )
           );
         },
         r => r
@@ -4393,6 +5220,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.getMediaBuyDelivery && {
       getMediaBuyDelivery: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const reqCtx = ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
         // Resolutions §5, recipe-driven delivery aggregation needs the
@@ -4424,7 +5252,13 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               (result as { media_buy_deliveries?: readonly unknown[] })?.media_buy_deliveries,
               logger
             );
-            return result;
+            return asSemanticServerResponseForWire(
+              result,
+              'get_media_buy_delivery',
+              legacyFormatConverter,
+              canonicalFormatLegacyResolver,
+              responseWireMode
+            );
           },
           actuals => actuals
         );
@@ -4433,19 +5267,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     // Optional methods — return UNSUPPORTED_FEATURE when the platform omits
     // them. Adopters that haven't migrated to the v6 platform interface for
-    // these specific tools can still pass raw handlers via opts.mediaBuy
+    // these specific tools can still pass raw handlers via opts.legacyHandlers.mediaBuy
     // (merge seam) — the merge runs AFTER buildMediaBuyHandlers, so opts
     // handlers fill in for the methods this platform omits.
     // `getMediaBuys` is REQUIRED at the type level, but we keep a runtime
     // guard for the merge-seam migration path: legacy adopters wire it via
-    // `opts.mediaBuy.getMediaBuys` rather than on the platform interface.
+    // `opts.legacyHandlers.mediaBuy.getMediaBuys` rather than on the platform interface.
     // Once the migration completes (every adopter implements it natively),
     // this conditional spreads can collapse — but for now, omitting the
     // platform-derived handler when absent lets `mergeHandlers` pick up the
-    // adopter's custom handler from `opts.mediaBuy` instead of throwing
+    // adopter's custom handler from `opts.legacyHandlers.mediaBuy` instead of throwing
     // `sales.getMediaBuys is not a function`.
     ...(sales?.getMediaBuys && {
       getMediaBuys: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
           async () => {
@@ -4457,16 +5292,32 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               (result as { media_buys?: readonly unknown[] })?.media_buys,
               logger
             );
+            const canonicalResult = asCanonicalSemanticServerResponse(
+              result,
+              'get_media_buys',
+              legacyFormatConverter,
+              canonicalFormatLegacyResolver
+            );
             await autoStoreResources(
               ctxMetadataStore,
               reqCtx.account?.id,
               'media_buy',
-              (result as { media_buys?: readonly unknown[] })?.media_buys,
+              (canonicalResult as { media_buys?: readonly unknown[] })?.media_buys,
               'media_buy_id',
               logger
             );
-            await backfillTargetingOverlay(mediaBuyStore, reqCtx.account?.id, result, logger);
-            return result;
+            const wireResult =
+              responseWireMode === 'canonical'
+                ? attachCanonicalCustomFormatWireRefs(canonicalResult, canonicalFormatLegacyResolver, 'get_media_buys')
+                : asSemanticServerResponseForWire(
+                    result,
+                    'get_media_buys',
+                    legacyFormatConverter,
+                    canonicalFormatLegacyResolver,
+                    responseWireMode
+                  );
+            await backfillTargetingOverlay(mediaBuyStore, reqCtx.account?.id, wireResult, logger);
+            return wireResult;
           },
           r => r
         );
@@ -4474,6 +5325,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
     ...(sales?.providePerformanceFeedback && {
       providePerformanceFeedback: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        params = asCanonicalSemanticServerRequest(params, 'provide_performance_feedback', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
         // Auto-hydrate `req.media_buy` from the prior createMediaBuy /
         // getMediaBuys store entry, plus `req.creative` when the buyer
@@ -4483,36 +5336,62 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // itself can ignore them. Schema-driven via `x-entity` (#1109);
         // package hydration is additive vs the prior hardcoded version
         // (silent no-op when packages aren't seeded).
-        await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'provide_performance_feedback', params, logger);
+        await hydrateForTool(
+          ctxMetadataStore,
+          reqCtx.account?.id,
+          'provide_performance_feedback',
+          params,
+          logger,
+          legacyFormatConverter
+        );
         return projectSync(
           () => sales!.providePerformanceFeedback!(params, reqCtx),
-          r => r
+          result =>
+            asSemanticServerResponseForWire(
+              result,
+              'provide_performance_feedback',
+              legacyFormatConverter,
+              canonicalFormatLegacyResolver,
+              responseWireMode
+            )
         );
       },
     }),
-    ...(sales?.listCreativeFormats && {
+    ...(sales?.listCreativeFormatsLegacy && {
       listCreativeFormats: async (params, ctx) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => sales!.listCreativeFormats!(params, reqCtx),
+          () => sales!.listCreativeFormatsLegacy!(params, reqCtx),
           r => r
         );
       },
     }),
     ...(sales?.listCreatives && {
       listCreatives: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx, params);
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        const canonicalParams = asCanonicalListCreativesRequest(
+          params as unknown as Record<string, unknown>,
+          legacyFormatConverter
+        );
+        const reqCtx = ctxFor(ctx, canonicalParams);
         return projectSync(
           async () => {
-            const result = await sales!.listCreatives!(params, reqCtx);
+            const result = await sales!.listCreatives!(canonicalParams, reqCtx);
+            const canonicalResult = asSemanticServerResponseForWire(
+              result,
+              'list_creatives',
+              legacyFormatConverter,
+              canonicalFormatLegacyResolver,
+              responseWireMode
+            );
             warnIfTruncatedMultiIdResponse(
               'listCreatives',
               'creative_ids',
               (params as { creative_ids?: readonly string[] }).creative_ids,
-              (result as { creatives?: readonly unknown[] })?.creatives,
+              (canonicalResult as { creatives?: readonly unknown[] })?.creatives,
               logger
             );
-            return result;
+            return canonicalResult as unknown as import('../../../types/tools.generated').ListCreativesResponse;
           },
           r => r
         );
@@ -4557,7 +5436,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
   pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  legacyFormatConverter: LegacyFormatConverter | undefined,
+  canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
+  creativeWireMode: 'canonical' | 'legacy'
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -4566,22 +5448,25 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => creative.buildCreative(params, reqCtx),
+        () => creative.buildCreativeLegacy(params, reqCtx),
         ret => projectBuildCreativeReturn(ret)
       );
     },
 
     previewCreative: async (params, ctx) => {
-      if (!('previewCreative' in creative) || (creative as CreativeBuilderPlatform).previewCreative == null) {
+      if (
+        !('previewCreativeLegacy' in creative) ||
+        (creative as CreativeBuilderPlatform).previewCreativeLegacy == null
+      ) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message:
-            'preview_creative: this creative platform did not implement previewCreative. ' +
-            'Add `previewCreative(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
+            'preview_creative: this creative platform did not implement previewCreativeLegacy. ' +
+            'Add `previewCreativeLegacy(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
         });
       }
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => (creative as CreativeBuilderPlatform).previewCreative!(params, reqCtx),
+        () => (creative as CreativeBuilderPlatform).previewCreativeLegacy!(params, reqCtx),
         preview => preview
       );
     },
@@ -4592,17 +5477,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     // undefined per `NoAccountCtx`. Wired identically on both
     // `CreativeBuilderPlatform` and `CreativeAdServerPlatform`.
     listCreativeFormats: async (params, ctx) => {
-      if (!('listCreativeFormats' in creative) || creative.listCreativeFormats == null) {
+      if (!('listCreativeFormatsLegacy' in creative) || creative.listCreativeFormatsLegacy == null) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message:
-            'list_creative_formats: this creative platform did not implement listCreativeFormats. ' +
-            'Add `listCreativeFormats(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal, ' +
+            'list_creative_formats: this creative platform did not implement listCreativeFormatsLegacy. ' +
+            'Add `listCreativeFormatsLegacy(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal, ' +
             'or delegate via `capabilities.creative_agents`.',
         });
       }
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => (creative as CreativeBuilderPlatform).listCreativeFormats!(params, reqCtx),
+        () => (creative as CreativeBuilderPlatform).listCreativeFormatsLegacy!(params, reqCtx),
         r => r
       );
     },
@@ -4614,8 +5499,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     // buildAccountHandlers — see comment at line 4544.
     ...(creative.syncCreatives != null && {
       syncCreatives: async (params, ctx) => {
+        const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+        params = asCanonicalSemanticServerRequest(params, 'sync_creatives', legacyFormatConverter);
         const reqCtx = ctxFor(ctx, params);
-        const creatives = params.creatives ?? [];
+        const creatives = (params.creatives ?? []) as CanonicalCreativeAsset[];
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
@@ -4637,7 +5524,14 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 logger,
               },
               result,
-              rows => ({ creatives: rows.map(normalizeRowErrors) })
+              rows =>
+                asSemanticServerResponseForWire(
+                  { creatives: rows.map(normalizeRowErrors) },
+                  'sync_creatives',
+                  legacyFormatConverter,
+                  canonicalFormatLegacyResolver,
+                  responseWireMode
+                )
             );
           },
           r => r
@@ -4653,18 +5547,30 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     ...('listCreatives' in creative &&
       (creative as CreativeAdServerPlatform).listCreatives != null && {
         listCreatives: async (params, ctx) => {
-          const reqCtx = ctxFor(ctx, params);
+          const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
+          const canonicalParams = asCanonicalListCreativesRequest(
+            params as unknown as Record<string, unknown>,
+            legacyFormatConverter
+          );
+          const reqCtx = ctxFor(ctx, canonicalParams);
           return projectSync(
             async () => {
-              const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
+              const result = await (creative as CreativeAdServerPlatform).listCreatives(canonicalParams, reqCtx);
+              const canonicalResult = asSemanticServerResponseForWire(
+                result,
+                'list_creatives',
+                legacyFormatConverter,
+                canonicalFormatLegacyResolver,
+                responseWireMode
+              );
               warnIfTruncatedMultiIdResponse(
                 'listCreatives',
                 'creative_ids',
                 (params as { creative_ids?: readonly string[] }).creative_ids,
-                (result as { creatives?: readonly unknown[] })?.creatives,
+                (canonicalResult as { creatives?: readonly unknown[] })?.creatives,
                 logger
               );
-              return result;
+              return canonicalResult as unknown as import('../../../types/tools.generated').ListCreativesResponse;
             },
             r => r
           );
@@ -4674,6 +5580,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     ...('getCreativeDelivery' in creative &&
       (creative as CreativeAdServerPlatform).getCreativeDelivery != null && {
         getCreativeDelivery: async (params, ctx) => {
+          const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
           const reqCtx = ctxFor(ctx, params);
           return projectSync(
             async () => {
@@ -4685,7 +5592,13 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 (result as { creative_deliveries?: readonly unknown[] })?.creative_deliveries,
                 logger
               );
-              return result;
+              return asSemanticServerResponseForWire(
+                result,
+                'get_creative_delivery',
+                legacyFormatConverter,
+                canonicalFormatLegacyResolver,
+                responseWireMode
+              ) as unknown as import('../../../types/tools.generated').GetCreativeDeliveryResponse;
             },
             r => r
           );
@@ -5019,7 +5932,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
-          const result = await br.getRights(params, reqCtx);
+          const result = await br.getRightsLegacy(params, reqCtx);
           // Auto-store rights offerings so subsequent acquire_rights can
           // hydrate `req.rights` (pricing_options + ctx_metadata) without
           // a separate publisher lookup.
@@ -5052,7 +5965,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       // rename would be wire-visible behavior.
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'acquire_rights', params, logger);
       return projectSync(
-        () => br.acquireRights(params, reqCtx),
+        () => br.acquireRightsLegacy(params, reqCtx),
         r => r
       );
     },
@@ -5070,7 +5983,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx, params);
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_rights', params, logger);
       return projectSync(
-        () => br.updateRights(params, reqCtx),
+        () => br.updateRightsLegacy(params, reqCtx),
         r => r
       );
     },
@@ -5200,59 +6113,59 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.listContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.listContentStandards(params, reqCtx),
+        () => cs.listContentStandardsLegacy(params, reqCtx),
         r => r
       );
     };
     handlers.getContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.getContentStandards(params, reqCtx),
+        () => cs.getContentStandardsLegacy(params, reqCtx),
         r => r
       );
     };
     handlers.createContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.createContentStandards(params, reqCtx),
+        () => cs.createContentStandardsLegacy(params, reqCtx),
         r => r
       );
     };
     handlers.updateContentStandards = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.updateContentStandards(params, reqCtx),
+        () => cs.updateContentStandardsLegacy(params, reqCtx),
         r => r
       );
     };
     handlers.calibrateContent = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.calibrateContent(params, reqCtx),
+        () => cs.calibrateContentLegacy(params, reqCtx),
         r => r
       );
     };
     handlers.validateContentDelivery = async (params, ctx) => {
       const reqCtx = ctxFor(ctx, params);
       return projectSync(
-        () => cs.validateContentDelivery(params, reqCtx),
+        () => cs.validateContentDeliveryLegacy(params, reqCtx),
         r => r
       );
     };
-    if (cs.getMediaBuyArtifacts) {
+    if (cs.getMediaBuyArtifactsLegacy) {
       handlers.getMediaBuyArtifacts = async (params, ctx) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => cs.getMediaBuyArtifacts!(params, reqCtx),
+          () => cs.getMediaBuyArtifactsLegacy!(params, reqCtx),
           r => r
         );
       };
     }
-    if (cs.getCreativeFeatures) {
+    if (cs.getCreativeFeaturesLegacy) {
       handlers.getCreativeFeatures = async (params, ctx) => {
         const reqCtx = ctxFor(ctx, params);
         return projectSync(
-          () => cs.getCreativeFeatures!(params, reqCtx),
+          () => cs.getCreativeFeaturesLegacy!(params, reqCtx),
           r => r
         );
       };

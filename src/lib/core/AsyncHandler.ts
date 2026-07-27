@@ -11,6 +11,7 @@ import type {
   BuildCreativeResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
+  GetCreativeDeliveryResponse,
   ProvidePerformanceFeedbackResponse,
   GetSignalsResponse,
   ActivateSignalResponse,
@@ -60,6 +61,11 @@ import {
   SyncCreativesAsyncResponseData,
   UpdateMediaBuyAsyncResponseData,
 } from '../types';
+import type {
+  CanonicalCreativeResponse,
+  CanonicalGetProductsResponse,
+  CanonicalListCreativesResponse,
+} from '../v2/projection/creative-delivery';
 
 /**
  * Metadata provided with webhook responses
@@ -124,34 +130,38 @@ export interface NotificationMetadata extends WebhookMetadata {
 
 // Simple union-typed handlers for webhook status changes
 export type GetProductsStatusChangeHandler = (
-  response: GetProductsResponse | GetProductsAsyncSubmitted | GetProductsAsyncWorking | GetProductsAsyncInputRequired,
+  response:
+    | CanonicalGetProductsResponse
+    | GetProductsAsyncSubmitted
+    | GetProductsAsyncWorking
+    | GetProductsAsyncInputRequired,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
 export type CreateMediaBuyStatusChangeHandler = (
-  response:
+  response: CanonicalCreativeResponse<
     | CreateMediaBuyResponse
     | CreateMediaBuyAsyncSubmitted
     | CreateMediaBuyAsyncWorking
-    | CreateMediaBuyAsyncInputRequired,
+    | CreateMediaBuyAsyncInputRequired
+  >,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
 export type UpdateMediaBuyStatusChangeHandler = (
-  response:
+  response: CanonicalCreativeResponse<
     | UpdateMediaBuyResponse
     | UpdateMediaBuyAsyncSubmitted
     | UpdateMediaBuyAsyncWorking
-    | UpdateMediaBuyAsyncInputRequired,
+    | UpdateMediaBuyAsyncInputRequired
+  >,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
 export type SyncCreativesStatusChangeHandler = (
-  response:
-    | SyncCreativesResponse
-    | SyncCreativesAsyncSubmitted
-    | SyncCreativesAsyncWorking
-    | SyncCreativesAsyncInputRequired,
+  response: CanonicalCreativeResponse<
+    SyncCreativesResponse | SyncCreativesAsyncSubmitted | SyncCreativesAsyncWorking | SyncCreativesAsyncInputRequired
+  >,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
@@ -225,21 +235,31 @@ export interface Activity {
 export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, working, input-required, submitted)
   onGetProductsStatusChange?: GetProductsStatusChangeHandler;
-  onListCreativeFormatsStatusChange?: (
+  onListCreativeFormatsLegacyStatusChange?: (
     data: ListCreativeFormatsResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onCreateMediaBuyStatusChange?: CreateMediaBuyStatusChangeHandler;
   onUpdateMediaBuyStatusChange?: UpdateMediaBuyStatusChangeHandler;
   onSyncCreativesStatusChange?: SyncCreativesStatusChangeHandler;
-  onListCreativesStatusChange?: (response: ListCreativesResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onPreviewCreativeStatusChange?: (
+  onListCreativesStatusChange?: (
+    response: CanonicalListCreativesResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onPreviewCreativeLegacyStatusChange?: (
     response: PreviewCreativeResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onGetMediaBuysStatusChange?: (response: GetMediaBuysResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onGetMediaBuysStatusChange?: (
+    response: CanonicalCreativeResponse<GetMediaBuysResponse>,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onGetMediaBuyDeliveryStatusChange?: (
-    response: GetMediaBuyDeliveryResponse,
+    response: CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
+  onGetCreativeDeliveryStatusChange?: (
+    response: CanonicalCreativeResponse<GetCreativeDeliveryResponse>,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
   onProvidePerformanceFeedbackStatusChange?: (
@@ -248,7 +268,10 @@ export interface AsyncHandlerConfig {
   ) => void | Promise<void>;
   onGetSignalsStatusChange?: (response: GetSignalsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onActivateSignalStatusChange?: (response: ActivateSignalResponse, metadata: WebhookMetadata) => void | Promise<void>;
-  onBuildCreativeStatusChange?: (response: BuildCreativeResponse, metadata: WebhookMetadata) => void | Promise<void>;
+  onBuildCreativeLegacyStatusChange?: (
+    response: BuildCreativeResponse,
+    metadata: WebhookMetadata
+  ) => void | Promise<void>;
   onListAccountsStatusChange?: (response: ListAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAccountsStatusChange?: (response: SyncAccountsResponse, metadata: WebhookMetadata) => void | Promise<void>;
   onSyncAudiencesStatusChange?: (response: SyncAudiencesResponse, metadata: WebhookMetadata) => void | Promise<void>;
@@ -272,19 +295,19 @@ export interface AsyncHandlerConfig {
     response: DeletePropertyListResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onListContentStandardsStatusChange?: (
+  onListContentStandardsLegacyStatusChange?: (
     response: ListContentStandardsResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onGetContentStandardsStatusChange?: (
+  onGetContentStandardsLegacyStatusChange?: (
     response: GetContentStandardsResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onCalibrateContentStatusChange?: (
+  onCalibrateContentLegacyStatusChange?: (
     response: CalibrateContentResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
-  onValidateContentDeliveryStatusChange?: (
+  onValidateContentDeliveryLegacyStatusChange?: (
     response: ValidateContentDeliveryResponse,
     metadata: WebhookMetadata
   ) => void | Promise<void>;
@@ -428,7 +451,15 @@ export class AsyncHandler {
         break;
 
       case 'list_creative_formats':
-        handler = this.config.onListCreativeFormatsStatusChange;
+        handler = this.config.onListCreativeFormatsLegacyStatusChange;
+        break;
+
+      case 'preview_creative':
+        handler = this.config.onPreviewCreativeLegacyStatusChange;
+        break;
+
+      case 'build_creative':
+        handler = this.config.onBuildCreativeLegacyStatusChange;
         break;
 
       case 'create_media_buy':
@@ -455,6 +486,10 @@ export class AsyncHandler {
         handler = this.config.onGetMediaBuyDeliveryStatusChange;
         break;
 
+      case 'get_creative_delivery':
+        handler = this.config.onGetCreativeDeliveryStatusChange;
+        break;
+
       case 'provide_performance_feedback':
         handler = this.config.onProvidePerformanceFeedbackStatusChange;
         break;
@@ -465,6 +500,22 @@ export class AsyncHandler {
 
       case 'activate_signal':
         handler = this.config.onActivateSignalStatusChange;
+        break;
+
+      case 'list_content_standards':
+        handler = this.config.onListContentStandardsLegacyStatusChange;
+        break;
+
+      case 'get_content_standards':
+        handler = this.config.onGetContentStandardsLegacyStatusChange;
+        break;
+
+      case 'calibrate_content':
+        handler = this.config.onCalibrateContentLegacyStatusChange;
+        break;
+
+      case 'validate_content_delivery':
+        handler = this.config.onValidateContentDeliveryLegacyStatusChange;
         break;
     }
 

@@ -81,11 +81,15 @@ campaign creative.
 batch preview helpers. That cache stores the result of `preview_creative`; it is
 not a durable asset store and is not shared across pods.
 
+`batchPreviewFormatsLegacy()` is intentionally a migration API for legacy
+named-format catalogs. Canonical product cards are self-contained and should be
+rendered from `product.product_card` without a creative-agent round trip.
+
 Production services that cache preview results should pass a shared
 `PreviewCacheBackend`:
 
 ```ts
-import { batchPreviewFormats, type PreviewCacheBackend } from '@adcp/sdk';
+import { batchPreviewFormatsLegacy, type PreviewCacheBackend } from '@adcp/sdk';
 import type { RedisClientType } from 'redis';
 
 function redisPreviewCache(redis: RedisClientType): PreviewCacheBackend {
@@ -103,7 +107,7 @@ function redisPreviewCache(redis: RedisClientType): PreviewCacheBackend {
   };
 }
 
-const previews = await batchPreviewFormats(formats, creativeAgentClient, {
+const previews = await batchPreviewFormatsLegacy(formats, creativeAgentClient, {
   cacheBackend: redisPreviewCache(redis),
 });
 ```

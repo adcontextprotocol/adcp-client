@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const { readFileSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
-const { resolveCanonicalFormatKind, canonicalDeclarationFromBareId } = require('../../dist/lib/index.js');
+const { resolveCanonicalFormatKind, canonicalDeclarationFromBareId } = require('../../dist/lib/v2/projection/index.js');
 
 const CATALOG_PATH = path.join(__dirname, 'v2-projection-fixtures', 'aao-reference-formats.json');
 
@@ -63,6 +63,34 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     assert.strictEqual(resolveCanonicalFormatKind('native_mention'), 'agent_placement');
   });
 
+  test('resolves deployed AAO legacy aliases for canonical and historical owner URLs', () => {
+    const expected = new Map([
+      ['display_320x50_html', 'html5'],
+      ['display_300x50_html', 'html5'],
+      ['display_static', 'image'],
+      ['video_hosted', 'video_hosted'],
+      ['audio_30s', 'audio_hosted'],
+    ]);
+    for (const agentUrl of [
+      'https://creative.adcontextprotocol.org',
+      'https://creative.adcontextprotocol.org/',
+      'HTTPS://CREATIVE.ADCONTEXTPROTOCOL.ORG:443/#ignored',
+      'https://adcontextprotocol.org',
+      'https://adcontextprotocol.org/',
+      'HTTPS://ADCONTEXTPROTOCOL.ORG:443/a/../#ignored',
+    ]) {
+      for (const [id, kind] of expected) {
+        assert.strictEqual(resolveCanonicalFormatKind(id, { agentUrl }), kind, `${agentUrl} ${id}`);
+      }
+    }
+  });
+
+  test('unique bare-id aliases still require a valid HTTP agent URL', () => {
+    for (const agentUrl of ['https://user@creative.adcontextprotocol.org/', 'ftp://creative.adcontextprotocol.org/']) {
+      assert.strictEqual(resolveCanonicalFormatKind('display_320x50_html', { agentUrl }), null, agentUrl);
+    }
+  });
+
   test('fails closed (null) for an under-specified bare id the catalog disambiguates by suffix', () => {
     // `display_300x250` alone is ambiguous — the catalog only carries
     // `_image` / `_html` / `_generative` variants. The resolver MUST NOT
@@ -78,11 +106,15 @@ describe('resolveCanonicalFormatKind', { skip: SKIP_REASON }, () => {
     assert.strictEqual(resolveCanonicalFormatKind(''), null);
   });
 
-  test('a non-AAO agentUrl does not match the AAO catalog — null, never a fabricated kind', () => {
-    // The catalog is AAO-keyed. Lifting a bare id under a foreign
-    // agent_url finds no entry and falls through to the (literal-free)
-    // registry → null.
-    assert.strictEqual(resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }), null);
+  test('a non-AAO owner still resolves an exact, uniquely AAO-published standard id', () => {
+    assert.strictEqual(
+      resolveCanonicalFormatKind('display_300x250_image', { agentUrl: 'https://example.com/' }),
+      'image'
+    );
+    assert.strictEqual(
+      resolveCanonicalFormatKind('totally_made_up_format', { agentUrl: 'https://example.com/' }),
+      null
+    );
   });
 
   test('assetType disambiguates an under-specified bare id to its catalog variant', () => {
@@ -143,6 +175,41 @@ describe('canonicalDeclarationFromBareId', { skip: SKIP_REASON }, () => {
     assert.strictEqual(decl.format_kind, 'image');
     assert.strictEqual(decl.params.asset_source, 'agent_synthesized');
     assert.ok(Array.isArray(decl.params.slots));
+  });
+
+  test('extracts fixed canonical params from reviewed catalog requirements', () => {
+    const mobileLeaderboard = canonicalDeclarationFromBareId('display_320x50_html');
+    assert.ok(mobileLeaderboard);
+    assert.strictEqual(mobileLeaderboard.format_kind, 'html5');
+    assert.strictEqual(mobileLeaderboard.params.width, 320);
+    assert.strictEqual(mobileLeaderboard.params.height, 50);
+
+    const mobileBanner = canonicalDeclarationFromBareId('display_300x50_html');
+    assert.ok(mobileBanner);
+    assert.strictEqual(mobileBanner.format_kind, 'html5');
+    assert.strictEqual(mobileBanner.params.width, 300);
+    assert.strictEqual(mobileBanner.params.height, 50);
+
+    const audio = canonicalDeclarationFromBareId('audio_30s');
+    assert.ok(audio);
+    assert.strictEqual(audio.format_kind, 'audio_hosted');
+    assert.strictEqual(audio.params.duration_ms_exact, 30000);
+
+    const genericImage = canonicalDeclarationFromBareId('display_static');
+    assert.ok(genericImage);
+    assert.strictEqual(genericImage.format_kind, 'image');
+    assert.deepStrictEqual(genericImage.params, {});
+
+    const genericVideo = canonicalDeclarationFromBareId('video_hosted');
+    assert.ok(genericVideo);
+    assert.strictEqual(genericVideo.format_kind, 'video_hosted');
+    assert.deepStrictEqual(genericVideo.params, {});
+
+    const broadcast = canonicalDeclarationFromBareId('broadcast_spot_30s');
+    assert.ok(broadcast);
+    assert.strictEqual(broadcast.params.width, 1920);
+    assert.strictEqual(broadcast.params.height, 1080);
+    assert.strictEqual(broadcast.params.duration_ms_exact, 30000);
   });
 
   test('assetType resolves an under-specified id and the v1_format_ref carries the DISAMBIGUATED id', () => {

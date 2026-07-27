@@ -68,7 +68,10 @@ describe(
             {
               creative_id: 'cre-1',
               name: 'Test Creative',
-              format_id: { agent_url: 'https://test.example', id: 'format1' },
+              format_id: {
+                agent_url: 'https://creative.adcontextprotocol.org/',
+                id: 'video_standard_30s',
+              },
               assets: {
                 video: {
                   asset_type: 'video',

@@ -154,9 +154,10 @@ an extension. New buyer code should compose packages with:
 import { packageRefsForFormatOptions } from '@adcp/sdk/v2/projection';
 ```
 
-`packageRefsForCapabilities()` remains exported for callers pinned to beta.3
-fixtures or sellers, but it is marked deprecated and emits a one-time warning
-on 8.1 because its return value is intentionally beta.3-only.
+`packageRefsForCapabilities()` remains available from the explicit
+`@adcp/sdk/v2/projection` migration subpath for callers pinned to beta.3
+fixtures or sellers. It is deprecated and emits a one-time warning because its
+return value is intentionally beta.3-only.
 
 Projection diagnostics also use the beta.5 field name:
 `diagnostic.error.details.format_option_id`. If you log or branch on the old
@@ -302,20 +303,14 @@ only as the v1 fallback during the migration window, using the v2 declaration's
 `v1_format_ref[]` as the authoritative pairing:
 
 ```ts
-import {
-  CanonicalFormat,
-  packageRefsForCapabilities,
-  withFormatOptions,
-} from '@adcp/sdk';
+import { CanonicalFormat } from '@adcp/sdk';
+import { packageRefsForCapabilities, withFormatOptions } from '@adcp/sdk/v2/projection';
 
 const homepageMrec = CanonicalFormat.image(
   { width: 300, height: 250 },
   {
-    capability_id: 'homepage_mrec',
+    format_option_id: 'homepage_mrec',
     display_name: 'Homepage MREC',
-    v1_format_ref: [
-      CanonicalFormat.ref('https://creative.adcontextprotocol.org', 'display_300x250_image'),
-    ],
   }
 );
 
@@ -403,7 +398,10 @@ const decl = canonicalDeclarationFromBareId('display_300x250_image');
 
 Both fail closed — they return `null`, never a guess, for an unknown id, an
 under-specified id (`display_300x250`, which the catalog only carries as
-`_image` / `_html` / `_generative` variants), or an id from a non-AAO catalog.
+`_image` / `_html` / `_generative` variants), or a bare id with more than one
+AAO-published meaning. A seller-owned URL does not make an arbitrary custom id
+resolvable; it is accepted only when the exact bare id has one unambiguous AAO
+catalog meaning.
 
 If you hold the asset type (e.g. a `format_type` field), pass `assetType`
 to disambiguate an under-specified id — the resolver retries the catalog
@@ -417,9 +415,11 @@ resolveCanonicalFormatKind('display', { assetType: 'javascript' }); // 'display_
 // Still fails closed if <id>_<suffix> isn't a catalog entry.
 ```
 
-Pass `{ agentUrl }` when the bare id was minted under a different agent's
-catalog. For the structured diagnostic explaining _why_ an id didn't resolve,
-run it through `projectV1ProductToV2` inside a one-format product.
+Pass `{ agentUrl }` to preserve the deployed owner when a seller emitted an
+unambiguous AAO standard id under its own creative-agent URL. For the
+structured diagnostic explaining _why_ an id didn't resolve, run it through
+`projectV1ProductToV2` inside a one-format product. Seller-specific catalogs
+still require an exact injected catalog snapshot or custom converter.
 
 `ListCreativeFormatsPayload` is the canonical alias for the server handler
 payload shape of `list_creative_formats`. `ListCreativeFormatsResponsePayload`

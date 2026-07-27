@@ -1,7 +1,7 @@
 const { describe, test, beforeEach } = require('node:test');
 const assert = require('node:assert');
 
-const { batchPreviewFormats, clearPreviewCache } = require('../../dist/lib/index.js');
+const { batchPreviewFormatsLegacy: batchPreviewFormats, clearPreviewCache } = require('../../dist/lib/index.js');
 
 describe('preview utilities', () => {
   beforeEach(() => {
@@ -29,7 +29,7 @@ describe('preview utilities', () => {
       get calls() {
         return calls;
       },
-      previewCreative: async () => {
+      previewCreativeLegacy: async () => {
         calls += 1;
         return {
           data: {

@@ -249,7 +249,7 @@ export async function testSchemaCompliance(
     const { result: formatsResult, step: formatsStep } = await runStep<TaskResult>(
       'Get creative formats (check assets structure)',
       'list_creative_formats',
-      async () => client.listCreativeFormats({}) as Promise<TaskResult>
+      async () => client.listCreativeFormatsLegacy({}) as Promise<TaskResult>
     );
 
     if (formatsResult?.success && formatsResult?.data) {

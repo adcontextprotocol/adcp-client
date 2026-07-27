@@ -206,7 +206,7 @@ describe('F12: auto-emit completion webhook on sync mutating responses', () => {
         name: 'sync_creatives',
         arguments: {
           account: { account_id: 'acc_1' },
-          creatives: [{ creative_id: 'cr_1', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
           idempotency_key: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
           push_notification_config: { url: 'https://buyer.example.com/webhook' },
         },

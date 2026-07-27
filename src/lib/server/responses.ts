@@ -20,7 +20,7 @@
  * @example
  * ```typescript
  * import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
- * import { capabilitiesResponse, productsResponse, adcpError } from '@adcp/sdk/server';
+ * import { legacyCapabilitiesResponse, legacyProductsResponse, adcpError } from '@adcp/sdk/server';
  * import { GetProductsRequestSchema } from '@adcp/sdk/schemas';
  *
  * const server = new McpServer({ name: 'My Agent', version: '1.0.0' });
@@ -34,7 +34,7 @@
  * server.registerTool(
  *   'get_products',
  *   { inputSchema: GetProductsRequestSchema.shape },
- *   async (params) => productsResponse({ products: myProducts, cache_scope: 'account' })
+ *   async (params) => legacyProductsResponse({ products: myProducts, cache_scope: 'account' })
  * );
  * ```
  */

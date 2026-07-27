@@ -25,7 +25,7 @@ function basePlatform(buildCreativeImpl) {
       resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
     },
     creative: {
-      buildCreative: buildCreativeImpl,
+      buildCreativeLegacy: buildCreativeImpl,
     },
   };
 }

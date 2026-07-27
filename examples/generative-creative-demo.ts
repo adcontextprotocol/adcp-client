@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // Demonstrates the new generative creative format support introduced in AdCP v1.7.0
-// This example shows how to use the new format_id and assets structure for both
+// This example shows how to use canonical format_kind and assets for both
 // static and generative creative workflows
 
 import { ADCPMultiAgentClient, imageAsset, textAsset, urlAsset, type SyncCreativesRequest } from '../src/lib';
@@ -24,17 +24,14 @@ async function demonstrateGenerativeCreatives() {
   console.log(`   Protocol: ${agent.config.protocol}\n`);
 
   // Example 1: Traditional static creative with new format
-  console.log('📝 Example 1: Static Creative with new format_id structure\n');
+  console.log('📝 Example 1: Static Creative with canonical format_kind\n');
 
   const staticCreativeRequest: SyncCreativesRequest = {
     creatives: [
       {
         creative_id: `static_banner_${Date.now()}`,
         name: 'Static Display Banner 300x250',
-        format_id: {
-          agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250',
-        },
+        format_kind: 'image',
         assets: {
           image: imageAsset({
             url: 'https://example.com/banner-300x250.jpg',
@@ -64,10 +61,7 @@ async function demonstrateGenerativeCreatives() {
       {
         creative_id: `gen_banner_${Date.now()}`,
         name: 'AI-Generated Display Banner',
-        format_id: {
-          agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative',
-        },
+        format_kind: 'image',
         assets: {
           brand_context: urlAsset({
             url: 'https://example.com',
@@ -115,10 +109,7 @@ async function demonstrateGenerativeCreatives() {
       {
         creative_id: 'gen_banner_12345', // Existing creative ID from previous sync
         name: 'AI-Generated Display Banner',
-        format_id: {
-          agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative',
-        },
+        format_kind: 'image',
         assets: {
           brand_context: urlAsset({
             url: 'https://example.com',
@@ -146,10 +137,7 @@ async function demonstrateGenerativeCreatives() {
       {
         creative_id: 'gen_banner_12345',
         name: 'AI-Generated Display Banner',
-        format_id: {
-          agent_url: 'https://creative.adcontextprotocol.org',
-          id: 'display_300x250_generative',
-        },
+        format_kind: 'image',
         assets: {
           brand_context: urlAsset({
             url: 'https://example.com',
@@ -172,7 +160,7 @@ async function demonstrateGenerativeCreatives() {
 
   console.log('🎉 Demo complete!');
   console.log('\n📚 Key Changes in AdCP v1.7.0:');
-  console.log('   ✓ format_id is now an object with agent_url and id');
+  console.log('   ✓ format_kind identifies the canonical creative format');
   console.log('   ✓ assets is now a flexible object keyed by asset_role');
   console.log('   ✓ New asset types: url and brand_manifest');
   console.log('   ✓ inputs array for defining preview contexts');

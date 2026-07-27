@@ -51,6 +51,7 @@ import {
   type ProposalManager,
   type SalesCorePlatform,
 } from '@adcp/sdk/server';
+import type { CanonicalProduct, GetProductsRequest } from '@adcp/sdk';
 import { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
 import type {
   AccountReference,
@@ -60,16 +61,13 @@ import type {
   GetMediaBuyDeliveryResponse,
   GetMediaBuysRequest,
   GetMediaBuysResponse,
-  GetProductsRequest,
   GetProductsResponse,
   UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
 } from '@adcp/sdk/types';
 
-// Wire `Product` and `Proposal` aren't directly re-exported from
-// `@adcp/sdk/types` — derive from the response array (same pattern as
-// `hello_seller_adapter_guaranteed.ts`).
-type Product = NonNullable<GetProductsResponse['products']>[number];
+// Proposal remains a generated wire type. Products use the SDK's canonical
+// primary surface; legacy format IDs are projected only at the wire boundary.
 type Proposal = NonNullable<GetProductsResponse['proposals']>[number];
 type Package = CreateMediaBuySuccess['packages'][number];
 
@@ -274,13 +272,38 @@ const accounts: AccountStore<NetworkMeta> = {
 // recipes onto ctx.recipes for sales.createMediaBuy.
 // ---------------------------------------------------------------------------
 
-const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
+function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_options'] {
+  const options = p.format_ids.map(id => {
+    const durationSeconds = id.match(/(?:^|_)(\d+)s(?:_|$)/)?.[1];
+    if (p.channel === 'video' || p.channel === 'ctv') {
+      return {
+        format_option_id: id,
+        format_kind: 'video_hosted' as const,
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    if (p.channel === 'audio') {
+      return {
+        format_option_id: id,
+        format_kind: 'audio_hosted' as const,
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    const dimensions = id.match(/(?:^|_)(\d+)x(\d+)(?:_|$)/);
+    return {
+      format_option_id: id,
+      format_kind: 'image' as const,
+      params: dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {},
+    };
+  });
+  if (options.length === 0) {
+    throw new AdcpError('INVALID_REQUEST', { message: `product ${p.product_id} has no creative formats` });
+  }
+  return [options[0]!, ...options.slice(1)];
+}
 
-function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAMLikeRecipe): Product {
-  // The wire `Product` shape doesn't enumerate `implementation_config`
-  // — adapters attach it on the wire and the framework reads it back
-  // via cast in the dispatch helpers. We do the same on the way out.
-  const product: Product = {
+function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAMLikeRecipe): CanonicalProduct {
+  const product: CanonicalProduct = {
     product_id: p.product_id,
     name: p.name,
     description: `${p.name} — ${p.delivery_type} ${p.channel}`,
@@ -294,7 +317,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAM
             ? 'streaming_audio'
             : 'display',
     ],
-    format_ids: p.format_ids.map(id => ({ agent_url: FORMAT_AGENT_URL, id })),
+    format_options: canonicalFormatOptions(p),
     delivery_type: p.delivery_type,
     pricing_options: [
       {
@@ -314,8 +337,7 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAM
       date_range_support: 'date_range',
     },
   };
-  // Attach the recipe via cast so strict TS doesn't reject the field
-  // that's not in the generated `Product` interface.
+  // implementation_config is an adopter-private recipe carrier.
   (product as { implementation_config?: GAMLikeRecipe }).implementation_config = recipe;
   return product;
 }
@@ -627,6 +649,10 @@ serve(
       stateStore,
       mediaBuyStore,
       proposalStore,
+      canonicalFormatLegacyResolver: context => {
+        if (context.source !== 'product' || !context.declaration.format_option_id) return undefined;
+        return { agent_url: PUBLIC_AGENT_URL, id: context.declaration.format_option_id };
+      },
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';

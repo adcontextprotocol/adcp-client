@@ -131,7 +131,15 @@ describe('executeTask error envelope (issue #1148)', () => {
 
     try {
       await assert.rejects(
-        () => agent.executeTask('create_media_buy', { account: { account_id: 'acc-1' }, idempotency_key: 'k1' }),
+        () =>
+          agent.executeTask('create_media_buy', {
+            account: { account_id: 'acc-1' },
+            brand: { domain: 'example.com' },
+            packages: [],
+            start_time: 'immediate',
+            end_time: '2027-01-01T00:00:00Z',
+            idempotency_key: 'version-error-key-1',
+          }),
         err => {
           assert.ok(
             err instanceof VersionUnsupportedError,

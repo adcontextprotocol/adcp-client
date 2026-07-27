@@ -1,8 +1,8 @@
 /**
  * Example: AdCP-Compliant MCP Server
  *
- * Demonstrates building a server using @adcp/sdk response builders
- * for type-safe responses. Run with:
+ * Demonstrates the explicit legacy handler-bag server and its raw response
+ * builders. New servers should use `createAdcpServerFromPlatform` instead.
  *
  *   npx tsx examples/error-compliant-server.ts
  *
@@ -14,10 +14,10 @@
 import {
   createTaskCapableServer,
   adcpError,
-  capabilitiesResponse,
-  productsResponse,
-  mediaBuyResponse,
-  deliveryResponse,
+  legacyCapabilitiesResponse,
+  legacyProductsResponse,
+  legacyMediaBuyResponse,
+  legacyDeliveryResponse,
   serve,
   DEFAULT_REPORTING_CAPABILITIES,
 } from '@adcp/sdk';
@@ -26,7 +26,7 @@ import {
   CreateMediaBuyRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
 } from '@adcp/sdk/schemas';
-import type { Product, ServerPayload } from '@adcp/sdk';
+import type { LegacyProduct, ServerPayload } from '@adcp/sdk';
 import type { GetAdCPCapabilitiesResponse } from '@adcp/sdk/types';
 
 // CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient
@@ -38,17 +38,21 @@ const LenientCreateMediaBuyInput = CreateMediaBuyRequestSchema.extend({
 });
 
 // ---------------------------------------------------------------------------
-// Product catalog — typed as Product[] so the compiler enforces the schema
+// Product catalog for the explicit raw handler-bag example.
 // ---------------------------------------------------------------------------
-const PRODUCTS: Product[] = [
+const PRODUCTS: LegacyProduct[] = [
   {
     product_id: 'prod_display_300x250',
     name: 'Display Banner 300x250',
     description: 'Standard IAB display banner ad unit served across premium news and lifestyle sites.',
     publisher_properties: [{ publisher_domain: 'example-publisher.com', selection_type: 'all' }],
     channels: ['display'],
-    format_ids: [
-      { agent_url: 'https://creatives.adcontextprotocol.org', id: 'display_static', width: 300, height: 250 },
+    format_options: [
+      {
+        format_option_id: 'display-static-300x250',
+        format_kind: 'image',
+        params: { width: 300, height: 250 },
+      },
     ],
     delivery_type: 'non_guaranteed',
     pricing_options: [
@@ -68,7 +72,13 @@ const PRODUCTS: Product[] = [
     description: 'Skippable pre-roll video ads served on premium video content.',
     publisher_properties: [{ publisher_domain: 'example-publisher.com', selection_type: 'all' }],
     channels: ['olv'],
-    format_ids: [{ agent_url: 'https://creatives.adcontextprotocol.org', id: 'video_hosted' }],
+    format_options: [
+      {
+        format_option_id: 'video-hosted-15s',
+        format_kind: 'video_hosted',
+        params: { duration_ms_exact: 15000 },
+      },
+    ],
     delivery_type: 'non_guaranteed',
     pricing_options: [
       {
@@ -130,7 +140,7 @@ function createAgentServer() {
         },
       },
     };
-    return capabilitiesResponse(capabilities);
+    return legacyCapabilitiesResponse(capabilities);
   });
 
   // --- get_products ---
@@ -138,7 +148,7 @@ function createAgentServer() {
     const limited = checkRateLimit();
     if (limited) return limited;
 
-    return productsResponse({ products: PRODUCTS, cache_scope: 'public' });
+    return legacyProductsResponse({ products: PRODUCTS, cache_scope: 'public' });
   });
 
   // --- create_media_buy ---
@@ -197,7 +207,7 @@ function createAgentServer() {
 
       const mediaBuyId = `mb_${Date.now()}`;
 
-      return mediaBuyResponse({
+      return legacyMediaBuyResponse({
         media_buy_id: mediaBuyId,
         packages: (packages ?? []).map((pkg, i) => ({
           package_id: `pkg_${i}_${Date.now()}`,
@@ -221,7 +231,7 @@ function createAgentServer() {
       const now = new Date();
       const yesterday = new Date(now.getTime() - 86400000);
 
-      return deliveryResponse({
+      return legacyDeliveryResponse({
         reporting_period: {
           start: yesterday.toISOString(),
           end: now.toISOString(),

@@ -95,8 +95,9 @@ export interface V1Product {
 }
 
 /**
- * Structured diagnostic shape matching the spec's `errors[]` augmentation
- * contract (`source: "sdk"`, `sdk_id`, `code`, `field`, `error.details`).
+ * Internal structured diagnostic produced by the pure projection algorithms.
+ * `toCanonicalOnlyResponse()` flattens this into the protocol `Error` shape
+ * (`message` plus top-level `details`) before augmenting `errors[]`.
  * Spec codes — `FORMAT_PROJECTION_FAILED` and `FORMAT_DECLARATION_V1_AMBIGUOUS`
  * — come straight from `enums/error-code.json`. The two SDK-local codes
  * (`*_NOT_APPLICABLE`, `CANONICAL_NOT_V1_TRANSLATABLE`) cover cases the
@@ -104,10 +105,9 @@ export interface V1Product {
  * skip silently") but where buyer-side transparency is more useful
  * than silent product drops.
  *
- * **Never logger-only**, per the resolution-order amendment — emitted
- * on the response envelope's `errors[]` array and surfaced on the
- * SDK's `TaskResult` for caller-side handling without re-walking
- * `errors[]`.
+ * **Never logger-only**, per the resolution-order amendment. The internal
+ * nesting keeps projection code strongly discriminated; it is not itself a
+ * wire/protocol Error and must be normalized before public response emission.
  */
 export interface ProjectionDiagnosticBase {
   /** Spec-mandated origin marker for SDK-augmented diagnostics. */
@@ -119,6 +119,24 @@ export interface ProjectionDiagnosticBase {
 }
 
 export type ProjectionDiagnostic =
+  | (ProjectionDiagnosticBase & {
+      /**
+       * SDK-local code: a valid seller product cannot be represented on the
+       * canonical-only public surface because it has no canonical option.
+       * Legacy `format_ids: []` is format-agnostic, not a failed lookup.
+       */
+      code: 'CANONICAL_PRODUCT_FORMATS_UNAVAILABLE';
+      error: {
+        details: {
+          product_id: string;
+          reason:
+            | 'legacy_format_list_empty'
+            | 'canonical_format_list_empty'
+            | 'missing_format_declaration'
+            | 'nested_placement_format_list_empty';
+        };
+      };
+    })
   | (ProjectionDiagnosticBase & {
       /**
        * Spec code (`enums/error-code.json`): registry-coverage gap or
@@ -137,6 +155,10 @@ export type ProjectionDiagnostic =
        *     possible"; this signals "no v2 form yet."
        *   - `no_match` — v1→v2 direction, format not in catalog or
        *     registry, no structural match.
+       *   - `invalid_format_id_parameters` — the legacy ref carries
+       *     malformed dimensional or duration discriminators.
+       *   - `catalog_requirement_conflict` — catalog-authored fixed
+       *     requirements are internally ambiguous or contradict the ref.
        */
       code: 'FORMAT_PROJECTION_FAILED';
       error: {
@@ -144,7 +166,14 @@ export type ProjectionDiagnostic =
           format_kind: CanonicalFormatKind;
           product_id: string;
           format_option_id?: string;
-          resolution_failure: 'no_registry_match' | 'catalog_lacks_canonical_annotation' | 'no_match';
+          resolution_failure:
+            | 'no_registry_match'
+            | 'catalog_lacks_canonical_annotation'
+            | 'no_match'
+            | 'custom_converter_failed'
+            | 'invalid_format_id_parameters'
+            | 'catalog_requirement_conflict';
+          converter_error?: string;
         };
       };
     })
@@ -246,8 +275,8 @@ export type ProjectionDiagnostic =
   | (ProjectionDiagnosticBase & {
       /**
        * SDK-local code: canonical-only projection (`toCanonicalOnlyProduct`
-       * / `toCanonicalOnlyResponse`) dropped a legacy `format_id` that no
-       * `format_options[].v1_format_ref` covers. Emitted only on the
+       * / `toCanonicalOnlyResponse`) found legacy routing metadata that no
+       * canonical format option covers. Emitted only on the
        * v2-native pass-through path — a seller that sent `format_options[]`
        * directly but also carried a `format_ids[]` entry with no canonical
        * representation. Without it, canonical-only mode would silently
@@ -263,14 +292,8 @@ export type ProjectionDiagnostic =
       error: {
         details: {
           product_id: string;
-          /**
-           * The full ref that was dropped, including the dimensional
-           * discriminators (`width` / `height` / `duration_ms`) when the
-           * input carried them — so a buyer can tell which variant of a
-           * multi-size/multi-duration family was lost and re-acquire it on
-           * the v1 path. Omitted keys mean the input ref carried no value.
-           */
-          dropped_format_id: { agent_url: string; id: string; width?: number; height?: number; duration_ms?: number };
+          /** Stable category only; canonical diagnostics never echo routing identifiers. */
+          resolution_failure: 'unmapped_legacy_format';
         };
       };
     });

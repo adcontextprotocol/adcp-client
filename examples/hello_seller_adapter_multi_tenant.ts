@@ -806,7 +806,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       };
     },
 
-    getRights: async (req: GetRightsRequest, ctx): Promise<GetRightsSuccess> => {
+    getRightsLegacy: async (req: GetRightsRequest, ctx): Promise<GetRightsSuccess> => {
       const tenant = getTenant(ctx);
       const requestedUses = new Set(req.uses);
       const matches = Array.from(tenant.rights.values()).filter(r => {
@@ -833,7 +833,10 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       };
     },
 
-    acquireRights: async (req: AcquireRightsRequest, ctx): Promise<AcquireRightsAcquired | AcquireRightsRejected> => {
+    acquireRightsLegacy: async (
+      req: AcquireRightsRequest,
+      ctx
+    ): Promise<AcquireRightsAcquired | AcquireRightsRejected> => {
       const tenant = getTenant(ctx);
       const offering = tenant.rights.get(req.rights_id);
       if (!offering) {
@@ -916,7 +919,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       };
     },
 
-    updateRights: async (req: UpdateRightsRequest, _ctx): Promise<UpdateRightsSuccess> => {
+    updateRightsLegacy: async (req: UpdateRightsRequest, _ctx): Promise<UpdateRightsSuccess> => {
       // Hello adapter doesn't persist a grant ledger; production adopters
       // hydrate by `req.rights_id`, apply the patch (extend dates, adjust
       // impression cap, change pricing, pause/resume), and re-issue

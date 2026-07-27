@@ -149,7 +149,7 @@ const client = ADCPMultiAgentClient.fromEnv();
 AdCP tools available on `AgentClient`:
 
 - `getProducts()` - Discover advertising products
-- `listCreativeFormats()` - Get supported creative formats
+- `listCreativeFormatsLegacy()` - Inspect the legacy named-format catalog during migration
 - `createMediaBuy()` - Create a media buy
 - `updateMediaBuy()` - Update a media buy
 - `syncCreatives()` - Sync creative assets

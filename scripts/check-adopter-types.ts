@@ -50,8 +50,8 @@ const ADOPTER_SOURCE = `
 import type {
   AdcpServer,
   ActivateSignalPayload,
-  BuildCreativePayload,
-  BuildCreativeMultiPayload,
+  LegacyBuildCreativePayload,
+  LegacyBuildCreativeMultiPayload,
   CheckGovernancePayload,
   CreativeApprovedPayload,
   CreatePropertyListPayload,
@@ -62,11 +62,11 @@ import type {
   GetAccountFinancialsHandlerResult,
   GetBrandIdentityPayload,
   GetProductsPayload,
-  GetRightsPayload,
+  LegacyGetRightsPayload,
   ListAccountsHandlerResult,
   ListAccountsPayload,
-  ListCreativeFormatsPayload,
-  ListContentStandardsPayload,
+  LegacyListCreativeFormatsPayload,
+  LegacyListContentStandardsPayload,
   OperationalContext,
   OperationalPlatform,
   RightsTerms,
@@ -81,7 +81,7 @@ import type {
   SyncCreativesHandlerResult,
   SyncEventSourcesPayload,
   SyncGovernanceHandlerResult,
-  UpdateRightsPayload,
+  LegacyUpdateRightsPayload,
   UpdateMediaBuyPayload,
 } from '@adcp/sdk/server';
 import { createAdcpServerFromPlatform, defineOperationalPlatform } from '@adcp/sdk/server';
@@ -177,7 +177,7 @@ const rightsTerms = {} as RightsTerms;
 // protocol task envelope (status, timestamp, context_id, etc.).
 const _payloadResults: [
   Result<GetProductsPayload, Error>,
-  Result<ListCreativeFormatsPayload, Error>,
+  Result<LegacyListCreativeFormatsPayload, Error>,
   Result<CreateMediaBuyPayload, Error>,
   Result<UpdateMediaBuyPayload, Error>,
   Result<SyncCreativesPayload, Error>,
@@ -185,13 +185,13 @@ const _payloadResults: [
   Result<ListAccountsPayload, Error>,
   Result<GetMediaBuysPayload, Error>,
   Result<GetMediaBuyDeliveryPayload, Error>,
-  Result<BuildCreativePayload, Error>,
-  Result<BuildCreativeMultiPayload, Error>,
+  Result<LegacyBuildCreativePayload, Error>,
+  Result<LegacyBuildCreativeMultiPayload, Error>,
   Result<SyncAudiencesPayload, Error>,
   Result<ActivateSignalPayload, Error>,
   Result<GetBrandIdentityPayload, Error>,
-  Result<GetRightsPayload, Error>,
-  Result<UpdateRightsPayload, Error>,
+  Result<LegacyGetRightsPayload, Error>,
+  Result<LegacyUpdateRightsPayload, Error>,
   Result<CreativeApprovedPayload, Error>,
   Result<CreateMediaBuyHandlerResult, Error>,
   Result<SyncCreativesHandlerResult, Error>,
@@ -286,7 +286,7 @@ const _propertyListPayload: CreatePropertyListPayload = {
   list: { list_id: 'list_1', name: 'Test list' },
   auth_token: 'token_1',
 };
-const _contentStandardsPayload: ListContentStandardsPayload = { standards: [] };
+const _contentStandardsPayload: LegacyListContentStandardsPayload = { standards: [] };
 const _siPayload: SIGetOfferingPayload = { available: true };
 void _checkGovernancePayload;
 void _propertyListPayload;
@@ -305,7 +305,7 @@ void _typesPayload;
 const _rootPayloadAlias: RootCreateMediaBuyPayload = _serverPayload;
 const _typesPayloadAlias: TypesCreateMediaBuyPayload = _rootPayloadAlias;
 const _rootGetProductsPayload: RootGetProductsPayload = { products: [], cache_scope: 'account' };
-const _typesGetProductsPayload: TypesGetProductsPayload = _rootGetProductsPayload;
+const _typesGetProductsPayload = { products: [], cache_scope: 'account' } satisfies TypesGetProductsPayload;
 const _rootUpdatePayload: RootUpdateMediaBuyPayload = _updateMediaBuyPayload;
 const _typesUpdatePayload: TypesUpdateMediaBuyPayload = _rootUpdatePayload;
 const _slaWindow: SLAWindow = { response_max: 'PT1H', completion_max: 'P1D' };

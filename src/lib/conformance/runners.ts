@@ -90,7 +90,7 @@ export async function runToolFuzz(
 
     let result;
     try {
-      result = await agent.executeTask(tool, probeRequest);
+      result = await agent.executeTaskLegacy(tool, probeRequest);
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);
       // SDK throws FeatureUnsupportedError when the agent's declared

@@ -76,6 +76,33 @@ runHelloAdapterGates({
       },
     },
     {
+      label: 'serves legacy and canonical product shapes across the 3.1 transition',
+      run: async ({ callTool }) => {
+        const account = {
+          brand: { domain: 'acmeoutdoor.example' },
+          operator: 'pinnacle-agency.example',
+          sandbox: true,
+        };
+        const legacy = await callTool('get_products', {
+          buying_mode: 'brief',
+          brief: 'premium inventory',
+          account,
+          fields: ['format_ids'],
+        });
+        assert.ok(legacy?.structuredContent?.products?.[0]?.format_ids?.[0], JSON.stringify(legacy));
+        assert.equal(legacy.structuredContent.products[0].format_options, undefined);
+
+        const canonical = await callTool('get_products', {
+          buying_mode: 'brief',
+          brief: 'premium inventory',
+          account,
+          fields: ['format_options'],
+        });
+        assert.ok(canonical?.structuredContent?.products?.[0]?.format_options?.[0], JSON.stringify(canonical));
+        assert.equal(canonical.structuredContent.products[0].format_ids, undefined);
+      },
+    },
+    {
       label: 'hides comply_test_controller from live-mode principals over MCP (adcp#4028)',
       run: async ({ agentUrl, authToken }) => {
         const sandboxList = await withMcpClient(agentUrl, authToken, client => client.listTools());

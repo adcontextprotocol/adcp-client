@@ -99,8 +99,8 @@ function brandRightsPlatform(brOverrides = {}) {
     },
     brandRights: {
       getBrandIdentity: async () => ACME_BRAND_IDENTITY,
-      getRights: async () => ({ rights: [RIGHTS_OFFERING] }),
-      acquireRights: async req => {
+      getRightsLegacy: async () => ({ rights: [RIGHTS_OFFERING] }),
+      acquireRightsLegacy: async req => {
         // Demo branch: pre-approved buyers clear sync; everyone else gets pending.
         if (req.buyer.brand_id === 'brand_pre_approved') {
           return buildAcquired(req.rights_id, RIGHTS_OFFERING.brand_id, req.pricing_option_id);

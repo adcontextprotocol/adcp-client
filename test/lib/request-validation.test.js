@@ -309,6 +309,7 @@ describe('SingleAgentClient Request Validation', () => {
           audienceTargeting: false,
           propertyListFiltering: false,
           contentStandards: false,
+          canonicalCreatives: true,
         },
         extensions: [],
         _synthetic: false,
@@ -515,7 +516,7 @@ describe('SingleAgentClient Request Validation', () => {
     // non-strict parse by asserting the injected request actually reaches
     // dispatch — not just "didn't throw a validation error."
     for (const [toolName, invoke] of [
-      ['list_creative_formats', agent => agent.listCreativeFormats],
+      ['list_creative_formats', agent => agent.listCreativeFormatsLegacy],
       ['get_signals', agent => agent.getSignals],
       ['list_creatives', agent => agent.listCreatives],
     ]) {
@@ -754,7 +755,7 @@ describe('SingleAgentClient Request Validation', () => {
 
       await assert.doesNotReject(async () => {
         try {
-          await agent.buildCreative({
+          await agent.buildCreativeLegacy({
             target_format_id: { agent_url: 'https://test.example', id: 'format1' },
             context: {
               build_id: 'build-789',
@@ -1035,7 +1036,7 @@ describe('v3 partial-schema field stripping', () => {
           {
             creative_id: 'cr_1',
             name: 'Test Creative',
-            format_id: { agent_url: 'https://test.example', id: 'format1' },
+            format_kind: 'video_hosted',
             assets: {
               video: {
                 asset_type: 'video',
@@ -1080,6 +1081,7 @@ describe('v3 partial-schema field stripping', () => {
           audienceTargeting: false,
           propertyListFiltering: false,
           contentStandards: false,
+          canonicalCreatives: true,
         },
         extensions: [],
         _synthetic: false,
@@ -1282,13 +1284,16 @@ describe('strict request validation against v2 servers', () => {
 
     try {
       await assert.doesNotReject(
-        agent.syncCreatives({
+        agent.syncCreativesLegacy({
           account: { account_id: 'acct-1' },
           creatives: [
             {
               creative_id: 'cre-1',
               name: 'Test Creative',
-              format_id: { agent_url: 'https://test.example', id: 'format1' },
+              format_id: {
+                agent_url: 'https://creative.adcontextprotocol.org/',
+                id: 'video_standard_30s',
+              },
               assets: {
                 video: {
                   asset_type: 'video',

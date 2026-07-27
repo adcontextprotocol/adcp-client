@@ -72,7 +72,7 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
         name: 'sync_creatives',
         arguments: {
           account: { account_id: 'acc_1' },
-          creatives: [{ creative_id: 'cr_1', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_1', name: 'Creative 1', format_kind: 'image', assets: {} }],
           idempotency_key: '11111111-1111-1111-1111-111111111111',
         },
       },
@@ -107,7 +107,7 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
         name: 'sync_creatives',
         arguments: {
           account: { account_id: 'acc_1' },
-          creatives: [{ creative_id: 'cr_2', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_2', name: 'Creative 2', format_kind: 'image', assets: {} }],
           idempotency_key: '22222222-2222-2222-2222-222222222222',
         },
       },
@@ -149,7 +149,7 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
         name: 'sync_creatives',
         arguments: {
           account: { account_id: 'acc_1' },
-          creatives: [{ creative_id: 'cr_3', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_3', name: 'Creative 3', format_kind: 'image', assets: {} }],
           idempotency_key: '33333333-3333-3333-3333-333333333333',
         },
       },
@@ -178,7 +178,7 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
         name: 'sync_creatives',
         arguments: {
           account: { account_id: 'acc_1' },
-          creatives: [{ creative_id: 'cr_ok', format_id: { id: 'f', agent_url: 'https://x' } }],
+          creatives: [{ creative_id: 'cr_ok', name: 'Creative OK', format_kind: 'image', assets: {} }],
           idempotency_key: '44444444-4444-4444-4444-444444444444',
         },
       },

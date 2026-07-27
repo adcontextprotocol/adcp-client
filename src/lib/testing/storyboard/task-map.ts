@@ -31,8 +31,8 @@ export const TASK_TO_METHOD: Record<string, string> = {
 
   // Creative
   list_creative_formats: 'listCreativeFormats',
-  build_creative: 'buildCreative',
-  preview_creative: 'previewCreative',
+  build_creative: 'buildCreativeLegacy',
+  preview_creative: 'previewCreativeLegacy',
   sync_creatives: 'syncCreatives',
   list_creatives: 'listCreatives',
 
@@ -71,8 +71,48 @@ export const TASK_TO_METHOD: Record<string, string> = {
   si_terminate_session: 'siTerminateSession',
 };
 
+/** Storyboards grade the selected protocol wire, not the SDK's canonical API. */
+const LEGACY_CREATIVE_TASK_TO_METHOD: Readonly<Record<string, string>> = {
+  get_products: 'getProductsLegacy',
+  create_media_buy: 'createMediaBuyLegacy',
+  update_media_buy: 'updateMediaBuyLegacy',
+  sync_creatives: 'syncCreativesLegacy',
+  list_creatives: 'listCreativesLegacy',
+};
+
+function gradesLegacyCreativeWire(client: unknown): boolean {
+  if (client === null || typeof client !== 'object') return false;
+  const getAdcpVersion = (client as { getAdcpVersion?: unknown }).getAdcpVersion;
+  if (typeof getAdcpVersion !== 'function') return false;
+  let version: unknown;
+  try {
+    version = getAdcpVersion.call(client);
+  } catch {
+    return false;
+  }
+  if (typeof version !== 'string') return false;
+  const match = /^v?(\d+)(?:\.(\d+))?/.exec(version.trim());
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major < 3 || (major === 3 && minor < 2);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function withLegacyCreativeWireHint(params: Record<string, unknown>): Record<string, unknown> {
+  const ext = isRecord(params.ext) ? params.ext : {};
+  const adcp = isRecord(ext.adcp) ? ext.adcp : {};
+  if (adcp.creative_wire === 'legacy' || adcp.creative_wire === 'canonical') return params;
+  return {
+    ...params,
+    ext: {
+      ...ext,
+      adcp: { ...adcp, creative_wire: 'legacy' },
+    },
+  };
 }
 
 function readAdcpError(value: unknown): AdcpErrorInfo | undefined {
@@ -131,7 +171,10 @@ export async function executeStoryboardTask(
   params: Record<string, unknown>,
   opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean; signal?: AbortSignal } = {}
 ): Promise<TaskResult> {
-  const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
+  const legacyMethodName = gradesLegacyCreativeWire(client) ? LEGACY_CREATIVE_TASK_TO_METHOD[taskName] : undefined;
+  const methodName =
+    legacyMethodName ?? (Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined);
+  const callParams = legacyMethodName ? withLegacyCreativeWireHint(params) : params;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
@@ -148,9 +191,9 @@ export async function executeStoryboardTask(
     if (methodName && typeof client[methodName] === 'function') {
       // Typed methods take (params, inputHandler?, options?). Pass options
       // only when set, otherwise they take their defaults.
-      return taskOptions ? client[methodName](params, undefined, taskOptions) : client[methodName](params);
+      return taskOptions ? client[methodName](callParams, undefined, taskOptions) : client[methodName](callParams);
     }
-    return client.executeTask(taskName, params, undefined, taskOptions);
+    return client.executeTask(taskName, callParams, undefined, taskOptions);
   };
 
   // Retry with exponential backoff on rate limit errors

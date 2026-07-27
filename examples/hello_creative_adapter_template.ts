@@ -41,7 +41,7 @@ import {
   assertNoExampleTlds,
   type DecisioningPlatform,
   type CreativeBuilderPlatform,
-  type BuildCreativeReturn,
+  type LegacyBuildCreativeReturn,
   type AccountStore,
   type Account,
 } from '@adcp/sdk/server';
@@ -55,13 +55,15 @@ import {
   urlRender,
   buildCreativeReturn,
   previewCreative,
-  type Format,
-  type ListCreativeFormatsResponse,
-  type BuildCreativeRequest,
-  type CreativeManifest,
-  type PreviewCreativeRequest,
-  type PreviewCreativeResponse,
 } from '@adcp/sdk';
+import type {
+  Format,
+  ListCreativeFormatsResponse,
+  BuildCreativeRequest,
+  CreativeManifest,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+} from '@adcp/sdk/types';
 import { randomUUID } from 'node:crypto';
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4250';
@@ -410,7 +412,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
   };
 
   creative: CreativeBuilderPlatform<CreativeMeta> = defineCreativeBuilderPlatform<CreativeMeta>({
-    listCreativeFormats: async (_req, ctx): Promise<ListCreativeFormatsResponse> => {
+    listCreativeFormatsLegacy: async (_req, ctx): Promise<ListCreativeFormatsResponse> => {
       // `list_creative_formats` is a no-account tool — `ctx.account` is
       // narrowed to `Account<TCtxMeta> | undefined`. The default
       // listing workspace fallback in `accounts.resolve(undefined)` ensures
@@ -424,7 +426,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       return { status: 'completed', formats: templates.map(templateToFormat) };
     },
 
-    buildCreative: async (req: BuildCreativeRequest, ctx): Promise<BuildCreativeReturn> => {
+    buildCreativeLegacy: async (req: BuildCreativeRequest, ctx): Promise<LegacyBuildCreativeReturn> => {
       const workspaceId = ctx.account.ctx_metadata.workspace_id;
 
       // Templates the workspace can render. Used to resolve the AdCP
@@ -472,7 +474,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
       return buildCreativeReturn.single(await buildOne(req.target_format_id, 0));
     },
 
-    previewCreative: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
+    previewCreativeLegacy: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
       // `preview_creative` is a no-account tool — the wire request schema
       // doesn't carry `account`, so the framework types `ctx.account` as
       // `Account<TCtxMeta> | undefined` per the framework's `NoAccountCtx` narrow.

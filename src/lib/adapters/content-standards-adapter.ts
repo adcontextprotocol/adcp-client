@@ -28,7 +28,7 @@ import type {
 /**
  * Content evaluation result from the adapter
  */
-export interface ContentEvaluationResult {
+export interface LegacyContentEvaluationResult {
   verdict: 'pass' | 'fail';
   confidence?: number;
   explanation?: string;
@@ -43,7 +43,7 @@ export interface ContentEvaluationResult {
  * Abstract interface for content standards adapters.
  * Publishers implement this to provide their evaluation logic.
  */
-export interface IContentStandardsAdapter {
+export interface LegacyIContentStandardsAdapter {
   /**
    * Check if content standards are supported by this server
    */
@@ -83,13 +83,13 @@ export interface IContentStandardsAdapter {
    * Evaluate a single artifact against standards.
    * Used internally by get_products and create_media_buy to filter content.
    */
-  evaluateArtifact(standardsId: string, artifact: Artifact): Promise<ContentEvaluationResult>;
+  evaluateArtifact(standardsId: string, artifact: Artifact): Promise<LegacyContentEvaluationResult>;
 }
 
 /**
  * Error codes for content standards operations
  */
-export const ContentStandardsErrorCodes = {
+export const LegacyContentStandardsErrorCodes = {
   NOT_SUPPORTED: 'UNSUPPORTED_FEATURE',
   STANDARDS_NOT_FOUND: 'REFERENCE_NOT_FOUND',
   INVALID_STANDARDS: 'INVALID_REQUEST',
@@ -98,13 +98,13 @@ export const ContentStandardsErrorCodes = {
 } as const;
 
 /**
- * Stub implementation of ContentStandardsAdapter.
+ * Stub implementation of LegacyContentStandardsAdapter.
  * Returns not-supported errors for all operations.
  *
  * Publishers should extend this class or provide their own implementation
  * that integrates with their brand safety systems.
  */
-export class ContentStandardsAdapter implements IContentStandardsAdapter {
+export class LegacyContentStandardsAdapter implements LegacyIContentStandardsAdapter {
   /**
    * Check if content standards are supported.
    * Override this to return true when implementing real logic.
@@ -119,7 +119,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         status: 'failed',
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content standards are not supported by this server',
           },
         ],
@@ -140,7 +140,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         status: 'failed',
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content standards are not supported by this server',
           },
         ],
@@ -152,7 +152,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
       status: 'failed',
       errors: [
         {
-          code: ContentStandardsErrorCodes.STANDARDS_NOT_FOUND,
+          code: LegacyContentStandardsErrorCodes.STANDARDS_NOT_FOUND,
           message: `Standards not found: ${request.standards_id}`,
         },
       ],
@@ -165,7 +165,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         status: 'failed',
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content standards are not supported by this server',
           },
         ],
@@ -177,7 +177,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
       status: 'failed',
       errors: [
         {
-          code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+          code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
           message: 'Creating content standards is not implemented',
         },
       ],
@@ -191,7 +191,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         success: false as const,
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content standards are not supported by this server',
           },
         ],
@@ -204,7 +204,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
       success: false as const,
       errors: [
         {
-          code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+          code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
           message: 'Updating content standards is not implemented',
         },
       ],
@@ -217,7 +217,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         status: 'failed',
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content standards calibration is not supported by this server',
           },
         ],
@@ -229,7 +229,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
       status: 'failed',
       errors: [
         {
-          code: ContentStandardsErrorCodes.EVALUATION_FAILED,
+          code: LegacyContentStandardsErrorCodes.EVALUATION_FAILED,
           message: 'Content calibration is not implemented',
         },
       ],
@@ -242,7 +242,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
         status: 'failed',
         errors: [
           {
-            code: ContentStandardsErrorCodes.NOT_SUPPORTED,
+            code: LegacyContentStandardsErrorCodes.NOT_SUPPORTED,
             message: 'Content delivery validation is not supported by this server',
           },
         ],
@@ -271,7 +271,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
    * Evaluate a single artifact against content standards.
    * Used by get_products and create_media_buy to filter content.
    */
-  async evaluateArtifact(standardsId: string, artifact: Artifact): Promise<ContentEvaluationResult> {
+  async evaluateArtifact(standardsId: string, artifact: Artifact): Promise<LegacyContentEvaluationResult> {
     if (!this.isSupported()) {
       // When not supported, all content passes (no filtering)
       return {
@@ -293,7 +293,7 @@ export class ContentStandardsAdapter implements IContentStandardsAdapter {
 /**
  * Helper to check if a response is an error response
  */
-export function isContentStandardsError(
+export function isLegacyContentStandardsError(
   response: ListContentStandardsResponse | GetContentStandardsResponse | CreateContentStandardsResponse
 ): boolean {
   return 'errors' in response && Array.isArray(response.errors) && response.errors.length > 0;
@@ -302,4 +302,4 @@ export function isContentStandardsError(
 /**
  * Default singleton instance for servers that don't need content standards
  */
-export const defaultContentStandardsAdapter = new ContentStandardsAdapter();
+export const legacyDefaultContentStandardsAdapter = new LegacyContentStandardsAdapter();

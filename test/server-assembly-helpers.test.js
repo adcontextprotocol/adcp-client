@@ -1,7 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildProduct, buildPricingOption, buildPackage } = require('../dist/lib/server');
+const { buildProduct, buildProductLegacy, buildPricingOption, buildPackage } = require('../dist/lib/server');
 const { validateResponse } = require('../dist/lib/validation/schema-validator');
 
 describe('buildProduct — emits correct wire shape', () => {
@@ -9,11 +9,12 @@ describe('buildProduct — emits correct wire shape', () => {
     const product = buildProduct({
       id: 'sports_display',
       name: 'Sports Display',
-      formats: ['display_300x250'],
+      format_options: [
+        { format_option_id: 'display_300x250', format_kind: 'image', params: { width: 300, height: 250 } },
+      ],
       delivery_type: 'non_guaranteed',
       pricing: { model: 'cpm', floor: 5.0, currency: 'USD' },
       publisher_domain: 'sports.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
     });
     assert.equal(product.publisher_properties[0].publisher_domain, 'sports.example');
     assert.equal(product.publisher_properties[0].selection_type, 'all');
@@ -23,7 +24,10 @@ describe('buildProduct — emits correct wire shape', () => {
     assert.equal(product.name, 'Sports Display');
     assert.equal(product.description, 'Sports Display');
     assert.equal(product.delivery_type, 'non_guaranteed');
-    assert.deepEqual(product.format_ids, [{ id: 'display_300x250', agent_url: 'http://127.0.0.1:4200/mcp' }]);
+    assert.deepEqual(product.format_options, [
+      { format_option_id: 'display_300x250', format_kind: 'image', params: { width: 300, height: 250 } },
+    ]);
+    assert.equal(product.format_ids, undefined);
     assert.equal(product.pricing_options.length, 1);
     assert.equal(product.pricing_options[0].pricing_model, 'cpm');
     assert.equal(product.pricing_options[0].floor_price, 5.0);
@@ -36,11 +40,12 @@ describe('buildProduct — emits correct wire shape', () => {
     const product = buildProduct({
       id: 'sports_display',
       name: 'Sports Display',
-      formats: ['display_300x250'],
+      format_options: [
+        { format_option_id: 'display_300x250', format_kind: 'image', params: { width: 300, height: 250 } },
+      ],
       delivery_type: 'non_guaranteed',
       pricing: { model: 'cpm', floor: 5.0, currency: 'USD' },
       publisher_domain: 'sports.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
     });
     // `cache_scope: 'public'` is required on the populated-products branch
     // of `get-products-response.json`'s top-level `if (unchanged) ... else`
@@ -57,11 +62,10 @@ describe('buildProduct — emits correct wire shape', () => {
     const product = buildProduct({
       id: 'p1',
       name: 'P1',
-      formats: ['f1'],
+      format_options: [{ format_option_id: 'f1', format_kind: 'image', params: {} }],
       delivery_type: 'guaranteed',
       pricing: { model: 'cpm', fixed: 10, currency: 'USD' },
       publisher_domain: 'pub.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
       ctx_metadata: { gam: { ad_unit_ids: ['au_1'] } },
     });
     assert.deepEqual(product.ctx_metadata, { gam: { ad_unit_ids: ['au_1'] } });
@@ -71,10 +75,9 @@ describe('buildProduct — emits correct wire shape', () => {
     const product = buildProduct({
       id: 'multi',
       name: 'Multi',
-      formats: ['f'],
+      format_options: [{ format_option_id: 'f', format_kind: 'image', params: {} }],
       delivery_type: 'guaranteed',
       publisher_domain: 'pub.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
       pricing: [
         buildPricingOption({ id: 'po_cpm', model: 'cpm', fixed: 25, currency: 'USD' }),
         buildPricingOption({ id: 'po_flat', model: 'flat_rate', fixed: 50000, currency: 'USD' }),
@@ -85,29 +88,192 @@ describe('buildProduct — emits correct wire shape', () => {
     assert.equal(product.pricing_options[1].pricing_option_id, 'po_flat');
   });
 
-  it('accepts string and structured format ids', () => {
+  it('accepts canonical format declarations', () => {
     const product = buildProduct({
       id: 'p',
       name: 'P',
-      formats: ['simple_id', { id: 'cross_agent', agent_url: 'https://other.example/mcp' }],
+      format_options: [
+        { format_option_id: 'simple-image', format_kind: 'image', params: { width: 300, height: 250 } },
+        { format_option_id: 'vast-video', format_kind: 'video_vast', params: {} },
+      ],
       delivery_type: 'non_guaranteed',
       publisher_domain: 'pub.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
     });
-    assert.deepEqual(product.format_ids, [
-      { id: 'simple_id', agent_url: 'http://127.0.0.1:4200/mcp' },
-      { id: 'cross_agent', agent_url: 'https://other.example/mcp' },
+    assert.deepEqual(product.format_options, [
+      { format_option_id: 'simple-image', format_kind: 'image', params: { width: 300, height: 250 } },
+      { format_option_id: 'vast-video', format_kind: 'video_vast', params: {} },
     ]);
+  });
+
+  it('keeps legacy product assembly behind an explicit helper name', () => {
+    const product = buildProductLegacy({
+      id: 'legacy',
+      name: 'Legacy',
+      formats: ['display_300x250'],
+      agentUrl: 'https://legacy.example/mcp',
+      delivery_type: 'non_guaranteed',
+      publisher_domain: 'pub.example',
+    });
+    assert.deepEqual(product.format_ids, [{ id: 'display_300x250', agent_url: 'https://legacy.example/mcp' }]);
+  });
+
+  it('rejects legacy identity and canonical field overrides through extra', () => {
+    const base = {
+      id: 'safe-extra',
+      name: 'Safe extra',
+      format_options: [{ format_option_id: 'image', format_kind: 'image', params: {} }],
+      delivery_type: 'non_guaranteed',
+      publisher_domain: 'pub.example',
+    };
+    assert.throws(
+      () => buildProduct({ ...base, extra: { format_ids: [{ id: 'legacy', agent_url: 'https://legacy.example' }] } }),
+      /cannot override a canonical product field/
+    );
+    assert.throws(
+      () => buildProduct({ ...base, extra: { format_options: [] } }),
+      /cannot override a canonical product field/
+    );
+    assert.throws(
+      () => buildProduct({ ...base, extra: { vendor: { agent_url: 'https:\/\/legacy.example' } } }),
+      /contains legacy creative identity/
+    );
+  });
+
+  it('descriptor-clones format_options without invoking getters or custom iterators', () => {
+    let getterCalls = 0;
+    let iteratorCalls = 0;
+    const unsafe = { format_kind: 'image', params: {} };
+    Object.defineProperty(unsafe, 'agent_url', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 'https://legacy.example';
+      },
+    });
+    assert.throws(
+      () =>
+        buildProduct({
+          id: 'unsafe-option',
+          name: 'Unsafe option',
+          format_options: [unsafe],
+          delivery_type: 'non_guaranteed',
+          publisher_domain: 'pub.example',
+        }),
+      /must be a data property, not an accessor/
+    );
+    assert.equal(getterCalls, 0);
+
+    const options = [{ format_option_id: 'safe', format_kind: 'image', params: { width: 300, height: 250 } }];
+    Object.defineProperty(options, Symbol.iterator, {
+      value() {
+        iteratorCalls += 1;
+        throw new Error('format option iterator must not run');
+      },
+    });
+    const product = buildProduct({
+      id: 'safe-options',
+      name: 'Safe options',
+      format_options: options,
+      delivery_type: 'non_guaranteed',
+      publisher_domain: 'pub.example',
+    });
+    assert.equal(iteratorCalls, 0);
+    assert.equal(product.format_options[0].format_kind, 'image');
+  });
+
+  it('rejects direct and nested legacy identity in format_options', () => {
+    const base = {
+      id: 'legacy-option',
+      name: 'Legacy option',
+      delivery_type: 'non_guaranteed',
+      publisher_domain: 'pub.example',
+    };
+    assert.throws(
+      () =>
+        buildProduct({
+          ...base,
+          format_options: [{ format_kind: 'image', params: {}, v1_format_ref: [{ id: 'legacy' }] }],
+        }),
+      /contains legacy creative identity/
+    );
+    assert.throws(
+      () =>
+        buildProduct({
+          ...base,
+          format_options: [{ format_kind: 'custom', params: { nested: { format_id: 'legacy' } } }],
+        }),
+      /contains legacy creative identity/
+    );
+  });
+
+  it('rejects serialization hooks without invoking them', () => {
+    let hookCalls = 0;
+    const maliciousParams = {};
+    Object.defineProperty(maliciousParams, 'toJSON', {
+      value() {
+        hookCalls += 1;
+        return { format_id: { id: 'legacy', agent_url: 'https://legacy.example' } };
+      },
+    });
+    assert.throws(
+      () =>
+        buildProduct({
+          id: 'option-to-json',
+          name: 'Option toJSON',
+          format_options: [{ format_kind: 'custom', params: maliciousParams }],
+          delivery_type: 'non_guaranteed',
+          publisher_domain: 'pub.example',
+        }),
+      /toJSON is not allowed/
+    );
+
+    const maliciousExtra = { vendor: {} };
+    Object.defineProperty(maliciousExtra.vendor, 'toJSON', {
+      enumerable: true,
+      value() {
+        hookCalls += 1;
+        return { agent_url: 'https://legacy.example', format_id: 'legacy' };
+      },
+    });
+    assert.throws(
+      () =>
+        buildProduct({
+          id: 'extra-to-json',
+          name: 'Extra toJSON',
+          format_options: [{ format_kind: 'image', params: {} }],
+          delivery_type: 'non_guaranteed',
+          publisher_domain: 'pub.example',
+          extra: maliciousExtra,
+        }),
+      /toJSON is not allowed/
+    );
+    assert.equal(hookCalls, 0);
+
+    const accessorInput = {
+      id: 'extra-accessor',
+      name: 'Extra accessor',
+      format_options: [{ format_kind: 'image', params: {} }],
+      delivery_type: 'non_guaranteed',
+      publisher_domain: 'pub.example',
+    };
+    Object.defineProperty(accessorInput, 'extra', {
+      enumerable: true,
+      get() {
+        hookCalls += 1;
+        return { format_id: 'legacy' };
+      },
+    });
+    assert.throws(() => buildProduct(accessorInput), /extra must be an own data property, not an accessor/);
+    assert.equal(hookCalls, 0);
   });
 
   it('emits a CPM placeholder when pricing is omitted (loud-default)', () => {
     const product = buildProduct({
       id: 'p',
       name: 'P',
-      formats: ['f'],
+      format_options: [{ format_option_id: 'f', format_kind: 'image', params: {} }],
       delivery_type: 'non_guaranteed',
       publisher_domain: 'pub.example',
-      agentUrl: 'http://127.0.0.1:4200/mcp',
     });
     assert.equal(product.pricing_options.length, 1, 'placeholder pricing emitted');
     assert.equal(product.pricing_options[0].pricing_model, 'cpm');
@@ -119,7 +285,7 @@ describe('buildProduct — emits correct wire shape', () => {
         buildProduct({
           id: 'p',
           name: 'P',
-          formats: [{ id: 'f', agent_url: 'http://127.0.0.1:4200/mcp' }], // pre-empt the agentUrl throw
+          format_options: [{ format_option_id: 'f', format_kind: 'image', params: {} }],
           delivery_type: 'non_guaranteed',
         }),
       /publisher_domain.*publisher_properties/

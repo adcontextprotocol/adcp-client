@@ -104,7 +104,7 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
 
   creative: CreativeBuilderPlatform<WatermarkMeta> = {
     /** Sync transform — fast operation, return result immediately. */
-    buildCreative: async (req: BuildCreativeRequest): Promise<CreativeManifest> => {
+    buildCreativeLegacy: async (req: BuildCreativeRequest): Promise<CreativeManifest> => {
       // requireAsset throws AdcpError with field path if missing/wrong type.
       // After the call, TS narrows `source` to `ImageAsset` — no cast needed.
       const source = requireAsset(req.creative_manifest, 'source_image', 'image');
@@ -132,7 +132,7 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
     },
 
     /** Always sync — preview is just a sandbox URL. */
-    previewCreative: async (req: PreviewCreativeRequest): Promise<PreviewCreativeResponse> => {
+    previewCreativeLegacy: async (req: PreviewCreativeRequest): Promise<PreviewCreativeResponse> => {
       // Soft-form helper — preview is best-effort even if source is missing.
       const source = getAsset(req.creative_manifest, 'source_image', 'image');
       const sourceUrl = source?.url ?? '';
@@ -228,17 +228,17 @@ return {
 
 `CreativeBuilderPlatform` has 5 method slots. **For each method-pair you implement EXACTLY ONE — sync OR `*Task`** — `validatePlatform()` will throw at construction if you provide both.
 
-| Slot             | Sync variant                    | HITL `*Task` variant                        | Required?    |
-| ---------------- | ------------------------------- | ------------------------------------------- | ------------ |
-| build creative   | `buildCreative(req, ctx)`       | `buildCreativeTask(taskId, req, ctx)`       | One required |
-| preview creative | `previewCreative(req, ctx)`     | — (always sync)                             | Required     |
-| sync creatives   | `syncCreatives(creatives, ctx)` | `syncCreativesTask(taskId, creatives, ctx)` | One required |
+| Slot             | Sync variant                      | HITL `*Task` variant                        | Required?    |
+| ---------------- | --------------------------------- | ------------------------------------------- | ------------ |
+| build creative   | `buildCreativeLegacy(req, ctx)`   | `buildCreativeTask(taskId, req, ctx)`       | One required |
+| preview creative | `previewCreativeLegacy(req, ctx)` | — (always sync)                             | Required     |
+| sync creatives   | `syncCreatives(creatives, ctx)`   | `syncCreativesTask(taskId, creatives, ctx)` | One required |
 
 ### Sync vs `*Task` — pick by latency, not by preference
 
 | Your operation typically takes...                           | Pick                                                                                          |
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Under ~5 seconds (image manipulation, simple template fill) | **Sync** (`buildCreative`)                                                                    |
+| Under ~5 seconds (image manipulation, simple template fill) | **Sync** (`buildCreativeLegacy`)                                                              |
 | 10-60 seconds (TTS, audio mixing, video transcode)          | **Sync** is fine — buyer awaits in the request                                                |
 | 1-30 minutes (heavy generation, multi-pass rendering)       | **HITL** (`buildCreativeTask`) — buyer immediately gets a `submitted` envelope with `task_id` |
 | Unknown / variable                                          | Pick sync; switch to `*Task` only if observed latency > 30s                                   |
@@ -310,7 +310,7 @@ Both helpers preserve the discriminator narrowing — `script.content` types cor
 Every method either returns its success type OR throws `AdcpError` for structured rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE` with `recovery: 'transient'`.
 
 ```ts
-buildCreative: async req => {
+buildCreativeLegacy: async req => {
   if (!req.format_id?.id?.startsWith('image_')) {
     throw new AdcpError('UNSUPPORTED_FEATURE', {
       recovery: 'terminal',
@@ -352,7 +352,7 @@ The framework consumes `idempotency_key` on every mutating request before dispat
 What you SHOULD do: pass `req.idempotency_key` to your upstream API's idempotency parameter when you call into GAM / Snap / Meta / your internal services. That makes the dedupe story end-to-end — if the AdCP layer dedupes a request, your upstream platform won't double-charge a CPM either.
 
 ```ts
-buildCreative: async req => {
+buildCreativeLegacy: async req => {
   // Framework already deduped for the (idempotency_key, account) pair.
   // Thread the same key into the upstream call so YOUR platform's API
   // also dedupes if the same key arrives twice (defensive).
@@ -489,7 +489,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 
 ❌ **Don't use `ctx.runAsync(...)` or `ctx.startTask(...)`.** The async story is dual-method (`xxx` vs `xxxTask`), period.
 
-❌ **Don't define both `buildCreative` and `buildCreativeTask`.** `validatePlatform()` will throw with a clear diagnostic. Pick one.
+❌ **Don't define both `buildCreativeLegacy` and `buildCreativeTask`.** `validatePlatform()` will throw with a clear diagnostic. Pick one.
 
 ❌ **Don't return error envelopes manually.** Throw `AdcpError`; the framework projects to the wire shape.
 

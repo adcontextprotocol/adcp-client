@@ -15,6 +15,7 @@ function makeProduct(product_id, publisher_domain, overrides = {}) {
     product_id,
     name: product_id,
     publisher_properties: [{ selection_type: 'all', publisher_domain }],
+    format_options: [{ format_kind: 'image', params: {} }],
     pricing_options: [{ pricing_option_id: 'po_cpm', pricing_model: 'cpm', currency: 'USD', fixed_price: 5 }],
     ...overrides,
   };
@@ -303,6 +304,8 @@ describe('client product property policy enforcement', () => {
     );
 
     assert.strictEqual(submitted.status, 'submitted');
+    const retainedPolicyState = agent.client.productPolicyRequestParamsByTask.get(submitted.metadata.taskId);
+    assert.strictEqual(retainedPolicyState.request.property_list.auth_token, 'list-token');
     const handled = await agent.handleWebhook(
       {
         idempotency_key: 'webhook-event-1',
@@ -321,6 +324,8 @@ describe('client product property policy enforcement', () => {
     );
 
     assert.strictEqual(handled, true);
+    assert.strictEqual(retainedPolicyState.request, undefined);
+    assert.strictEqual(agent.client.productPolicyRequestParamsByTask.has(submitted.metadata.taskId), false);
     assert.strictEqual(handlerCalls.length, 1);
     assert.deepStrictEqual(
       handlerCalls[0].response.products.map(p => p.product_id),

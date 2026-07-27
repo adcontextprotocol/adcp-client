@@ -273,8 +273,9 @@ const creativeClient = new CreativeAgentClient({
   protocol: 'mcp'
 });
 
-// List available formats
-const formats = await creativeClient.listFormats();
+// Migration-only: inspect a legacy named-format catalog explicitly.
+// Canonical buyers discover `format_options[]` through getProducts().
+const formats = await creativeClient.listFormatsLegacy();
 ```
 
 See [`CreativeAgentClient`](./classes/CreativeAgentClient.html) for details.

@@ -3,13 +3,14 @@
 import type { SingleAgentClient } from '../core/SingleAgentClient';
 import type { Format, Product, FormatReferenceStructuredObject as FormatID } from '../types/tools.generated';
 import type { PreviewCreativeRequest, PreviewCreativeResponse } from '../types/tools.generated';
+import type { CanonicalProduct } from '../v2/projection/creative-delivery';
 
 /**
- * Preview result for a single item (product or format)
+ * Preview result for a single canonical item.
  */
-export interface PreviewResult {
-  /** The item being previewed (Product or Format) */
-  item: Product | Format;
+export interface PreviewResult<TItem = CanonicalProduct> {
+  /** The item being previewed. */
+  item: TItem;
   /** Preview URL for the rendered card */
   previewUrl?: string;
   /** Preview ID from the creative agent */
@@ -17,6 +18,9 @@ export interface PreviewResult {
   /** Error message if preview failed */
   error?: string;
 }
+
+/** Raw named-format preview result for explicit migration tooling. */
+export type LegacyPreviewResult = PreviewResult<Product | Format>;
 
 /**
  * Options for batch preview generation
@@ -194,12 +198,12 @@ export function clearPreviewCache(): void {
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function batchPreviewProducts(
-  products: Product[],
+  products: CanonicalProduct[],
   _creativeAgentClient: SingleAgentClient,
   _options: BatchPreviewOptions = {}
 ): Promise<PreviewResult[]> {
   return products.map(product => {
-    const imageUrl = product.product_card?.image?.url;
+    const imageUrl = (product.product_card as { image?: { url?: string } } | undefined)?.image?.url;
     if (imageUrl) {
       return { item: product, previewUrl: imageUrl };
     }
@@ -208,7 +212,7 @@ export async function batchPreviewProducts(
 }
 
 /**
- * Generate batch previews for formats with format_card manifests
+ * Generate batch previews for legacy named formats with format_card manifests.
  *
  * Formats with format_card fields will have their cards rendered via the creative agent.
  * Formats without format_card will be returned with no preview.
@@ -227,7 +231,7 @@ export async function batchPreviewProducts(
  *   protocol: 'mcp'
  * });
  *
- * const previews = await batchPreviewFormats(formats, creativeAgent);
+ * const previews = await batchPreviewFormatsLegacy(formats, creativeAgent);
  * previews.forEach(p => {
  *   if (p.previewUrl) {
  *     console.log(`${(p.item as Format).name}: ${p.previewUrl}`);
@@ -235,11 +239,11 @@ export async function batchPreviewProducts(
  * });
  * ```
  */
-export async function batchPreviewFormats(
+export async function batchPreviewFormatsLegacy(
   formats: Format[],
   creativeAgentClient: SingleAgentClient,
   options: BatchPreviewOptions = {}
-): Promise<PreviewResult[]> {
+): Promise<LegacyPreviewResult[]> {
   const cacheTtl = options.cacheTtl ?? 3600000; // 1 hour default
   const skipCache = options.skipCache ?? false;
   const cacheBackend = options.cacheBackend ?? defaultPreviewCacheBackend;
@@ -253,7 +257,7 @@ export async function batchPreviewFormats(
     inputName: string;
   }[] = [];
 
-  const results: PreviewResult[] = [];
+  const results: LegacyPreviewResult[] = [];
 
   for (const format of formats) {
     if (format.format_card) {
@@ -326,7 +330,7 @@ export async function batchPreviewFormats(
       };
 
       // Call preview_creative
-      const response = await creativeAgentClient.previewCreative(previewRequest);
+      const response = await creativeAgentClient.previewCreativeLegacy(previewRequest);
 
       // Check for data even if validation failed (response.success may be false due to schema warnings)
       // Handle both single request (previews) and batch request (results) response formats

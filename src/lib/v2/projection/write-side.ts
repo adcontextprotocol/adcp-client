@@ -1,26 +1,33 @@
 /**
  * Write-side ergonomics for V2-mental-model buyers.
  *
- * New beta.5+ code should use `packageRefsForFormatOptions`. It emits
- * `format_option_refs` for beta.5+ sellers plus optional legacy
- * `format_ids` for heterogeneous paths. The old capability-named exports
+ * New beta.5+ code should use `packageRefsForFormatOptions`. It emits only
+ * canonical `format_option_refs`; module-private weak storage lets the SDK
+ * downgrade at the wire boundary without exposing legacy identifiers. The old capability-named exports
  * keep the beta.3 `capability_ids` surface for callers pinned to that
  * protocol version.
  */
 
 import type { V1FormatId, V2ProductFormatDeclaration } from './types';
 import { warnOnce } from '../../utils/deprecation';
+import { concealLegacyFormatRefs, concealSelectedFormatOptions } from './legacy-metadata';
+import type { CanonicalFormatDeclaration } from './legacy-metadata';
 
 export type FormatOptionRef =
-  | { scope: 'publisher'; publisher_domain: string; format_option_id: string }
-  | { scope: 'product'; format_option_id: string; publisher_domain?: never };
+  | {
+      scope: 'publisher';
+      publisher_domain: string;
+      format_option_id: string;
+      canonical_formats_only?: true;
+    }
+  | { scope: 'product'; format_option_id: string; publisher_domain?: never; canonical_formats_only?: true };
 
 export type FormatOptionSelector = string | { format_option_id: string; publisher_domain?: string };
 
 /**
  * Result shape for {@link packageRefsForFormatOptions} - spread into a
- * `PackageRequest` to author a 3.1+ format-option package while keeping
- * legacy sellers working via dual emission.
+ * `PackageRequest` to author a canonical format-option package. The helper
+ * retains downgrade metadata in module-private weak storage.
  */
 export interface PackageFormatRefs {
   /**
@@ -30,12 +37,8 @@ export interface PackageFormatRefs {
    * `{ scope: 'publisher', publisher_domain, format_option_id }`.
    */
   format_option_refs: FormatOptionRef[];
-  /**
-   * Legacy named-format path. Omitted entirely when no chosen declaration
-   * has a v1 form; emitting `[]` would violate the wire schema's
-   * `minItems: 1` constraint.
-   */
-  format_ids?: V1FormatId[];
+  /** Legacy identifiers are deliberately unavailable on the canonical SDK surface. */
+  format_ids?: never;
 }
 
 /**
@@ -119,24 +122,38 @@ function selectorLabel(selector: FormatOptionSelector): string {
     : selector.format_option_id;
 }
 
-function declarationLabel(decl: V2ProductFormatDeclaration): string | undefined {
+type SelectableFormatDeclaration = {
+  format_option_id?: string;
+  publisher_domain?: string;
+};
+
+function declarationLabel(decl: SelectableFormatDeclaration): string | undefined {
   if (!decl.format_option_id) return undefined;
   return decl.publisher_domain ? `${decl.publisher_domain}/${decl.format_option_id}` : decl.format_option_id;
 }
 
-function declarationToRef(decl: V2ProductFormatDeclaration): FormatOptionRef {
+function declarationToRef(decl: SelectableFormatDeclaration & { canonical_formats_only?: boolean }): FormatOptionRef {
   if (!decl.format_option_id) {
     throw new Error('declarationToRef requires a declaration with format_option_id');
   }
   return decl.publisher_domain
-    ? { scope: 'publisher', publisher_domain: decl.publisher_domain, format_option_id: decl.format_option_id }
-    : { scope: 'product', format_option_id: decl.format_option_id };
+    ? {
+        scope: 'publisher',
+        publisher_domain: decl.publisher_domain,
+        format_option_id: decl.format_option_id,
+        ...(decl.canonical_formats_only === true && { canonical_formats_only: true as const }),
+      }
+    : {
+        scope: 'product',
+        format_option_id: decl.format_option_id,
+        ...(decl.canonical_formats_only === true && { canonical_formats_only: true as const }),
+      };
 }
 
-function findDeclaration(
-  opts: V2ProductFormatDeclaration[],
+function findDeclaration<T extends SelectableFormatDeclaration>(
+  opts: T[],
   selector: FormatOptionSelector
-): V2ProductFormatDeclaration | undefined {
+): T | undefined {
   if (typeof selector === 'string') {
     return opts.find(o => o.format_option_id === selector && !o.publisher_domain);
   }
@@ -155,14 +172,14 @@ function dedupeRefKey(ref: FormatOptionRef): string {
 
 /**
  * Resolve format option selectors against a product's `format_options[]`
- * and produce `{ format_option_refs, format_ids? }` for `PackageRequest`.
+ * and produce canonical `{ format_option_refs }` for `PackageRequest`.
  *
  * Selectors may be plain product-local IDs (`'nytimes_mrec'`) or
  * structured `{ format_option_id, publisher_domain }` selectors. Returned
  * refs are always structured per the beta.5 schema.
  */
 export function packageRefsForFormatOptions(
-  product: { format_options?: V2ProductFormatDeclaration[] },
+  product: { format_options?: CanonicalFormatDeclaration[] },
   formatOptions: FormatOptionSelector[]
 ): PackageFormatRefs {
   const requested = formatOptions.map(selectorLabel);
@@ -206,7 +223,7 @@ export function packageRefsForFormatOptions(
     );
   }
 
-  const selected: V2ProductFormatDeclaration[] = [];
+  const selected: CanonicalFormatDeclaration[] = [];
   const missing: string[] = [];
   for (const selector of formatOptions) {
     const match = findDeclaration(addressable, selector);
@@ -237,21 +254,11 @@ export function packageRefsForFormatOptions(
     format_option_refs.push(ref);
   }
 
-  // De-dupe v1 refs across multiple chosen declarations. Include
-  // dimensional discriminators in the key so multi-size declarations with
-  // the same `{ agent_url, id }` but different sizes survive.
-  const seen = new Set<string>();
-  const format_ids: V1FormatId[] = [];
-  for (const decl of selected) {
-    for (const ref of decl.v1_format_ref ?? []) {
-      const key = `${ref.agent_url}::${ref.id}::${ref.width ?? ''}x${ref.height ?? ''}::${ref.duration_ms ?? ''}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      format_ids.push({ ...ref });
-    }
-  }
-
-  return format_ids.length > 0 ? { format_option_refs, format_ids } : { format_option_refs };
+  concealSelectedFormatOptions(
+    format_option_refs,
+    selected.map(declaration => concealLegacyFormatRefs(declaration))
+  );
+  return { format_option_refs };
 }
 
 /**

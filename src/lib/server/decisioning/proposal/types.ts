@@ -32,11 +32,19 @@
 import type { MaybePromise } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext } from '../context';
-import type { GetProductsRequest, GetProductsResponse } from '../../../types/tools.generated';
+import type { GetProductsResponse } from '../../../types/tools.generated';
+import type {
+  CanonicalCreativeResponse,
+  CanonicalGetProductsRequest,
+  CanonicalProduct,
+} from '../../../v2/projection/creative-delivery';
 import type { RequireCacheScopeWhenProducts, ServerPayload } from '../../../types/server-payload';
 import type { TaskHandoff } from '../async-outcome';
 
-export type ProposalGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
+export type ProposalGetProductsPayload = RequireCacheScopeWhenProducts<
+  Omit<ServerPayload<CanonicalCreativeResponse<GetProductsResponse>>, 'products'> & { products?: CanonicalProduct[] }
+>;
+export type LegacyProposalGetProductsPayload = RequireCacheScopeWhenProducts<ServerPayload<GetProductsResponse>>;
 
 // ---------------------------------------------------------------------------
 // Capabilities
@@ -299,11 +307,11 @@ export interface FinalizeProposalRequest<TRecipe extends Recipe = Recipe> {
   ask?: string;
 
   /**
-   * The parent {@link GetProductsRequest} so the adopter sees the full
+   * The parent canonical get-products request so the adopter sees the full
    * envelope (account, etc.) without the framework projecting fields
    * one-by-one.
    */
-  parentRequest: GetProductsRequest;
+  parentRequest: CanonicalGetProductsRequest;
 }
 
 /**
@@ -411,7 +419,7 @@ export interface ProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
    * buyer drives the finalize transition via subsequent refine calls
    * with `action: 'finalize'`.
    */
-  getProducts(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ProposalGetProductsPayload>;
+  getProducts(req: CanonicalGetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ProposalGetProductsPayload>;
 
   /**
    * Refine-mode iteration on a previous `getProducts` response.
@@ -432,7 +440,7 @@ export interface ProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
    * see those entries intercepted by the framework before this method
    * is called.
    */
-  refineProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ProposalGetProductsPayload>;
+  refineProducts?(req: CanonicalGetProductsRequest, ctx: Ctx<TCtxMeta>): MaybePromise<ProposalGetProductsPayload>;
 
   /**
    * Commit a draft proposal to firm pricing + inventory hold.

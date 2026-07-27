@@ -17,6 +17,7 @@ function makeProduct(product_id, overrides = {}) {
     product_id,
     name: product_id,
     publisher_properties: [{ selection_type: 'all', publisher_domain: 'example.com' }],
+    format_options: [{ format_option_id: 'image', format_kind: 'image', params: {} }],
     pricing_options: CPM,
     ...overrides,
   };
@@ -135,7 +136,7 @@ describe('client rejects products without pricing_options', () => {
       },
     });
 
-    const submitted = await agent.getProducts({ brief: 'sports' }, undefined, { project: false });
+    const submitted = await agent.getProducts({ brief: 'sports' });
     assert.strictEqual(submitted.status, 'submitted');
 
     const handled = await agent.handleWebhook(
@@ -161,6 +162,7 @@ describe('client rejects products without pricing_options', () => {
       handlerCalls[0].response.products.map(p => p.product_id),
       ['priced']
     );
+    assert.doesNotMatch(JSON.stringify(handlerCalls[0].response), /agent_url|format_id/);
     assert.strictEqual(handlerCalls[0].metadata.productPricingPolicy.rejected_count, 1);
   });
 

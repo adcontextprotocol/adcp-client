@@ -773,7 +773,7 @@ export async function testCreativeSync(
     const { result: formatsResult } = await runStep<TaskResult>(
       'Get formats for creative',
       'list_creative_formats',
-      async () => client.listCreativeFormats({}) as Promise<TaskResult>
+      async () => client.listCreativeFormatsLegacy({}) as Promise<TaskResult>
     );
 
     if (formatsResult?.success && formatsResult?.data) {
@@ -994,7 +994,7 @@ export async function testCreativeInline(
       `Build creative for inline flow (${formatIdToString(formatId)})`,
       'build_creative',
       async () =>
-        client.executeTask('build_creative', {
+        client.executeTaskLegacy('build_creative', {
           target_format_id: formatId,
           brand: resolveBrand(options),
           message: `Create an ad creative for the ${formatIdToString(formatId)} format that can be attached to a media buy`,
@@ -1149,7 +1149,7 @@ export async function testCreativeReference(
     `Build creative for reference flow (${formatIdToString(formatId)})`,
     'build_creative',
     async () =>
-      client.executeTask('build_creative', {
+      client.executeTaskLegacy('build_creative', {
         target_format_id: formatId,
         brand: resolveBrand(options),
         message: `Create a reusable ad creative for the ${formatIdToString(formatId)} format`,
@@ -1189,7 +1189,7 @@ export async function testCreativeReference(
     'Sync generated creative to library',
     'sync_creatives',
     async () =>
-      client.executeTask('sync_creatives', {
+      client.executeTaskLegacy('sync_creatives', {
         creatives: [syncedCreative],
       }) as Promise<TaskResult>
   );
@@ -1220,7 +1220,7 @@ export async function testCreativeReference(
   const { result: createResult, step: createStep } = await runStep<TaskResult>(
     'Create media buy with referenced creative',
     'create_media_buy',
-    async () => client.executeTask('create_media_buy', createRequest) as Promise<TaskResult>
+    async () => client.executeTaskLegacy('create_media_buy', createRequest) as Promise<TaskResult>
   );
 
   if (createResult?.success && createResult?.data) {

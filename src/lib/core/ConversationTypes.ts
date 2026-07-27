@@ -214,8 +214,12 @@ export interface TaskState {
   taskId: string;
   /** Task name (tool name) */
   taskName: string;
-  /** Original parameters */
-  params: any;
+  /**
+   * Original parameters while the SDK is actively dispatching or resolving
+   * input. Redacted after a task becomes working, submitted, or terminal so
+   * lifecycle inspection does not retain request assets or credentials.
+   */
+  params?: any;
   /** Current status */
   status: TaskStatus;
   /** Message history */

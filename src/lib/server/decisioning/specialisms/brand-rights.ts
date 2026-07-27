@@ -59,15 +59,15 @@ import type {
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 export type GetBrandIdentityPayload = ServerPayload<GetBrandIdentitySuccess>;
-export type GetRightsPayload = ServerPayload<GetRightsSuccess>;
-export type AcquireRightsAcquiredPayload = ServerPayload<AcquireRightsAcquired>;
-export type AcquireRightsPendingApprovalPayload = ServerPayload<AcquireRightsPendingApproval>;
-export type AcquireRightsRejectedPayload = ServerPayload<AcquireRightsRejected>;
-export type AcquireRightsPayload =
-  | AcquireRightsAcquiredPayload
-  | AcquireRightsPendingApprovalPayload
-  | AcquireRightsRejectedPayload;
-export type UpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
+export type LegacyGetRightsPayload = ServerPayload<GetRightsSuccess>;
+export type LegacyAcquireRightsAcquiredPayload = ServerPayload<AcquireRightsAcquired>;
+export type LegacyAcquireRightsPendingApprovalPayload = ServerPayload<AcquireRightsPendingApproval>;
+export type LegacyAcquireRightsRejectedPayload = ServerPayload<AcquireRightsRejected>;
+export type LegacyAcquireRightsPayload =
+  | LegacyAcquireRightsAcquiredPayload
+  | LegacyAcquireRightsPendingApprovalPayload
+  | LegacyAcquireRightsRejectedPayload;
+export type LegacyUpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
 export type CreativeApprovedPayload = ServerPayload<CreativeApproved>;
 export type CreativeRejectedPayload = ServerPayload<CreativeRejected>;
 export type CreativePendingReviewPayload = ServerPayload<CreativePendingReview>;
@@ -92,7 +92,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * Note: the wire field is `rights`, NOT `offerings`. Adopters who
    * named their internal model `offerings` translate at this seam.
    */
-  getRights(req: GetRightsRequest, ctx: Ctx<TCtxMeta>): Promise<GetRightsPayload>;
+  getRightsLegacy(req: GetRightsRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyGetRightsPayload>;
 
   /**
    * Acquire rights — buyer commits to an offering. Four wire-spec arms:
@@ -134,7 +134,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * sync regardless of arm — invalid requests reject before allocating
    * any state.
    */
-  acquireRights(req: AcquireRightsRequest, ctx: Ctx<TCtxMeta>): Promise<AcquireRightsPayload>;
+  acquireRightsLegacy(req: AcquireRightsRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyAcquireRightsPayload>;
 
   /**
    * Modify an existing rights grant — extend dates, adjust impression caps,
@@ -170,7 +170,7 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * the response for replay against the same `idempotency_key`; this
    * handler runs at most once per (key, principal).
    */
-  updateRights(req: UpdateRightsRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateRightsPayload>;
+  updateRightsLegacy(req: UpdateRightsRequest, ctx: Ctx<TCtxMeta>): Promise<LegacyUpdateRightsPayload>;
 
   /**
    * Review a creative submitted under an existing rights grant.

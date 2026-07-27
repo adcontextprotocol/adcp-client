@@ -161,7 +161,7 @@ async function campaignWorkflow() {
 
     // Step 2: Check available creative formats
     console.log('\n2️⃣  Checking creative format options...');
-    const formats = await agent.listCreativeFormats(
+    const formats = await agent.listCreativeFormatsLegacy(
       {
         type: 'video',
       },

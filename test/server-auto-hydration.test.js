@@ -48,7 +48,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
             {
               product_id: 'prod_a',
               name: 'Sports Display Auction',
-              format_ids: [{ id: 'display_300x250' }],
+              format_options: [{ format_kind: 'image', params: { width: 300, height: 250 } }],
               delivery_type: 'non_guaranteed',
               pricing_options: [{ pricing_option_id: 'po1', model: 'cpm' }],
               ctx_metadata: { gam: { ad_unit_ids: ['au_123'] } },
@@ -79,6 +79,27 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
       params: { name: 'get_products', arguments: { brief: 'sports display', promoted_offering: 'shoes' } },
     });
 
+    // Simulate an older/custom store reattaching the pre-migration product
+    // shape. The platform handler boundary must still remain canonical.
+    await ctxMetadata.setResource(
+      'acct_default',
+      'product',
+      'prod_a',
+      {
+        product_id: 'prod_a',
+        name: 'Sports Display Auction',
+        format_ids: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+        format_options: [
+          {
+            format_kind: 'image',
+            params: { width: 300, height: 250 },
+            v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+          },
+        ],
+      },
+      { gam: { ad_unit_ids: ['au_123'] } }
+    );
+
     // Step 2: createMediaBuy referencing prod_a — SDK auto-hydrates pkg.product
     await server.dispatchTestRequest({
       method: 'tools/call',
@@ -103,7 +124,17 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
     assert.ok(pkg.product, 'pkg.product should be hydrated by SDK');
     assert.equal(pkg.product.product_id, 'prod_a', 'hydrated product carries product_id');
     assert.equal(pkg.product.name, 'Sports Display Auction', 'hydrated product carries wire fields (name)');
-    assert.deepEqual(pkg.product.format_ids, [{ id: 'display_300x250' }], 'hydrated product carries format_ids');
+    assert.deepEqual(
+      pkg.product.format_options,
+      [{ format_kind: 'image', params: { width: 300, height: 250 } }],
+      'hydrated product carries canonical format options'
+    );
+    assert.equal(pkg.product.format_ids, undefined, 'hydrated product does not expose legacy format_ids');
+    assert.equal(
+      pkg.product.format_options[0].v1_format_ref,
+      undefined,
+      'hydrated declarations do not expose legacy v1 refs'
+    );
     assert.deepEqual(
       pkg.product.ctx_metadata,
       { gam: { ad_unit_ids: ['au_123'] } },
@@ -111,12 +142,231 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
     );
   });
 
+  it('semantically converts a legacy-only custom product during hydration', async () => {
+    let hydratedProduct;
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [] }),
+      createMediaBuyImpl: async req => {
+        hydratedProduct = req.packages[0].product;
+        return { media_buy_id: 'mb_custom_hydration', status: 'pending_creatives', packages: [] };
+      },
+    });
+    const ctxMetadata = createCtxMetadataStore({
+      backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }),
+    });
+    await ctxMetadata.setResource(
+      'acct_default',
+      'product',
+      'prod_custom',
+      {
+        product_id: 'prod_custom',
+        name: 'Custom takeover',
+        description: 'Legacy-only stored product',
+        format_ids: [{ agent_url: 'https://seller.example/custom', id: 'homepage_takeover' }],
+      },
+      { upstream_product_id: 'custom-42' }
+    );
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Custom hydration',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+      legacyCreativeFormatConverter: ({ formatId }) =>
+        formatId.id === 'homepage_takeover'
+          ? {
+              format_option_id: 'homepage-takeover',
+              format_kind: 'custom',
+              format_shape: 'takeover',
+              format_schema: {
+                uri: 'https://seller.example/formats/homepage_takeover.json',
+                digest: `sha256:${'a'.repeat(64)}`,
+              },
+              params: {},
+            }
+          : undefined,
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          packages: [{ product_id: 'prod_custom' }],
+          idempotency_key: 'custom-hydration-create',
+        },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(hydratedProduct);
+    assert.strictEqual(hydratedProduct.format_ids, undefined);
+    assert.strictEqual(hydratedProduct.format_options[0].format_kind, 'custom');
+    assert.strictEqual(hydratedProduct.format_options[0].format_option_id, 'homepage-takeover');
+    assert.strictEqual(hydratedProduct.format_options[0].v1_format_ref, undefined);
+    assert.deepStrictEqual(hydratedProduct.ctx_metadata, { upstream_product_id: 'custom-42' });
+  });
+
+  it('downgrades persisted canonical custom product and creative through the explicit resolver', async () => {
+    const canonicalProduct = {
+      product_id: 'prod_persisted_custom',
+      name: 'Persisted custom takeover',
+      description: 'No hidden v1 metadata survives persistence',
+      format_options: [
+        {
+          format_kind: 'custom',
+          format_option_id: 'homepage-takeover',
+          format_shape: 'takeover',
+          format_schema: {
+            uri: 'https://seller.example/formats/homepage_takeover.json',
+            digest: `sha256:${'a'.repeat(64)}`,
+          },
+          params: {},
+        },
+      ],
+    };
+    let hydratedProduct;
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [canonicalProduct], cache_scope: 'account' }),
+      createMediaBuyImpl: async req => {
+        hydratedProduct = req.packages[0].product;
+        return {
+          media_buy_id: 'mb_persisted_custom',
+          packages: [
+            {
+              package_id: 'pkg_persisted_custom',
+              product: hydratedProduct,
+              creatives: [
+                {
+                  creative_id: 'creative_persisted_custom',
+                  name: 'Persisted custom creative',
+                  format_kind: 'custom',
+                  format_option_ref: { scope: 'product', format_option_id: 'homepage-takeover' },
+                  assets: {},
+                },
+              ],
+            },
+          ],
+        };
+      },
+    });
+    const ctxMetadata = createCtxMetadataStore({
+      backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }),
+    });
+    const resolver = context => {
+      if (
+        (context.source === 'product' && context.declaration.format_option_id === 'homepage-takeover') ||
+        (context.source === 'creative' && context.creative.format_option_ref?.format_option_id === 'homepage-takeover')
+      ) {
+        return { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' };
+      }
+      return undefined;
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Persisted custom downgrade',
+      version: '1.0.0',
+      adcpVersion: '3.0.12',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+      canonicalFormatLegacyResolver: resolver,
+    });
+
+    const products = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { brief: 'custom' } },
+    });
+    assert.notStrictEqual(products.isError, true, JSON.stringify(products.structuredContent));
+    assert.deepStrictEqual(products.structuredContent.products[0].format_ids, [
+      { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' },
+    ]);
+
+    // Force a JSON persistence round-trip so no SDK-private WeakMap mapping
+    // can participate in the subsequent hydration/downgrade.
+    await ctxMetadata.setResource(
+      'acct_default',
+      'product',
+      canonicalProduct.product_id,
+      JSON.parse(JSON.stringify(canonicalProduct))
+    );
+    const created = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          packages: [{ product_id: canonicalProduct.product_id }],
+          idempotency_key: 'persisted-custom-create',
+        },
+      },
+    });
+
+    assert.notStrictEqual(created.isError, true, JSON.stringify(created.structuredContent));
+    assert.strictEqual(hydratedProduct.format_options[0].format_kind, 'custom');
+    assert.strictEqual(hydratedProduct.format_ids, undefined);
+    const wirePackage = created.structuredContent.packages[0];
+    assert.deepStrictEqual(wirePackage.product.format_ids, [
+      { agent_url: 'https://seller.example/formats', id: 'homepage_takeover' },
+    ]);
+    assert.strictEqual(wirePackage.product.format_options, undefined);
+    assert.deepStrictEqual(wirePackage.creatives[0].format_id, {
+      agent_url: 'https://seller.example/formats',
+      id: 'homepage_takeover',
+    });
+    assert.strictEqual(wirePackage.creatives[0].format_kind, undefined);
+  });
+
+  it('errors cleanly when the canonical legacy resolver returns ambiguous creative refs', async () => {
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [] }),
+      createMediaBuyImpl: async () => ({
+        media_buy_id: 'mb_ambiguous_custom',
+        packages: [
+          {
+            package_id: 'pkg_ambiguous_custom',
+            creatives: [
+              {
+                creative_id: 'creative_ambiguous_custom',
+                format_kind: 'custom',
+                assets: {},
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Ambiguous custom downgrade',
+      version: '1.0.0',
+      adcpVersion: '3.0.12',
+      validation: { requests: 'off', responses: 'off' },
+      canonicalFormatLegacyResolver: () => [
+        { agent_url: 'https://seller.example/formats', id: 'custom_a' },
+        { agent_url: 'https://seller.example/formats', id: 'custom_b' },
+      ],
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { packages: [], idempotency_key: 'ambiguous-custom-create' },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /cannot be represented on the configured legacy wire/);
+  });
+
   it('does not hydrate when ctxMetadata store is not wired', async () => {
     let observedPackages;
     const platform = makePlatform({
       getProductsImpl: async () => ({
         products: [
-          { product_id: 'prod_a', name: 'A', formats: [], delivery_type: 'guaranteed', ctx_metadata: { x: 1 } },
+          {
+            product_id: 'prod_a',
+            name: 'A',
+            format_options: [{ format_kind: 'image', params: {} }],
+            delivery_type: 'guaranteed',
+            ctx_metadata: { x: 1 },
+          },
         ],
       }),
       createMediaBuyImpl: async (req, ctx) => {

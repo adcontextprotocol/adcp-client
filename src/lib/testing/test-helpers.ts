@@ -239,14 +239,14 @@ export function createTestAgent(overrides?: Partial<AgentConfig>): AgentConfig {
  * import { creativeAgent } from '@adcp/sdk/testing';
  *
  * // List available creative formats
- * const formats = await creativeAgent.listFormats();
+ * const formats = await creativeAgent.listFormatsLegacy();
  * console.log(`Found ${formats.length} creative formats`);
  * ```
  *
  * @example
  * ```typescript
  * // Find formats by dimensions
- * const formats = await creativeAgent.listFormats();
+ * const formats = await creativeAgent.listFormatsLegacy();
  * const banner = formats.find(f =>
  *   f.renders?.[0]?.dimensions?.width === 300 &&
  *   f.renders?.[0]?.dimensions?.height === 250

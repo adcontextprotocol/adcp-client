@@ -30,6 +30,12 @@ export type AdcpProtocol =
  */
 export interface MediaBuyFeatures {
   /**
+   * Seller accepts canonical `format_kind` creative assets on write
+   * surfaces. AdCP 3.1 without this declaration remains unknown; the release
+   * number alone does not prove runtime support.
+   */
+  canonicalCreatives?: boolean;
+  /**
    * Agent accepts package-scoped inline creative uploads in
    * create_media_buy/update_media_buy via `packages[].creatives`.
    *
@@ -556,6 +562,9 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       : wireProtocols;
 
   const features: MediaBuyFeatures = {
+    ...(typeof response.media_buy?.features?.canonical_creatives === 'boolean' && {
+      canonicalCreatives: response.media_buy.features.canonical_creatives,
+    }),
     inlineCreativeManagement: response.media_buy?.features?.inline_creative_management ?? false,
     propertyListFiltering: response.media_buy?.features?.property_list_filtering ?? false,
     contentStandards: response.media_buy?.features?.content_standards === true || declaresContentStandardsSpecialism,
@@ -796,6 +805,7 @@ export const TASK_FEATURE_MAP: Record<string, FeatureName[]> = {
  * Map of media_buy.features field names to their camelCase keys in MediaBuyFeatures.
  */
 const FEATURE_KEY_MAP: Record<string, keyof MediaBuyFeatures> = {
+  canonical_creatives: 'canonicalCreatives',
   inline_creative_management: 'inlineCreativeManagement',
   property_list_filtering: 'propertyListFiltering',
   content_standards: 'contentStandards',

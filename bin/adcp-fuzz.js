@@ -249,7 +249,9 @@ async function handleFuzzCommand(argv) {
   }
 
   const uniformErrorFails = (report.uniformError ?? []).filter(r => r.verdict === 'fail').length;
-  process.exit(report.totalFailures > 0 || uniformErrorFails > 0 ? 1 : 0);
+  // Let Node drain stdout before exiting. Calling process.exit() here can
+  // truncate JSON reports at the first pipe buffer when output is redirected.
+  process.exitCode = report.totalFailures > 0 || uniformErrorFails > 0 ? 1 : 0;
 }
 
 function argError(msg) {

@@ -49,8 +49,151 @@ import { reverseLookup } from './registry';
 import { isCanonicalV1Translatable } from './canonical-properties';
 import { findCatalogEntryByCanonicalAndSize, parseSizedIdTemplate } from './catalog';
 import { LIBRARY_VERSION } from '../../version';
+import { legacyFormatRefsForDeclaration } from './legacy-metadata';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
+
+export interface CanonicalProductFormatLegacyResolutionContext {
+  source: 'product';
+  declaration: Readonly<V2ProductFormatDeclaration>;
+  productId: string;
+  field: string;
+}
+
+export interface CanonicalCreativeFormatLegacyResolutionContext {
+  source: 'creative';
+  creative: Readonly<Record<string, unknown>>;
+  selector: Readonly<Record<string, unknown>>;
+  operation: string;
+  field: string;
+}
+
+export interface CanonicalSelectorFormatLegacyResolutionContext {
+  source: 'selector';
+  selector: Readonly<Record<string, unknown>>;
+  operation: string;
+  field: string;
+}
+
+export type CanonicalFormatLegacyResolutionContext =
+  | CanonicalProductFormatLegacyResolutionContext
+  | CanonicalCreativeFormatLegacyResolutionContext
+  | CanonicalSelectorFormatLegacyResolutionContext;
+
+/** Explicit canonical → legacy resolver for persisted routes the SDK cannot safely infer. */
+export type CanonicalFormatLegacyResolver = (
+  context: CanonicalFormatLegacyResolutionContext
+) => V1FormatId | readonly V1FormatId[] | null | undefined;
+
+export interface V2ToV1ProjectionOptions {
+  canonicalFormatLegacyResolver?: CanonicalFormatLegacyResolver;
+}
+
+export class CanonicalFormatLegacyResolutionError extends Error {
+  readonly name = 'CanonicalFormatLegacyResolutionError' as const;
+}
+
+function resolverRef(value: unknown): V1FormatId {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output must be a format-id object');
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const descriptor of Object.values(descriptors)) {
+    if (descriptor.enumerable && !('value' in descriptor)) {
+      throw new CanonicalFormatLegacyResolutionError('resolver output must not contain enumerable accessors');
+    }
+  }
+  const read = (key: string): unknown => {
+    const descriptor = descriptors[key];
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  };
+  const agentUrl = read('agent_url');
+  const id = read('id');
+  if (typeof agentUrl !== 'string' || agentUrl.length === 0 || typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output has an invalid agent_url or id');
+  }
+  try {
+    new URL(agentUrl);
+  } catch {
+    throw new CanonicalFormatLegacyResolutionError('resolver output agent_url must be an absolute URI');
+  }
+  const width = read('width');
+  const height = read('height');
+  const durationMs = read('duration_ms');
+  if ((width === undefined) !== (height === undefined)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output width and height must be provided together');
+  }
+  if (width !== undefined && (!Number.isInteger(width) || (width as number) < 1)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output width must be a positive integer');
+  }
+  if (height !== undefined && (!Number.isInteger(height) || (height as number) < 1)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output height must be a positive integer');
+  }
+  if (durationMs !== undefined && (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 1)) {
+    throw new CanonicalFormatLegacyResolutionError('resolver output duration_ms must be a positive number');
+  }
+  return {
+    agent_url: agentUrl,
+    id,
+    ...(width !== undefined ? { width: width as number, height: height as number } : {}),
+    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+  };
+}
+
+export function resolveCanonicalFormatLegacyRefs(
+  resolver: CanonicalFormatLegacyResolver | undefined,
+  context: CanonicalFormatLegacyResolutionContext,
+  requireSingle = false
+): V1FormatId[] | undefined {
+  if (!resolver) return undefined;
+  let output: V1FormatId | readonly V1FormatId[] | null | undefined;
+  try {
+    output = resolver(context);
+  } catch {
+    throw new CanonicalFormatLegacyResolutionError('canonical format legacy resolver threw');
+  }
+  if (output == null) return undefined;
+  try {
+    let values: unknown[];
+    if (Array.isArray(output)) {
+      const descriptors = Object.getOwnPropertyDescriptors(output) as Record<string, PropertyDescriptor>;
+      const lengthDescriptor = descriptors['length'];
+      const length = lengthDescriptor && 'value' in lengthDescriptor ? lengthDescriptor.value : undefined;
+      if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) {
+        throw new CanonicalFormatLegacyResolutionError('resolver returned an invalid format-id array');
+      }
+      values = [];
+      for (let index = 0; index < length; index++) {
+        const descriptor = descriptors[String(index)];
+        if (!descriptor || !('value' in descriptor)) {
+          throw new CanonicalFormatLegacyResolutionError(
+            'resolver output arrays must be dense data-only format-id arrays'
+          );
+        }
+        values.push(descriptor.value);
+      }
+    } else {
+      values = [output];
+    }
+    if (values.length === 0 || (requireSingle && values.length !== 1)) {
+      throw new CanonicalFormatLegacyResolutionError(
+        requireSingle ? 'resolver must return exactly one format-id for a creative' : 'resolver returned no format ids'
+      );
+    }
+    const refs = values.map(resolverRef);
+    return [
+      ...new Map(
+        refs.map(ref => [
+          `${ref.agent_url}|${ref.id}|${ref.width ?? ''}|${ref.height ?? ''}|${ref.duration_ms ?? ''}`,
+          ref,
+        ])
+      ).values(),
+    ];
+  } catch (error) {
+    if (error instanceof CanonicalFormatLegacyResolutionError) throw error;
+    throw new CanonicalFormatLegacyResolutionError('canonical format legacy resolver returned unreadable output');
+  }
+}
 
 export interface V2ToV1Result {
   v1: V1Product;
@@ -148,7 +291,8 @@ function tryFanOutMultiSize(decl: V2ProductFormatDeclaration, v1Refs: V1FormatId
 function projectDeclaration(
   decl: V2ProductFormatDeclaration,
   productId: string,
-  field: string
+  field: string,
+  options?: V2ToV1ProjectionOptions
 ): { v1?: V1FormatId | V1FormatId[]; diagnostic?: ProjectionDiagnostic } {
   // Step 1: seller-asserted product-level opt-out. canonical_formats_only
   // is REQUIRED on `custom` declarations without v1_format_ref, but it's
@@ -204,8 +348,9 @@ function projectDeclaration(
   // available) and surface the lossy advisory so the buyer knows the
   // v1 wire is partial-coverage. Responsive ranges (min_*/max_*) are
   // always advisory — the v1 wire can't carry a range.
-  if (decl.v1_format_ref && decl.v1_format_ref.length > 0) {
-    const refs = decl.v1_format_ref;
+  const declaredLegacyRefs = legacyFormatRefsForDeclaration(decl);
+  if (declaredLegacyRefs.length > 0) {
+    const refs = [...declaredLegacyRefs];
     const lossy = detectLossyMultiSize(decl);
     if (lossy) {
       // Sizes mode: seller asserted ≥1 ref; try to widen via catalog
@@ -252,6 +397,32 @@ function projectDeclaration(
     // synthesized agent_url is implementation-defined; downstream
     // consumers MUST NOT depend on this projection.
     return { v1: result.v1 };
+  }
+  try {
+    const resolved = resolveCanonicalFormatLegacyRefs(options?.canonicalFormatLegacyResolver, {
+      source: 'product',
+      declaration: decl,
+      productId,
+      field,
+    });
+    if (resolved) return { v1: resolved };
+  } catch {
+    return {
+      diagnostic: {
+        source: 'sdk',
+        sdk_id: SDK_ID,
+        field,
+        code: 'FORMAT_PROJECTION_FAILED',
+        error: {
+          details: {
+            format_kind: decl.format_kind,
+            product_id: productId,
+            format_option_id: decl.format_option_id,
+            resolution_failure: 'custom_converter_failed',
+          },
+        },
+      },
+    };
   }
   if (result.kind === 'ambiguous') {
     // Step 5: family known, specific format not pickable.
@@ -301,14 +472,14 @@ function projectDeclaration(
  * sending to a v1-only seller (the spec requires `format_ids` to have
  * minItems: 1).
  */
-export function projectV2ProductToV1(v2: V2Product): V2ToV1Result {
+export function projectV2ProductToV1(v2: V2Product, options?: V2ToV1ProjectionOptions): V2ToV1Result {
   const format_ids: V1FormatId[] = [];
   const diagnostics: ProjectionDiagnostic[] = [];
 
   for (let i = 0; i < v2.format_options.length; i++) {
     const decl = v2.format_options[i]!;
     const field = `products[${v2.product_id}].format_options[${i}]`;
-    const { v1, diagnostic } = projectDeclaration(decl, v2.product_id, field);
+    const { v1, diagnostic } = projectDeclaration(decl, v2.product_id, field, options);
     if (v1) {
       if (Array.isArray(v1)) {
         for (const id of v1) format_ids.push(id);

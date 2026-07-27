@@ -41,7 +41,7 @@ function buildPlatform(overrides = {}) {
             product_id: 'p1',
             name: 'sample',
             description: '',
-            format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+            format_options: [{ format_kind: 'image', params: {} }],
             delivery_type: 'non_guaranteed',
             publisher_properties: { reportable: true },
             reporting_capabilities: { available_dimensions: ['geo'] },
@@ -256,6 +256,8 @@ describe('buyer-agent registry resolve seam — Stage 2 of #1269', () => {
 
   it('threaded ctx.agent is reference-identical across accounts.resolve and the handler (single record per request)', async () => {
     const agent = sampleAgent();
+    let resolveAgent;
+    let handlerAgent;
     const platform = buildPlatform({
       agentRegistry: {
         async resolve() {
@@ -263,22 +265,28 @@ describe('buyer-agent registry resolve seam — Stage 2 of #1269', () => {
         },
       },
     });
+    const originalResolve = platform.accounts.resolve;
+    platform.accounts.resolve = async (ref, ctx) => {
+      resolveAgent = ctx?.agent;
+      return originalResolve(ref, ctx);
+    };
+    const originalGetProducts = platform.sales.getProducts;
+    platform.sales.getProducts = async (req, ctx) => {
+      handlerAgent = ctx?.agent;
+      return originalGetProducts(req, ctx);
+    };
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
-    const result = await dispatch(server);
+    await dispatch(server);
     assert.strictEqual(
-      result.structuredContent._ctxAgent,
-      result.structuredContent._accountResolveAgent,
+      handlerAgent,
+      resolveAgent,
       'handler and accounts.resolve must see the same BuyerAgent reference'
     );
-    assert.strictEqual(
-      result.structuredContent._ctxAgent,
-      agent,
-      'reference must be the same object the registry returned'
-    );
+    assert.strictEqual(handlerAgent, agent, 'reference must be the same object the registry returned');
   });
 
   it('resolveAccountFromAuth sees ctx.agent (account-less tools)', async () => {

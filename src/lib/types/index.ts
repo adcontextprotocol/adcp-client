@@ -7,10 +7,15 @@ export type {
   TestResult,
   TestRequest,
   ApiResponse,
-  CreativeFormat,
-  AdvertisingProduct,
+  LegacyCreativeFormatSummary,
+  LegacyAdvertisingProduct,
   MediaBuy,
   Targeting,
+  LegacyManagedCreativeAsset,
+  LegacyManageSyncCreativesRequest,
+  LegacyManageListCreativesRequest,
+  LegacyManageListCreativesResponse,
+  LegacyManagedCreativeFilters,
   ManageCreativeAssetsRequest,
   ManageCreativeAssetsResponse,
   CreateMediaBuyAsyncResponseData,
@@ -43,7 +48,7 @@ export type FormatID = FormatReferenceStructuredObject;
 // adopters never reach into generated files.
 //
 // Intentionally excluded — name conflicts with legacy adcp.ts shapes:
-//   SyncCreativesRequest, ListCreativesRequest, ListCreativesResponse,
+//   LegacyManageSyncCreativesRequest, LegacyManageListCreativesRequest, LegacyManageListCreativesResponse,
 //   ManageCreativeAssetsRequest, ManageCreativeAssetsResponse (adcp.ts versions
 //   already public via `export * from './adcp'` above; use those).
 // Intentionally excluded — comply-runner internals, not specialism surface:
@@ -186,11 +191,15 @@ export type {
   GetCreativeFeaturesResponse,
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
+  SyncCreativesRequest,
   SyncCreativesResponse,
   SyncCreativesSuccess,
   SyncCreativesError,
   SyncCreativesSubmitted,
   SyncCreativesAsyncSubmitted,
+  ListCreativesRequest,
+  ListCreativesResponse,
+  CreativeFilters,
   CreativeAsset,
   CreativeQuality,
   Format,

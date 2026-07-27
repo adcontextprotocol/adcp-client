@@ -53,8 +53,9 @@ export async function testTrustedMatchFlow(
           type: 'context_match_request',
           request_id: `e2e-ctx-${Date.now()}`,
           property_rid: '00000000-0000-7000-0000-000000000001',
-          property_type: 'web',
+          property_type: 'website',
           placement_id: 'e2e-test-placement',
+          seller_agent_url: agentUrl,
           context_signals: {
             topics: ['632'],
             taxonomy_source: 'iab',
@@ -106,8 +107,8 @@ export async function testTrustedMatchFlow(
         client.executeTask('identity_match', {
           type: 'identity_match_request',
           request_id: `e2e-id-${Date.now()}`,
-          user_token: 'e2e-test-opaque-token',
-          uid_type: 'publisher_first_party',
+          seller_agent_url: agentUrl,
+          identities: [{ user_token: 'e2e-test-opaque-token', uid_type: 'publisher_first_party' }],
           package_ids: ['e2e-test-package-001', 'e2e-test-package-002'],
           consent: {
             gdpr: false,

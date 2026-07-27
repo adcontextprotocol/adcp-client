@@ -1,45 +1,84 @@
 // Format Asset Utilities
-// Provides access to format assets from the v3 `assets` field
+// Provides access to asset-slot declarations without requiring a raw
+// list_creative_formats `Format` or its legacy format identity.
 
-import type { Format } from '../types/tools.generated';
+import type {
+  IndividualAudioAsset,
+  IndividualBriefAsset,
+  IndividualCatalogAsset,
+  IndividualCssAsset,
+  IndividualDaastAsset,
+  IndividualHtmlAsset,
+  IndividualImageAsset,
+  IndividualJavaScriptAsset,
+  IndividualMarkdownAsset,
+  IndividualTextAsset,
+  IndividualUrlAsset,
+  IndividualVastAsset,
+  IndividualVideoAsset,
+  IndividualWebhookAsset,
+  RepeatableGroupAsset,
+} from '../types/tools.generated';
 
-// Internal types - derived from Format['assets'] since schema doesn't export standalone types
-type FormatAsset = NonNullable<Format['assets']>[number];
-type IndividualAsset = Extract<FormatAsset, { item_type: 'individual' }>;
-type RepeatableAssetGroup = Extract<FormatAsset, { item_type: 'repeatable_group' }>;
+/** Canonical structural union for the slots declared in an `assets` array. */
+export type CanonicalFormatAssetSlot =
+  | IndividualAudioAsset
+  | IndividualBriefAsset
+  | IndividualCatalogAsset
+  | IndividualCssAsset
+  | IndividualDaastAsset
+  | IndividualHtmlAsset
+  | IndividualImageAsset
+  | IndividualJavaScriptAsset
+  | IndividualMarkdownAsset
+  | IndividualTextAsset
+  | IndividualUrlAsset
+  | IndividualVastAsset
+  | IndividualVideoAsset
+  | IndividualWebhookAsset
+  | RepeatableGroupAsset;
 
-// Legacy support: v2 responses may still include assets_required (deprecated in v3)
-// This internal type allows runtime backward compatibility without exposing it in public API
-interface LegacyFormat extends Format {
+export type IndividualFormatAssetSlot = Exclude<CanonicalFormatAssetSlot, RepeatableGroupAsset>;
+export type RepeatableFormatAssetGroup = RepeatableGroupAsset;
+
+/**
+ * Minimal structural input for asset inspection. It deliberately has no
+ * `format_id`, `agent_url`, name, or other legacy catalog identity.
+ */
+export interface FormatAssetsInput {
+  assets?: CanonicalFormatAssetSlot[];
+  /** Deprecated v2 compatibility field; values are normalized as required slots. */
   assets_required?: unknown[];
 }
 
+// Legacy support: v2 responses may still include assets_required (deprecated in v3)
+// This internal type allows runtime backward compatibility without exposing it in public API
+type LegacyFormatAssetsInput = FormatAssetsInput;
+
 /**
- * Get assets from a Format
+ * Get asset slots from any structural asset container.
  *
  * Returns the assets from the v3 `assets` field. For backward compatibility with v2 servers,
  * this function also handles the deprecated `assets_required` field if present.
  *
- * @param format - The Format object from list_creative_formats response
+ * @param format - An object containing canonical `assets` slots
  * @returns Array of assets
  *
  * @example
  * ```typescript
- * const formats = await agent.listCreativeFormats({});
- * for (const format of formats.formats) {
- *   const assets = getFormatAssets(format);
- *   console.log(`${format.name} has ${assets.length} assets`);
- * }
+ * const assets = getFormatAssets({
+ *   assets: [FormatAsset.image({ asset_id: 'hero', required: true })]
+ * });
  * ```
  */
-export function getFormatAssets(format: Format): FormatAsset[] {
+export function getFormatAssets(format: FormatAssetsInput): CanonicalFormatAssetSlot[] {
   // Use v3 `assets` field
   if (format.assets && format.assets.length > 0) {
     return format.assets;
   }
 
   // Runtime backward compatibility: handle v2 responses with deprecated assets_required
-  const legacyFormat = format as LegacyFormat;
+  const legacyFormat = format as LegacyFormatAssetsInput;
   if (
     legacyFormat.assets_required &&
     Array.isArray(legacyFormat.assets_required) &&
@@ -61,17 +100,17 @@ export function getFormatAssets(format: Format): FormatAsset[] {
  * @returns Normalized assets array with explicit required: true
  * @internal
  */
-function normalizeAssetsRequired(assetsRequired: unknown[]): FormatAsset[] {
+function normalizeAssetsRequired(assetsRequired: unknown[]): CanonicalFormatAssetSlot[] {
   return assetsRequired.map(asset => ({
     ...(asset as Record<string, unknown>),
     required: true, // assets_required only contained required assets
-  })) as FormatAsset[];
+  })) as CanonicalFormatAssetSlot[];
 }
 
 /**
- * Get only required assets from a Format
+ * Get only required slots from an asset container.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns Array of required assets only
  *
  * @example
@@ -80,17 +119,17 @@ function normalizeAssetsRequired(assetsRequired: unknown[]): FormatAsset[] {
  * console.log(`Must provide ${requiredAssets.length} assets`);
  * ```
  */
-export function getRequiredAssets(format: Format): FormatAsset[] {
+export function getRequiredAssets(format: FormatAssetsInput): CanonicalFormatAssetSlot[] {
   return getFormatAssets(format).filter(asset => asset.required);
 }
 
 /**
- * Get only optional assets from a Format
+ * Get only optional slots from an asset container.
  *
  * Note: When using deprecated `assets_required`, this will always return empty
  * since assets_required only contained required assets.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns Array of optional assets only
  *
  * @example
@@ -99,66 +138,68 @@ export function getRequiredAssets(format: Format): FormatAsset[] {
  * console.log(`Can optionally provide ${optionalAssets.length} additional assets`);
  * ```
  */
-export function getOptionalAssets(format: Format): FormatAsset[] {
+export function getOptionalAssets(format: FormatAssetsInput): CanonicalFormatAssetSlot[] {
   return getFormatAssets(format).filter(asset => !asset.required);
 }
 
 /**
- * Get individual assets (not repeatable groups) from a Format
+ * Get individual slots (not repeatable groups) from an asset container.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns Array of individual assets
  */
-export function getIndividualAssets(format: Format): IndividualAsset[] {
-  return getFormatAssets(format).filter((asset): asset is IndividualAsset => asset.item_type === 'individual');
+export function getIndividualAssets(format: FormatAssetsInput): IndividualFormatAssetSlot[] {
+  return getFormatAssets(format).filter(
+    (asset): asset is IndividualFormatAssetSlot => asset.item_type === 'individual'
+  );
 }
 
 /**
- * Get repeatable asset groups from a Format
+ * Get repeatable asset groups from an asset container.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns Array of repeatable asset groups
  */
-export function getRepeatableGroups(format: Format): RepeatableAssetGroup[] {
+export function getRepeatableGroups(format: FormatAssetsInput): RepeatableFormatAssetGroup[] {
   return getFormatAssets(format).filter(
-    (asset): asset is RepeatableAssetGroup => asset.item_type === 'repeatable_group'
+    (asset): asset is RepeatableFormatAssetGroup => asset.item_type === 'repeatable_group'
   );
 }
 
 /**
  * Check if format uses deprecated assets_required field (for migration warnings)
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns true if using deprecated field, false if using new field or neither
  *
  * @example
  * ```typescript
  * if (usesDeprecatedAssetsField(format)) {
- *   console.warn(`Format ${format.name} uses deprecated assets_required field`);
+ *   console.warn('Asset container uses deprecated assets_required field');
  * }
  * ```
  */
-export function usesDeprecatedAssetsField(format: Format): boolean {
-  const legacyFormat = format as LegacyFormat;
+export function usesDeprecatedAssetsField(format: FormatAssetsInput): boolean {
+  const legacyFormat = format as LegacyFormatAssetsInput;
   return !format.assets && !!(legacyFormat.assets_required && Array.isArray(legacyFormat.assets_required));
 }
 
 /**
- * Get the count of assets in a format (for display purposes)
+ * Get the count of slots in an asset container.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns Number of assets, or 0 if none defined
  */
-export function getAssetCount(format: Format): number {
+export function getAssetCount(format: FormatAssetsInput): number {
   return getFormatAssets(format).length;
 }
 
 /**
- * Check if a format has any assets defined
+ * Check if an asset container has any slots defined.
  *
- * @param format - The Format object
+ * @param format - A structural asset container
  * @returns true if format has assets, false otherwise
  */
-export function hasAssets(format: Format): boolean {
+export function hasAssets(format: FormatAssetsInput): boolean {
   return getAssetCount(format) > 0;
 }

@@ -151,7 +151,7 @@ runHelloAdapterGates({
             {
               creative_id: 'hello_social_creative_001',
               name: 'Hello Social Creative',
-              format_id: { agent_url: 'https://social-ads.example.com', id: 'native_feed' },
+              format_kind: 'native_in_feed',
               assets: {
                 headline: { asset_type: 'text', content: 'Trail Pro 3000' },
                 image: {

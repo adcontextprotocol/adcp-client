@@ -151,6 +151,47 @@ test('onCreateMediaBuyStatusChange called with completed status', async () => {
   assert.strictEqual(receivedMediaBuyId, 'mb_789', 'Should receive media buy ID');
 });
 
+test('explicit legacy handlers receive asynchronous creative and content-standard completions', async () => {
+  const received = [];
+  let fallbackCalled = false;
+  const handler = new AsyncHandler({
+    onPreviewCreativeLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onBuildCreativeLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onListContentStandardsLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onGetContentStandardsLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onCalibrateContentLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onValidateContentDeliveryLegacyStatusChange: (_response, metadata) => received.push(metadata.task_type),
+    onTaskStatusChange: () => {
+      fallbackCalled = true;
+    },
+  });
+
+  const taskTypes = [
+    'preview_creative',
+    'build_creative',
+    'list_content_standards',
+    'get_content_standards',
+    'calibrate_content',
+    'validate_content_delivery',
+  ];
+  for (const [index, taskType] of taskTypes.entries()) {
+    await handler.handleWebhook({
+      result: { status: 'completed' },
+      metadata: {
+        operation_id: `op_legacy_${index}`,
+        task_id: `task_legacy_${index}`,
+        agent_id: 'agent_legacy',
+        task_type: taskType,
+        status: 'completed',
+        timestamp: '2026-07-24T12:00:00.000Z',
+      },
+    });
+  }
+
+  assert.deepStrictEqual(received, taskTypes);
+  assert.strictEqual(fallbackCalled, false, 'Legacy task-specific handlers should win over the fallback');
+});
+
 test('onTaskStatusChange fallback handler called for unmapped task type', async () => {
   let fallbackCalled = false;
   let receivedTaskType = null;

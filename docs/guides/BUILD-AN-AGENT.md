@@ -686,11 +686,16 @@ For `getProducts`, any response that includes `products` or `unchanged: true` mu
 If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
 
 ```typescript
-import { productsResponse, mediaBuyResponse, deliveryResponse, taskToolResponse } from '@adcp/sdk';
+import {
+  legacyProductsResponse,
+  legacyMediaBuyResponse,
+  legacyDeliveryResponse,
+  taskToolResponse,
+} from '@adcp/sdk';
 // For error envelopes, throw a typed error class — `AuthMissingError`,
 // `PermissionDeniedError`, `RateLimitedError`, etc. — from `@adcp/sdk/server`.
 
-const response = productsResponse({ products, cache_scope: 'public' });
+const response = legacyProductsResponse({ products, cache_scope: 'public' });
 ```
 
 ### Task Statuses (Server-Side Contract)

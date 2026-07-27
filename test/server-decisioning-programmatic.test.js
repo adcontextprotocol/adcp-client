@@ -104,8 +104,7 @@ function makeProgrammaticSeller({ networkId = 'NET_42', floorCpm = 1.5, creative
       syncCreatives: async creatives => {
         return creatives.map(c => {
           const id = c.creative_id ?? `cr_${Math.random()}`;
-          const formatId = c.format_id?.id ?? '';
-          const needsReview = formatId.startsWith('video_');
+          const needsReview = c.format_kind === 'video_hosted';
           if (needsReview) {
             setTimeout(() => {
               publishStatusChange({
@@ -256,8 +255,8 @@ describe('ProgrammaticSeller — sync first, status-change for post-commit lifec
           name: 'sync_creatives',
           arguments: {
             creatives: [
-              { creative_id: 'cr_display', format_id: { id: 'display_300x250', agent_url: 'x' } },
-              { creative_id: 'cr_video', format_id: { id: 'video_15s', agent_url: 'x' } },
+              { creative_id: 'cr_display', format_kind: 'image' },
+              { creative_id: 'cr_video', format_kind: 'video_hosted' },
             ],
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
             account: { account_id: 'acc_1' },

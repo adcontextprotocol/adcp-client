@@ -29,7 +29,7 @@ async function main() {
 
   // List all formats
   console.log('📋 Fetching all creative formats...');
-  const result = await creativeAgent.listCreativeFormats({});
+  const result = await creativeAgent.listCreativeFormatsLegacy({});
 
   if (!result.success || !result.data) {
     console.error('❌ Failed to fetch formats:', result.error);

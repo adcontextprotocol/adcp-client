@@ -67,20 +67,18 @@ import {
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
-  type GetProductsPayload,
+  type GetProductsHandlerResult,
   type GetMediaBuyDeliveryPayload,
   type GetMediaBuysPayload,
-  type ListCreativeFormatsPayload,
+  type SalesLegacyListCreativeFormatsPayload,
   type AccountStore,
   type Account,
   type AdcpMediaBuyStatus,
   type SyncCreativesRow,
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
-import { FormatAsset } from '@adcp/sdk';
+import { FormatAsset, type CanonicalProduct, type GetProductsRequest } from '@adcp/sdk';
 import type {
-  GetProductsRequest,
-  GetProductsResponse,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
@@ -90,8 +88,6 @@ import type {
   GetMediaBuyDeliveryResponse,
 } from '@adcp/sdk/types';
 
-// `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
-type Product = NonNullable<GetProductsResponse['products']>[number];
 type AdcpPackage = NonNullable<UpdateMediaBuySuccess['affected_packages']>[number];
 type ViewabilityMetrics = NonNullable<
   GetMediaBuyDeliveryResponse['media_buy_deliveries'][number]['totals']['viewability']
@@ -380,11 +376,41 @@ const toAdcpDateTime = (value: string, fallback: string): string => {
 /** Project upstream product onto AdCP `Product`. Auction-cleared inventory
  *  surfaces `min_cpm` as `floor_price` when buyers request auction pricing,
  *  while unfiltered protocol storyboards still get a fixed CPM option first. */
+function canonicalFormatOptions(p: UpstreamProduct): CanonicalProduct['format_options'] {
+  const options = p.format_ids.map(id => {
+    const durationSeconds = id.match(/(?:^|_)(\d+)s(?:_|$)/)?.[1];
+    if (p.channel === 'video' || p.channel === 'ctv') {
+      return {
+        format_option_id: id,
+        format_kind: 'video_hosted' as const,
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    if (p.channel === 'audio') {
+      return {
+        format_option_id: id,
+        format_kind: 'audio_hosted' as const,
+        params: durationSeconds ? { duration_ms_exact: Number(durationSeconds) * 1_000 } : {},
+      };
+    }
+    const dimensions = id.match(/(?:^|_)(\d+)x(\d+)(?:_|$)/);
+    return {
+      format_option_id: id,
+      format_kind: 'image' as const,
+      params: dimensions ? { width: Number(dimensions[1]), height: Number(dimensions[2]) } : {},
+    };
+  });
+  if (options.length === 0) {
+    throw new AdcpError('INVALID_REQUEST', { message: `product ${p.product_id} has no creative formats` });
+  }
+  return [options[0]!, ...options.slice(1)];
+}
+
 function projectProduct(
   p: UpstreamProduct,
   publisherDomain: string,
   pricingMode: 'fixed' | 'auction' = 'fixed'
-): Product {
+): CanonicalProduct {
   const auctionMidpoint = p.pricing.target_cpm ?? round2(p.pricing.min_cpm * 1.3);
   const pricingOption =
     pricingMode === 'auction'
@@ -421,7 +447,7 @@ function projectProduct(
             ? 'streaming_audio'
             : 'display',
     ],
-    format_ids: p.format_ids.map(id => ({ agent_url: FORMAT_AGENT_URL, id })),
+    format_options: canonicalFormatOptions(p),
     delivery_type: 'non_guaranteed',
     pricing_options: [pricingOption],
     reporting_capabilities: {
@@ -638,20 +664,28 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
   // all-optional and `RequiredPlatformsFor<'sales-non-guaranteed'>` requires
   // the closed shape on the way out.
   sales: SalesCorePlatform<NetworkMeta> & SalesIngestionPlatform<NetworkMeta> = {
-    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsPayload> => {
+    getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsHandlerResult> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const publisherDomain = ctx.account.ctx_metadata.publisher_domain;
       // When the buyer provides structured filters (flight dates, budget),
       // forward them so each product comes back with a per-query forecast.
       // Single upstream round-trip surfaces both the catalog and the
       // forecast curve.
-      const briefBudget = (req.filters?.budget_range as { max?: number } | undefined)?.max;
+      const filters = req['filters'] as
+        | {
+            budget_range?: { max?: number };
+            start_date?: string;
+            end_date?: string;
+            is_fixed_price?: boolean;
+          }
+        | undefined;
+      const briefBudget = filters?.budget_range?.max;
       const products = await upstream.listProducts(networkCode, {
-        ...(req.filters?.start_date && { flightStart: req.filters.start_date }),
-        ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
+        ...(filters?.start_date && { flightStart: filters.start_date }),
+        ...(filters?.end_date && { flightEnd: filters.end_date }),
         ...(briefBudget !== undefined && { budget: briefBudget }),
       });
-      const pricingMode = req.filters?.is_fixed_price === false ? 'auction' : 'fixed';
+      const pricingMode = filters?.is_fixed_price === false ? 'auction' : 'fixed';
       return {
         products: products.map(p => projectProduct(p, publisherDomain, pricingMode)),
         cache_scope: 'account',
@@ -1023,17 +1057,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       const advertiserId = networkCode; // SWAP: same collapse caveat as createMediaBuy.
       const out: SyncCreativesRow[] = [];
       for (const c of creatives) {
-        const formatRef = (c as { format_id?: { id?: string } | string }).format_id;
-        const formatId = typeof formatRef === 'string' ? formatRef : formatRef?.id;
-        if (!formatId) {
-          out.push({
-            creative_id: (c as { creative_id?: string }).creative_id ?? 'unknown',
-            action: 'failed',
-            status: 'rejected',
-            errors: [{ code: 'CREATIVE_REJECTED', message: 'format_id is required' }],
-          });
-          continue;
-        }
+        const formatId = c.format_kind;
         try {
           const creativeIdHint = (c as { creative_id?: string }).creative_id;
           const created = await upstream.createCreative(networkCode, {
@@ -1061,7 +1085,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       return out;
     },
 
-    listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsPayload> => {
+    listCreativeFormatsLegacy: async (_req, _ctx): Promise<SalesLegacyListCreativeFormatsPayload> => {
       // Publisher-owned format catalog. The mock doesn't have a discrete
       // formats endpoint (formats live inline on Product); production sellers
       // typically expose `/v1/formats` separately. SWAP: replace with your
@@ -1153,6 +1177,10 @@ serve(
       taskStore,
       idempotency: idempotencyStore,
       mediaBuyStore,
+      canonicalFormatLegacyResolver: context => {
+        if (context.source !== 'product' || !context.declaration.format_option_id) return undefined;
+        return { agent_url: FORMAT_AGENT_URL, id: context.declaration.format_option_id };
+      },
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';

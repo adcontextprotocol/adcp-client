@@ -56,7 +56,7 @@ const platform = {
 
   sales: {
     getProducts: async (req, ctx) => ({
-      status: 'completed',
+      status: 'completed' as const,
       cache_scope: 'account',
       products: [
         {
@@ -64,7 +64,13 @@ const platform = {
           name: 'Homepage display',
           description: 'Above-the-fold homepage display, IAB display 300x250',
           delivery_type: 'non_guaranteed',
-          format_ids: [{ id: 'display_300x250', agent_url: 'https://creative.example.com/mcp' }],
+          format_options: [
+            {
+              format_kind: 'image' as const,
+              format_option_id: 'homepage_300x250',
+              params: { width: 300, height: 250 },
+            },
+          ],
           publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
           pricing_options: [{ pricing_option_id: 'cpm_5', pricing_model: 'cpm', rate: 5, currency: 'USD' }],
           reporting_capabilities: {

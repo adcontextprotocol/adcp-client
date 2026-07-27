@@ -39,7 +39,7 @@ export async function testDiscovery(
     const { result, step } = await runStep<TaskResult>(
       'List creative formats',
       'list_creative_formats',
-      async () => client.listCreativeFormats({}) as Promise<TaskResult>
+      async () => client.listCreativeFormatsLegacy({}) as Promise<TaskResult>
     );
 
     if (result?.success && result?.data) {
@@ -68,7 +68,7 @@ export async function testDiscovery(
     const { result, step } = await runStep<TaskResult>(
       'List authorized properties',
       'list_authorized_properties',
-      async () => client.executeTask('list_authorized_properties', {}) as Promise<TaskResult>
+      async () => client.executeCustomTask('list_authorized_properties', {}) as Promise<TaskResult>
     );
 
     const data = result?.data as unknown as Record<string, unknown> | undefined;

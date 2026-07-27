@@ -278,7 +278,9 @@ export {
 } from './core/SingleAgentClient';
 export type {
   ClientProductPropertyPolicy,
+  CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
+  SyncCreativesTaskOptions,
   VerifyAndParseWebhookOptions,
   WebhookParseErrorCode,
   WebhookParseFailure,
@@ -287,7 +289,11 @@ export type {
 } from './core/SingleAgentClient';
 export {
   AgentClient,
+  type CanonicalGetProductsResponse,
+  type CanonicalProjectionTaskOptions,
   type TaskResponseTypeMap,
+  type TaskRequestTypeMap,
+  type TaskRequestFor,
   type AdcpTaskName,
   type InProcessAgentClientConfig,
 } from './core/AgentClient';
@@ -297,8 +303,9 @@ export {
   CreativeAgentClient,
   createCreativeAgentClient,
   STANDARD_CREATIVE_AGENTS,
-  type CreativeFormat,
+  type CreativeAgentListTaskOptions,
   type CreativeAgentClientConfig,
+  type LegacyCreativeFormat,
 } from './core/CreativeAgentClient';
 export { TaskExecutor } from './core/TaskExecutor';
 export { match, attachMatch } from './core/match';
@@ -628,33 +635,33 @@ export * from './types';
 // imports from loading the generated schema declaration bundle.
 export type {
   // Media Buy Domain
-  GetProductsRequest,
-  GetProductsResponse,
-  ListCreativeFormatsRequest,
-  ListCreativeFormatsResponse,
-  CreateMediaBuyRequest,
-  CreateMediaBuyResponse,
-  CreateMediaBuySuccess,
-  CreateMediaBuyError,
-  CreateMediaBuySubmitted,
-  UpdateMediaBuyRequest,
-  UpdateMediaBuyResponse,
-  UpdateMediaBuySuccess,
-  UpdateMediaBuyError,
-  SyncCreativesRequest,
-  SyncCreativesResponse,
-  SyncCreativesSuccess,
-  SyncCreativesError,
-  SyncCreativesSubmitted,
+  GetProductsRequest as LegacyGetProductsRequest,
+  GetProductsResponse as LegacyGetProductsResponse,
+  ListCreativeFormatsRequest as LegacyListCreativeFormatsRequest,
+  ListCreativeFormatsResponse as LegacyListCreativeFormatsResponse,
+  CreateMediaBuyRequest as LegacyCreateMediaBuyRequest,
+  CreateMediaBuyResponse as LegacyCreateMediaBuyResponse,
+  CreateMediaBuySuccess as LegacyCreateMediaBuySuccess,
+  CreateMediaBuyError as LegacyCreateMediaBuyError,
+  CreateMediaBuySubmitted as LegacyCreateMediaBuySubmitted,
+  UpdateMediaBuyRequest as LegacyUpdateMediaBuyRequest,
+  UpdateMediaBuyResponse as LegacyUpdateMediaBuyResponse,
+  UpdateMediaBuySuccess as LegacyUpdateMediaBuySuccess,
+  UpdateMediaBuyError as LegacyUpdateMediaBuyError,
+  SyncCreativesRequest as LegacySyncCreativesRequest,
+  SyncCreativesResponse as LegacySyncCreativesResponse,
+  SyncCreativesSuccess as LegacySyncCreativesSuccess,
+  SyncCreativesError as LegacySyncCreativesError,
+  SyncCreativesSubmitted as LegacySyncCreativesSubmitted,
   SyncAudiencesRequest,
   SyncAudiencesResponse,
   SyncAudiencesSuccess,
   SyncAudiencesError,
-  ListCreativesRequest,
-  ListCreativesResponse,
-  CreativeFilters,
+  ListCreativesRequest as LegacyListCreativesRequest,
+  ListCreativesResponse as LegacyListCreativesResponse,
+  CreativeFilters as LegacyCreativeFilters,
   GetMediaBuyDeliveryRequest,
-  GetMediaBuyDeliveryResponse,
+  GetMediaBuyDeliveryResponse as LegacyGetMediaBuyDeliveryResponse,
   ProvidePerformanceFeedbackRequest,
   ProvidePerformanceFeedbackResponse,
   ProvidePerformanceFeedbackSuccess,
@@ -697,22 +704,22 @@ export type {
   PropertyList,
   PropertyListFilters,
   // Governance Domain - Content Standards
-  ListContentStandardsRequest,
-  ListContentStandardsResponse,
-  GetContentStandardsRequest,
-  GetContentStandardsResponse,
-  CreateContentStandardsRequest,
-  CreateContentStandardsResponse,
-  UpdateContentStandardsRequest,
-  UpdateContentStandardsResponse,
-  UpdateContentStandardsSuccess,
-  UpdateContentStandardsError,
-  CalibrateContentRequest,
-  CalibrateContentResponse,
-  ValidateContentDeliveryRequest,
-  ValidateContentDeliveryResponse,
-  ContentStandards,
-  Artifact,
+  ListContentStandardsRequest as LegacyListContentStandardsRequest,
+  ListContentStandardsResponse as LegacyListContentStandardsResponse,
+  GetContentStandardsRequest as LegacyGetContentStandardsRequest,
+  GetContentStandardsResponse as LegacyGetContentStandardsResponse,
+  CreateContentStandardsRequest as LegacyCreateContentStandardsRequest,
+  CreateContentStandardsResponse as LegacyCreateContentStandardsResponse,
+  UpdateContentStandardsRequest as LegacyUpdateContentStandardsRequest,
+  UpdateContentStandardsResponse as LegacyUpdateContentStandardsResponse,
+  UpdateContentStandardsSuccess as LegacyUpdateContentStandardsSuccess,
+  UpdateContentStandardsError as LegacyUpdateContentStandardsError,
+  CalibrateContentRequest as LegacyCalibrateContentRequest,
+  CalibrateContentResponse as LegacyCalibrateContentResponse,
+  ValidateContentDeliveryRequest as LegacyValidateContentDeliveryRequest,
+  ValidateContentDeliveryResponse as LegacyValidateContentDeliveryResponse,
+  ContentStandards as LegacyContentStandards,
+  Artifact as LegacyArtifact,
   // Governance Domain - Campaign Governance
   SyncPlansRequest,
   SyncPlansResponse,
@@ -733,8 +740,8 @@ export type {
   PolicyEnforcementLevel,
   OutcomeType,
   // Governance Domain - Creative Features
-  GetCreativeFeaturesRequest,
-  GetCreativeFeaturesResponse,
+  GetCreativeFeaturesRequest as LegacyGetCreativeFeaturesRequest,
+  GetCreativeFeaturesResponse as LegacyGetCreativeFeaturesResponse,
   // Sponsored Intelligence Domain
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -761,12 +768,12 @@ export type {
   // Enums
   CanceledBy,
   // Core data structures used within requests and responses
-  Format,
-  Product,
+  Format as LegacyFormat,
+  Product as LegacyProduct,
   Proposal,
   ProductAllocation,
-  PackageRequest, // Creation params for packages — not Package (response-shaped, from core.generated)
-  CreativeAsset,
+  PackageRequest as LegacyPackageRequest, // Raw wire shape for migration/server tooling
+  CreativeAsset as LegacyCompatibleCreativeAsset,
   CreativePolicy,
   BrandReference,
   BrandID,
@@ -800,19 +807,19 @@ export type {
   SyncCatalogsError,
   // Format Assets
   Overlay,
-  Placement,
+  Placement as LegacyPlacement,
   // Creative Agent Domain
-  CreativeManifest,
+  CreativeManifest as LegacyCreativeManifest,
   CreativeVariable,
-  BuildCreativeRequest,
-  BuildCreativeResponse,
-  BuildCreativeSuccess,
-  BuildCreativeMultiSuccess,
-  BuildCreativeError,
-  PreviewCreativeRequest,
-  PreviewCreativeResponse,
+  BuildCreativeRequest as LegacyBuildCreativeRequest,
+  BuildCreativeResponse as LegacyBuildCreativeResponse,
+  BuildCreativeSuccess as LegacyBuildCreativeSuccess,
+  BuildCreativeMultiSuccess as LegacyBuildCreativeMultiSuccess,
+  BuildCreativeError as LegacyBuildCreativeError,
+  PreviewCreativeRequest as LegacyPreviewCreativeRequest,
+  PreviewCreativeResponse as LegacyPreviewCreativeResponse,
   GetMediaBuysRequest,
-  GetMediaBuysResponse,
+  GetMediaBuysResponse as LegacyGetMediaBuysResponse,
   ImageAsset,
   VideoAsset,
   AudioAsset,
@@ -835,7 +842,7 @@ export type {
   EventCustomData,
   // Creative Delivery Domain
   GetCreativeDeliveryRequest,
-  GetCreativeDeliveryResponse,
+  GetCreativeDeliveryResponse as LegacyGetCreativeDeliveryResponse,
   // Account Domain
   Account,
   ListAccountsRequest,
@@ -852,13 +859,134 @@ export type {
   PaginationRequest,
   PaginationResponse,
   // Nested domain types used as fields within request/response objects
-  PackageUpdate,
-  Package,
+  PackageUpdate as LegacyPackageUpdate,
+  Package as LegacyPackage,
   Destination,
   SignalFilters,
   PricingOption,
   PriceGuidance,
 } from './types/tools.generated';
+
+// Legacy creative identity also appears indirectly in content-standard
+// artifacts, creative-feature manifests, media-buy artifacts, and rights
+// constraints. Keep those raw protocol shapes behind explicit migration
+// names; the primary clients intentionally do not expose these tasks until a
+// lossless canonical projection is defined.
+export type {
+  GetMediaBuyArtifactsRequest as LegacyGetMediaBuyArtifactsRequest,
+  GetMediaBuyArtifactsResponse as LegacyGetMediaBuyArtifactsResponse,
+} from './types/tools.generated';
+export type {
+  GetRightsRequest as LegacyGetRightsRequest,
+  GetRightsResponse as LegacyGetRightsResponse,
+  AcquireRightsRequest as LegacyAcquireRightsRequest,
+  AcquireRightsResponse as LegacyAcquireRightsResponse,
+  UpdateRightsRequest as LegacyUpdateRightsRequest,
+  UpdateRightsResponse as LegacyUpdateRightsResponse,
+} from './types/core.generated';
+
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetMediaBuyArtifactsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetMediaBuyArtifactsResponse = never;
+export type {
+  FormatReferenceStructuredObject as LegacyFormatReferenceStructuredObject,
+  FormatReferenceStructuredObject as LegacyFormatID,
+} from './types/core.generated';
+/** @deprecated Legacy creative routing identity is available as `LegacyFormatReferenceStructuredObject`. */
+export type FormatReferenceStructuredObject = never;
+/** @deprecated Legacy creative routing identity is available as `LegacyFormatID`. */
+export type FormatID = never;
+/** @deprecated Use `LegacyBuildCreativeRequest`; canonical build support awaits a canonical protocol request. */
+export type BuildCreativeRequest = never;
+/** @deprecated Use `LegacyBuildCreativeResponse`. */
+export type BuildCreativeResponse = never;
+/** @deprecated Use `LegacyPreviewCreativeRequest`. */
+export type PreviewCreativeRequest = never;
+/** @deprecated Use `LegacyPreviewCreativeResponse`. */
+export type PreviewCreativeResponse = never;
+/** @deprecated Use `LegacyBuildCreativePayload`. */
+export type BuildCreativePayload = never;
+/** @deprecated Use `LegacyBuildCreativeMultiPayload`. */
+export type BuildCreativeMultiPayload = never;
+/** @deprecated Use `LegacyPreviewCreativePayload`. */
+export type PreviewCreativePayload = never;
+/** @deprecated Use `LegacyListCreativeFormatsRequest`. */
+export type ListCreativeFormatsRequest = never;
+/** @deprecated Use `LegacyListCreativeFormatsResponse`. */
+export type ListCreativeFormatsResponse = never;
+/** @deprecated Use `LegacyListCreativeFormatsPayload`. */
+export type ListCreativeFormatsPayload = never;
+/** @deprecated Use `LegacyListCreativeFormatsResponsePayload`. */
+export type ListCreativeFormatsResponsePayload = never;
+/** @deprecated Use `LegacyListCreativeFormatsServerPayload`. */
+export type ListCreativeFormatsServerPayload = never;
+/** @deprecated Use the explicit legacy creative-agent migration types. */
+export type CreativeManifest = never;
+export type {
+  ManageCreativeAssetsRequest as LegacyManageCreativeAssetsRequest,
+  ManageCreativeAssetsResponse as LegacyManageCreativeAssetsResponse,
+  CreateMediaBuyAsyncResponseData as LegacyCreateMediaBuyAsyncResponseData,
+  GetProductsAsyncResponseData as LegacyGetProductsAsyncResponseData,
+  UpdateMediaBuyAsyncResponseData as LegacyUpdateMediaBuyAsyncResponseData,
+  SyncCreativesAsyncResponseData as LegacySyncCreativesAsyncResponseData,
+} from './types/adcp';
+/** @deprecated Use `LegacyManageCreativeAssetsRequest`. */
+export type ManageCreativeAssetsRequest = never;
+/** @deprecated Use `LegacyManageCreativeAssetsResponse`. */
+export type ManageCreativeAssetsResponse = never;
+/** @deprecated Use `LegacyCreateMediaBuyAsyncResponseData`. */
+export type CreateMediaBuyAsyncResponseData = never;
+/** @deprecated Use `LegacyGetProductsAsyncResponseData`. */
+export type GetProductsAsyncResponseData = never;
+/** @deprecated Use `LegacyUpdateMediaBuyAsyncResponseData`. */
+export type UpdateMediaBuyAsyncResponseData = never;
+/** @deprecated Use `LegacySyncCreativesAsyncResponseData`. */
+export type SyncCreativesAsyncResponseData = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type ListContentStandardsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type ListContentStandardsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetContentStandardsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetContentStandardsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type CreateContentStandardsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type CreateContentStandardsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type UpdateContentStandardsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type UpdateContentStandardsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type CalibrateContentRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type CalibrateContentResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type ValidateContentDeliveryRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type ValidateContentDeliveryResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetCreativeFeaturesRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetCreativeFeaturesResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type ContentStandards = never;
+/** @deprecated Use `LegacyArtifact` from the migration surface. */
+export type Artifact = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetRightsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type GetRightsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type AcquireRightsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type AcquireRightsResponse = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type UpdateRightsRequest = never;
+/** @deprecated Use the corresponding explicit `Legacy*` migration type. */
+export type UpdateRightsResponse = never;
 export type {
   AccountStatus,
   CreativeStatus,
@@ -889,38 +1017,39 @@ export { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } from './t
 export type { StandardErrorCode, ErrorRecovery } from './types/error-codes';
 
 // ====== SERVER-SIDE HELPERS ======
-// Helpers for building AdCP-compliant MCP servers
+// Low-level raw response builders are explicit `legacy*` migration APIs.
+// Modern DecisioningPlatform handlers return canonical payloads directly.
 export {
   adcpError,
-  capabilitiesResponse,
-  productsResponse,
-  mediaBuyResponse,
-  deliveryResponse,
-  listAccountsResponse,
-  listCreativeFormatsResponse,
-  updateMediaBuyResponse,
-  getMediaBuysResponse,
-  performanceFeedbackResponse,
-  buildCreativeResponse,
-  buildCreativeMultiResponse,
-  previewCreativeResponse,
-  creativeDeliveryResponse,
-  listCreativesResponse,
-  listPropertyListsResponse,
-  listCollectionListsResponse,
-  listContentStandardsResponse,
-  getPlanAuditLogsResponse,
-  syncCreativesResponse,
-  getSignalsResponse,
-  activateSignalResponse,
-  cancelMediaBuyResponse,
-  acquireRightsResponse,
-  acquireRightsAcquired,
-  acquireRightsPendingApproval,
-  acquireRightsRejected,
-  syncAccountsResponse,
-  syncGovernanceResponse,
-  reportUsageResponse,
+  legacyCapabilitiesResponse,
+  legacyProductsResponse,
+  legacyMediaBuyResponse,
+  legacyDeliveryResponse,
+  legacyListAccountsResponse,
+  legacyListCreativeFormatsResponse,
+  legacyUpdateMediaBuyResponse,
+  legacyGetMediaBuysResponse,
+  legacyPerformanceFeedbackResponse,
+  legacyBuildCreativeResponse,
+  legacyBuildCreativeMultiResponse,
+  legacyPreviewCreativeResponse,
+  legacyCreativeDeliveryResponse,
+  legacyListCreativesResponse,
+  legacyListPropertyListsResponse,
+  legacyListCollectionListsResponse,
+  legacyListContentStandardsResponse,
+  legacyGetPlanAuditLogsResponse,
+  legacySyncCreativesResponse,
+  legacyGetSignalsResponse,
+  legacyActivateSignalResponse,
+  legacyCancelMediaBuyResponse,
+  legacyAcquireRightsResponse,
+  legacyAcquireRightsAcquired,
+  legacyAcquireRightsPendingApproval,
+  legacyAcquireRightsRejected,
+  legacySyncAccountsResponse,
+  legacySyncGovernanceResponse,
+  legacyReportUsageResponse,
   validActionsForStatus,
   MEDIA_BUY_TRANSITIONS,
   CREATIVE_ASSET_TRANSITIONS,
@@ -1018,11 +1147,11 @@ export type {
   SessionContext,
   OnInstructionsError,
   MaybePromise,
-  AdcpServerConfig,
-  AdcpToolMap,
+  LegacyAdcpServerConfig,
+  LegacyAdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
-  AdcpCustomToolConfig,
+  LegacyAdcpCustomToolConfig,
   McpAppUiMeta,
   McpAppMeta,
   AdcpMcpResourceDefinition,
@@ -1032,14 +1161,14 @@ export type {
   McpAppResourceMeta,
   McpAppResourceReadContext,
   AdcpLogger,
-  HandlerContext,
-  MediaBuyHandlers,
-  SignalsHandlers,
-  CreativeHandlers,
-  GovernanceHandlers,
-  AccountHandlers,
-  EventTrackingHandlers,
-  SponsoredIntelligenceHandlers,
+  LegacyHandlerContext,
+  LegacyMediaBuyHandlers,
+  LegacySignalsHandlers,
+  LegacyCreativeHandlers,
+  LegacyGovernanceHandlers,
+  LegacyAccountHandlers,
+  LegacyEventTrackingHandlers,
+  LegacySponsoredIntelligenceHandlers,
   SignedRequestsConfig,
   AdcpPreTransport,
   AdcpServer,
@@ -1082,9 +1211,26 @@ export type {
   AccountMode,
   RequireCacheScopeWhenProducts,
   ServerPayload,
-  ListCreativeFormatsPayload,
-  ListCreativeFormatsResponsePayload,
-  ListCreativeFormatsServerPayload,
+  GetProductsPayload,
+  CreateMediaBuyPayload,
+  UpdateMediaBuyPayload,
+  GetMediaBuysPayload,
+  GetMediaBuyDeliveryPayload,
+  ListCreativesPayload,
+  GetCreativeDeliveryPayload,
+  LegacyGetProductsPayload,
+  LegacyCreateMediaBuyPayload,
+  LegacyUpdateMediaBuyPayload,
+  LegacyGetMediaBuysPayload,
+  LegacyGetMediaBuyDeliveryPayload,
+  LegacyListCreativesPayload,
+  LegacyGetCreativeDeliveryPayload,
+  LegacyListCreativeFormatsPayload,
+  LegacyListCreativeFormatsResponsePayload,
+  LegacyListCreativeFormatsServerPayload,
+  LegacyBuildCreativePayload,
+  LegacyBuildCreativeMultiPayload,
+  LegacyPreviewCreativePayload,
   SyncCreativesPayload,
   SyncCreativesSuccessPayload,
   SyncCreativesErrorPayload,
@@ -1259,7 +1405,7 @@ export const wireVersion = {
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
 export {
-  getStandardFormats,
+  getStandardFormatsLegacy,
   unwrapProtocolResponse,
   isAdcpError,
   isAdcpSuccess,
@@ -1272,12 +1418,13 @@ export {
 export type { EffectiveTaskState, ResolvedTaskState, ResolveTaskStateOptions } from './utils';
 export { injectLegacyEnvelopeStatus } from './utils/envelope-status-compat';
 export { extractResult, type ToolCallResultLike } from './utils';
-export { REQUEST_TIMEOUT, MAX_CONCURRENT, STANDARD_FORMATS } from './utils';
+export { REQUEST_TIMEOUT, MAX_CONCURRENT, LEGACY_STANDARD_FORMATS } from './utils';
 export {
   batchPreviewProducts,
-  batchPreviewFormats,
+  batchPreviewFormatsLegacy,
   clearPreviewCache,
   type PreviewResult,
+  type LegacyPreviewResult,
   type BatchPreviewOptions,
   type PreviewCacheBackend,
   type PreviewCacheEntry,
@@ -1294,7 +1441,8 @@ export { isCPAPricing } from './utils';
 export { paginate, paginatePages, type PaginateOptions } from './utils';
 
 // ====== FORMAT ASSET UTILITIES ======
-// Access to format assets (v3 `assets` field)
+// Structural access to canonical asset-slot arrays. These helpers deliberately
+// do not require or expose a legacy named-format `Format` / `format_id`.
 export {
   getFormatAssets,
   getRequiredAssets,
@@ -1304,6 +1452,10 @@ export {
   usesDeprecatedAssetsField,
   getAssetCount,
   hasAssets,
+  type CanonicalFormatAssetSlot,
+  type FormatAssetsInput,
+  type IndividualFormatAssetSlot,
+  type RepeatableFormatAssetGroup,
 } from './utils/format-assets';
 
 // ====== CREATIVE ASSET BUILDERS ======
@@ -1398,43 +1550,87 @@ export {
   type RenderItem,
 } from './utils/format-render-builders';
 
-// ====== CANONICAL CREATIVE FORMAT MIGRATION HELPERS ======
-// Author `Product.format_options[]`, v1 `format_id` references, and product
-// cards from one obvious namespace while migrating away from local Format.type
-// and product_card.format_id conventions.
+// ====== CANONICAL CREATIVE FORMAT HELPERS ======
+// Primary application surfaces author canonical `Product.format_options[]`,
+// `format_option_refs[]`, and creative `format_kind`. Raw projection helpers
+// live only under the explicit `@adcp/sdk/v2/projection` migration subpath.
 export {
   CanonicalFormat,
+  canonicalFormatDeclaration,
   type CanonicalFormatDeclaration,
+  type CanonicalFormatDeclaration as Format,
   type CanonicalFormatDeclarationFields,
   type CanonicalFormatKind,
   type CanonicalFormatParams,
-  type FormatReferenceInput,
   type ProductCardDetailedFields,
   type ProductCardFields,
 } from './v2/projection';
 
 export {
-  augmentProductWithFormatOptions,
-  withFormatOptions,
   toCanonicalOnlyProduct,
   toCanonicalOnlyResponse,
-  packageRefsForCapabilities,
-  legacyFormatIdsFromOptions,
-  tryLegacyFormatIdsFromOptions,
-  legacyFormatIdsForCapability,
-  canonicalDeclarationFromBareId,
-  resolveCanonicalFormatKind,
-  CapabilityIdsLookupError,
-  type BareFormatIdResolveOptions,
+  packageRefsForFormatOptions,
+  FormatOptionRefsLookupError,
+  CreativeFormatCapabilityError,
+  CreativeFormatProjectionError,
+  type LegacyFormatConversionContext,
+  type LegacyFormatConverter,
+  legacyFormatConverterFromCatalogSnapshots,
+  canonicalFormatLegacyResolverFromCatalogSnapshots,
+  projectionAdaptersFromCatalogSnapshots,
+  type ProjectionCatalogAdapters,
+  type ProjectionCatalogSnapshot,
+  type ProjectionCatalogSource,
+  type CanonicalFormatLegacyResolver,
+  type CanonicalFormatLegacyResolutionContext,
   type CanonicalOnlyProduct,
-  type CapabilityIdsLookupErrorCode,
+  type CanonicalCreativeAsset,
+  type CanonicalCreativeAsset as CreativeAsset,
+  type CanonicalCreateMediaBuyRequest,
+  type CanonicalCreateMediaBuyRequest as CreateMediaBuyRequest,
+  type CanonicalCreateMediaBuyResponse,
+  type CanonicalCreateMediaBuyResponse as CreateMediaBuyResponse,
+  type CanonicalCreativeResponse,
+  type CanonicalCreativeFilters,
+  type CanonicalCreativeFilters as CreativeFilters,
+  type CanonicalGetCreativeDeliveryResponse,
+  type CanonicalGetCreativeDeliveryResponse as GetCreativeDeliveryResponse,
+  type CanonicalGetMediaBuyDeliveryResponse,
+  type CanonicalGetMediaBuyDeliveryResponse as GetMediaBuyDeliveryResponse,
+  type CanonicalGetMediaBuysResponse,
+  type CanonicalGetMediaBuysResponse as GetMediaBuysResponse,
+  type CanonicalGetProductsResponse as GetProductsResponse,
+  type CanonicalGetProductsRequest,
+  type CanonicalGetProductsRequest as GetProductsRequest,
+  type CanonicalListCreativesRequest,
+  type CanonicalListCreativesRequest as ListCreativesRequest,
+  type CanonicalListCreativesResponse,
+  type CanonicalListCreativesResponse as ListCreativesResponse,
+  type CanonicalListedCreative,
+  type CanonicalPackageRequest,
+  type CanonicalPackageRequest as PackageRequest,
+  type CanonicalPackageUpdate,
+  type CanonicalPackageUpdate as PackageUpdate,
+  type CanonicalPackage,
+  type CanonicalPackage as Package,
+  type CanonicalPlacement,
+  type CanonicalPlacement as Placement,
+  type CanonicalProduct,
+  type CanonicalProduct as Product,
+  type CanonicalProjectedCreative,
+  type CanonicalSyncCreativesRequest,
+  type CanonicalSyncCreativesRequest as SyncCreativesRequest,
+  type CanonicalSyncCreativesResponse,
+  type CanonicalSyncCreativesResponse as SyncCreativesResponse,
+  type CanonicalUpdateMediaBuyRequest,
+  type CanonicalUpdateMediaBuyRequest as UpdateMediaBuyRequest,
+  type CanonicalUpdateMediaBuyResponse,
+  type CanonicalUpdateMediaBuyResponse as UpdateMediaBuyResponse,
+  type LegacyCreativeAsset,
+  type CanonicalCreativeFormatSelectorContainer,
   type PackageFormatRefs,
   type ProjectionDiagnostic,
-  type V1FormatId,
-  type V1Product,
-  type V2AugmentedProduct,
-  type V2Product,
-  type V2ProductFormatDeclaration,
+  type SyncCreativeFormatProjection,
 } from './v2/projection';
 
 // ====== ACTIVATION KEY BUILDERS ======
@@ -1543,12 +1739,14 @@ export type {
 } from './utils/capabilities';
 
 // Buyer-side creative delivery helpers
-export { inlineCreativesForPackages } from './utils/creative-delivery';
+export { inlineCreativesForPackages, inlineCreativesForPackagesLegacy } from './utils/creative-delivery';
 export type {
   InlineCreativeAssignment,
   InlineCreativePackage,
   InlineCreativePackagePatch,
   InlineCreativesForPackagesOptions,
+  InlineCreativesForPackagesLegacyOptions,
+  LegacyInlineCreativePackage,
 } from './utils/creative-delivery';
 
 // Creative assignment adapter (v2 creative_ids ↔ v3 creative_assignments)
@@ -1664,18 +1862,21 @@ export {
 
 // ====== AGENT CLASSES ======
 // Primary agent interface - returns raw AdCP responses
-export { Agent, AgentCollection } from './agents/index.generated';
+// Generated all-tool facades mirror raw protocol schemas, including legacy
+// format_id-bearing tools. Keep them explicit so the primary root surface
+// cannot bypass AgentClient's canonical boundary.
+export { Agent as LegacyAgent, AgentCollection as LegacyAgentCollection } from './agents/index.generated';
 
 // ====== SERVER-SIDE ADAPTERS ======
 // Adapters for building AdCP servers with customizable business logic
 export {
   // Content Standards
-  ContentStandardsAdapter,
-  type IContentStandardsAdapter,
-  type ContentEvaluationResult,
-  ContentStandardsErrorCodes,
-  isContentStandardsError,
-  defaultContentStandardsAdapter,
+  LegacyContentStandardsAdapter,
+  type LegacyIContentStandardsAdapter,
+  type LegacyContentEvaluationResult,
+  LegacyContentStandardsErrorCodes,
+  isLegacyContentStandardsError,
+  legacyDefaultContentStandardsAdapter,
   // Property Lists
   PropertyListAdapter,
   type IPropertyListAdapter,

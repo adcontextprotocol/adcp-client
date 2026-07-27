@@ -22,7 +22,7 @@ async function main() {
   // Simple preview_creative request
   // Note: Using type assertion to bypass strict TypeScript validation
   // The actual creative agent expects plain strings for text assets
-  const response = await creativeAgent.previewCreative({
+  const response = await creativeAgent.previewCreativeLegacy({
     format_id: {
       agent_url: 'https://creative.adcontextprotocol.org/',
       id: 'product_card_standard',

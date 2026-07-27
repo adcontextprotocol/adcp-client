@@ -77,7 +77,7 @@ function basePlatformShape(salesOverrides) {
       syncCreatives: async creatives => {
         return creatives.map(c => {
           const id = c.creative_id ?? `cr_${Math.random()}`;
-          const needsReview = c.format_id?.id?.startsWith('video_');
+          const needsReview = c.format_kind === 'video_hosted';
           return {
             creative_id: id,
             status: needsReview ? 'pending_review' : 'approved',
@@ -257,9 +257,9 @@ describe('MockSeller worked example — unified hybrid shape', () => {
           name: 'sync_creatives',
           arguments: {
             creatives: [
-              { creative_id: 'cr_display_1', format_id: { id: 'display_300x250', agent_url: 'x' } },
-              { creative_id: 'cr_video_1', format_id: { id: 'video_15s', agent_url: 'x' } },
-              { creative_id: 'cr_display_2', format_id: { id: 'display_728x90', agent_url: 'x' } },
+              { creative_id: 'cr_display_1', format_kind: 'image' },
+              { creative_id: 'cr_video_1', format_kind: 'video_hosted' },
+              { creative_id: 'cr_display_2', format_kind: 'image' },
             ],
             idempotency_key: '8f4e2a1c-d6b8-4f9e-9a3c-7b1d5e8f2a4d',
             account: { account_id: 'acc_1' },
