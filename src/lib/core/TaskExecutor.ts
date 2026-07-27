@@ -276,12 +276,15 @@ interface TaskStatusPollResult {
   rawResponse: Record<string, unknown>;
 }
 
+const COMPACTED_TASK_STATE_LIMIT = 10_000;
+
 /**
  * Core task execution engine that handles the conversation loop with agents
  */
 export class TaskExecutor {
   private responseParser: ProtocolResponseParser;
   private activeTasks = new Map<string, TaskState>();
+  private compactedTaskIds = new Map<string, true>();
   private conversationStorage?: Map<string, Message[]>;
   private governanceMiddleware?: GovernanceMiddleware;
   private lastKnownServerVersion?: 'v2' | 'v3';
@@ -1266,7 +1269,10 @@ export class TaskExecutor {
    * options for an unbounded amount of time while the seller works. Retain
    * only lifecycle metadata and the separately tracked idempotency key.
    */
-  private compactIntermediateTaskState(taskId: string, status: 'working' | 'submitted'): void {
+  private compactIntermediateTaskState(
+    taskId: string,
+    status: 'working' | 'submitted' | 'input-required' | 'auth-required' | 'deferred'
+  ): void {
     const task = this.activeTasks.get(taskId);
     if (!task) return;
     task.status = status;
@@ -1274,6 +1280,14 @@ export class TaskExecutor {
     task.messages = [];
     task.options = {};
     delete task.pendingInput;
+    this.compactedTaskIds.delete(taskId);
+    this.compactedTaskIds.set(taskId, true);
+    while (this.compactedTaskIds.size > COMPACTED_TASK_STATE_LIMIT) {
+      const oldest = this.compactedTaskIds.keys().next().value;
+      if (oldest === undefined) break;
+      this.compactedTaskIds.delete(oldest);
+      this.activeTasks.delete(oldest);
+    }
   }
 
   /**
@@ -1303,20 +1317,22 @@ export class TaskExecutor {
     if (!inputHandler) {
       // Extract any data that came with the response (some agents include partial results)
       const partialData = this.extractResponseData(response, debugLogs, taskName);
+      const metadata = this.buildMetadata({
+        taskId,
+        taskName,
+        agent,
+        startTime,
+        status: 'input-required',
+        response,
+        inputRequest,
+      });
+      this.compactIntermediateTaskState(taskId, 'input-required');
 
       return {
         success: true, // The task is progressing, not failed
         status: 'input-required',
         data: partialData,
-        metadata: this.buildMetadata({
-          taskId,
-          taskName,
-          agent,
-          startTime,
-          status: 'input-required',
-          response,
-          inputRequest,
-        }),
+        metadata,
         conversation: messages,
         debug_logs: debugLogs,
       };
@@ -1385,6 +1401,9 @@ export class TaskExecutor {
           createdAt: Date.now(),
         });
       }
+      // Deferred storage is the resume source of truth. Avoid retaining a
+      // duplicate full request (including assets/credentials) in activeTasks.
+      this.compactIntermediateTaskState(taskId, 'deferred');
 
       const deferred: DeferredContinuation<T> = {
         token,
@@ -2000,6 +2019,10 @@ export class TaskExecutor {
   async getTaskInfo(taskId: string): Promise<TaskInfo | null> {
     const localTask = this.activeTasks.get(taskId);
     if (localTask) {
+      if (this.compactedTaskIds.has(taskId)) {
+        this.compactedTaskIds.delete(taskId);
+        this.compactedTaskIds.set(taskId, true);
+      }
       return {
         taskId: localTask.taskId,
         status: localTask.status,
@@ -2241,6 +2264,10 @@ export class TaskExecutor {
         timestamp: new Date().toISOString(),
       });
 
+      if (status === 'input-required' || status === 'auth-required') {
+        this.compactIntermediateTaskState(taskId, status);
+      }
+
       // If task is finished, remove from active tasks after a delay.
       // unref() ensures this timer doesn't prevent the process from exiting.
       if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(status)) {
@@ -2253,6 +2280,7 @@ export class TaskExecutor {
         delete task.pendingInput;
         setTimeout(() => {
           this.activeTasks.delete(taskId);
+          this.compactedTaskIds.delete(taskId);
         }, 30000).unref(); // Keep for 30 seconds for final status checks
       }
     }

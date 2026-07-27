@@ -629,6 +629,40 @@ describe('canonical creative asynchronous boundaries', () => {
       assert.equal(paused.status, 'input-required');
       assert.equal(pausedExecutor.getActiveTasks()[0].status, 'input-required');
       assert.equal(pausedExecutor.getActiveTasks()[0].params, undefined);
+
+      ProtocolClient.callTool = mock.fn(async () => ({
+        status: 'input-required',
+        question: 'Approve directly?',
+        field: 'approval',
+        contextId: 'direct-paused-context',
+      }));
+      const directPausedExecutor = new TaskExecutor({ validation: { requests: 'off', responses: 'off' } });
+      const directPaused = await directPausedExecutor.executeTask(agentConfig, 'create_media_buy', request);
+      assert.equal(directPaused.status, 'input-required');
+      assert.equal(directPausedExecutor.getActiveTasks()[0].params, undefined);
+      assert.deepEqual(directPausedExecutor.getActiveTasks()[0].messages, []);
+
+      const boundedExecutor = new TaskExecutor();
+      for (let index = 0; index <= 10_000; index += 1) {
+        const taskId = `bounded-paused-${index}`;
+        boundedExecutor.activeTasks.set(taskId, {
+          taskId,
+          taskName: 'create_media_buy',
+          params: { secret: `bounded-secret-${index}` },
+          status: 'submitted',
+          messages: [],
+          startTime: index,
+          attempt: 0,
+          maxAttempts: 3,
+          options: {},
+          agent: { id: agentConfig.id, name: agentConfig.name, protocol: agentConfig.protocol },
+        });
+        boundedExecutor.compactIntermediateTaskState(taskId, 'input-required');
+      }
+      assert.equal(boundedExecutor.activeTasks.size, 10_000);
+      assert.equal(boundedExecutor.compactedTaskIds.size, 10_000);
+      assert.equal(boundedExecutor.activeTasks.has('bounded-paused-0'), false);
+      assert.equal(boundedExecutor.activeTasks.has('bounded-paused-10000'), true);
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }
