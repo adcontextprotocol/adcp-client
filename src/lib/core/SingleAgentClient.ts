@@ -790,6 +790,10 @@ export class SingleAgentClient {
         ...this.normalizedAgent,
         agent_uri: this.discoveredEndpoint,
       };
+      if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
+        const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
+        shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+      }
       return this.discoveredAgent;
     }
 
@@ -806,7 +810,12 @@ export class SingleAgentClient {
     const discoveredEndpoint = await this.discoverMCPEndpoint(this.normalizedAgent.agent_uri, options);
 
     if (usesScopedFetch) {
-      return { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
+      const discoveredAgent = { ...this.normalizedAgent, agent_uri: discoveredEndpoint };
+      if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
+        const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
+        shareNonInteractiveOAuthProvider(this.normalizedAgent, discoveredAgent);
+      }
+      return discoveredAgent;
     }
 
     this.discoveredEndpoint = discoveredEndpoint;
@@ -818,6 +827,10 @@ export class SingleAgentClient {
       ...this.normalizedAgent,
       agent_uri: this.discoveredEndpoint,
     };
+    if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
+      const { shareNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
+      shareNonInteractiveOAuthProvider(this.normalizedAgent, this.discoveredAgent);
+    }
     return this.discoveredAgent;
   }
 
@@ -1015,13 +1028,17 @@ export class SingleAgentClient {
       : this.agent.auth_token;
     const agentHeaders = this.agent.headers;
     const authHeaders = { ...agentHeaders, ...createMCPAuthHeaders(authToken) };
-    const authProvider =
+    const oauth =
       this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials
-        ? (await import('../auth/oauth')).createNonInteractiveOAuthProvider(this.normalizedAgent, {
-            agentHint: this.normalizedAgent.id,
-            allowHttp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
-          })
+        ? await import('../auth/oauth')
         : undefined;
+    const authProvider = oauth
+      ? (await import('../auth/oauth/provider-cache')).getNonInteractiveOAuthProvider(this.normalizedAgent, {
+          agentHint: this.normalizedAgent.id,
+          storage: oauth.getAgentStorage(this.normalizedAgent),
+          allowHttp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
+        })
+      : undefined;
 
     type EndpointTestResult = {
       success: boolean;
@@ -3869,9 +3886,11 @@ export class SingleAgentClient {
       }
       let authProvider: Parameters<typeof connectMCP>[0]['authProvider'];
       if (this.normalizedAgent.oauth_tokens && !this.normalizedAgent.oauth_client_credentials) {
-        const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
-        authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
+        const { getAgentStorage } = await import('../auth/oauth');
+        const { getNonInteractiveOAuthProvider } = await import('../auth/oauth/provider-cache');
+        authProvider = getNonInteractiveOAuthProvider(this.normalizedAgent, {
           agentHint: this.normalizedAgent.id,
+          storage: getAgentStorage(this.normalizedAgent),
           allowHttp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
         });
         connectOptions.authProvider = authProvider;
