@@ -608,6 +608,27 @@ describe('canonical creative asynchronous boundaries', () => {
         JSON.stringify(workingState),
         /inline-task-state|task-state-webhook-secret|working-option-secret|reporting_webhook|assets/
       );
+
+      ProtocolClient.callTool = mock.fn(async (_agent, taskName) => {
+        if (taskName === 'tasks/get' || taskName === 'tasks_get') {
+          return {
+            task_id: 'seller-paused-state',
+            task_type: 'create_media_buy',
+            protocol: 'media-buy',
+            status: 'input-required',
+            created_at: '2026-07-27T12:00:00.000Z',
+            updated_at: '2026-07-27T12:00:01.000Z',
+            result: { question: 'Approve?', field: 'approval' },
+          };
+        }
+        return { status: 'submitted', task_id: 'seller-paused-state' };
+      });
+      const pausedExecutor = new TaskExecutor({ validation: { requests: 'off', responses: 'off' } });
+      const pausedSubmission = await pausedExecutor.executeTask(agentConfig, 'create_media_buy', request);
+      const paused = await pausedSubmission.submitted.waitForCompletion(1);
+      assert.equal(paused.status, 'input-required');
+      assert.equal(pausedExecutor.getActiveTasks()[0].status, 'input-required');
+      assert.equal(pausedExecutor.getActiveTasks()[0].params, undefined);
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }

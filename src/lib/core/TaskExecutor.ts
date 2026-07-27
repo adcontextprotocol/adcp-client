@@ -1230,12 +1230,10 @@ export class TaskExecutor {
       },
       waitForCompletion: async (pollInterval = 60000, signal?: AbortSignal) => {
         const completed = await this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, pollingTransport, signal);
-        this.updateTaskStatus(
-          taskId,
-          completed.status === 'completed' ? 'completed' : 'failed',
-          completed.data,
-          completed.error
-        );
+        // `pollTaskCompletion` also returns paused input-required/auth-required
+        // states. Preserve that status so callers can resume the seller task;
+        // only genuinely terminal statuses trigger delayed state eviction.
+        this.updateTaskStatus(taskId, completed.status as TaskStatus, completed.data, completed.error);
         return completed;
       },
     };
