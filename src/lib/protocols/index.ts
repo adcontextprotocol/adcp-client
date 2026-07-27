@@ -42,12 +42,12 @@ import type { AgentConfig, DebugLogEntry } from '../types';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import { getAuthToken } from '../auth';
 import {
-  createNonInteractiveOAuthProvider,
   discoverAuthorizationRequirements,
   NeedsAuthorizationError,
   getAgentStorage,
   ensureClientCredentialsTokens,
 } from '../auth/oauth';
+import { getNonInteractiveOAuthProvider } from '../auth/oauth/provider-cache';
 import { is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
@@ -71,25 +71,6 @@ export {
 export type { TransportActivity, TransportActivityContext, TransportActivityHandler } from './transportDiagnostics';
 
 export type VersionEnvelopeMode = 'auto' | 'none' | 'major-only';
-
-const nonInteractiveOAuthProviderCache = new WeakMap<
-  AgentConfig,
-  ReturnType<typeof createNonInteractiveOAuthProvider>
->();
-
-function getNonInteractiveOAuthProvider(agent: AgentConfig): ReturnType<typeof createNonInteractiveOAuthProvider> {
-  let provider = nonInteractiveOAuthProviderCache.get(agent);
-  if (!provider) {
-    const storage = getAgentStorage(agent);
-    provider = createNonInteractiveOAuthProvider(agent, {
-      agentHint: agent.id,
-      storage,
-      allowHttp: isLikelyPrivateUrl(agent.agent_uri),
-    });
-    nonInteractiveOAuthProviderCache.set(agent, provider);
-  }
-  return provider;
-}
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -512,7 +493,11 @@ export class ProtocolClient {
                 // and their refresh path is a secret re-exchange (handled above),
                 // not the SDK's refresh_token grant.
                 if (agent.oauth_tokens && !agent.oauth_client_credentials) {
-                  const authProvider = getNonInteractiveOAuthProvider(agent);
+                  const authProvider = getNonInteractiveOAuthProvider(agent, {
+                    agentHint: agent.id,
+                    storage: getAgentStorage(agent),
+                    allowHttp: isLikelyPrivateUrl(agent.agent_uri),
+                  });
                   try {
                     return await callMCPToolWithOAuth({
                       agentUrl: agent.agent_uri,

@@ -12,6 +12,11 @@ const { createServer } = require('node:http');
 const { callMCPTool, closeMCPConnections } = require('../../dist/lib/protocols/mcp.js');
 const { callMCPToolWithOAuth } = require('../../dist/lib/protocols/mcp.js');
 const { callMCPToolWithTasks } = require('../../dist/lib/protocols/mcp-tasks.js');
+const {
+  probeModernMCPConnection,
+  tryCallModernMCPTool,
+  tryListModernMCPTools,
+} = require('../../dist/lib/protocols/mcp-modern.js');
 
 function createStaticOAuthProvider(token) {
   return {
@@ -152,6 +157,168 @@ test('remote MCP client negotiates 2026-07-28 with a modern-only server', async 
     debugLogs.some(entry => entry.message === 'MCP: Tool echo response received (success)'),
     'modern calls should preserve the existing response debug log contract'
   );
+});
+
+test('modern discovery is reused within the same authorization context', async t => {
+  const { createMcpHandler, McpServer } = require('@modelcontextprotocol/server');
+  const { toNodeHandler } = require('@modelcontextprotocol/node');
+
+  const handler = createMcpHandler(
+    () => {
+      const server = new McpServer({ name: 'modern-discovery-cache-test', version: '1.0.0' });
+      server.registerTool('echo', { description: 'Echo a fixed modern result' }, async () => ({
+        content: [{ type: 'text', text: 'modern' }],
+      }));
+      return server;
+    },
+    { legacy: 'reject' }
+  );
+  const httpServer = createServer(toNodeHandler(handler));
+  const url = await listen(httpServer);
+  let discoverRequests = 0;
+  const countingFetch = async (input, init) => {
+    const request = input instanceof Request ? input.clone() : new Request(input, init);
+    if (request.method === 'POST') {
+      const body = await request
+        .clone()
+        .json()
+        .catch(() => undefined);
+      if (body?.method === 'server/discover') discoverRequests++;
+    }
+    return fetch(input, init);
+  };
+
+  t.after(async () => {
+    await closeMCPConnections();
+    await handler.close();
+    await closeServer(httpServer);
+  });
+
+  const probe = await probeModernMCPConnection(url, 'tenant-a-token', undefined, {
+    fetchFn: countingFetch,
+  });
+  assert.deepEqual(probe, { connected: true, era: 'modern' });
+  assert.equal(discoverRequests, 1);
+
+  const cachedAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-a-token', [], undefined, {
+    fetchFn: countingFetch,
+  });
+  assert.equal(cachedAttempt.handled, true);
+  assert.equal(discoverRequests, 1, 'the first tool connection should adopt the cached discovery result');
+
+  const otherTenantAttempt = await tryCallModernMCPTool(url, 'echo', {}, 'tenant-b-token', [], undefined, {
+    fetchFn: countingFetch,
+  });
+  assert.equal(otherTenantAttempt.handled, true);
+  assert.equal(discoverRequests, 2, 'discovery results must not cross authorization contexts');
+
+  const { AgentClient } = require('../../dist/lib/core/AgentClient.js');
+  const oauthClient = new AgentClient(
+    {
+      id: 'oauth-discovery-cache-agent',
+      name: 'oauth-discovery-cache-agent',
+      protocol: 'mcp',
+      agent_uri: url.replace(/\/mcp$/, ''),
+      oauth_tokens: { access_token: 'oauth-discovery-token', token_type: 'Bearer' },
+    },
+    { transport: { fetchFn: countingFetch } }
+  );
+  const beforeOAuthDiscovery = discoverRequests;
+  const oauthInfo = await oauthClient.getAgentInfo();
+  assert.ok(oauthInfo.tools.some(tool => tool.name === 'echo'));
+  assert.equal(
+    discoverRequests,
+    beforeOAuthDiscovery + 1,
+    'OAuth endpoint probing and tool listing should share one provider-scoped discovery result'
+  );
+  const internalClient = oauthClient.client;
+  const {
+    getNonInteractiveOAuthProvider,
+    shareNonInteractiveOAuthProvider,
+  } = require('../../dist/lib/auth/oauth/provider-cache.js');
+  const derivedAgent = { ...internalClient.normalizedAgent, agent_uri: url };
+  shareNonInteractiveOAuthProvider(internalClient.normalizedAgent, derivedAgent);
+  assert.strictEqual(
+    getNonInteractiveOAuthProvider(internalClient.normalizedAgent),
+    getNonInteractiveOAuthProvider(derivedAgent),
+    'the derived agent config should retain the endpoint probe OAuth provider identity'
+  );
+});
+
+test('stale modern discovery is refreshed before read-only tool listing fails', async t => {
+  const { createMcpHandler, McpServer: ModernMcpServer } = require('@modelcontextprotocol/server');
+  const { toNodeHandler } = require('@modelcontextprotocol/node');
+  const { McpServer: LegacyMcpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+  const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+
+  const modernHandler = createMcpHandler(
+    () => {
+      const server = new ModernMcpServer({ name: 'modern-before-downgrade', version: '1.0.0' });
+      server.registerTool('echo', { description: 'Modern echo' }, async () => ({
+        content: [{ type: 'text', text: 'modern' }],
+      }));
+      return server;
+    },
+    { legacy: 'reject' }
+  );
+  const modernNodeHandler = toNodeHandler(modernHandler);
+  let useLegacy = false;
+  let respondNotFound = false;
+  const httpServer = createServer(async (req, res) => {
+    if (respondNotFound) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    if (!useLegacy) {
+      await modernNodeHandler(req, res);
+      return;
+    }
+    const server = new LegacyMcpServer({ name: 'legacy-after-downgrade', version: '1.0.0' });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } finally {
+      await server.close();
+    }
+  });
+  const url = await listen(httpServer);
+  let discoverRequests = 0;
+  const countingFetch = async (input, init) => {
+    const request = input instanceof Request ? input.clone() : new Request(input, init);
+    if (request.method === 'POST') {
+      const body = await request
+        .clone()
+        .json()
+        .catch(() => undefined);
+      if (body?.method === 'server/discover') discoverRequests++;
+    }
+    return fetch(input, init);
+  };
+
+  t.after(async () => {
+    await closeMCPConnections();
+    await modernHandler.close();
+    await closeServer(httpServer);
+  });
+
+  const probe = await probeModernMCPConnection(url, undefined, undefined, { fetchFn: countingFetch });
+  assert.deepEqual(probe, { connected: true, era: 'modern' });
+  assert.equal(discoverRequests, 1);
+
+  useLegacy = true;
+  const listed = await tryListModernMCPTools(url, undefined, undefined, { fetchFn: countingFetch });
+  assert.deepEqual(listed, { handled: false });
+  assert.equal(discoverRequests, 2, 'read-only listing should re-probe after a stale modern verdict');
+
+  useLegacy = false;
+  const secondProbe = await probeModernMCPConnection(url, undefined, undefined, { fetchFn: countingFetch });
+  assert.deepEqual(secondProbe, { connected: true, era: 'modern' });
+  respondNotFound = true;
+  const unavailable = await tryListModernMCPTools(url, undefined, undefined, { fetchFn: countingFetch });
+  assert.deepEqual(unavailable, { handled: false });
+  assert.equal(discoverRequests, 4, 'a failed fresh retry should retain the 404 fallback contract');
 });
 
 test('remote MCP client preserves the v1 path for a legacy server', async t => {
