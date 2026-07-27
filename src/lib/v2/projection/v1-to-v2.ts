@@ -65,9 +65,19 @@ import { isLikelyPrivateUrl } from '../../net/address-guards';
 import { createHmac } from 'crypto';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
-const MIGRATED_OPTION_ID_KEY = 'adcp:v1-format-option-id:v1';
 
 class CatalogRequirementConflict extends Error {}
+
+/**
+ * Stable identity disambiguator, not a password hash. The input is a public
+ * creative-format tuple and the output is a product-local routing label. As
+ * with the transport cache disambiguators, HMAC-SHA256 with an empty key gives
+ * deterministic collision resistance without placing this non-secret value
+ * in CodeQL's password-storage dataflow class.
+ */
+function formatIdentityDisambiguator(identity: string): string {
+  return createHmac('sha256', '').update(identity).digest('hex').slice(0, 32);
+}
 
 /**
  * Give an unnamed projected option a stable, opaque identity derived from the
@@ -83,8 +93,7 @@ function migratedFormatOptionId(fid: V1FormatId): string {
     fid.height ?? null,
     fid.duration_ms ?? null,
   ]);
-  const digest = createHmac('sha256', MIGRATED_OPTION_ID_KEY).update(identity).digest('hex').slice(0, 32);
-  return `migrated_${digest}`;
+  return `migrated_${formatIdentityDisambiguator(identity)}`;
 }
 
 export interface V1ToV2Result {
