@@ -284,6 +284,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const DEFAULT_LARGE_RESPONSE_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const ERROR_BODY_PREVIEW_CHARS = 200;
+const MAX_BRAND_BULK_DOMAINS = 25;
 const MAX_BULK_DOMAINS = 100;
 const MAX_BRAND_HIERARCHY_CACHE_ENTRIES = 1000;
 const MAX_CHECK_DOMAINS = 10000; // per OpenAPI spec maxItems
@@ -390,11 +391,11 @@ export class RegistryClient {
     return this.get(url);
   }
 
-  /** Bulk resolve domains to their canonical brand identities (max 100). */
+  /** Bulk resolve domains to their canonical brand identities (max 25). */
   async lookupBrands(domains: string[]): Promise<Record<string, ResolvedBrand | null>> {
     if (domains.length === 0) return {};
-    if (domains.length > MAX_BULK_DOMAINS) {
-      throw new Error(`Cannot resolve more than ${MAX_BULK_DOMAINS} domains at once (got ${domains.length})`);
+    if (domains.length > MAX_BRAND_BULK_DOMAINS) {
+      throw new Error(`Cannot resolve more than ${MAX_BRAND_BULK_DOMAINS} domains at once (got ${domains.length})`);
     }
     const data = await this.post(`${this.baseUrl}/api/brands/resolve/bulk`, { domains });
     return data.results;

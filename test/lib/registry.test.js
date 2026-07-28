@@ -184,14 +184,14 @@ describe('RegistryClient', () => {
       assert.deepStrictEqual(result, {});
     });
 
-    test('rejects more than 100 domains', async () => {
+    test('rejects more than 25 domains', async () => {
       const client = new RegistryClient();
-      const domains = Array.from({ length: 101 }, (_, i) => `domain${i}.com`);
+      const domains = Array.from({ length: 26 }, (_, i) => `domain${i}.com`);
 
       await assert.rejects(
         () => client.lookupBrands(domains),
         err => {
-          assert.ok(err.message.includes('100'));
+          assert.ok(err.message.includes('25'));
           return true;
         }
       );
