@@ -599,7 +599,22 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
   });
 
   it('errors cleanly when a canonical-only product cannot be represented on a 3.0 server wire', async () => {
-    const server = createAdcpServerFromPlatform(buildPlatform(), {
+    const platform = buildPlatform();
+    const getProducts = platform.sales.getProducts;
+    platform.sales.getProducts = async (...args) => {
+      const response = await getProducts(...args);
+      return {
+        ...response,
+        products: response.products.map(product => ({
+          ...product,
+          // Inherently canonical-only: unlike the newly mapped 300x250 image,
+          // responsive asset-pool composition has no legacy named-format form.
+          format_options: [{ format_kind: 'responsive_creative', params: {} }],
+        })),
+      };
+    };
+
+    const server = createAdcpServerFromPlatform(platform, {
       name: 'legacy-wire-unrepresentable-product',
       version: '1.0.0',
       adcpVersion: '3.0.0',
