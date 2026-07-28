@@ -9,6 +9,8 @@
 
 import {
   Client,
+  SdkError,
+  SdkErrorCode,
   StreamableHTTPClientTransport,
   type OAuthClientProvider as ModernOAuthClientProvider,
   type Tool,
@@ -341,6 +343,15 @@ async function attemptModernCall(
       });
       return { handled: false };
     }
+    if (SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
+      markKnownLegacy(cacheKey);
+      options.debugLogs.push({
+        type: 'info',
+        message: `MCP: Era negotiation failed for ${toolName}; preserving the v1 transport path`,
+        timestamp: new Date().toISOString(),
+      });
+      return { handled: false };
+    }
     throw error;
   }
 
@@ -468,6 +479,7 @@ export async function probeModernMCPConnection(
     if (is401Error(error) || isAbortOrTimeoutError(error)) throw error;
     const status = httpStatusOf(error);
     if (status === 404 || status === 405) return { connected: false };
+    if (SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) return { connected: false };
     throw error;
   } finally {
     await client?.close().catch(() => {});
@@ -507,6 +519,7 @@ export async function tryListModernMCPTools(
     if (is401Error(error) || isAbortOrTimeoutError(error)) throw error;
     const status = httpStatusOf(error);
     if (status === 404 || status === 405) return { handled: false };
+    if (SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) return { handled: false };
     throw error;
   } finally {
     await client?.close().catch(() => {});
