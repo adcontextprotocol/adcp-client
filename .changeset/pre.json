@@ -6,5 +6,11 @@
     "@adcp/client": "6.0.0",
     "@adcp/eslint-plugin": "0.1.6"
   },
-  "changesets": ["bright-cats-listen", "project-legacy-creative-delivery"]
+  "changesets": [
+    "bright-cats-listen",
+    "fix-canonical-list-creatives-validation",
+    "fix-mcp-beta-pins",
+    "project-legacy-creative-delivery",
+    "soft-tools-smile"
+  ]
 }

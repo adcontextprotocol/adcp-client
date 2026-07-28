@@ -1,5 +1,15 @@
 # Changelog
 
+## 13.0.0-rc.1
+
+### Patch Changes
+
+- 563fe56: Accept canonical `format_kind` identities in strict `list_creatives` response validation while retaining legacy `format_id` compatibility.
+- c5636e9: Align the modular MCP client, Node transport, and server dependencies on 2.0.0-beta.5.
+- 0ec560c: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.6.
+
+  This release expands the v1-to-canonical creative format mapping registry with nine observed legacy video and audio format IDs, preserving their duration, dimensions, and VAST delivery constraints during projection. It also refreshes protocol metadata, documentation, compatibility declarations, and generated source references. There are no wire-level schema changes from AdCP 3.1.5.
+
 ## 13.0.0-rc.0
 
 ### Major Changes
