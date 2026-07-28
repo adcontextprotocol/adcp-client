@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.6
-// Generated at: 2026-07-27T19:30:16.718Z
+// Generated AdCP core types from official schemas v3.1.7
+// Generated at: 2026-07-28T00:55:19.743Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -17326,132 +17326,7 @@ export type ListCreativesResponse = ProtocolEnvelope & {
   /**
    * Array of creative assets matching the query
    */
-  creatives: {
-    /**
-     * Unique identifier for the creative
-     */
-    creative_id: string;
-    account?: Account;
-    /**
-     * Human-readable creative name
-     */
-    name: string;
-    format_id: FormatReferenceStructuredObject;
-    status: CreativeStatus;
-    /**
-     * When the creative was created
-     * @format date-time
-     */
-    created_date: string;
-    /**
-     * When the creative was last modified
-     * @format date-time
-     */
-    updated_date: string;
-    /**
-     * Assets for this creative, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
-     */
-    assets?: {
-      /**
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-z0-9_]+$".
-       */
-      [k: string]: AssetVariant | AssetVariant1[];
-    };
-    /**
-     * User-defined tags for organization and searchability
-     */
-    tags?: string[];
-    /**
-     * Creative concept this creative belongs to. Concepts group related creatives across sizes and formats.
-     */
-    concept_id?: string;
-    /**
-     * Human-readable concept name
-     */
-    concept_name?: string;
-    /**
-     * Dynamic content variables (DCO slots) for this creative. Included when include_variables=true.
-     */
-    variables?: CreativeVariable[];
-    /**
-     * Current package assignments (included when include_assignments=true)
-     */
-    assignments?: {
-      /**
-       * Total number of active package assignments
-       * @minimum 0
-       */
-      assignment_count: number;
-      /**
-       * List of packages this creative is assigned to
-       */
-      assigned_packages?: {
-        /**
-         * Package identifier
-         */
-        package_id: string;
-        /**
-         * When this assignment was created
-         * @format date-time
-         */
-        assigned_date: string;
-      }[];
-    };
-    /**
-     * Lightweight delivery snapshot (included when include_snapshot=true). For detailed performance analytics, use get_creative_delivery.
-     */
-    snapshot?: {
-      /**
-       * When this snapshot was captured by the platform
-       * @format date-time
-       */
-      as_of: string;
-      /**
-       * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
-       * @minimum 0
-       */
-      staleness_seconds: number;
-      /**
-       * Lifetime impressions across all assignments. Not scoped to any date range.
-       * @minimum 0
-       */
-      impressions: number;
-      /**
-       * Last time this creative served an impression. Absent when the creative has never served.
-       * @format date-time
-       */
-      last_served?: string;
-    };
-    snapshot_unavailable_reason?: SnapshotUnavailableReason;
-    /**
-     * Items for multi-asset formats like carousels and native ads (included when include_items=true)
-     */
-    items?: CreativeItem[];
-    /**
-     * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
-     */
-    pricing_options?: VendorPricingOption[];
-    /**
-     * Tombstone block — present only when this record is a soft-purged creative surfaced via `include_purged: true`. The record's `status` field reflects the last status before purge (frozen — buyers MUST treat the creative as gone; assignments, snapshot, and serving operations no longer apply). Tombstones surface for the seller's webhook activity retention window (30 days from `purge.at`). Hard purges (`purge_kind: hard` on the webhook) do not surface on this read — the [`creative.purged`](https://adcontextprotocol.org/schemas/v3/creative/creative-purged-webhook.json) webhook is the only signal.
-     */
-    purge?: {
-      /**
-       * Always `soft` on tombstones — hard purges do not surface on this read.
-       */
-      kind: 'soft';
-      /**
-       * ISO 8601 timestamp when the creative was destroyed. Matches the `purged_at` field on the corresponding `creative.purged` webhook fire.
-       * @format date-time
-       */
-      at: string;
-      reason_code: CreativeEventReasonCode;
-    };
-    /**
-     * Recent webhook fires scoped to this creative — `creative.status_changed` and `creative.purged` deliveries. Present only when the request set `include_webhook_activity: true`. Each item is a `webhook-activity-record`; the `notification_type` field discriminates between status changes and purges. The `ext.creative_id` slot MAY be populated on records nested inside larger reads where the parent does not already key the array; on `list_creatives` the parent creative_id is unambiguous and `ext.creative_id` MAY be omitted. Retention: 30 days from `completed_at` (MUST). See `snapshot-and-log.mdx § Webhook activity log pattern` for the full normative contract.
-     */
-    webhook_activity?: WebhookActivityRecord[];
-  }[];
+  creatives: (LegacyListedCreativeNamedFormatReference | ListedCreativeCanonicalFormatKind)[];
   /**
    * Breakdown of creatives by format. Keys are agent-defined format identifiers, optionally including dimensions (e.g., 'display_static_300x250', 'video_30s_vast'). Key construction is platform-specific — there is no required format.
    */
@@ -17574,7 +17449,133 @@ export type CreativeEventReasonCode =
   | 'account_suspended'
   | 'retention_expired'
   | 'legal_erasure';
-
+export interface LegacyListedCreativeNamedFormatReference {
+  /**
+   * Unique identifier for the creative
+   */
+  creative_id: string;
+  account?: Account;
+  /**
+   * Human-readable creative name
+   */
+  name: string;
+  format_id: FormatReferenceStructuredObject;
+  format_option_ref?: FormatOptionReference;
+  status: CreativeStatus;
+  /**
+   * When the creative was created
+   * @format date-time
+   */
+  created_date: string;
+  /**
+   * When the creative was last modified
+   * @format date-time
+   */
+  updated_date: string;
+  /**
+   * Assets for this creative, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   */
+  assets?: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant | AssetVariant1[];
+  };
+  /**
+   * User-defined tags for organization and searchability
+   */
+  tags?: string[];
+  /**
+   * Creative concept this creative belongs to. Concepts group related creatives across sizes and formats.
+   */
+  concept_id?: string;
+  /**
+   * Human-readable concept name
+   */
+  concept_name?: string;
+  /**
+   * Dynamic content variables (DCO slots) for this creative. Included when include_variables=true.
+   */
+  variables?: CreativeVariable[];
+  /**
+   * Current package assignments (included when include_assignments=true)
+   */
+  assignments?: {
+    /**
+     * Total number of active package assignments
+     * @minimum 0
+     */
+    assignment_count: number;
+    /**
+     * List of packages this creative is assigned to
+     */
+    assigned_packages?: {
+      /**
+       * Package identifier
+       */
+      package_id: string;
+      /**
+       * When this assignment was created
+       * @format date-time
+       */
+      assigned_date: string;
+    }[];
+  };
+  /**
+   * Lightweight delivery snapshot (included when include_snapshot=true). For detailed performance analytics, use get_creative_delivery.
+   */
+  snapshot?: {
+    /**
+     * When this snapshot was captured by the platform
+     * @format date-time
+     */
+    as_of: string;
+    /**
+     * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
+     * @minimum 0
+     */
+    staleness_seconds: number;
+    /**
+     * Lifetime impressions across all assignments. Not scoped to any date range.
+     * @minimum 0
+     */
+    impressions: number;
+    /**
+     * Last time this creative served an impression. Absent when the creative has never served.
+     * @format date-time
+     */
+    last_served?: string;
+  };
+  snapshot_unavailable_reason?: SnapshotUnavailableReason;
+  /**
+   * Items for multi-asset formats like carousels and native ads (included when include_items=true)
+   */
+  items?: CreativeItem[];
+  /**
+   * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
+   */
+  pricing_options?: VendorPricingOption[];
+  /**
+   * Tombstone block — present only when this record is a soft-purged creative surfaced via `include_purged: true`. The record's `status` field reflects the last status before purge (frozen — buyers MUST treat the creative as gone; assignments, snapshot, and serving operations no longer apply). Tombstones surface for the seller's webhook activity retention window (30 days from `purge.at`). Hard purges (`purge_kind: hard` on the webhook) do not surface on this read — the [`creative.purged`](https://adcontextprotocol.org/schemas/v3/creative/creative-purged-webhook.json) webhook is the only signal.
+   */
+  purge?: {
+    /**
+     * Always `soft` on tombstones — hard purges do not surface on this read.
+     */
+    kind: 'soft';
+    /**
+     * ISO 8601 timestamp when the creative was destroyed. Matches the `purged_at` field on the corresponding `creative.purged` webhook fire.
+     * @format date-time
+     */
+    at: string;
+    reason_code: CreativeEventReasonCode;
+  };
+  /**
+   * Recent webhook fires scoped to this creative — `creative.status_changed` and `creative.purged` deliveries. Present only when the request set `include_webhook_activity: true`. Each item is a `webhook-activity-record`; the `notification_type` field discriminates between status changes and purges. The `ext.creative_id` slot MAY be populated on records nested inside larger reads where the parent does not already key the array; on `list_creatives` the parent creative_id is unambiguous and `ext.creative_id` MAY be omitted. Retention: 30 days from `completed_at` (MUST). See `snapshot-and-log.mdx § Webhook activity log pattern` for the full normative contract.
+   */
+  webhook_activity?: WebhookActivityRecord[];
+}
 /**
  * A dynamic content variable (DCO slot) on a creative. Variables represent content that can change at serve time — headlines, images, product data, etc.
  */
@@ -17664,8 +17665,133 @@ export interface WebhookActivityRecord {
   error_message?: string | null;
   ext?: ExtensionObject;
 }
-
-// bundled/creative/list-transformers-request.json
+export interface ListedCreativeCanonicalFormatKind {
+  /**
+   * Unique identifier for the creative
+   */
+  creative_id: string;
+  account?: Account;
+  /**
+   * Human-readable creative name
+   */
+  name: string;
+  format_kind: CanonicalFormatKind;
+  format_option_ref?: FormatOptionReference;
+  status: CreativeStatus;
+  /**
+   * When the creative was created
+   * @format date-time
+   */
+  created_date: string;
+  /**
+   * When the creative was last modified
+   * @format date-time
+   */
+  updated_date: string;
+  /**
+   * Assets for this creative, keyed by asset_id. Each slot value is either a single asset object or an array of asset objects (for slots with `min`/`max > 1`). Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
+   */
+  assets?: {
+    /**
+     * This interface was referenced by `undefined`'s JSON-Schema definition
+     * via the `patternProperty` "^[a-z0-9_]+$".
+     */
+    [k: string]: AssetVariant2 | AssetVariant3[];
+  };
+  /**
+   * User-defined tags for organization and searchability
+   */
+  tags?: string[];
+  /**
+   * Creative concept this creative belongs to. Concepts group related creatives across sizes and formats.
+   */
+  concept_id?: string;
+  /**
+   * Human-readable concept name
+   */
+  concept_name?: string;
+  /**
+   * Dynamic content variables (DCO slots) for this creative. Included when include_variables=true.
+   */
+  variables?: CreativeVariable[];
+  /**
+   * Current package assignments (included when include_assignments=true)
+   */
+  assignments?: {
+    /**
+     * Total number of active package assignments
+     * @minimum 0
+     */
+    assignment_count: number;
+    /**
+     * List of packages this creative is assigned to
+     */
+    assigned_packages?: {
+      /**
+       * Package identifier
+       */
+      package_id: string;
+      /**
+       * When this assignment was created
+       * @format date-time
+       */
+      assigned_date: string;
+    }[];
+  };
+  /**
+   * Lightweight delivery snapshot (included when include_snapshot=true). For detailed performance analytics, use get_creative_delivery.
+   */
+  snapshot?: {
+    /**
+     * When this snapshot was captured by the platform
+     * @format date-time
+     */
+    as_of: string;
+    /**
+     * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
+     * @minimum 0
+     */
+    staleness_seconds: number;
+    /**
+     * Lifetime impressions across all assignments. Not scoped to any date range.
+     * @minimum 0
+     */
+    impressions: number;
+    /**
+     * Last time this creative served an impression. Absent when the creative has never served.
+     * @format date-time
+     */
+    last_served?: string;
+  };
+  snapshot_unavailable_reason?: SnapshotUnavailableReason;
+  /**
+   * Items for multi-asset formats like carousels and native ads (included when include_items=true)
+   */
+  items?: CreativeItem[];
+  /**
+   * Pricing options for using this creative (serving, delivery). Used by ad servers and library agents. Transformation agents expose format-level pricing on list_creative_formats instead. Present when include_pricing=true and account provided. The buyer passes the applied pricing_option_id in report_usage.
+   */
+  pricing_options?: VendorPricingOption[];
+  /**
+   * Tombstone block — present only when this record is a soft-purged creative surfaced via `include_purged: true`. The record's `status` field reflects the last status before purge (frozen — buyers MUST treat the creative as gone; assignments, snapshot, and serving operations no longer apply). Tombstones surface for the seller's webhook activity retention window (30 days from `purge.at`). Hard purges (`purge_kind: hard` on the webhook) do not surface on this read — the [`creative.purged`](https://adcontextprotocol.org/schemas/v3/creative/creative-purged-webhook.json) webhook is the only signal.
+   */
+  purge?: {
+    /**
+     * Always `soft` on tombstones — hard purges do not surface on this read.
+     */
+    kind: 'soft';
+    /**
+     * ISO 8601 timestamp when the creative was destroyed. Matches the `purged_at` field on the corresponding `creative.purged` webhook fire.
+     * @format date-time
+     */
+    at: string;
+    reason_code: CreativeEventReasonCode;
+  };
+  /**
+   * Recent webhook fires scoped to this creative — `creative.status_changed` and `creative.purged` deliveries. Present only when the request set `include_webhook_activity: true`. Each item is a `webhook-activity-record`; the `notification_type` field discriminates between status changes and purges. The `ext.creative_id` slot MAY be populated on records nested inside larger reads where the parent does not already key the array; on `list_creatives` the parent creative_id is unambiguous and `ext.creative_id` MAY be omitted. Retention: 30 days from `completed_at` (MUST). See `snapshot-and-log.mdx § Webhook activity log pattern` for the full normative contract.
+   */
+  webhook_activity?: WebhookActivityRecord[];
+}
 /**
  * Request parameters for discovering account-scoped creative transformers offered by this creative agent. Brief-filterable and paginated. Transformers are the creative analog of media-buy products: agent-offered, account-scoped, selectable units of build capability. Use `expand_params` to additionally return account-scoped option VALUES (e.g. the buyer's configured voices) for named enumerable params.
  */

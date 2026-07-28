@@ -91,6 +91,47 @@ describe('schema-driven validation', () => {
       assert.ok(productsIssue.schemaPath.length > 0);
     });
 
+    test('accepts exactly one legacy or canonical list_creatives identity', () => {
+      const baseResponse = {
+        status: 'completed',
+        query_summary: { total_matching: 1, returned: 1 },
+        pagination: { has_more: false },
+        creatives: [
+          {
+            creative_id: 'creative_1',
+            name: 'Display creative',
+            status: 'approved',
+            created_date: '2026-07-27T00:00:00Z',
+            updated_date: '2026-07-27T00:00:00Z',
+          },
+        ],
+      };
+      const creative = baseResponse.creatives[0];
+      const identities = [
+        { format_id: { agent_url: 'https://creative.example', id: 'display_image' } },
+        {
+          format_kind: 'image',
+          format_option_ref: { scope: 'product', format_option_id: 'display_image' },
+        },
+      ];
+
+      for (const identity of identities) {
+        const outcome = validateResponse('list_creatives', {
+          ...baseResponse,
+          creatives: [{ ...creative, ...identity }],
+        });
+        assert.strictEqual(outcome.valid, true, formatIssues(outcome.issues));
+      }
+
+      for (const identity of [{}, { ...identities[0], ...identities[1] }]) {
+        const outcome = validateResponse('list_creatives', {
+          ...baseResponse,
+          creatives: [{ ...creative, ...identity }],
+        });
+        assert.strictEqual(outcome.valid, false, 'creative identity must contain exactly one identity path');
+      }
+    });
+
     test('accepts envelope fields (replayed, unknown vendor keys) at the response root when bundled schema is additionalProperties:false', () => {
       // create_property_list-response declares additionalProperties:false at root.
       // Envelope fields like `replayed` (per security.mdx) must ride alongside.
