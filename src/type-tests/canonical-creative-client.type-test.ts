@@ -203,8 +203,14 @@ client.listCreatives().then(response => {
 });
 
 client.listCreativesLegacy().then(response => {
-  const legacyRef: FormatReferenceStructuredObject = response.creatives[0]!.format_id;
-  void legacyRef;
+  const creative = response.creatives[0]!;
+  if ('format_id' in creative) {
+    const legacyRef: FormatReferenceStructuredObject = creative.format_id;
+    void legacyRef;
+  } else {
+    const kind: CanonicalFormatKind = creative.format_kind;
+    void kind;
+  }
 });
 
 agent.createMediaBuy(canonicalCreate);
