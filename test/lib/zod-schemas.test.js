@@ -64,6 +64,78 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.CancellationPolicySchema.safeParse(policy({ type: 'none' })).success);
   });
 
+  test('canonical delivery metrics stay strict while legacy response variants remain tolerant', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const baseMetrics = { impressions: 10, spend: 2.5 };
+    assert.ok(!schemas.CatalogItemDeliveryMetricsSchema.safeParse(baseMetrics).success);
+    assert.ok(schemas.CatalogItemDeliveryMetricsSchema.safeParse({ ...baseMetrics, content_id: 'sku-1' }).success);
+
+    assert.ok(!schemas.KeywordDeliveryMetricsSchema.safeParse({ ...baseMetrics, keyword: 'running shoes' }).success);
+    assert.ok(!schemas.KeywordDeliveryMetricsSchema.safeParse({ ...baseMetrics, match_type: 'exact' }).success);
+    assert.ok(
+      schemas.KeywordDeliveryMetricsSchema.safeParse({
+        ...baseMetrics,
+        keyword: 'running shoes',
+        match_type: 'exact',
+      }).success
+    );
+
+    assert.ok(!schemas.GeoDeliveryMetricsSchema.safeParse({ ...baseMetrics, geo_level: 'country' }).success);
+    assert.ok(!schemas.GeoDeliveryMetricsSchema.safeParse({ ...baseMetrics, geo_code: 'US' }).success);
+    assert.ok(
+      schemas.GeoDeliveryMetricsSchema.safeParse({ ...baseMetrics, geo_level: 'country', geo_code: 'US' }).success
+    );
+
+    assert.ok(schemas.GetMediaBuyDeliveryCatalogItemMetricsSchema.safeParse(baseMetrics).success);
+    assert.ok(schemas.GetMediaBuyDeliveryKeywordMetricsSchema.safeParse(baseMetrics).success);
+    assert.ok(schemas.GetMediaBuyDeliveryGeoMetricsSchema.safeParse(baseMetrics).success);
+
+    const legacyResponse = {
+      status: 'completed',
+      reporting_period: { start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' },
+      media_buy_deliveries: [
+        {
+          media_buy_id: 'buy-1',
+          status: 'active',
+          totals: baseMetrics,
+          by_package: [
+            {
+              package_id: 'package-1',
+              ...baseMetrics,
+              by_catalog_item: [baseMetrics],
+              by_keyword: [baseMetrics],
+              by_geo: [baseMetrics],
+              by_geo_truncated: false,
+              by_device_type: [baseMetrics],
+              by_device_platform: [baseMetrics],
+              by_audience: [baseMetrics],
+              by_placement: [baseMetrics],
+            },
+          ],
+        },
+      ],
+    };
+    assert.ok(
+      schemas.GetMediaBuyDeliveryResponseSchema.safeParse(legacyResponse).success,
+      'full legacy delivery response should remain wired to optional compatibility metrics'
+    );
+  });
+
+  test('PostalCountrySystemSchema requires a valid country and system pair', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({}).success);
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ country: 'US' }).success);
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ system: 'zip' }).success);
+    assert.ok(schemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'zip' }).success);
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'outward' }).success);
+  });
+
   test('Trusted Match request schemas reject unexpected privacy-boundary fields', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

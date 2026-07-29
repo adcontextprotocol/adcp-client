@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-07-28T00:55:50.604Z
+// Generated at: 2026-07-29T13:08:12.620Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3122,35 +3122,35 @@ export const TasksGetRequestSchema = z.object({
 }).passthrough();
 
 export const PostalCountrySystemSchema = z.union([z.object({
-        country: z.literal("US").optional(),
-        system: z.union([z.literal("zip"), z.literal("zip_plus_four")]).optional()
+        country: z.literal("US"),
+        system: z.union([z.literal("zip"), z.literal("zip_plus_four")])
     }).passthrough(), z.object({
-        country: z.literal("GB").optional(),
-        system: z.union([z.literal("outward"), z.literal("full")]).optional()
+        country: z.literal("GB"),
+        system: z.union([z.literal("outward"), z.literal("full")])
     }).passthrough(), z.object({
-        country: z.literal("CA").optional(),
-        system: z.union([z.literal("fsa"), z.literal("full")]).optional()
+        country: z.literal("CA"),
+        system: z.union([z.literal("fsa"), z.literal("full")])
     }).passthrough(), z.object({
-        country: z.union([z.literal("DE"), z.literal("CH"), z.literal("AT")]).optional(),
-        system: z.literal("plz").optional()
+        country: z.union([z.literal("DE"), z.literal("CH"), z.literal("AT")]),
+        system: z.literal("plz")
     }).passthrough(), z.object({
-        country: z.literal("FR").optional(),
-        system: z.literal("code_postal").optional()
+        country: z.literal("FR"),
+        system: z.literal("code_postal")
     }).passthrough(), z.object({
-        country: z.literal("AU").optional(),
-        system: z.literal("postcode").optional()
+        country: z.literal("AU"),
+        system: z.literal("postcode")
     }).passthrough(), z.object({
-        country: z.literal("BR").optional(),
-        system: z.literal("cep").optional()
+        country: z.literal("BR"),
+        system: z.literal("cep")
     }).passthrough(), z.object({
-        country: z.literal("IN").optional(),
-        system: z.literal("pin").optional()
+        country: z.literal("IN"),
+        system: z.literal("pin")
     }).passthrough(), z.object({
-        country: z.literal("ZA").optional(),
-        system: z.literal("postal_code").optional()
+        country: z.literal("ZA"),
+        system: z.literal("postal_code")
     }).passthrough(), z.object({
-        country: z.record(z.string(), z.unknown()).optional(),
-        system: z.union([z.literal("postal_code"), z.literal("custom")]).optional()
+        country: z.record(z.string(), z.unknown()),
+        system: z.union([z.literal("postal_code"), z.literal("custom")])
     }).passthrough()]);
 
 export const PostalAreaSchema = z.union([PostalArea1Schema, LegacyPostalAreaSchema]);
@@ -3941,8 +3941,8 @@ export const MissingMetricSchema = z.union([z.object({
         metric_id: VendorMetricIDSchema
     }).passthrough()]);
 
-export const CatalogItemDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
-    content_id: z.string(),
+export const GetMediaBuyDeliveryCatalogItemMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    content_id: z.string().optional(),
     content_id_type: ContentIDTypeSchema.optional()
 }).passthrough());
 
@@ -3951,17 +3951,37 @@ export const CreativeDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.objec
     weight: z.number().min(0).max(100).optional()
 }).passthrough());
 
-export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+export const GetMediaBuyDeliveryKeywordMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     keyword: z.string().optional(),
     match_type: MatchTypeSchema.optional()
 }).passthrough());
 
-export const GeoDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
-    geo_level: GeographicTargetingLevelSchema,
+export const GetMediaBuyDeliveryGeoMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    geo_level: GeographicTargetingLevelSchema.optional(),
     system: z.string().optional(),
     country: z.string().regex(/^[A-Z]{2}$/).optional(),
-    geo_code: z.string(),
+    geo_code: z.string().optional(),
     geo_name: z.string().optional()
+}).passthrough());
+
+export const GetMediaBuyDeliveryDeviceTypeMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    device_type: DeviceTypeSchema.optional()
+}).passthrough());
+
+export const GetMediaBuyDeliveryDevicePlatformMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    device_platform: DevicePlatformSchema.optional()
+}).passthrough());
+
+export const GetMediaBuyDeliveryAudienceMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    audience_id: z.string().optional(),
+    audience_source: AudienceSourceSchema.optional(),
+    audience_name: z.string().optional()
+}).passthrough());
+
+export const GetMediaBuyDeliveryPlacementMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    placement_id: z.string().optional(),
+    placement_name: z.string().optional(),
+    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional()
 }).passthrough());
 
 export const GetMediaBuysRequestSchema = z.object({
@@ -4853,6 +4873,11 @@ export const CanonicalProjectionSlotOverrideSchema = z.object({
     consumed_for_production: z.boolean().optional()
 }).passthrough();
 
+export const CatalogItemDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    content_id: z.string(),
+    content_id_type: ContentIDTypeSchema.optional()
+}).passthrough());
+
 export const CatchmentSchema = z.object({
     catchment_id: z.string(),
     label: z.string().optional(),
@@ -5176,6 +5201,14 @@ export const BaseGroupAssetSchema = z.object({
     overlays: z.array(OverlaySchema).optional()
 }).passthrough();
 
+export const GeoDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    geo_level: GeographicTargetingLevelSchema,
+    system: z.string().optional(),
+    country: z.string().regex(/^[A-Z]{2}$/).optional(),
+    geo_code: z.string(),
+    geo_name: z.string().optional()
+}).passthrough());
+
 export const HotelItemSchema = z.object({
     hotel_id: z.string(),
     name: z.string(),
@@ -5229,6 +5262,11 @@ export const JobItemSchema = z.object({
     assets: z.array(OfferingAssetGroupSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
+    keyword: z.string(),
+    match_type: MatchTypeSchema
+}).passthrough());
 
 export const OfferingSchema = z.object({
     offering_id: z.string(),
@@ -7006,30 +7044,18 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             measurement_window: z.string().max(50).optional(),
             supersedes_window: z.string().max(50).optional(),
             missing_metrics: z.array(MissingMetricSchema).optional(),
-            by_catalog_item: z.array(CatalogItemDeliveryMetricsSchema).optional(),
+            by_catalog_item: z.array(GetMediaBuyDeliveryCatalogItemMetricsSchema).optional(),
             by_creative: z.array(CreativeDeliveryMetricsSchema).optional(),
-            by_keyword: z.array(KeywordDeliveryMetricsSchema).optional(),
-            by_geo: z.array(GeoDeliveryMetricsSchema).optional(),
+            by_keyword: z.array(GetMediaBuyDeliveryKeywordMetricsSchema).optional(),
+            by_geo: z.array(GetMediaBuyDeliveryGeoMetricsSchema).optional(),
             by_geo_truncated: z.boolean().optional(),
-            by_device_type: z.array(DeliveryMetricsSchema.merge(z.object({
-                device_type: DeviceTypeSchema.optional()
-            }).passthrough())).optional(),
+            by_device_type: z.array(GetMediaBuyDeliveryDeviceTypeMetricsSchema).optional(),
             by_device_type_truncated: z.boolean().optional(),
-            by_device_platform: z.array(DeliveryMetricsSchema.merge(z.object({
-                device_platform: DevicePlatformSchema.optional()
-            }).passthrough())).optional(),
+            by_device_platform: z.array(GetMediaBuyDeliveryDevicePlatformMetricsSchema).optional(),
             by_device_platform_truncated: z.boolean().optional(),
-            by_audience: z.array(DeliveryMetricsSchema.merge(z.object({
-                audience_id: z.string().optional(),
-                audience_source: AudienceSourceSchema.optional(),
-                audience_name: z.string().optional()
-            }).passthrough())).optional(),
+            by_audience: z.array(GetMediaBuyDeliveryAudienceMetricsSchema).optional(),
             by_audience_truncated: z.boolean().optional(),
-            by_placement: z.array(DeliveryMetricsSchema.merge(z.object({
-                placement_id: z.string().optional(),
-                placement_name: z.string().optional(),
-                publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/).optional()
-            }).passthrough())).optional(),
+            by_placement: z.array(GetMediaBuyDeliveryPlacementMetricsSchema).optional(),
             by_placement_truncated: z.boolean().optional(),
             daily_breakdown: z.array(z.object({
                 date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
