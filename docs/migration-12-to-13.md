@@ -29,12 +29,17 @@ Raw compatibility calls are deliberately conspicuous: use `getProductsLegacy()`,
 
 `RegistryClient.resolveBrandHierarchy()` and `resolveBrandHierarchies()` have been removed. They targeted `/api/brands/hierarchy` routes that the public v3 registry deliberately retired, and converted the resulting 404 into `null`, making a missing route indistinguishable from a missing relationship.
 
-Use `lookupBrand()` or `lookupBrands()` and inspect the resolved relationship instead:
+Use `lookupBrand()` or `lookupBrands()` and inspect the resolved relationship instead. Call `lookupBrand(domain, { fresh: true })` when a policy requires a live origin check:
 
 ```ts
 const brand = await registry.lookupBrand('leaf.example', { fresh: true });
 if (!brand) {
   // The declared /api/brands/resolve endpoint found no resolvable brand.
+  return;
+}
+
+if (brand.live_brand_json) {
+  // The live check failed and this response contains stored evidence.
   return;
 }
 
@@ -46,7 +51,7 @@ if (
 }
 ```
 
-Only `mutual` and `inline` are reciprocated. `claimed_house_domain` is one side's self-assertion and is not authorization evidence. For `mutual`, use `relationship_verified_at` and `relationship_declared_at` to apply any stricter freshness policy. V3 hierarchy is one level deep; there is no replacement ordered-chain call.
+Only `mutual` and `inline` are reciprocated. `claimed_house_domain` is one side's self-assertion and is not authorization evidence. For `mutual`, use `relationship_verified_at` and `relationship_declared_at` to apply any stricter freshness policy. V3 hierarchy is one level deep; there is no replacement ordered-chain call. The removed methods' client-side `ttlMs` cache is also gone. `lookupBrands()` performs ordinary bulk lookups but has no fresh mode; callers that need multiple live reads should fan out bounded `lookupBrand(domain, { fresh: true })` calls and own any caching while respecting registry rate limits.
 
 `source` is provenance, not relationship evidence. Missing `relationship_trust` means unknown. Pass `{ fresh: true }` when the caller requires a live origin check; `live_brand_json` means that check failed and the resolver returned stored evidence. Inspect `migration_warnings` when `promoted_from_schema` is present, but do not treat an absent warning as proof that every legacy relationship field was promoted.
 

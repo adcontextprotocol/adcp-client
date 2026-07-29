@@ -144,8 +144,10 @@ export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
  * `parent_brand` is a registry hierarchy reference. New registry responses use
  * the parent brand's canonical domain when the parent has one; older rows may
  * still carry a portfolio-internal brand id from `brand.json#/brands[].id`.
- * Consumers that need ancestry should use `RegistrySync.getAncestors()` rather
- * than walking `parent_brand` directly.
+ * Do not walk `parent_brand` directly. `RegistrySync.getAncestors()` is a
+ * topology-only compatibility view populated by older/self-hosted brand feed
+ * events; public v3 feeds may not populate it, and it is not relationship
+ * authorization evidence.
  *
  * `source` reports identity provenance, not relationship authorization. Only
  * `relationship_trust: "mutual" | "inline"` extends trust to `house_domain`.

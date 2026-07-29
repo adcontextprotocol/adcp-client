@@ -677,12 +677,14 @@ const registry = new RegistryClient();
 const brand = await registry.lookupBrand('leaf.example', { fresh: true });
 
 const verifiedHouse =
-  brand?.relationship_trust === 'mutual' || brand?.relationship_trust === 'inline' ? brand.house_domain : undefined;
+  !brand?.live_brand_json && (brand.relationship_trust === 'mutual' || brand.relationship_trust === 'inline')
+    ? brand.house_domain
+    : undefined;
 ```
 
 Only `relationship_trust: "mutual"` and `"inline"` are reciprocated. For `mutual`, `relationship_verified_at` says when both sides were last observed agreeing. `claimed_house_domain` is a unilateral leaf claim and must not be used for authorization. `ResolvedBrand.parent_brand` is a registry reference that may be a portfolio-internal id, not a portable traversal API.
 
-`source` answers a different question: where the selected identity record came from. Provenance is not relationship authorization, and callers must not infer a relationship from `source`. Treat an absent `relationship_trust` as unknown, not `standalone`. Pass `{ fresh: true }` when a live origin check is required; if `live_brand_json` is present, that check failed and the response came from stored evidence. If `promoted_from_schema` is present, inspect every `migration_warnings` entry. Until the registry guarantees a warning for every discarded legacy field, absence of a warning is not evidence that a legacy relationship was promoted.
+`source` answers a different question: where the selected identity record came from. Provenance is not relationship authorization, and callers must not infer a relationship from `source`. Treat an absent `relationship_trust` as unknown, not `standalone`. Pass `{ fresh: true }` when a live origin check is required; if `live_brand_json` is present, that check failed and the response came from stored evidence, so a strict live-evidence policy must reject it. Policies that permit stored evidence should apply their own age ceiling to `relationship_verified_at` and `relationship_declared_at`. If `promoted_from_schema` is present, inspect every `migration_warnings` entry. Until the registry guarantees a warning for every discarded legacy field, absence of a warning is not evidence that a legacy relationship was promoted.
 
 ### Community Mirror `adagents.json` Catalogs
 
