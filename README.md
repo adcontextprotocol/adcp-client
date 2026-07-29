@@ -677,7 +677,7 @@ const registry = new RegistryClient();
 const brand = await registry.lookupBrand('leaf.example', { fresh: true });
 
 const verifiedHouse =
-  !brand?.live_brand_json && (brand.relationship_trust === 'mutual' || brand.relationship_trust === 'inline')
+  brand && !brand.live_brand_json && (brand.relationship_trust === 'mutual' || brand.relationship_trust === 'inline')
     ? brand.house_domain
     : undefined;
 ```
