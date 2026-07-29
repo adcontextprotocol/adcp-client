@@ -1,0 +1,288 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const ts = require('typescript');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const CORE_SCHEMA_DIR = path.join(REPO_ROOT, 'schemas/cache/latest/core');
+const CORE_TYPES_PATH = path.join(REPO_ROOT, 'src/lib/types/core.generated.ts');
+
+function runGeneratorHarness(source) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-required-fields-'));
+  const script = path.join(dir, 'harness.ts');
+  const output = path.join(dir, 'output.json');
+  fs.writeFileSync(
+    script,
+    source
+      .replaceAll('__GENERATOR__', JSON.stringify(path.join(REPO_ROOT, 'scripts/generate-types.ts')))
+      .replaceAll('__REPO_ROOT__', JSON.stringify(REPO_ROOT))
+      .replaceAll('__OUTPUT__', JSON.stringify(output))
+  );
+  try {
+    const result = spawnSync('npx', ['tsx', script], { cwd: REPO_ROOT, encoding: 'utf8' });
+    assert.equal(result.status, 0, `harness failed:\n${result.stderr}\n${result.stdout}`);
+    return JSON.parse(fs.readFileSync(output, 'utf8'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('PostalCountrySystem propagates unconditional requirements into every anyOf branch', () => {
+  const result = runGeneratorHarness(`
+import { writeFileSync } from 'node:fs';
+import { preservePostalCountrySystemRequiredness } from __GENERATOR__;
+
+const schema = {
+  title: 'Postal Country System',
+  type: 'object',
+  properties: { country: { type: 'string' }, system: { type: 'string' } },
+  required: ['country', 'system'],
+  anyOf: [
+    { properties: { country: { const: 'US' }, system: { const: 'zip' } } },
+    { properties: { country: { const: 'GB' }, system: { const: 'outward' } } },
+  ],
+};
+const transformed = preservePostalCountrySystemRequiredness(schema);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  branches: transformed.anyOf.map((branch: any) => branch.required),
+  originalBranchesRemainUntouched: schema.anyOf.every((branch: any) => branch.required === undefined),
+}));
+`);
+
+  assert.deepEqual(result.branches, [
+    ['country', 'system'],
+    ['country', 'system'],
+  ]);
+  assert.equal(result.originalBranchesRemainUntouched, true);
+});
+
+test('GetMediaBuyDeliveryResponse isolates optional breakdown identifiers under unique compat titles', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds } from __GENERATOR__;
+
+const root = __REPO_ROOT__;
+const specs = [
+  ['by_catalog_item', 'Get Media Buy Delivery Catalog Item Metrics', ['content_id']],
+  ['by_keyword', 'Get Media Buy Delivery Keyword Metrics', ['keyword', 'match_type']],
+  ['by_geo', 'Get Media Buy Delivery Geo Metrics', ['geo_level', 'geo_code']],
+  ['by_device_type', 'Get Media Buy Delivery Device Type Metrics', ['device_type']],
+  ['by_device_platform', 'Get Media Buy Delivery Device Platform Metrics', ['device_platform']],
+  ['by_audience', 'Get Media Buy Delivery Audience Metrics', ['audience_id', 'audience_source']],
+  ['by_placement', 'Get Media Buy Delivery Placement Metrics', ['placement_id']],
+];
+
+function read(relative: string) {
+  return JSON.parse(readFileSync(path.join(root, relative), 'utf8'));
+}
+
+function inspect(schema: any) {
+  const packageItems = schema.properties.media_buy_deliveries.items.properties.by_package.items;
+  const members = [packageItems, ...(packageItems.allOf ?? [])];
+  const packageDetails = members.find((member: any) => specs.some(([name]) => member?.properties?.[name]));
+  const properties = packageDetails.properties;
+  const breakdowns = Object.fromEntries(specs.map(([name, expectedTitle, optionalFields]) => {
+    const item = properties[name].items;
+    const required = [...(item.required ?? []), ...(item.allOf ?? []).flatMap((member: any) => member.required ?? [])];
+    return [name, {
+      title: item.title,
+      expectedTitle,
+      optionalFieldsAbsent: optionalFields.every((field: string) => !required.includes(field)),
+      baseMetricsRemainRequired: required.includes('impressions') && required.includes('spend'),
+      hasCanonicalId: Object.hasOwn(item, '$id'),
+    }];
+  }));
+  return {
+    breakdowns,
+    responseCurrencyAbsent: !(schema.required ?? []).includes('currency'),
+    responseBaseFieldsRemainRequired: ['reporting_period', 'media_buy_deliveries'].every(field =>
+      (schema.required ?? []).includes(field)
+    ),
+    packageCompatFieldsAbsent: ['pricing_model', 'rate', 'currency'].every(
+      field => !(packageDetails.required ?? []).includes(field)
+    ),
+    packageBaseFieldsRemainRequired: ['package_id', 'spend'].every(field =>
+      (packageDetails.required ?? []).includes(field)
+    ),
+  };
+}
+
+function countUnrelatedKeywordRequirements(value: any, path: string[] = []): number {
+  if (!value || typeof value !== 'object') return 0;
+  if (Array.isArray(value)) {
+    return value.reduce((count, entry, index) => count + countUnrelatedKeywordRequirements(entry, [...path, String(index)]), 0);
+  }
+  const ownCount =
+    Array.isArray(value.required) && value.required.includes('keyword') && !path.includes('by_keyword') ? 1 : 0;
+  return ownCount + Object.entries(value).reduce(
+    (count, [key, entry]) => count + countUnrelatedKeywordRequirements(entry, [...path, key]),
+    0
+  );
+}
+
+const unbundledInput = read('schemas/cache/latest/media-buy/get-media-buy-delivery-response.json');
+const bundledInput = read('schemas/cache/latest/bundled/media-buy/get-media-buy-delivery-response.json');
+const unbundledBefore = JSON.stringify(unbundledInput);
+const bundledBefore = JSON.stringify(bundledInput);
+const bundledUnrelatedKeywordRequirements = countUnrelatedKeywordRequirements(bundledInput);
+const unbundled = applyCodegenSchemaWorkarounds(unbundledInput, 'GetMediaBuyDeliveryResponse');
+const bundled = applyCodegenSchemaWorkarounds(bundledInput, 'GetMediaBuyDeliveryResponse');
+const noOpInput = { title: 'Unrelated response', type: 'object', properties: {} };
+const noOpResult = applyCodegenSchemaWorkarounds(noOpInput, 'GetMediaBuyDeliveryResponse');
+const canonicalRequired = Object.fromEntries([
+  ['catalog', read('schemas/cache/latest/core/catalog-item-delivery-metrics.json')],
+  ['keyword', read('schemas/cache/latest/core/keyword-delivery-metrics.json')],
+  ['geo', read('schemas/cache/latest/core/geo-delivery-metrics.json')],
+].map(([name, schema]: any) => [name, (schema.allOf ?? []).flatMap((member: any) => member.required ?? [])]));
+
+writeFileSync(__OUTPUT__, JSON.stringify({
+  unbundled: inspect(unbundled),
+  bundled: inspect(bundled),
+  canonicalRequired,
+  inputsUnchanged: JSON.stringify(unbundledInput) === unbundledBefore && JSON.stringify(bundledInput) === bundledBefore,
+  noOpPreservesIdentity: noOpResult === noOpInput,
+  unrelatedKeywordRequirementsPreserved:
+    bundledUnrelatedKeywordRequirements > 0 &&
+    countUnrelatedKeywordRequirements(bundled) === bundledUnrelatedKeywordRequirements,
+}));
+`);
+
+  for (const source of [result.unbundled, result.bundled]) {
+    for (const entry of Object.values(source.breakdowns)) {
+      assert.equal(entry.title, entry.expectedTitle);
+      assert.equal(entry.optionalFieldsAbsent, true);
+      assert.equal(entry.baseMetricsRemainRequired, true);
+      assert.equal(entry.hasCanonicalId, false);
+    }
+    assert.equal(source.responseCurrencyAbsent, true);
+    assert.equal(source.responseBaseFieldsRemainRequired, true);
+    assert.equal(source.packageCompatFieldsAbsent, true);
+    assert.equal(source.packageBaseFieldsRemainRequired, true);
+  }
+  assert.equal(result.inputsUnchanged, true);
+  assert.equal(result.noOpPreservesIdentity, true);
+  assert.equal(result.unrelatedKeywordRequirementsPreserved, true);
+  assert.ok(result.canonicalRequired.catalog.includes('content_id'));
+  assert.ok(result.canonicalRequired.keyword.includes('keyword'));
+  assert.ok(result.canonicalRequired.keyword.includes('match_type'));
+  assert.ok(result.canonicalRequired.geo.includes('geo_level'));
+  assert.ok(result.canonicalRequired.geo.includes('geo_code'));
+});
+
+test('every unconditional canonical core required property is required in generated TypeScript', () => {
+  const requiredByType = new Map();
+  let requiredCellCount = 0;
+
+  const schemaPaths = [];
+  const directories = [CORE_SCHEMA_DIR];
+  while (directories.length > 0) {
+    const directory = directories.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) directories.push(entryPath);
+      else if (entry.isFile() && entry.name.endsWith('.json')) schemaPaths.push(entryPath);
+    }
+  }
+
+  for (const schemaPath of schemaPaths) {
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+    if (typeof schema.title !== 'string') continue;
+    const typeName = schema.title.replace(/[^A-Za-z0-9]/g, '');
+    const fields = requiredByType.get(typeName) ?? new Set();
+    const collect = member => {
+      if (!member?.properties || !Array.isArray(member.required)) return;
+      for (const field of member.required) {
+        if (typeof field === 'string' && Object.hasOwn(member.properties, field)) fields.add(field);
+      }
+    };
+    collect(schema);
+    for (const member of schema.allOf ?? []) collect(member);
+    if (fields.size > 0) requiredByType.set(typeName, fields);
+  }
+
+  const source = ts.createSourceFile(
+    CORE_TYPES_PATH,
+    fs.readFileSync(CORE_TYPES_PATH, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const declarations = new Map();
+  for (const statement of source.statements) {
+    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+      declarations.set(statement.name.text, statement);
+    }
+  }
+
+  const memberState = (members, field) => {
+    const member = members.find(
+      candidate =>
+        ts.isPropertySignature(candidate) &&
+        (ts.isIdentifier(candidate.name) || ts.isStringLiteral(candidate.name)) &&
+        candidate.name.text === field
+    );
+    if (!member) return 'absent';
+    return member.questionToken ? 'optional' : 'required';
+  };
+
+  const typeNodeState = (node, field, seen) => {
+    if (ts.isTypeLiteralNode(node)) return memberState(node.members, field);
+    if (ts.isParenthesizedTypeNode(node)) return typeNodeState(node.type, field, seen);
+    if (ts.isIntersectionTypeNode(node)) {
+      const states = node.types.map(type => typeNodeState(type, field, seen));
+      if (states.includes('required')) return 'required';
+      if (states.includes('optional')) return 'optional';
+      return 'absent';
+    }
+    if (ts.isUnionTypeNode(node)) {
+      const states = node.types.map(type => typeNodeState(type, field, seen));
+      if (states.length > 0 && states.every(state => state === 'required')) return 'required';
+      if (states.some(state => state !== 'absent')) return 'optional';
+      return 'absent';
+    }
+    if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+      return declarationState(node.typeName.text, field, seen);
+    }
+    return 'absent';
+  };
+
+  const declarationState = (typeName, field, seen = new Set()) => {
+    const key = `${typeName}.${field}`;
+    if (seen.has(key)) return 'absent';
+    seen.add(key);
+    const declaration = declarations.get(typeName);
+    if (!declaration) return 'absent';
+    let state;
+    if (ts.isInterfaceDeclaration(declaration)) {
+      state = memberState(declaration.members, field);
+      if (state === 'absent') {
+        const inherited = (declaration.heritageClauses ?? [])
+          .flatMap(clause => clause.types)
+          .map(type =>
+            ts.isIdentifier(type.expression) ? declarationState(type.expression.text, field, seen) : 'absent'
+          );
+        state = inherited.includes('required') ? 'required' : inherited.includes('optional') ? 'optional' : 'absent';
+      }
+    } else {
+      state = typeNodeState(declaration.type, field, seen);
+    }
+    seen.delete(key);
+    return state;
+  };
+
+  const drift = [];
+  for (const [typeName, fields] of requiredByType) {
+    for (const field of fields) {
+      requiredCellCount++;
+      const state = declarationState(typeName, field);
+      if (state !== 'required') drift.push(`${typeName}.${field} (${state})`);
+    }
+  }
+
+  assert.ok(requiredCellCount >= 380, `expected at least 380 required-field cells, found ${requiredCellCount}`);
+  assert.deepEqual(drift, [], `schema-required fields drifted in generated TypeScript:\n${drift.join('\n')}`);
+});

@@ -71,8 +71,13 @@ const collisionResults = [
 const toolsGenerated = readFileSync(${JSON.stringify(path.join(REPO_ROOT, 'src/lib/types/tools.generated.ts'))}, 'utf8');
 const generatedSurface = {
   importsCoreSharedTypes: /import type \\{[\\s\\S]*\\bAudienceConstraints\\b[\\s\\S]*\\bPurchaseType\\b[\\s\\S]*\\} from '\\.\\/core\\.generated';/.test(toolsGenerated),
-  reExportsCoreSharedTypes: toolsGenerated.includes("export type { AudienceConstraints, PurchaseType } from './core.generated';"),
+  reExportsCoreSharedTypes: toolsGenerated.includes(
+    "export type { AudienceConstraints, CatalogItemDeliveryMetrics, GeoDeliveryMetrics, KeywordDeliveryMetrics, PurchaseType } from './core.generated';"
+  ),
   declaresAudienceConstraints: /export interface AudienceConstraints\\b/.test(toolsGenerated),
+  declaresCatalogItemDeliveryMetrics: /export type CatalogItemDeliveryMetrics\\b/.test(toolsGenerated),
+  declaresGeoDeliveryMetrics: /export type GeoDeliveryMetrics\\b/.test(toolsGenerated),
+  declaresKeywordDeliveryMetrics: /export type KeywordDeliveryMetrics\\b/.test(toolsGenerated),
   declaresPurchaseType: /export type PurchaseType\\b/.test(toolsGenerated),
 };
 writeFileSync(${JSON.stringify(outPath)}, JSON.stringify({ stripResults, collisionResults, generatedSurface }));
@@ -144,5 +149,8 @@ test('tools.generated: core-authored shared types are imported and re-exported w
   assert.strictEqual(RESULTS.generatedSurface.importsCoreSharedTypes, true);
   assert.strictEqual(RESULTS.generatedSurface.reExportsCoreSharedTypes, true);
   assert.strictEqual(RESULTS.generatedSurface.declaresAudienceConstraints, false);
+  assert.strictEqual(RESULTS.generatedSurface.declaresCatalogItemDeliveryMetrics, false);
+  assert.strictEqual(RESULTS.generatedSurface.declaresGeoDeliveryMetrics, false);
+  assert.strictEqual(RESULTS.generatedSurface.declaresKeywordDeliveryMetrics, false);
   assert.strictEqual(RESULTS.generatedSurface.declaresPurchaseType, false);
 });
