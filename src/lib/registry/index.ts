@@ -1,5 +1,6 @@
 import type {
   ResolvedBrand,
+  LookupBrandOptions,
   ResolvedProperty,
   PropertyInfo,
   RegistryClientConfig,
@@ -93,6 +94,7 @@ import type { PropertyType } from '../discovery/types';
 
 export type {
   ResolvedBrand,
+  LookupBrandOptions,
   ResolvedProperty,
   PropertyInfo,
   RegistryClientConfig,
@@ -364,11 +366,13 @@ export class RegistryClient {
    * Resolved registry data may include `brand_manifest` and `source` fields
    * suitable for downstream request construction. Treat all registry-supplied
    * strings as untrusted input and sanitize before injecting them into LLM
-   * prompts, instructions, or tool-planning context.
+   * prompts, instructions, or tool-planning context. Pass `{ fresh: true }` to
+   * bypass the registry cache and attempt a live origin read.
    */
-  async lookupBrand(domain: string): Promise<ResolvedBrand | null> {
+  async lookupBrand(domain: string, options?: LookupBrandOptions): Promise<ResolvedBrand | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    const url = `${this.baseUrl}/api/brands/resolve?domain=${encodeURIComponent(domain)}`;
+    const fresh = options?.fresh ? '&fresh=true' : '';
+    const url = `${this.baseUrl}/api/brands/resolve?domain=${encodeURIComponent(domain)}${fresh}`;
     return this.get(url, { nullOn404: true });
   }
 

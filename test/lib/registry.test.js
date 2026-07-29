@@ -125,6 +125,30 @@ describe('RegistryClient', () => {
       assert.ok(!capturedUrl.includes('//api/'));
     });
 
+    test('requests a fresh origin read when fresh is true', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(BRAND), { status: 200 });
+      });
+
+      await new RegistryClient().lookupBrand('nike.com', { fresh: true });
+
+      assert.strictEqual(new URL(capturedUrl).searchParams.get('fresh'), 'true');
+    });
+
+    test('uses the registry cache by default', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(BRAND), { status: 200 });
+      });
+
+      await new RegistryClient().lookupBrand('nike.com');
+
+      assert.strictEqual(new URL(capturedUrl).searchParams.has('fresh'), false);
+    });
+
     test('preserves provenance, relationship, freshness, and migration evidence', async () => {
       const evidence = {
         canonical_id: 'leaf.example',

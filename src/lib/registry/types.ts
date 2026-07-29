@@ -158,6 +158,15 @@ export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_bran
   parent_brand?: string;
 }
 
+/** Options for resolving one brand through the registry. */
+export type LookupBrandOptions = Omit<
+  NonNullable<operations['resolveBrand']['parameters']['query']>,
+  'domain' | 'fresh'
+> & {
+  /** Bypass the registry resolution cache and attempt a live origin read. */
+  fresh?: boolean;
+};
+
 /** Request body for POST /api/brands/save */
 export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody']>['content']['application/json'];
 

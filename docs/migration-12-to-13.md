@@ -32,7 +32,7 @@ Raw compatibility calls are deliberately conspicuous: use `getProductsLegacy()`,
 Use `lookupBrand()` or `lookupBrands()` and inspect the resolved relationship instead:
 
 ```ts
-const brand = await registry.lookupBrand('leaf.example');
+const brand = await registry.lookupBrand('leaf.example', { fresh: true });
 if (!brand) {
   // The declared /api/brands/resolve endpoint found no resolvable brand.
   return;
@@ -48,7 +48,7 @@ if (
 
 Only `mutual` and `inline` are reciprocated. `claimed_house_domain` is one side's self-assertion and is not authorization evidence. For `mutual`, use `relationship_verified_at` and `relationship_declared_at` to apply any stricter freshness policy. V3 hierarchy is one level deep; there is no replacement ordered-chain call.
 
-The resolver selects identity records deterministically in `hosted` > `brand_json` > `community` > `enriched` order. This makes `source` stable, but does not turn it into relationship evidence. Missing `relationship_trust` means unknown, `live_brand_json` means a fresh request fell back to stored evidence, and `migration_warnings` explains legacy fields that were not promoted. A `house` warning specifically means no portfolio edge was established.
+`source` is provenance, not relationship evidence. Missing `relationship_trust` means unknown. Pass `{ fresh: true }` when the caller requires a live origin check; `live_brand_json` means that check failed and the resolver returned stored evidence. Inspect `migration_warnings` when `promoted_from_schema` is present, but do not treat an absent warning as proof that every legacy relationship field was promoted.
 
 Standard tasks that indirectly carry legacy identity through artifacts, manifests, standards, or rights constraints no longer appear in the primary typed task map. This includes:
 
