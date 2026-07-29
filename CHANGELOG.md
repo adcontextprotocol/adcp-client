@@ -1,5 +1,22 @@
 # Changelog
 
+## 13.0.0-rc.4
+
+### Major Changes
+
+- e8cc665: Remove `RegistryClient.resolveBrandHierarchy()`, `resolveBrandHierarchies()`, and their compatibility-only types. The public v3 registry deliberately retired those undeclared routes; use `lookupBrand()` and require `relationship_trust` to be `mutual` or `inline` before extending trust to `house_domain`. Add typed fresh-origin lookup support and document how consumers should interpret provenance, freshness, and migration evidence.
+
+### Minor Changes
+
+- 9f62965: Tighten generated canonical delivery-metric and postal-system authoring types to match their JSON Schemas. Code using those standalone canonical types must now provide `content_id`, `keyword`, `match_type`, `geo_level`, `geo_code`, `country`, and `system` where the protocol requires them; the generated postal-system Zod validator now enforces the same contract.
+
+  Buyer-side `GetMediaBuyDeliveryResponse` types retain response-local optional compatibility aliases for legacy sellers that omit the newer currency, package pricing, and breakdown identifier fields. Existing canonical delivery-metric exports from `@adcp/sdk/types/tools.generated` remain available as strict re-exports.
+
+### Patch Changes
+
+- bc7c0d7: Upgrade the modular MCP client, Node transport, and server dependencies to the stable 2.0.0 release. Preserve HTTP 5xx discovery failures instead of treating them as evidence of a legacy MCP endpoint.
+- 92bb92a: Grade unsigned functional storyboard steps as not applicable when an agent capability requires a request signature and returns the corresponding rejection.
+
 ## 13.0.0-rc.3
 
 ### Patch Changes
