@@ -39,9 +39,7 @@ export {
 } from './registry';
 export type {
   ResolvedBrand,
-  BrandHierarchyResolution,
-  BrandHierarchyBulkResolution,
-  ResolveBrandHierarchyOptions,
+  LookupBrandOptions,
   ResolvedProperty as ResolvedRegistryProperty,
   PropertyInfo,
   RegistryClientConfig,

@@ -144,43 +144,30 @@ export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
  * `parent_brand` is a registry hierarchy reference. New registry responses use
  * the parent brand's canonical domain when the parent has one; older rows may
  * still carry a portfolio-internal brand id from `brand.json#/brands[].id`.
- * Consumers that need ancestry should use `RegistrySync.getAncestors()` rather
- * than walking `parent_brand` directly.
+ * Do not walk `parent_brand` directly. `RegistrySync.getAncestors()` is a
+ * topology-only compatibility view populated by older/self-hosted brand feed
+ * events; public v3 feeds may not populate it, and it is not relationship
+ * authorization evidence.
+ *
+ * `source` reports identity provenance, not relationship authorization. Only
+ * `relationship_trust: "mutual" | "inline"` extends trust to `house_domain`.
+ * Missing `relationship_trust` means the selected record carries no verdict;
+ * it is not equivalent to `standalone`. When `live_brand_json` is present, a
+ * `fresh=true` read fell back to stored evidence. Read `migration_warnings`
+ * before relying on fields promoted from a legacy document.
  */
 export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
   parent_brand?: string;
 }
 
-/**
- * Ordered corporate brand hierarchy for a domain, from self to house.
- *
- * This is retained for SDK compatibility with older/self-hosted registry
- * deployments. AdCP 3.1.1 removed the hierarchy endpoints from the public
- * registry OpenAPI; new ancestry consumers should prefer `RegistrySync`.
- */
-export interface BrandHierarchyResolution {
-  chain: ResolvedBrand[];
-}
-
-/**
- * Bulk ordered corporate brand hierarchy result keyed by the requested domain.
- *
- * Retained for SDK compatibility with older/self-hosted registry deployments.
- */
-export interface BrandHierarchyBulkResolution {
-  results: Record<string, BrandHierarchyResolution | null>;
-}
-
-/** Options for client-side brand hierarchy resolution caching. */
-export interface ResolveBrandHierarchyOptions {
-  /**
-   * Cache this resolution in-memory for the provided number of milliseconds.
-   * Omit or set to `0` to bypass the SDK cache.
-   */
-  ttlMs?: number;
-  /** Force a registry read and refresh any matching cache entry. */
+/** Options for resolving one brand through the registry. */
+export type LookupBrandOptions = Omit<
+  NonNullable<operations['resolveBrand']['parameters']['query']>,
+  'domain' | 'fresh'
+> & {
+  /** Bypass the registry resolution cache and attempt a live origin read. */
   fresh?: boolean;
-}
+};
 
 /** Request body for POST /api/brands/save */
 export type SaveBrandRequest = NonNullable<operations['saveBrand']['requestBody']>['content']['application/json'];
