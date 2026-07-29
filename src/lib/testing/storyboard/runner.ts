@@ -2045,11 +2045,11 @@ async function executeStoryboardPass(
     // prevents a stale `pendingTaskId` from a prior storyboard's non-terminal
     // step from auto-threading into this storyboard's first call. (#1585)
     resetClientSessions(clients);
-    // Pick the first agent's profile as the "primary" for downstream code
-    // that reads single-profile fields (library_version on per-step result
-    // records, raw_capabilities for `requires_capability`). Per-step
-    // accuracy across N agents is a follow-up; today's storyboards that
-    // use `requires_capability` are single-tenant authored.
+    // Pick the first agent's profile as the run-level "primary" for gates
+    // that are evaluated before a step is routed (`requires_capability`,
+    // notices). The dispatcher separately attaches the selected agent's
+    // profile to each step assignment for capability-derived execution
+    // behavior and per-step library-version hints.
     profile = [...routingContext.profiles.values()][0];
     // For `required_tools` gating, union every agent's advertised tools so
     // a storyboard that needs ≥1 of [sync_governance, activate_signal]
@@ -2363,7 +2363,7 @@ async function executeStoryboardPass(
   const dispatch =
     routingContext && options.agents
       ? createRoutingDispatcher(routingContext, options, options.agents)
-      : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
+      : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset, profile);
 
   // Resolve cross-step assertions declared on `storyboard.invariants`.
   // `resolveAssertions` throws on unknown ids — fail fast here rather than
@@ -2823,7 +2823,9 @@ async function executeStoryboardPass(
           priorA2aEnvelopes,
           stepRequestStarts,
           responseDerivedNotApplicableContextKeys,
-          agentLibraryVersion: profile?.library_version,
+          agentProfile: assignment.profile,
+          agentLibraryVersion: assignment.profile?.library_version,
+          storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
         }
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -3687,7 +3689,9 @@ async function runStoryboardStepBody(
     priorA2aEnvelopes: new Map(),
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys,
+    agentProfile: profile,
     agentLibraryVersion: profile?.library_version,
+    storyboardRequiresRequestSigner: resolveStoryboardRequires(storyboard, options).includes('request_signer'),
   });
 
   if (!result.skipped && result.passed && found.step.contributes_to) {
@@ -3754,6 +3758,11 @@ interface ExecutionState {
    */
   priorA2aEnvelopes?: Map<string, A2ATaskEnvelope>;
   /**
+   * Profile for the agent selected to execute this step. In routed runs this
+   * must be the selected agent's profile, not the run-level primary profile.
+   */
+  agentProfile?: AgentProfile;
+  /**
    * Agent's reported `@adcp/client@X.Y.Z` library version, captured from
    * the `get_adcp_capabilities` discovery probe. Threaded into shape-drift
    * hints so the runner can suffix recommendations with a version-staleness
@@ -3761,6 +3770,12 @@ interface ExecutionState {
    * #850. Undefined when the agent did not advertise `library_version`.
    */
   agentLibraryVersion?: string;
+  /**
+   * Whether the storyboard declares or implicitly requires a request signer.
+   * Unsigned functional storyboards use this to distinguish an expected
+   * signature-required rejection from a failure in a signing test.
+   */
+  storyboardRequiresRequestSigner?: boolean;
 }
 
 async function executeStep(
@@ -4339,6 +4354,46 @@ async function executeStep(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
     storyboardId
   );
+
+  // Until functional storyboards can sign individual mutating requests,
+  // a seller that correctly requires signatures would otherwise receive a
+  // false-negative grade. Convert only the capability-declared rejection:
+  // the response code, dispatched task, and unsigned-storyboard state must
+  // all agree before authored validations are bypassed.
+  const requiredForSigning = resolveCapabilityPath(
+    runState.agentProfile?.raw_capabilities,
+    'request_signing.required_for'
+  );
+  if (
+    taskResult?.adcp_error?.code === 'request_signature_required' &&
+    Array.isArray(requiredForSigning) &&
+    requiredForSigning.includes(effectiveStep.task) &&
+    runState.storyboardRequiresRequestSigner !== true
+  ) {
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    const detail =
+      `Agent declared request_signing.required_for includes "${effectiveStep.task}" and rejected the unsigned ` +
+      `request with request_signature_required; storyboard "${storyboardId}" does not require request_signer.`;
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_applicable',
+      skip: buildSkip('not_applicable', detail),
+      duration_ms: stepResult.duration_ms,
+      validations: [],
+      context,
+      response: redactSecrets(taskResult.data),
+      next,
+      request: requestRecord,
+      ...(responseRecord && { response_record: responseRecord }),
+      extraction: extractionFromTaskResult(taskResult),
+      ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
+    };
+  }
 
   // AdCP 3.0.12 runner-output-contract `force_scenario_unsupported`: when a
   // comply_test_controller step calls a force_* scenario that the agent
@@ -6639,6 +6694,8 @@ interface StepAssignment {
   agentUrl: string;
   /** 0-based index into the agent URL list */
   instanceIndex: number;
+  /** Profile discovered for the agent selected to execute this step. */
+  profile?: AgentProfile;
 }
 
 interface Dispatcher {
@@ -6661,7 +6718,8 @@ function createDispatcher(
   agentUrls: string[],
   clients: TestClient[],
   _strategy: 'round-robin',
-  startOffset = 0
+  startOffset = 0,
+  profile?: AgentProfile
 ): Dispatcher {
   let counter = startOffset;
   return {
@@ -6672,6 +6730,7 @@ function createDispatcher(
         client: clients[idx]!,
         agentUrl: agentUrls[idx]!,
         instanceIndex: idx,
+        profile,
       };
     },
   };
@@ -6698,6 +6757,7 @@ function createRoutingDispatcher(
     nextFor(step: StoryboardStep): StepAssignment {
       const key = resolveAgentForStep(step, options, ctx);
       const client = ctx.clients.get(key);
+      const profile = ctx.profiles.get(key);
       const url = agents[key]?.url;
       if (!client || !url) {
         throw new RoutingError(
@@ -6711,6 +6771,7 @@ function createRoutingDispatcher(
         client,
         agentUrl: url,
         instanceIndex: keyToIndex.get(key) ?? 0,
+        profile,
       };
     },
   };
