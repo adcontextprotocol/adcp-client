@@ -666,28 +666,25 @@ Build a registry service that:
 
 Library provides discovery logic - you add persistence layer.
 
-### Brand Hierarchy Resolution
+### Brand relationship verification
 
-Use `RegistryClient.resolveBrandHierarchy()` when rules need the ordered corporate chain for a brand domain. The chain is ordered from the resolved brand itself to the house brand, so nearest-ancestor matching can scan from left to right.
+Use `RegistryClient.lookupBrand()` to resolve a domain and verify its relationship to a house. The public v3 registry does not expose an ordered-chain endpoint; v3 hierarchy is one level deep.
 
 ```ts
-import { RegistryClient, RegistrySync } from '@adcp/sdk';
+import { RegistryClient } from '@adcp/sdk';
 
-const registry = new RegistryClient({ apiKey: process.env.ADCP_REGISTRY_API_KEY });
+const registry = new RegistryClient();
+const brand = await registry.lookupBrand('leaf.example');
 
-const brand = await registry.resolveBrandHierarchy('wpp-spain.com', { ttlMs: 60_000 });
-const domains = brand?.chain.map(node => node.canonical_domain) ?? [];
-
-const both = await registry.resolveBrandHierarchies(['wpp-spain.com', 'operator.example'], { ttlMs: 60_000 });
-
-const sync = new RegistrySync({ client: registry });
-await sync.start();
-const ancestors = sync.getAncestors('wpp-spain.com'); // self -> parents -> house
+const verifiedHouse =
+  brand?.relationship_trust === 'mutual' || brand?.relationship_trust === 'inline'
+    ? brand.house_domain
+    : undefined;
 ```
 
-`ResolvedBrand.parent_brand` is a hierarchy reference, not a portable traversal API. New registry responses use the parent brand's canonical domain when known, but older rows may still carry a portfolio-internal `brand.json` id. Use the hierarchy APIs instead of N+1 walking `parent_brand`.
+Only `relationship_trust: "mutual"` and `"inline"` are reciprocated. For `mutual`, `relationship_verified_at` says when both sides were last observed agreeing. `claimed_house_domain` is a unilateral leaf claim and must not be used for authorization. `ResolvedBrand.parent_brand` is a registry reference that may be a portfolio-internal id, not a portable traversal API.
 
-`RegistrySync` maintains its hierarchy index from registry feed events. On a cold start before a relevant hierarchy event has been applied, call `resolveBrandHierarchy()` for a one-off read and treat `getAncestors()` as the zero-latency mirror once the feed has populated that domain.
+`source` answers a different question: where the selected identity record came from. Registry selection is deterministic (`hosted` > `brand_json` > `community` > `enriched`); normal reads prefer the durable stored winner on a source tie, while `fresh=true` lets a successful live read win a tie. Provenance is not relationship authorization. Treat an absent `relationship_trust` as unknown, not `standalone`. If `live_brand_json` is present, the requested fresh origin check failed and the response came from stored evidence. If `promoted_from_schema` is present, inspect every `migration_warnings` entry; a warning for `house` means the legacy house claim was preserved only as opaque metadata and did not establish `house_domain`.
 
 ### Community Mirror `adagents.json` Catalogs
 

@@ -25,6 +25,31 @@ The primary `getProducts`, `createMediaBuy`, `updateMediaBuy`, `syncCreatives`, 
 
 Raw compatibility calls are deliberately conspicuous: use `getProductsLegacy()`, `createMediaBuyLegacy()`, `updateMediaBuyLegacy()`, `syncCreativesLegacy()`, `listCreativesLegacy()`, or `executeTaskLegacy()` only in migration and conformance code. Legacy format discovery, building, previewing, and transformer discovery likewise use their `*Legacy` methods.
 
+### Registry brand relationships
+
+`RegistryClient.resolveBrandHierarchy()` and `resolveBrandHierarchies()` have been removed. They targeted `/api/brands/hierarchy` routes that the public v3 registry deliberately retired, and converted the resulting 404 into `null`, making a missing route indistinguishable from a missing relationship.
+
+Use `lookupBrand()` or `lookupBrands()` and inspect the resolved relationship instead:
+
+```ts
+const brand = await registry.lookupBrand('leaf.example');
+if (!brand) {
+  // The declared /api/brands/resolve endpoint found no resolvable brand.
+  return;
+}
+
+if (
+  brand.house_domain &&
+  (brand.relationship_trust === 'mutual' || brand.relationship_trust === 'inline')
+) {
+  authorizeHouseRelationship(brand.house_domain);
+}
+```
+
+Only `mutual` and `inline` are reciprocated. `claimed_house_domain` is one side's self-assertion and is not authorization evidence. For `mutual`, use `relationship_verified_at` and `relationship_declared_at` to apply any stricter freshness policy. V3 hierarchy is one level deep; there is no replacement ordered-chain call.
+
+The resolver selects identity records deterministically in `hosted` > `brand_json` > `community` > `enriched` order. This makes `source` stable, but does not turn it into relationship evidence. Missing `relationship_trust` means unknown, `live_brand_json` means a fresh request fell back to stored evidence, and `migration_warnings` explains legacy fields that were not promoted. A `house` warning specifically means no portfolio edge was established.
+
 Standard tasks that indirectly carry legacy identity through artifacts, manifests, standards, or rights constraints no longer appear in the primary typed task map. This includes:
 
 - `list_content_standards`, `get_content_standards`, `create_content_standards`, and `update_content_standards`
