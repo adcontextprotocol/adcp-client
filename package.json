@@ -568,9 +568,9 @@
     "email": "bugs@adcontextprotocol.org"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0-beta.5",
-    "@modelcontextprotocol/node": "2.0.0-beta.5",
-    "@modelcontextprotocol/server": "2.0.0-beta.5",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "@types/ws": "^8.18.1",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",

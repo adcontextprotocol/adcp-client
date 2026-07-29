@@ -200,6 +200,14 @@ function httpStatusOf(error: unknown, depth = 0): number | undefined {
   return httpStatusOf(candidate.cause, depth + 1);
 }
 
+function isLegacyEraNegotiationFailure(error: unknown, status = httpStatusOf(error)): boolean {
+  // Stable MCP SDK v2 uses EraNegotiationFailed for HTTP 5xx responses so
+  // callers preserve infrastructure failures instead of treating them as
+  // evidence of a legacy endpoint. Only status-less negotiation failures
+  // (for example a malformed legacy response) retain the v1 fallback.
+  return status === undefined && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed;
+}
+
 function withPerRequestTraceHeaders(fetchImpl: typeof fetch): typeof fetch {
   return (input, init) => {
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
@@ -391,7 +399,7 @@ async function attemptModernCall(
       });
       return { handled: false };
     }
-    if (SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
+    if (isLegacyEraNegotiationFailure(error, status)) {
       markKnownLegacy(cacheKey);
       options.debugLogs.push({
         type: 'info',
@@ -536,7 +544,7 @@ export async function probeModernMCPConnection(
     if (is401Error(error) || isAbortOrTimeoutError(error)) throw error;
     const status = httpStatusOf(error);
     if (status === 404 || status === 405) return { connected: false };
-    if (SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) return { connected: false };
+    if (isLegacyEraNegotiationFailure(error, status)) return { connected: false };
     throw error;
   } finally {
     await client?.close().catch(() => {});
@@ -598,7 +606,7 @@ export async function tryListModernMCPTools(
     if (is401Error(failure) || isAbortOrTimeoutError(failure)) throw failure;
     const status = httpStatusOf(failure);
     if (status === 404 || status === 405) return { handled: false };
-    if (SdkError.isInstance(failure) && failure.code === SdkErrorCode.EraNegotiationFailed) return { handled: false };
+    if (isLegacyEraNegotiationFailure(failure, status)) return { handled: false };
     throw failure;
   } finally {
     await client?.close().catch(() => {});
