@@ -355,6 +355,46 @@ test('remote MCP client preserves the v1 path for a legacy server', async t => {
   );
 });
 
+test('modern discovery 5xx fails closed without dispatching through the v1 client', async t => {
+  let discoverRequests = 0;
+  let initializeRequests = 0;
+  const httpServer = createServer(async (req, res) => {
+    let body;
+    try {
+      body = JSON.parse(
+        await new Promise((resolve, reject) => {
+          let data = '';
+          req.setEncoding('utf8');
+          req.on('data', chunk => {
+            data += chunk;
+          });
+          req.on('end', () => resolve(data));
+          req.on('error', reject);
+        })
+      );
+    } catch {
+      body = undefined;
+    }
+    if (body?.method === 'server/discover') discoverRequests++;
+    if (body?.method === 'initialize') initializeRequests++;
+    res.writeHead(503, { 'Content-Type': 'text/plain' });
+    res.end('temporarily unavailable');
+  });
+  const url = await listen(httpServer);
+
+  t.after(async () => {
+    await closeMCPConnections();
+    await closeServer(httpServer);
+  });
+
+  await assert.rejects(
+    () => callMCPToolWithTasks(url, 'echo', {}, undefined, []),
+    error => error?.code === 'ERA_NEGOTIATION_FAILED' && error?.status === 503
+  );
+  assert.equal(discoverRequests, 1);
+  assert.equal(initializeRequests, 0, 'an infrastructure failure must not be cached or retried as legacy evidence');
+});
+
 test('modern client never forwards credentials across redirects', async t => {
   let redirectedRequests = 0;
   const sink = createServer((req, res) => {

@@ -13,10 +13,10 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { SdkError, SdkErrorCode } = require('@modelcontextprotocol/client');
+const { SdkError, SdkErrorCode, SdkHttpError } = require('@modelcontextprotocol/client');
 
 function isEraNegotiationFailed(error) {
-  return SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed;
+  return error?.status === undefined && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed;
 }
 
 // Replicates the probeModernMCPConnection catch classifier.
@@ -43,6 +43,10 @@ function listClassify(error) {
 
 describe('mcp-modern: ERA_NEGOTIATION_FAILED treated as legacy-era signal', () => {
   const eraError = new SdkError(SdkErrorCode.EraNegotiationFailed, 'id: null in server/discover response');
+  const serverError = new SdkHttpError(SdkErrorCode.EraNegotiationFailed, 'server/discover returned HTTP 503', {
+    status: 503,
+    statusText: 'Service Unavailable',
+  });
 
   describe('probeModernMCPConnection catch', () => {
     test('ERA_NEGOTIATION_FAILED returns { connected: false }', () => {
@@ -53,6 +57,13 @@ describe('mcp-modern: ERA_NEGOTIATION_FAILED treated as legacy-era signal', () =
     test('generic network error is rethrown', () => {
       const networkErr = new Error('ECONNREFUSED');
       assert.throws(() => probeClassify(networkErr), { message: 'ECONNREFUSED' });
+    });
+
+    test('HTTP 5xx ERA_NEGOTIATION_FAILED is rethrown', () => {
+      assert.throws(
+        () => probeClassify(serverError),
+        error => error === serverError
+      );
     });
   });
 
@@ -71,6 +82,13 @@ describe('mcp-modern: ERA_NEGOTIATION_FAILED treated as legacy-era signal', () =
       const networkErr = new Error('timeout');
       assert.throws(() => attemptClassify(networkErr), { message: 'timeout' });
     });
+
+    test('HTTP 5xx ERA_NEGOTIATION_FAILED is rethrown', () => {
+      assert.throws(
+        () => attemptClassify(serverError),
+        error => error === serverError
+      );
+    });
   });
 
   describe('tryListModernMCPTools catch', () => {
@@ -87,6 +105,13 @@ describe('mcp-modern: ERA_NEGOTIATION_FAILED treated as legacy-era signal', () =
     test('generic network error is rethrown', () => {
       const networkErr = new Error('ETIMEDOUT');
       assert.throws(() => listClassify(networkErr), { message: 'ETIMEDOUT' });
+    });
+
+    test('HTTP 5xx ERA_NEGOTIATION_FAILED is rethrown', () => {
+      assert.throws(
+        () => listClassify(serverError),
+        error => error === serverError
+      );
     });
   });
 });
