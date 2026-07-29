@@ -56,8 +56,4 @@ check is a smell — call it out.
 - docs/**
 - schemas/cache/**
 - **/*.generated.ts
-- test/**
-- tests/**
-- **/*.test.ts
-- **/*.spec.ts
 - package-lock.json
