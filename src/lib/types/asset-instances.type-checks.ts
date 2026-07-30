@@ -17,7 +17,14 @@
 //
 // Run with `npm run typecheck`.
 
-import type { AssetInstance, AssetInstanceType, SyncAccountsResponseRow, SyncGovernanceResponseRow } from './index';
+import type {
+  AssetInstance,
+  AssetInstanceType,
+  PublishedPostAsset,
+  SyncAccountsResponseRow,
+  SyncGovernanceResponseRow,
+} from './index';
+import type { AssetVariant } from './tools.generated';
 
 // ── AssetInstance: discriminator narrowing + exhaustiveness ──────────────
 
@@ -43,6 +50,12 @@ function describeAsset(asset: AssetInstance): string {
     case 'brief':
     case 'catalog':
     case 'webhook':
+    case 'zip':
+    case 'published_post':
+    case 'card':
+    case 'pixel_tracker':
+    case 'vast_tracker':
+    case 'daast_tracker':
       return asset.asset_type;
     default: {
       // Exhaustiveness rail: if a new asset_type lands in AssetInstance
@@ -93,7 +106,31 @@ const _all_types: AssetInstanceType[] = [
   'brief',
   'catalog',
   'webhook',
+  'zip',
+  'published_post',
+  'card',
+  'pixel_tracker',
+  'vast_tracker',
+  'daast_tracker',
 ];
+
+// AssetInstance intentionally aliases the generated protocol union. The
+// runtime schema test separately compares that union's refs with every entry
+// in the creative asset-type registry.
+declare const _registry_variant: AssetVariant;
+const _registry_drift_guard: AssetInstance = _registry_variant;
+
+const _published_post: PublishedPostAsset = {
+  asset_type: 'published_post',
+  platform: 'meta',
+  platform_post_id: 'page_post',
+};
+const _published_post_as_asset: AssetInstance = _published_post;
+
+function _publishedPost_narrows(asset: AssetInstance): string | undefined {
+  if (asset.asset_type === 'published_post') return asset.platform_post_id;
+  return undefined;
+}
 
 function _assetType_bogusValue(): AssetInstanceType {
   // @ts-expect-error — 'banner' is not a valid asset_type.
@@ -152,6 +189,10 @@ export const _references = [
   _imageAsset_missingWidth,
   _htmlAsset_wrongFieldName,
   _all_types,
+  _registry_drift_guard,
+  _published_post,
+  _published_post_as_asset,
+  _publishedPost_narrows,
   _assetType_bogusValue,
   _row_ok,
   _row_missingAction,

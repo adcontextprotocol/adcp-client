@@ -317,11 +317,10 @@ export * from './format-asset-slots';
 // Discriminated union of creative asset INSTANCES (what a buyer delivers
 // inside `creative_manifest.assets`). Companion to format-asset-slots.ts
 // (which describes what a publisher SELLS in `Format.assets[]`). The
-// individual ImageAsset / VideoAsset / etc. interfaces are generated; this
-// file is the missing canonical union over them.
-// Note: tools.generated.ts also has `AssetVariant`, a narrower generated union
-// that omits AudioAsset. `AssetInstance` (this file) is the curated, complete
-// union — prefer it. `AssetVariant` is intentionally not re-exported.
+// individual ImageAsset / VideoAsset / etc. interfaces and their canonical
+// `AssetVariant` union are generated. `AssetInstance` aliases that union so
+// every registry-backed asset branch remains available without curated drift.
+// `AssetVariant` itself is intentionally not re-exported.
 export * from './asset-instances';
 
 // Strict per-row types for sync_* response success arms. The codegen

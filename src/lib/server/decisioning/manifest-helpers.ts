@@ -1,11 +1,12 @@
 /**
  * Helpers for reading typed assets out of `creative_manifest.assets`.
  *
- * `creative_manifest.assets` is a keyed map (`{ [asset_id]: AssetInstance }`)
- * where each value is a discriminated union by `asset_type`. Adopters
- * narrowing per-call write the same null-check + discriminator-check
- * boilerplate over and over. These helpers replace that boilerplate
- * without compromising the discriminator-narrowing story.
+ * `creative_manifest.assets` is a keyed map
+ * (`{ [asset_id]: AssetInstance | AssetInstance[] }`) where each individual
+ * value is a discriminated union by `asset_type`. Adopters narrowing per-call
+ * write the same null-check + discriminator-check boilerplate over and over.
+ * These helpers replace that boilerplate without compromising the
+ * discriminator-narrowing story.
  *
  * Status: Preview / 6.0.
  *
