@@ -29,8 +29,7 @@ export class AdAgentsRedirectRefusedError extends Error {
 }
 
 export type AdAgentsRedirectPolicy =
-  | { mode: 'none' }
-  | { mode: 'same-registrable-domain'; originUrl: string; maxRedirects?: number };
+  { mode: 'none' } | { mode: 'same-registrable-domain'; originUrl: string; maxRedirects?: number };
 
 export async function ssrfSafeFetchAdAgents(
   url: string,

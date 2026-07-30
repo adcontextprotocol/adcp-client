@@ -58,17 +58,7 @@ export interface PromotedOfferings {
   asset_selectors?: {
     tags?: string[];
     asset_types?: (
-      | 'image'
-      | 'video'
-      | 'audio'
-      | 'vast'
-      | 'daast'
-      | 'text'
-      | 'url'
-      | 'html'
-      | 'css'
-      | 'javascript'
-      | 'webhook'
+      'image' | 'video' | 'audio' | 'vast' | 'daast' | 'text' | 'url' | 'html' | 'css' | 'javascript' | 'webhook'
     )[];
     exclude_tags?: string[];
     [k: string]: unknown | undefined;

@@ -543,9 +543,7 @@ describe('Cross-Protocol Integration Tests', () => {
         jsonrpc: '2.0',
         method: 'message/send',
         params: {
-          message: {
-            /* invalid structure */
-          },
+          message: {/* invalid structure */},
         },
       }),
     });
@@ -553,9 +551,7 @@ describe('Cross-Protocol Integration Tests', () => {
     const invalidMCPResponse = await mockMCPServer.handleRequest({
       jsonrpc: '2.0',
       method: 'tools/call',
-      params: {
-        /* missing name */
-      },
+      params: {/* missing name */},
     });
 
     const a2aError = await invalidA2AResponse.json();

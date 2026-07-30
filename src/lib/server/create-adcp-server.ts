@@ -5382,8 +5382,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededProducts(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetProductsResponse
-                    | undefined;
+                    import('../types/tools.generated').GetProductsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededProductsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5409,8 +5408,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededCreatives(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').ListCreativesResponse
-                    | undefined;
+                    import('../types/tools.generated').ListCreativesResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativesIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5433,8 +5431,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededMediaBuys(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetMediaBuysResponse
-                    | undefined;
+                    import('../types/tools.generated').GetMediaBuysResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededMediaBuysIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5457,8 +5454,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededMediaBuyDeliveries(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetMediaBuyDeliveryResponse
-                    | undefined;
+                    import('../types/tools.generated').GetMediaBuyDeliveryResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededMediaBuyDeliveryIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5481,8 +5477,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededAccounts(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').ListAccountsResponse
-                    | undefined;
+                    import('../types/tools.generated').ListAccountsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededAccountsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5505,8 +5500,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededAccountFinancials(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetAccountFinancialsResponse
-                    | undefined;
+                    import('../types/tools.generated').GetAccountFinancialsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     // Brand+operator `AccountReference` variants don't carry
                     // `account_id` on the wire — the framework's resolved
@@ -5545,8 +5539,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededCreativeFormats(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').ListCreativeFormatsResponse
-                    | undefined;
+                    import('../types/tools.generated').ListCreativeFormatsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativeFormatsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5578,8 +5571,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 if (seeded.length > 0) {
                   if (toolName === 'list_property_lists') {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').ListPropertyListsResponse
-                      | undefined;
+                      import('../types/tools.generated').ListPropertyListsResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededPropertyListsIntoResponse(sc, seeded);
                       formatted = wrap(merged);
@@ -5587,8 +5579,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     }
                   } else {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').GetPropertyListResponse
-                      | undefined;
+                      import('../types/tools.generated').GetPropertyListResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = replacePropertyListIfSeeded(
                         params as import('../types/tools.generated').GetPropertyListRequest,
@@ -5623,8 +5614,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 if (seeded.length > 0) {
                   if (toolName === 'list_collection_lists') {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').ListCollectionListsResponse
-                      | undefined;
+                      import('../types/tools.generated').ListCollectionListsResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededCollectionListsIntoResponse(sc, seeded);
                       formatted = wrap(merged);
@@ -5632,8 +5622,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     }
                   } else {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').GetCollectionListResponse
-                      | undefined;
+                      import('../types/tools.generated').GetCollectionListResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = replaceCollectionListIfSeeded(
                         params as import('../types/tools.generated').GetCollectionListRequest,
@@ -5666,8 +5655,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededSignals(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetSignalsResponse
-                    | undefined;
+                    import('../types/tools.generated').GetSignalsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededSignalsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5693,8 +5681,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededCreativeDelivery(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetCreativeDeliveryResponse
-                    | undefined;
+                    import('../types/tools.generated').GetCreativeDeliveryResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativeDeliveryIntoResponse(sc, seeded);
                     formatted = wrap(merged);
@@ -5720,8 +5707,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededCreativeFeatures(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').GetCreativeFeaturesResponse
-                    | undefined;
+                    import('../types/tools.generated').GetCreativeFeaturesResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativeFeaturesIntoResponse(sc, seeded);
                     if (merged !== sc) {
@@ -5750,8 +5736,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededBrandIdentity(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/core.generated').GetBrandIdentityResponse
-                    | undefined;
+                    import('../types/core.generated').GetBrandIdentityResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = replaceBrandIdentityIfSeeded(
                       params as import('../types/core.generated').GetBrandIdentityRequest,
@@ -5782,8 +5767,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededRights(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/core.generated').GetRightsResponse
-                    | undefined;
+                    import('../types/core.generated').GetRightsResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededRightsIntoResponse(sc, seeded);
                     if (merged !== sc) {
@@ -5811,8 +5795,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 const seeded = filterValidSeededSiOffering(rawSeeded, logger);
                 if (seeded.length > 0) {
                   const sc = formatted.structuredContent as
-                    | import('../types/tools.generated').SIGetOfferingResponse
-                    | undefined;
+                    import('../types/tools.generated').SIGetOfferingResponse | undefined;
                   if (sc && typeof sc === 'object') {
                     const merged = replaceSiOfferingIfSeeded(
                       params as import('../types/tools.generated').SIGetOfferingRequest,
@@ -5850,8 +5833,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 if (seeded.length > 0) {
                   if (toolName === 'list_content_standards') {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').ListContentStandardsResponse
-                      | undefined;
+                      import('../types/tools.generated').ListContentStandardsResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededContentStandardsIntoResponse(sc, seeded);
                       if (merged !== sc) {
@@ -5861,8 +5843,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     }
                   } else {
                     const sc = formatted.structuredContent as
-                      | import('../types/tools.generated').GetContentStandardsResponse
-                      | undefined;
+                      import('../types/tools.generated').GetContentStandardsResponse | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = replaceContentStandardsIfSeeded(
                         params as import('../types/tools.generated').GetContentStandardsRequest,

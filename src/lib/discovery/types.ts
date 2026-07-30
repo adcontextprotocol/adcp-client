@@ -58,12 +58,7 @@ export type RevokedPublisherDomain =
  * see `src/lib/discovery/resolve-agent-properties.ts`.
  */
 export type AuthorizationType =
-  | 'property_ids'
-  | 'property_tags'
-  | 'inline_properties'
-  | 'publisher_properties'
-  | 'signal_ids'
-  | 'signal_tags';
+  'property_ids' | 'property_tags' | 'inline_properties' | 'publisher_properties' | 'signal_ids' | 'signal_tags';
 
 /**
  * Cross-publisher selector used by `authorization_type: 'publisher_properties'`.

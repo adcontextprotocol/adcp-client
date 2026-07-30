@@ -584,10 +584,7 @@ export interface ActionNotAllowedErrorDetails {
 }
 
 export type ActionNotAllowedReasonValue =
-  | 'wrong_status'
-  | 'not_supported_on_product'
-  | 'not_supported_on_buy'
-  | 'mode_mismatch';
+  'wrong_status' | 'not_supported_on_product' | 'not_supported_on_buy' | 'mode_mismatch';
 
 export type ActionNotAllowedAttemptedAction = string;
 

@@ -818,12 +818,7 @@ export interface SyncAccountsResultRow {
 }
 
 export type AdcpAccountStatus =
-  | 'active'
-  | 'pending_approval'
-  | 'rejected'
-  | 'payment_required'
-  | 'suspended'
-  | 'closed';
+  'active' | 'pending_approval' | 'rejected' | 'payment_required' | 'suspended' | 'closed';
 
 // ---------------------------------------------------------------------------
 // Wire projection — strip framework-internal fields before emit

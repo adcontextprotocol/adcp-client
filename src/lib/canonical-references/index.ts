@@ -111,8 +111,7 @@ export interface CanonicalReferenceFailureResult extends CanonicalReferenceResul
 }
 
 export type CanonicalReferenceResult<TDocument = unknown> =
-  | CanonicalReferenceResolvedResult<TDocument>
-  | CanonicalReferenceFailureResult;
+  CanonicalReferenceResolvedResult<TDocument> | CanonicalReferenceFailureResult;
 
 export type FormatSchemaReferenceResult = FormatSchemaReferenceResolvedResult | CanonicalReferenceFailureResult;
 export type PlatformExtensionsReferenceResult = CanonicalReferenceResult<unknown>;

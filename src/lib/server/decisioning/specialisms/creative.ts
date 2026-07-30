@@ -66,10 +66,7 @@ export type LegacyListCreativeFormatsPayload = ServerPayload<ListCreativeFormats
  * as schema-validation failure on the wire response.
  */
 export type LegacyBuildCreativeReturn =
-  | CreativeManifest
-  | CreativeManifest[]
-  | LegacyBuildCreativePayload
-  | LegacyBuildCreativeMultiPayload;
+  CreativeManifest | CreativeManifest[] | LegacyBuildCreativePayload | LegacyBuildCreativeMultiPayload;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.

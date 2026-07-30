@@ -24,10 +24,7 @@ import type { RunnerSelectionResult, Storyboard } from './types';
  * `console.warn` rather than throwing.
  */
 export type CapabilityResolutionCode =
-  | 'specialism_parent_protocol_missing'
-  | 'unknown_specialism'
-  | 'unknown_protocol'
-  | 'unsupported_adcp_version';
+  'specialism_parent_protocol_missing' | 'unknown_specialism' | 'unknown_protocol' | 'unsupported_adcp_version';
 
 /**
  * Thrown when the agent's declared capabilities cannot be mapped onto the

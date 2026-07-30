@@ -1247,8 +1247,7 @@ export function projectMediaBuyCreativesForDelivery<T>(
     });
   }
   return (changed ? next : request) as
-    | ProjectedMediaBuyCreativeRequest<T, 'canonical'>
-    | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
+    ProjectedMediaBuyCreativeRequest<T, 'canonical'> | ProjectedMediaBuyCreativeRequest<T, 'legacy'>;
 }
 
 export function projectSyncCreativesForDelivery<T>(
@@ -1316,8 +1315,7 @@ export function projectSyncCreativesForDelivery<T>(
     return projected;
   });
   return (changed ? { ...requestRecord, creatives } : request) as
-    | ProjectedSyncCreativeRequest<T, 'canonical'>
-    | ProjectedSyncCreativeRequest<T, 'legacy'>;
+    ProjectedSyncCreativeRequest<T, 'canonical'> | ProjectedSyncCreativeRequest<T, 'legacy'>;
 }
 
 type CreativeProtocolRelease = { major: number; minor: number; label: string };

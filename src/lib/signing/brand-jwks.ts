@@ -29,14 +29,7 @@ import { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 import type { AdcpJsonWebKey } from './types';
 
 export type BrandAgentType =
-  | 'brand'
-  | 'rights'
-  | 'measurement'
-  | 'governance'
-  | 'creative'
-  | 'sales'
-  | 'buying'
-  | 'signals';
+  'brand' | 'rights' | 'measurement' | 'governance' | 'creative' | 'sales' | 'buying' | 'signals';
 
 export type BrandJsonResolverErrorCode =
   | 'invalid_url'

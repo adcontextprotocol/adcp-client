@@ -865,12 +865,12 @@ async function resolveTaskCompletionOutputs(
   if (canPoll) {
     const pollSignal = AbortSignal.timeout(timeoutMs);
     racers.push(
-      executor.pollTaskCompletion(agent, taskId, pollIntervalMs, undefined, pollSignal).then(
-        (result: TaskResult): PollWin => ({
+      executor
+        .pollTaskCompletion(agent, taskId, pollIntervalMs, undefined, pollSignal)
+        .then((result: TaskResult): PollWin => ({
           kind: 'poll',
           result,
-        })
-      )
+        }))
     );
   }
 

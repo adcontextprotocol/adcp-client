@@ -131,10 +131,7 @@ export interface NotificationMetadata extends WebhookMetadata {
 // Simple union-typed handlers for webhook status changes
 export type GetProductsStatusChangeHandler = (
   response:
-    | CanonicalGetProductsResponse
-    | GetProductsAsyncSubmitted
-    | GetProductsAsyncWorking
-    | GetProductsAsyncInputRequired,
+    CanonicalGetProductsResponse | GetProductsAsyncSubmitted | GetProductsAsyncWorking | GetProductsAsyncInputRequired,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 

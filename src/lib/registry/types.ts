@@ -110,11 +110,7 @@ type RegistryFeedEventBase<TEventType extends string, TPayload> = {
 };
 
 export type RegistryBrandEventType =
-  | 'brand.hierarchy_updated'
-  | 'brand.updated'
-  | 'brand.resolved'
-  | 'brand.removed'
-  | 'brand.deleted';
+  'brand.hierarchy_updated' | 'brand.updated' | 'brand.resolved' | 'brand.removed' | 'brand.deleted';
 
 /** Brand feed events emitted by older/self-hosted registry deployments. */
 export type RegistryBrandEvent = RegistryFeedEventBase<RegistryBrandEventType, BrandEventPayload>;

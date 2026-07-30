@@ -53,16 +53,10 @@ export interface PackageCapabilityRefs {
 }
 
 export type FormatOptionRefsLookupErrorCode =
-  | 'unknown_format_option_id'
-  | 'format_option_refs_not_published'
-  | 'empty_input'
-  | 'invalid_product';
+  'unknown_format_option_id' | 'format_option_refs_not_published' | 'empty_input' | 'invalid_product';
 
 export type CapabilityIdsLookupErrorCode =
-  | 'unknown_capability_id'
-  | 'capability_ids_not_published'
-  | 'empty_input'
-  | 'invalid_product';
+  'unknown_capability_id' | 'capability_ids_not_published' | 'empty_input' | 'invalid_product';
 
 /**
  * Structured error from {@link packageRefsForFormatOptions}. Carries a

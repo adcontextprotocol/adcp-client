@@ -32,13 +32,7 @@ export interface StatusMappers {
 }
 
 export type AdcpMediaBuyStatus =
-  | 'pending_creatives'
-  | 'pending_start'
-  | 'active'
-  | 'paused'
-  | 'completed'
-  | 'rejected'
-  | 'canceled';
+  'pending_creatives' | 'pending_start' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
 
 export type AdcpCreativeStatus = 'pending_review' | 'approved' | 'rejected' | 'archived';
 

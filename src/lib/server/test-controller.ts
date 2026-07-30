@@ -1644,8 +1644,7 @@ export function registerTestController(
   // from the factory's static `scenarios` (factory shape) or is inferred
   // from the plain store's method presence.
   const capsBag = (server as unknown as Record<PropertyKey, unknown>)[ADCP_CAPABILITIES] as
-    | GetAdCPCapabilitiesResponse
-    | undefined;
+    GetAdCPCapabilitiesResponse | undefined;
   if (capsBag) {
     const incoming = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
     if (incoming.length > 0) {

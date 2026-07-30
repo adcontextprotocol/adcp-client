@@ -363,7 +363,7 @@ describe('live-verifier integration: stale-revocation fail-closed', () => {
 
       // Origin stops responding. Advance past next_update + grace.
       await revocationServer.stop();
-      clock = issuedAt + 60 /* nextUpdate */ + 31 /* past 30s grace */;
+      clock = issuedAt + 60 /* nextUpdate */ + 31; /* past 30s grace */
 
       const signed2 = buildSigned({
         kid: 'test-ed25519-2026',

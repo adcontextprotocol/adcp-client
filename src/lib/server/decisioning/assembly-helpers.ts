@@ -425,14 +425,7 @@ export interface BuildPackageInput {
   buyer_ref?: string;
   /** AdCP package status. Defaults to `'pending_creatives'` (just-created buys). */
   status?:
-    | 'draft'
-    | 'pending_creatives'
-    | 'pending_start'
-    | 'active'
-    | 'paused'
-    | 'completed'
-    | 'canceled'
-    | 'rejected';
+    'draft' | 'pending_creatives' | 'pending_start' | 'active' | 'paused' | 'completed' | 'canceled' | 'rejected';
   /** product_id this package was bound to. */
   product_id?: string;
   /** pricing_option_id selected for this package. */

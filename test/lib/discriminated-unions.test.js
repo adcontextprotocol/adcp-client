@@ -368,11 +368,7 @@ describe('Discriminated Union Validation', () => {
       const ambiguous = {
         // Missing request_type - can't be parsed
         format_id: { agent_url: 'https://test.com', id: 'fmt-1' },
-        requests: [
-          {
-            /* ... */
-          },
-        ],
+        requests: [{/* ... */}],
       };
 
       const result = PreviewCreativeRequestSchema.safeParse(ambiguous);

@@ -59,12 +59,7 @@ import type { AdcpStateStore } from '../server/state-store';
 import type { PricingOption } from '../types/tools.generated';
 
 export type ComplianceFixtureCategory =
-  | 'products'
-  | 'formats'
-  | 'creatives'
-  | 'plans'
-  | 'media_buys'
-  | 'pricing_options';
+  'products' | 'formats' | 'creatives' | 'plans' | 'media_buys' | 'pricing_options';
 
 /**
  * State-store collection names the seeder writes into. Handlers that

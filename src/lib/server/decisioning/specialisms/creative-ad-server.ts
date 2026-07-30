@@ -61,10 +61,7 @@ export type LegacyGetCreativeDeliveryPayload = ServerPayload<GetCreativeDelivery
 export type LegacyBuildCreativePayload = ServerPayload<BuildCreativeSuccess>;
 export type LegacyBuildCreativeMultiPayload = ServerPayload<BuildCreativeMultiSuccess>;
 export type LegacyBuildCreativeReturn =
-  | CreativeManifest
-  | CreativeManifest[]
-  | LegacyBuildCreativePayload
-  | LegacyBuildCreativeMultiPayload;
+  CreativeManifest | CreativeManifest[] | LegacyBuildCreativePayload | LegacyBuildCreativeMultiPayload;
 
 export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   /**

@@ -45,9 +45,7 @@ export interface BindingMatch {
    * `assert_scheme_preserved`.
    */
   position:
-    | { kind: 'query'; key: string; index: number }
-    | { kind: 'path'; index: number }
-    | { kind: 'href_whole_value' };
+    { kind: 'query'; key: string; index: number } | { kind: 'path'; index: number } | { kind: 'href_whole_value' };
   /** Observed value at the aligned position — the bytes emitted after substitution. */
   observed_value: string;
   /**

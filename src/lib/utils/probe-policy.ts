@@ -82,8 +82,7 @@ function isLoopbackHost(host: string): boolean {
 }
 
 export type ProbePolicyResult =
-  | { allowed: true }
-  | { allowed: false; code: 'invalid_url' | 'always_blocked' | 'private_address'; reason: string };
+  { allowed: true } | { allowed: false; code: 'invalid_url' | 'always_blocked' | 'private_address'; reason: string };
 
 /**
  * Decide whether the SDK should issue a discovery probe to `url`. Returns
