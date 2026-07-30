@@ -865,11 +865,11 @@ function projectPackageSelectors(
           return ref ? [ref] : [];
         });
         if (projected.diagnostics.length > 0 || projectedRefs.length !== legacyRefs.length) {
-          throw new CreativeFormatProjectionError(
-            operation,
-            '(package selector)',
-            'legacy package format_ids cannot be converted to stable canonical format_option_refs'
-          );
+          // Cannot convert this package's legacy format_ids to canonical format_option_refs.
+          // Return the package unchanged rather than throwing so responses for existing
+          // buys remain usable. These buys were created before canonical format_option_refs
+          // were enforced at write time.
+          return next;
         }
         mappedRefs = projectedRefs;
       }

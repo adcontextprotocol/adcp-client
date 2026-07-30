@@ -595,7 +595,10 @@ describe('creative format delivery projection', () => {
         },
       ],
     };
-    assert.throws(() => projectMediaBuyCreativesForDelivery(request, 'canonical'), CreativeFormatProjectionError);
+    // Canonical: cannot convert, so return the package unchanged (preserving format_ids)
+    // rather than throwing — this prevents get_media_buys from crashing on legacy buys.
+    const projected = projectMediaBuyCreativesForDelivery(request, 'canonical');
+    assert.deepEqual(projected.packages[0].format_ids, request.packages[0].format_ids);
     assert.throws(() => projectMediaBuyCreativesForDelivery(request, 'legacy'), CreativeFormatProjectionError);
   });
 
