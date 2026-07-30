@@ -207,17 +207,20 @@ describe('gradeSigner', () => {
     );
   });
 
-  test('signer signs with wrong key (different `d`) → verifier rejects request_signature_invalid', async () => {
-    // Advertise ed25519 + correct kid, but sign with ES256 private material.
+  test('signer signs with wrong keypair → verifier rejects request_signature_invalid', async () => {
+    // Advertise ed25519 + correct kid, but sign with a different Ed25519
+    // keypair.
     // This simulates a KMS adapter pointed at the wrong key version.
     const dir = mkdtempSync(path.join(os.tmpdir(), 'adcp-grader-'));
     const keyFilePath = path.join(dir, 'key.jwk');
-    // Create a frankenstein JWK: kid + alg of ed25519, but `d` from a different
-    // ed25519 key that's not in the JWKS. Reuses the gov-signing key from the
-    // test vectors.
+    // Keep the advertised identity metadata, but sign with a complete,
+    // different Ed25519 keypair that's not in the JWKS. Reuses the
+    // governance-signing key material from the test vectors. Both `x` and
+    // `d` must come from that pair; Node rejects an incoherent OKP JWK before
+    // signing, which would test signer setup rather than verifier rejection.
     const govEd = keysData.keys.find(k => k.adcp_use === 'governance-signing' && k.crv === 'Ed25519');
     assert.ok(govEd, 'test fixture: governance-signing Ed25519 key required for wrong-key assertion');
-    const wrongKey = { ...privateJwkFor(ed), d: govEd._private_d_for_test_only };
+    const wrongKey = { ...privateJwkFor(ed), x: govEd.x, d: govEd._private_d_for_test_only };
     writeFileSync(keyFilePath, JSON.stringify(wrongKey));
 
     const report = await gradeSigner({
@@ -229,7 +232,8 @@ describe('gradeSigner', () => {
       allowPrivateIp: true,
     });
     assert.strictEqual(report.passed, false);
-    assert.match(report.step.error_code, /request_signature_invalid|request_signature_key_unknown/);
+    assert.strictEqual(report.step.error_code, 'request_signature_invalid');
+    assert.match(report.step.diagnostic, /step 10/);
   });
 
   test('passing both --key-file and --signer-url throws a clear setup error', async () => {
