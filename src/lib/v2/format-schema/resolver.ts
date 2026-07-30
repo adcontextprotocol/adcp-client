@@ -32,7 +32,12 @@ export type CanonicalReferenceKind = 'format_schema' | 'platform_extensions';
 export type CanonicalRef = FormatSchemaRef;
 
 export type CanonicalReferenceResolutionStatus =
-  'resolved' | 'invalid_ref' | 'blocked_unsafe_url' | 'digest_mismatch' | 'invalid_schema' | 'unresolvable';
+  | 'resolved'
+  | 'invalid_ref'
+  | 'blocked_unsafe_url'
+  | 'digest_mismatch'
+  | 'invalid_schema'
+  | 'unresolvable';
 
 export type CanonicalReferenceResolutionCode =
   | FormatSchemaFetchErrorCode

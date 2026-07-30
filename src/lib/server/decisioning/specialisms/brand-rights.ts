@@ -64,7 +64,9 @@ export type LegacyAcquireRightsAcquiredPayload = ServerPayload<AcquireRightsAcqu
 export type LegacyAcquireRightsPendingApprovalPayload = ServerPayload<AcquireRightsPendingApproval>;
 export type LegacyAcquireRightsRejectedPayload = ServerPayload<AcquireRightsRejected>;
 export type LegacyAcquireRightsPayload =
-  LegacyAcquireRightsAcquiredPayload | LegacyAcquireRightsPendingApprovalPayload | LegacyAcquireRightsRejectedPayload;
+  | LegacyAcquireRightsAcquiredPayload
+  | LegacyAcquireRightsPendingApprovalPayload
+  | LegacyAcquireRightsRejectedPayload;
 export type LegacyUpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
 export type CreativeApprovedPayload = ServerPayload<CreativeApproved>;
 export type CreativeRejectedPayload = ServerPayload<CreativeRejected>;

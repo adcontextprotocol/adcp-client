@@ -2146,7 +2146,10 @@ export interface BridgeFromSessionStoreOptions<TSession, TAccount = unknown> {
   selectSeededMediaBuyDelivery?: (
     session: TSession
   ) =>
-    Iterable<SeededMediaBuyDelivery> | Promise<Iterable<SeededMediaBuyDelivery> | null | undefined> | null | undefined;
+    | Iterable<SeededMediaBuyDelivery>
+    | Promise<Iterable<SeededMediaBuyDelivery> | null | undefined>
+    | null
+    | undefined;
 
   /**
    * Extract seeded accounts from a resolved session. Each entry MUST carry
@@ -2228,7 +2231,10 @@ export interface BridgeFromSessionStoreOptions<TSession, TAccount = unknown> {
   selectSeededCreativeDelivery?: (
     session: TSession
   ) =>
-    Iterable<SeededCreativeDelivery> | Promise<Iterable<SeededCreativeDelivery> | null | undefined> | null | undefined;
+    | Iterable<SeededCreativeDelivery>
+    | Promise<Iterable<SeededCreativeDelivery> | null | undefined>
+    | null
+    | undefined;
 
   /**
    * Extract seeded creative-feature results from a resolved session. Each

@@ -77,7 +77,12 @@ export interface ObserverFetchOptions {
 
 export class PreviewFetchError extends Error {
   readonly sub_reason:
-    'http_status' | 'content_type' | 'size_exceeded' | 'redirect_returned' | 'ssrf_blocked' | 'fetch_timeout';
+    | 'http_status'
+    | 'content_type'
+    | 'size_exceeded'
+    | 'redirect_returned'
+    | 'ssrf_blocked'
+    | 'fetch_timeout';
   readonly detail: string;
   constructor(sub_reason: PreviewFetchError['sub_reason'], detail: string) {
     super(`preview_url_unusable:${sub_reason} — ${detail}`);

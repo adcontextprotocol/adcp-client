@@ -83,21 +83,23 @@ export type RequireCacheScopeWhenProducts<T> = T extends {
   cache_scope?: infer TScope;
   unchanged?: infer TUnchanged;
 }
-  ? | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
-        products: Exclude<TProducts, undefined>;
-        unchanged?: undefined;
-        cache_scope: NonNullable<TScope>;
-      })
-    | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
-        products?: undefined;
-        unchanged: Extract<TUnchanged, true>;
-        cache_scope: NonNullable<TScope>;
-      })
-    | (Omit<T, 'products' | 'unchanged'> & { products?: undefined; unchanged?: undefined })
-  : T extends { products?: infer TProducts; cache_scope?: infer TScope }
-    ? | (Omit<T, 'products' | 'cache_scope'> & {
+  ?
+      | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
           products: Exclude<TProducts, undefined>;
+          unchanged?: undefined;
           cache_scope: NonNullable<TScope>;
         })
-      | (Omit<T, 'products'> & { products?: undefined })
+      | (Omit<T, 'products' | 'cache_scope' | 'unchanged'> & {
+          products?: undefined;
+          unchanged: Extract<TUnchanged, true>;
+          cache_scope: NonNullable<TScope>;
+        })
+      | (Omit<T, 'products' | 'unchanged'> & { products?: undefined; unchanged?: undefined })
+  : T extends { products?: infer TProducts; cache_scope?: infer TScope }
+    ?
+        | (Omit<T, 'products' | 'cache_scope'> & {
+            products: Exclude<TProducts, undefined>;
+            cache_scope: NonNullable<TScope>;
+          })
+        | (Omit<T, 'products'> & { products?: undefined })
     : T;

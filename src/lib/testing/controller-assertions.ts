@@ -14,7 +14,11 @@ import type {
 } from '../types/tools.generated';
 
 type AnyControllerSuccess =
-  ListScenariosSuccess | StateTransitionSuccess | SimulationSuccess | ForcedDirectiveSuccess | SeedSuccess;
+  | ListScenariosSuccess
+  | StateTransitionSuccess
+  | SimulationSuccess
+  | ForcedDirectiveSuccess
+  | SeedSuccess;
 
 /**
  * `ControllerError` with `error_detail` guaranteed to be present. The SDK's

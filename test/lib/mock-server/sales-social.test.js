@@ -272,7 +272,9 @@ describe('mock-server sales-social', () => {
             {
               event_name: 'Purchase',
               event_time: Math.floor(Date.now() / 1000),
-              user_data: {/* no hashed identifiers */},
+              user_data: {
+                /* no hashed identifiers */
+              },
               custom_data: { value: 1 },
             },
           ],

@@ -787,7 +787,8 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // `package`.
       const packagesOut: CreateMediaBuySuccess['packages'] = (order.line_items ?? []).map((li, i) => {
         const requestedPackage = packagesRequest[i] as
-          { buyer_ref?: string; context?: unknown; pricing_option_id?: string } | undefined;
+          | { buyer_ref?: string; context?: unknown; pricing_option_id?: string }
+          | undefined;
         const packageContext = asPackageContext(requestedPackage?.context);
         if (packageContext) {
           localPackageContexts.set(

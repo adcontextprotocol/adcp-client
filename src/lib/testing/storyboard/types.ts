@@ -1844,7 +1844,10 @@ export interface RunnerSkipResult {
 }
 
 export type RunnerSelectionReason =
-  'run_mode_excluded' | 'explicit_scope_excluded' | 'version_excluded' | 'profile_excluded';
+  | 'run_mode_excluded'
+  | 'explicit_scope_excluded'
+  | 'version_excluded'
+  | 'profile_excluded';
 
 export interface RunnerSelectionResult {
   reason: RunnerSelectionReason;
@@ -1860,7 +1863,12 @@ export interface RunnerSelectionResult {
  * Spec: adcp-client#1626, adcp-client#2281.
  */
 export type RequirementName =
-  'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver' | 'request_signer' | 'multi_agent';
+  | 'controller'
+  | 'seeded_state'
+  | 'real_wire'
+  | 'webhook_receiver'
+  | 'request_signer'
+  | 'multi_agent';
 
 /**
  * Enumeration of every requirement this SDK knows how to satisfy. The loader

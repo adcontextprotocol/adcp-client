@@ -4899,7 +4899,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 : await proposalManager.getProducts(canonicalParams, reqCtx as never);
             } else {
               result = (await sales!.getProducts!(canonicalParams, reqCtx)) as unknown as
-                GetProductsPayload | TaskHandoff<GetProductsPayload>;
+                | GetProductsPayload
+                | TaskHandoff<GetProductsPayload>;
             }
             const projectProducts = async (terminalResult: GetProductsPayload) => {
               const canonicalResult = asCanonicalProductResponse(terminalResult, legacyFormatConverter);

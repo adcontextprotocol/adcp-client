@@ -367,7 +367,8 @@ export async function testErrorTransport(
 
   try {
     const rawResponse = (await callMCPToolRaw(agentUrl, provocation.tool, provocation.args, authToken, [], headers)) as
-      RawMcpResponse | undefined;
+      | RawMcpResponse
+      | undefined;
 
     const hasIsError = rawResponse?.isError === true;
     const structured = rawResponse?.structuredContent as Record<string, unknown> | undefined;

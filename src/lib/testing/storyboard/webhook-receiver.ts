@@ -121,7 +121,8 @@ export interface WebhookFilter {
 }
 
 export type WebhookWaitResult =
-  { webhook: CapturedWebhook; timed_out?: false } | { timed_out: true; webhook?: undefined };
+  | { webhook: CapturedWebhook; timed_out?: false }
+  | { timed_out: true; webhook?: undefined };
 
 export interface RetryReplayPolicy {
   /** How many deliveries to reject before accepting. */

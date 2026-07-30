@@ -156,7 +156,9 @@ export type AcquireRightsAcquiredPayload = ServerPayload<AcquireRightsAcquired>;
 export type AcquireRightsPendingApprovalPayload = ServerPayload<AcquireRightsPendingApproval>;
 export type AcquireRightsRejectedPayload = ServerPayload<AcquireRightsRejected>;
 export type AcquireRightsPayload =
-  AcquireRightsAcquiredPayload | AcquireRightsPendingApprovalPayload | AcquireRightsRejectedPayload;
+  | AcquireRightsAcquiredPayload
+  | AcquireRightsPendingApprovalPayload
+  | AcquireRightsRejectedPayload;
 export type UpdateRightsPayload = ServerPayload<UpdateRightsSuccess>;
 
 export type CreativeApprovedPayload = ServerPayload<CreativeApproved>;

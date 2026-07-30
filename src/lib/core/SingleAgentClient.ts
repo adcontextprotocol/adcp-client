@@ -2992,7 +2992,8 @@ export class SingleAgentClient {
     // Call handler if task completed successfully and handler is configured
     if (result.status === 'completed' && result.success && this.asyncHandler) {
       const handler = this.config.handlers?.[handlerName] as
-        ((data: unknown, metadata: Record<string, unknown>) => Promise<void>) | undefined;
+        | ((data: unknown, metadata: Record<string, unknown>) => Promise<void>)
+        | undefined;
       if (handler) {
         const metadata = {
           operation_id: options?.contextId || 'sync',

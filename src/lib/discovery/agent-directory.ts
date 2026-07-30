@@ -35,7 +35,10 @@ import { validateUserAgent } from '../utils/validate-user-agent';
  * `agent-publishers.json` schema for trust-profile notes per value.
  */
 export type DirectoryDiscoveryMethod =
-  'direct' | 'authoritative_location' | 'adagents_authoritative' | 'ads_txt_managerdomain';
+  | 'direct'
+  | 'authoritative_location'
+  | 'adagents_authoritative'
+  | 'ads_txt_managerdomain';
 
 /** Lifecycle state for a publisher → agent edge. */
 export type DirectoryPublisherStatus = 'authorized' | 'revoked';

@@ -761,14 +761,20 @@ export type AsyncResponseByTask = {
     | CreateMediaBuyAsyncInputRequired
     | CreateMediaBuyAsyncSubmitted;
   get_products:
-    GetProductsResponse | GetProductsAsyncWorking | GetProductsAsyncInputRequired | GetProductsAsyncSubmitted;
+    | GetProductsResponse
+    | GetProductsAsyncWorking
+    | GetProductsAsyncInputRequired
+    | GetProductsAsyncSubmitted;
   update_media_buy:
     | UpdateMediaBuyResponse
     | UpdateMediaBuyAsyncWorking
     | UpdateMediaBuyAsyncInputRequired
     | UpdateMediaBuyAsyncSubmitted;
   sync_creatives:
-    SyncCreativesResponse | SyncCreativesAsyncWorking | SyncCreativesAsyncInputRequired | SyncCreativesAsyncSubmitted;
+    | SyncCreativesResponse
+    | SyncCreativesAsyncWorking
+    | SyncCreativesAsyncInputRequired
+    | SyncCreativesAsyncSubmitted;
 };
 
 export type AsyncResponseFor<TTask extends keyof AsyncResponseByTask> = AsyncResponseByTask[TTask];

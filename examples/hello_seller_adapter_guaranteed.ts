@@ -1324,7 +1324,13 @@ const simulatedDelivery = new Map<string, SimulatedDelivery>();
 // `media_buy_seller/invalid_transitions` storyboard exercises NOT_CANCELLABLE
 // on re-cancel (canceled → canceled is illegal per `core/state-machine.yaml`).
 type MediaBuyStatus =
-  'pending_creatives' | 'pending_start' | 'active' | 'paused' | 'completed' | 'rejected' | 'canceled';
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
 const localBuyStatus = new Map<string, MediaBuyStatus>();
 const localBuyRevisions = new Map<string, number>();
 const localPackageContexts = new Map<string, Record<string, unknown>>();
