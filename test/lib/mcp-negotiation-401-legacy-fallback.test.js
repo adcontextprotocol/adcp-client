@@ -112,8 +112,17 @@ function credentialRejectionBody() {
  * @param options.rejectEverythingWith when set, EVERY request is answered with
  *   this status: a genuinely bad credential, as opposed to a server that merely
  *   refuses the modern discovery method.
+ * @param options.failNonDiscoverWith when set, `server/discover` is refused with
+ *   `rejectDiscoverWith` while every other method fails with this status. Lets a
+ *   test drive the legacy retry to a NON-auth failure, which `rejectEverythingWith`
+ *   cannot express.
  */
-async function startV3Seller({ era = 'modern', rejectDiscoverWith = 0, rejectEverythingWith = 0 } = {}) {
+async function startV3Seller({
+  era = 'modern',
+  rejectDiscoverWith = 0,
+  rejectEverythingWith = 0,
+  failNonDiscoverWith = 0,
+} = {}) {
   const requests = [];
   const tools = {
     get_adcp_capabilities: () => jsonResult(capabilities()),
@@ -204,6 +213,11 @@ async function startV3Seller({ era = 'modern', rejectDiscoverWith = 0, rejectEve
       res
         .writeHead(rejectDiscoverWith, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ error: 'invalid_token' }));
+      return;
+    }
+
+    if (failNonDiscoverWith !== 0) {
+      res.writeHead(failNonDiscoverWith, { 'Content-Type': 'text/plain' }).end('unavailable');
       return;
     }
 
@@ -429,4 +443,42 @@ test('v3 MCP seller: the legacy retry after a probe refusal is attempted at most
       `across ${seller.requests.length} hops`
   );
   assert.ok(seller.requests.length < 40, `expected a bounded number of hops, saw ${seller.requests.length}`);
+});
+
+// Companion to the bound test above, which drives the legacy retry to a 401 and
+// so only ever exercises the auth-shaped failure. Here the retry fails for a
+// NON-auth reason, the shape that reaches the `EraNegotiationFailed` re-probe
+// branch in `createNegotiatedClient`. Recursing there would reset `skipProbe`
+// and run probe -> legacy a second time per URL.
+//
+// Coverage, not a regression test: it passes with and without the `!skipProbe`
+// guard, because a 5xx legacy `initialize` surfaces as `CLIENT_HTTP_NOT_IMPLEMENTED`,
+// not `EraNegotiationFailed`. What it pins is the observable bound — exactly one
+// probe and one legacy attempt per candidate URL — so a future client version
+// that does raise `EraNegotiationFailed` from `_legacyHandshake` fails here
+// instead of silently doubling the hops against a live seller.
+test('v3 MCP seller: a non-auth failure on the legacy retry does not re-enter the probe', async t => {
+  withCleanup(t);
+  const seller = await startV3Seller({ era: 'legacy', rejectDiscoverWith: 401, failNonDiscoverWith: 503 });
+  t.after(() => seller.stop());
+
+  const result = await readDelivery(prodAgent(await prodAgentConfig(seller.url, 'req-nonauth')));
+
+  assert.notEqual(result.success, true, 'a seller failing every non-discover method must not read successfully');
+
+  const byPath = new Map();
+  for (const entry of seller.requests) {
+    const counts = byPath.get(entry.path) ?? { discover: 0, initialize: 0 };
+    if (entry.method === 'server/discover') counts.discover++;
+    if (entry.method === 'initialize') counts.initialize++;
+    byPath.set(entry.path, counts);
+  }
+
+  for (const [path, counts] of byPath) {
+    assert.equal(counts.discover, 1, `${path}: expected exactly one server/discover probe, saw ${counts.discover}`);
+    assert.ok(
+      counts.initialize <= 1,
+      `${path}: expected at most one legacy initialize retry, saw ${counts.initialize}`
+    );
+  }
 });

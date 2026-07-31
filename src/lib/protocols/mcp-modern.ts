@@ -344,7 +344,24 @@ async function createNegotiatedClient(
     } catch {
       /* ignore close errors */
     }
-    if (prior && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
+    // `!skipProbe` keeps the explicit-legacy retry terminal. Re-probing here is
+    // only meaningful when `prior` was a *cached modern* discovery that has gone
+    // stale — dropping the cache and negotiating afresh can then succeed. On the
+    // `skipProbe` retry `prior` is the synthetic `{ kind: 'legacy' }`: there is
+    // no stale cache to discard, and recursing would reset `skipProbe` to its
+    // default and re-enter the probe→legacy retry below a second time.
+    //
+    // Reachability: server-driven failures on this path surface as
+    // `SdkHttpError` (measured: a 5xx legacy `initialize` gives
+    // `CLIENT_HTTP_NOT_IMPLEMENTED`, a malformed body
+    // `CLIENT_HTTP_UNEXPECTED_CONTENT`), so no server can drive the cycle today.
+    // But `EraNegotiationFailed` is not unreachable under `prior`: the client
+    // raises it from `_legacyHandshake` when `supportedProtocolVersions` offers
+    // no pre-2026-07-28 version, and for an unrecognized `prior` shape. Those
+    // depend on client construction and the library's error taxonomy — both of
+    // which moved under us in the 2.0.0-beta.4 -> 2.0.0 bump. The guard makes
+    // the bound independent of them.
+    if (prior && !skipProbe && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
       return createNegotiatedClient(cacheKey, options, authHeaders, false);
     }
     // Era negotiation is meant to be automatic: `mode: 'auto'` documents that
