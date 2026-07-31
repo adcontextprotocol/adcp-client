@@ -243,11 +243,26 @@ function evictLeastRecentlyUsed(): void {
   void client?.close().catch(() => {});
 }
 
+/**
+ * Did this connect fail because the era-negotiation probe was answered with
+ * `401`/`403`? That is the one probe outcome the MCP client classifies as
+ * terminal instead of falling back to the legacy era.
+ */
+function isNegotiationAuthFailure(error: unknown): boolean {
+  return is401Error(error) || httpStatusOf(error) === 403;
+}
+
 async function createNegotiatedClient(
   cacheKey: string,
   options: ModernConnectionOptions,
   authHeaders: Record<string, string>,
-  useCachedDiscovery = true
+  useCachedDiscovery = true,
+  /**
+   * Skip the `server/discover` probe and `initialize` straight into the legacy
+   * era. Set only on the retry after a negotiation-time 401/403 — see the catch
+   * block below.
+   */
+  skipProbe = false
 ): Promise<Client> {
   const generation = connectionGeneration;
   const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
@@ -282,14 +297,18 @@ async function createNegotiatedClient(
     }
   );
 
-  const prior = useCachedDiscovery ? getCachedModernDiscovery(cacheKey) : undefined;
+  const prior = skipProbe
+    ? ({ kind: 'legacy' } as const)
+    : useCachedDiscovery
+      ? getCachedModernDiscovery(cacheKey)
+      : undefined;
   try {
     await client.connect(transport, {
       ...(options.signal && { signal: options.signal }),
       ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
       ...(prior && { prior }),
     });
-    if (prior) clientsUsingCachedDiscovery.add(client);
+    if (prior && !skipProbe) clientsUsingCachedDiscovery.add(client);
     if (!prior) {
       const discover = client.getDiscoverResult();
       if (generation === connectionGeneration) {
@@ -299,7 +318,7 @@ async function createNegotiatedClient(
     }
     return client;
   } catch (error) {
-    if (prior) modernDiscoveries.delete(cacheKey);
+    if (prior && !skipProbe) modernDiscoveries.delete(cacheKey);
     try {
       await client.close();
     } catch {
@@ -307,6 +326,18 @@ async function createNegotiatedClient(
     }
     if (prior && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
       return createNegotiatedClient(cacheKey, options, authHeaders, false);
+    }
+    // A 401/403 raised while negotiating the era is a verdict on
+    // `server/discover`, not on our credential. The MCP client's classifier
+    // (`classifyHttpError`) makes 401/403 the only probe failure that never
+    // falls back to the legacy era, so a server that rejects the modern
+    // discovery method while accepting the same credential on `initialize`
+    // becomes unreachable to every caller on this path. Skip the probe and
+    // initialize directly, exactly as the SDK documents for a server known to
+    // be legacy. If the credential really is bad, that connect fails on its own
+    // and surfaces the seller's own 401.
+    if (isNegotiationAuthFailure(error) && !skipProbe) {
+      return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
     throw error;
   }

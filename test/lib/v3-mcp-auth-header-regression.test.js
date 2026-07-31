@@ -1,26 +1,23 @@
 /**
- * Regression: MCP auth credentials must reach an AdCP 3.1 seller served on a
- * `/v3/mcp` endpoint.
+ * MCP auth credentials must reach an AdCP 3.1 seller served on a `/v3/mcp`
+ * endpoint, across both protocol eras and with request signing on or off.
  *
- * Reported against 13.0.0-rc.4 (works on 12.0.3): a delivery read against a
- * `/v3/mcp` AdCP 3.1 seller arrives with neither `Authorization: Bearer` nor
- * `x-adcp-auth`, so the seller answers HTTP 200 with
- * `{"jsonrpc":"2.0","error":{"code":-32602,"message":"missing Bearer or
- * x-adcp-auth header"}}` and the SDK surfaces `AuthenticationRequiredError`.
- * The buyer config carries a plain API-key `auth_token` alongside `headers`
- * and a `request_signing` provider block.
+ * This began as a repro attempt for a reported credential loss on that path.
+ * That hypothesis was wrong: the SDK attaches `Authorization` /
+ * `x-adcp-auth` on every hop in all four combinations below, and the real defect
+ * turned out to be elsewhere — a `server/discover` probe refused with 401/403 was
+ * classified as an auth failure instead of falling back to the legacy transport
+ * (see `mcp-negotiation-401-legacy-fallback.test.js`).
  *
- * The seller stub below mirrors that gate exactly and records the headers of
- * every inbound request, so the assertion is on the wire, not on an internal
- * header-building helper.
+ * The file is kept because the coverage is worth having on its own terms: the
+ * era × signing matrix is the cheapest place to catch a future regression in
+ * header attachment, and the assertions read the wire rather than an internal
+ * header-building helper. It is not a repro of anything currently broken, and it
+ * passes on 13.0.0-rc.4.
  *
- * STATUS: these cases PASS on 13.0.0-rc.4 — the reported configuration alone
- * does not reproduce the credential loss. All four transport/signing
- * combinations send `Authorization`, `x-adcp-auth`, and `agent.headers` on
- * every request of the read (endpoint probe, tools/list,
- * get_adcp_capabilities, get_media_buy_delivery). The scenario table is the
- * place to add the missing trigger once it is identified; the assertions are
- * already the ones that must fail when it is present.
+ * The seller stub answers an uncredentialed request the way the reported seller
+ * does — a JSON-RPC error inside an HTTP 200 — and records the headers of every
+ * inbound request.
  */
 
 const { test } = require('node:test');
