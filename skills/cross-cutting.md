@@ -66,9 +66,11 @@ The hello adapters use simple in-memory `accounts.resolution: 'lookup'` against 
 - `createOAuthPassthroughResolver` — buyer-OAuth-passes-through (Shape B)
 - `createRosterAccountStore` — pre-loaded roster (Shape C)
 - `createDerivedAccountStore` — single-tenant `'derived'` mode (Shape D)
-- `createTenantStore` — multi-tenant with built-in isolation gate
+- `createTenantStore` — multi-tenant, with a built-in isolation gate on the account-sync tools and a **required** `refAccess` choice for `resolve`
 
 `createTenantStore` is the right default for any adopter handling more than one advertiser. It refuses inline `{account_id}` references unless your store explicitly lists them — that's a hard security gate, not a soft warning.
+
+Its `refAccess` field is required and has no default: `'auth-scoped'` makes a ref naming another tenant fail closed, `'ref-routed'` lets one credential span tenants on purpose. The sync-tool isolation gate is always on and is a *separate* decision — `refAccess` governs `accounts.resolve`, which is the account path for `create_media_buy` / `update_media_buy`. See `skills/build-holdco-agent/SKILL.md`.
 
 ## Webhooks: stable `operation_id` across retries
 

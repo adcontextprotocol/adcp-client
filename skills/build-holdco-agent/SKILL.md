@@ -71,6 +71,7 @@ The framework calls `accounts.resolve(ref, ctx)` once per request, and hub adapt
 1. **Path 1** — operator-routed resolution for tools that carry `account` on the wire (`sync_accounts`, `sync_governance`, governance, property-lists)
 2. **Path 2** — auth-derived resolution for no-account tools (`get_brand_identity`, `get_rights`)
 3. **Per-entry tenant-isolation gate** on `sync_accounts` / `sync_governance` — verify each entry's `operator` maps to the buyer's authenticated home tenant before persisting, fail-closed when the auth principal isn't registered
+4. **A resolve posture** — decide whether a buyer-supplied ref naming *another* tenant resolves or fails closed. This is the `refAccess` field and it is **required with no default**, because both answers are correct for some hubs. It is a separate decision from (3): the gate in (3) covers the sync tools only, while `resolve` is the account path for `create_media_buy` and `update_media_buy`
 
 All three live in `createTenantStore<TTenant, TCtxMeta>` (`@adcp/sdk/server`). Callbacks the adopter provides; gating logic the SDK owns:
 
@@ -78,6 +79,9 @@ All three live in `createTenantStore<TTenant, TCtxMeta>` (`@adcp/sdk/server`). C
 import { createTenantStore, narrowAccountRef } from '@adcp/sdk/server';
 
 accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
+  // REQUIRED, no default. 'auth-scoped' = a ref naming another tenant fails
+  // closed. Use it unless one credential is *supposed* to span tenants.
+  refAccess: 'auth-scoped',
   resolveByRef: ref => {  // Path 1 — operator (or account_id) on the wire
     const r = narrowAccountRef(ref);
     const tenantId = OPERATOR_TO_TENANT.get(r.operator ?? '');
@@ -110,10 +114,25 @@ accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>(
 });
 ```
 
+**Pick your `refAccess` deliberately — it is the one field with no safe default:**
+
+| | `resolve` with a ref naming another tenant | Use when |
+| --- | --- | --- |
+| `'auth-scoped'` | returns `null` → `ACCOUNT_NOT_FOUND` | Tenants are unrelated clients / competing agencies. **Most hubs.** |
+| `'ref-routed'` | returns that tenant's `Account` | One credential is *supposed* to span tenants (a single agency operating all of them) |
+
+Getting this wrong in the `'ref-routed'` direction means any authenticated tenant can name another tenant's `account_id` or `operator` and have `create_media_buy` run scoped to that account — cross-tenant **spend**, not just cross-tenant reads. If you genuinely need `'ref-routed'`, layer a `resolve-presets` guard (`requireAccountMatch` / `requireAdvertiserMatch` / `requireOrgScope`) on top via `composeMethod`.
+
+**What the helper does NOT guarantee:**
+
+- **`refAccess` governs `resolve` only.** Verifying the sync-tool gate tells you nothing about `resolve`. Under `'ref-routed'` there is no isolation on `resolve` at all — that is the mode's purpose, not a bug.
+- **It does not scope your data layer.** `tenantToAccount` returns whatever your callbacks hand it; if `resolveByRef` reads a shared table without a tenant predicate, the helper cannot see that.
+
 **What the helper guarantees:**
 
 - **Cross-tenant entries never reach `upsertRow` / `syncGovernanceRow`.** The helper resolves `authTenant = resolveFromAuth(ctx)` once per request, then for each entry resolves `entryTenant = resolveByRef(ref)` and emits a `'failed'` row with `code: 'PERMISSION_DENIED'` when `tenantId(authTenant) !== tenantId(entryTenant)`. Adopter callbacks see only in-tenant entries.
 - **Fail-closed when `resolveFromAuth` returns null** (unknown principal, no `agentRegistry`, agent_url not in your home-tenant map): every entry fails `PERMISSION_DENIED`. Don't fork around this — the prior fail-OPEN shape (`if (homeTenantId && entryTenant !== homeTenantId)`) silently disabled isolation for credentials lacking a home-tenant binding.
+- **Construction refuses a missing or unrecognized `refAccess`.** TypeScript flags it, and the helper also throws at runtime so a JS adopter or an `as any` cast can't fall through to the permissive branch silently.
 - **`accounts.upsert` and `accounts.syncGovernance` are non-writable** on the returned store. An adopter who writes `accounts.upsert = customHandler` after construction gets a `TypeError` (in strict mode) instead of silently bypassing the gate. To extend with `list` / `reportUsage` / `getAccountFinancials`, use `Object.assign`:
 
   ```ts

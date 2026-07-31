@@ -461,6 +461,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
    * disabled isolation for credentials lacking a home tenant.
    */
   accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
+    // Required, no default — the safe value depends on whether one credential
+    // is *supposed* to span tenants. Here it is not: each buyer agent_url maps
+    // to exactly one home tenant via BUYER_HOME_TENANT, so a ref naming another
+    // tenant must fail closed rather than resolve. An agency hub whose single
+    // credential legitimately spans tenants would pass 'ref-routed' instead and
+    // layer a `resolve-presets` guard on top.
+    refAccess: 'auth-scoped',
     resolveByRef: ref => {
       const r = narrowAccountRef(ref);
       if (!r.operator) return null;
