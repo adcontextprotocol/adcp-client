@@ -31,6 +31,7 @@ function makeClient(config = {}) {
     protocol: 'mcp',
   };
   const client = new AdCPClient([agent], {
+    allowUnauthenticatedWebhooks: true,
     validateFeatures: false,
     validation: {
       responses: 'off',

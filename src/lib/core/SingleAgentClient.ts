@@ -852,7 +852,16 @@ export type WebhookParseErrorCode =
   | 'webhook_timestamp_invalid'
   | 'webhook_unsupported_payload'
   | 'webhook_envelope_invalid'
-  | 'webhook_result_invalid';
+  | 'webhook_result_invalid'
+  /**
+   * The receiver has no way to authenticate this webhook: no `webhookSecret` is
+   * configured, so the legacy HMAC profile has nothing to verify against, and
+   * this client does not yet verify the RFC 9421 webhook profile that an
+   * omitted `authentication` block selects. Distinct from
+   * `webhook_signature_invalid` — nothing was checked and found wrong; there was
+   * no check to perform.
+   */
+  | 'webhook_unverifiable';
 
 export interface VerifyAndParseWebhookOptions {
   /** Raw HTTP body bytes captured before JSON parsing. Required when `webhookSecret` is configured. */
@@ -997,6 +1006,23 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   handlers?: AsyncHandlerConfig;
   /** Webhook secret for signature verification (recommended for production) */
   webhookSecret?: string;
+  /**
+   * Accept inbound webhooks that carry no verifiable authenticity at all.
+   *
+   * Without `webhookSecret` the legacy HMAC profile has nothing to verify
+   * against, and this client does not yet verify the RFC 9421 webhook profile
+   * that an omitted `authentication` block selects. `verifyAndParseWebhook`
+   * therefore refuses such webhooks with `webhook_unverifiable` by default:
+   * anyone who can reach the receiver route could otherwise forge task
+   * completions and status changes.
+   *
+   * Set this only when the receiver is genuinely unreachable from outside your
+   * network (in-process test harnesses, a route bound to loopback). It is not a
+   * substitute for a secret on any route an agent can reach over the internet.
+   *
+   * @default false
+   */
+  allowUnauthenticatedWebhooks?: boolean;
   /**
    * Webhook URL template with macro substitution
    *
@@ -2270,8 +2296,24 @@ export class SingleAgentClient {
           message: check.message,
         };
       }
-    } else {
+    } else if (this.config.allowUnauthenticatedWebhooks === true) {
       warnUnverifiedWebhookReceive();
+    } else {
+      // Fail closed. With no secret the legacy HMAC profile has nothing to
+      // verify against, and this client does not yet verify the RFC 9421 profile
+      // that an omitted `authentication` block selects (tracked separately), so
+      // accepting here would dispatch a caller-supplied payload to async and
+      // activity handlers and update external task status on nothing but its
+      // shape.
+      return {
+        ok: false,
+        code: 'webhook_unverifiable',
+        message:
+          'Refusing an unauthenticated webhook: no `webhookSecret` is configured, so there is no ' +
+          'signature to verify. Configure `webhookSecret` to enable HMAC verification, or set ' +
+          '`allowUnauthenticatedWebhooks: true` to accept unverified webhooks (only safe when the ' +
+          'receiver route is unreachable from outside your network).',
+      };
     }
 
     const payloadSource =
@@ -4259,6 +4301,19 @@ export class SingleAgentClient {
         // seller its delivery reports are authenticated by a constant that ships
         // in this file. Skip the auto-injection instead and say why.
         if (!consumerAuth && !defaultAuth) {
+          // A caller who asked for a `reporting_webhook` explicitly gets an
+          // error, not a silent edit: the request cannot be made spec-valid
+          // without a credential, and quietly dropping a field the caller wrote
+          // would make the SDK a translator of intent rather than a witness to
+          // it. Only the library's OWN auto-injection is skipped silently.
+          if (params.reporting_webhook) {
+            throw new Error(
+              'reporting_webhook requires an `authentication` block for all of AdCP 3.x, and no credential ' +
+                'is available: set `webhookSecret` on the client, or pass `reporting_webhook.authentication` ' +
+                'explicitly. Remove `reporting_webhook` from the request if you do not need automated ' +
+                'delivery reports — the media buy itself does not require it.'
+            );
+          }
           warnReportingWebhookNeedsSecret();
         } else {
           // Library defaults
@@ -4267,16 +4322,19 @@ export class SingleAgentClient {
             reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
           };
 
-          // Deep merge: consumer overrides library defaults
+          // Merge the envelope, but treat `authentication` as ATOMIC. A
+          // field-level merge would cross `schemes` from the caller with
+          // `credentials` from `webhookSecret` — a caller passing
+          // `schemes: ['Bearer']` with no credential would have the HMAC shared
+          // secret registered as a Bearer token, which the seller then sends in
+          // cleartext on every delivery. `schemes` determines how `credentials`
+          // travels, so the two must come from the same source.
           params = {
             ...params,
             reporting_webhook: {
               ...libraryDefaults,
               ...params.reporting_webhook,
-              authentication: {
-                ...defaultAuth,
-                ...consumerAuth,
-              },
+              authentication: consumerAuth ?? defaultAuth,
             },
           } as CanonicalCreateMediaBuyRequest;
         }

@@ -113,10 +113,54 @@ describe('createExpressVerifier: raw-body guard', () => {
     assert.strictEqual(outcome.body?.error, 'request_signature_header_malformed');
   });
 
+  test('treats Content-Length: 00 as zero, not as a body', async () => {
+    // llhttp accepts `00`; a string compare against '0' would 401 a legitimate
+    // bodiless signed request.
+    const outcome = await run({
+      method: 'GET',
+      url: '/mcp',
+      headers: { ...SIGNED_HEADERS, 'content-length': '00' },
+    });
+
+    assert.notStrictEqual(outcome.body?.error, 'request_signature_header_malformed');
+  });
+
+  test('rejects a POST with no body headers at all (HTTP/2 shape)', async () => {
+    // HTTP/2 forbids Transfer-Encoding and makes content-length optional, so a
+    // DATA-frame body arrives with neither header. Enumerating body signals
+    // could not catch this; requiring rawBody for body-bearing methods does.
+    const outcome = await run({
+      method: 'POST',
+      url: '/mcp',
+      headers: { ...SIGNED_HEADERS, 'content-type': 'application/json' },
+    });
+
+    assert.strictEqual(outcome.status, 401, 'a body-bearing method must supply rawBody');
+    assert.strictEqual(outcome.body?.error, 'request_signature_header_malformed');
+    assert.strictEqual(outcome.nextCalled, false);
+  });
+
+  test('accepts a Buffer rawBody, which is what express.json({ verify }) yields', async () => {
+    // The canonical recipe hands back the raw Buffer; 401-ing a correctly wired
+    // app was its own bug.
+    const outcome = await run({
+      method: 'POST',
+      url: '/mcp',
+      headers: { ...SIGNED_HEADERS, 'content-type': 'application/json' },
+      rawBody: Buffer.from('{"tool":"create_media_buy"}', 'utf8'),
+    });
+
+    assert.notStrictEqual(
+      outcome.body?.error,
+      'request_signature_header_malformed',
+      'a Buffer rawBody must be accepted, not treated as missing'
+    );
+  });
+
   test('a genuinely bodiless request is not refused by the guard', async () => {
-    // Content-Length: 0, no transfer-encoding, no parsed body — `''` is the
-    // truthful body here, so the guard must let it reach signature verification.
-    // It fails later at key resolution, which proves it got past the guard.
+    // GET with an explicit zero length is the only shape that can honestly
+    // verify against `''`, so it must reach signature verification. It fails
+    // later at key resolution, which proves it got past the guard.
     const outcome = await run({
       method: 'GET',
       url: '/mcp',

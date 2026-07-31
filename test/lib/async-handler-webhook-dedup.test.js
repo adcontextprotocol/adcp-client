@@ -125,6 +125,7 @@ test('idempotency_key propagates from MCP envelope through SingleAgentClient to 
   const client = new AdCPClient(
     [{ id: 'agent_mcp', name: 'MCP', agent_uri: 'https://agent.example', protocol: 'mcp' }],
     {
+      allowUnauthenticatedWebhooks: true,
       handlers: {
         onCreateMediaBuyStatusChange: (_response, metadata) => {
           seenMetadata = metadata;

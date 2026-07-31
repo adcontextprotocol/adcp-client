@@ -41,6 +41,10 @@ function normalize(address: string): { addr: string; family: 'ipv4' | 'ipv6' } |
 const alwaysBlocked = new BlockList();
 alwaysBlocked.addSubnet('169.254.0.0', 16, 'ipv4');
 alwaysBlocked.addSubnet('fe80::', 10, 'ipv6');
+// Oracle Cloud IMDS lives at 192.0.0.192 (inside RFC 6890's 192.0.0.0/24
+// IETF-protocol assignments) rather than the 169.254.0.0/16 everyone else
+// uses, so it needs its own entry to be refused even under the private opt-in.
+alwaysBlocked.addAddress('192.0.0.192', 'ipv4');
 
 // Private, loopback, multicast, and reserved ranges. Defense-in-depth adds the
 // NAT64 well-known prefix (`64:ff9b::/96`) and 6to4 (`2002::/16`) so a
@@ -57,6 +61,9 @@ privateIp.addSubnet('169.254.0.0', 16, 'ipv4');
 privateIp.addSubnet('172.16.0.0', 12, 'ipv4');
 privateIp.addSubnet('192.168.0.0', 16, 'ipv4');
 privateIp.addSubnet('224.0.0.0', 4, 'ipv4'); // multicast
+privateIp.addSubnet('192.0.0.0', 24, 'ipv4'); // RFC 6890 IETF protocol assignments (incl. Oracle IMDS)
+privateIp.addSubnet('192.88.99.0', 24, 'ipv4'); // 6to4 relay anycast (RFC 7526, deprecated)
+privateIp.addSubnet('240.0.0.0', 4, 'ipv4'); // reserved for future use
 privateIp.addAddress('255.255.255.255', 'ipv4'); // limited broadcast
 // v6
 privateIp.addAddress('::', 'ipv6'); // unspecified

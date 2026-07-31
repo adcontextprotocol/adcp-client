@@ -401,16 +401,17 @@ function validateTargetUri(rawUrl: string): void {
  * registered names like `127.example.com`, which resolve to arbitrary public
  * addresses and would let a real webhook drop TLS.
  */
-const LOOPBACK_IPV4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+// Only reached with an already-parsed `URL.hostname`, so WHATWG has normalized
+// `127.1` / `0x7f000001` to dotted-quad form and rejected out-of-range octets
+// before this sees them. No octet-range check is needed (or reachable).
+const LOOPBACK_IPV4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
 function isLoopbackHost(hostname: string): boolean {
   if (!hostname) return false;
-  const normalized = hostname.toLowerCase();
-  // Node's `URL.hostname` keeps IPv6 literals bracketed.
+  // Node's `URL.hostname` keeps IPv6 literals bracketed; a FQDN keeps its dot.
+  const normalized = hostname.toLowerCase().replace(/\.$/, '');
   if (normalized === 'localhost' || normalized === '::1' || normalized === '[::1]') return true;
-  const v4 = LOOPBACK_IPV4.exec(normalized);
-  if (!v4) return false;
-  return v4.slice(1).every(octet => Number(octet) <= 255);
+  return LOOPBACK_IPV4.test(normalized);
 }
 
 /**

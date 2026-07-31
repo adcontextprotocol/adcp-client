@@ -16,7 +16,7 @@ import { withCachedConnection } from './mcp';
 import { createMCPAuthHeaders } from '../auth';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { signingContextStorage, type AgentSigningContext } from '../signing/client';
-import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { redactArgsForLog as sharedRedactArgsForLog } from '../utils/redact-args';
 import { withResponseSizeLimit } from './responseSizeLimit';
 import { withTransportDiagnostics, type TransportActivityHandler } from './transportDiagnostics';
 import { isAbortOrTimeoutError, resolveClientRequestTimeoutMs } from './abort';
@@ -147,17 +147,7 @@ function buildAuthHeaders(authToken?: string, customHeaders?: Record<string, str
  *   full logging via `ADCP_LOG_IDEMPOTENCY_KEYS=1`
  */
 function redactArgsForLog(args: Record<string, unknown>): Record<string, unknown> {
-  let redacted: Record<string, unknown> = args;
-  if (redacted.push_notification_config) {
-    redacted = {
-      ...redacted,
-      push_notification_config: {
-        ...(redacted.push_notification_config as object),
-        authentication: '***',
-      },
-    };
-  }
-  return redactIdempotencyKeyInArgs(redacted);
+  return sharedRedactArgsForLog(args);
 }
 
 /**

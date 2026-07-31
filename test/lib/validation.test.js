@@ -38,88 +38,82 @@ describe('validation utilities', () => {
       }, /Invalid agent URL/);
     });
 
-    describe('private-network enforcement', () => {
-      // The guard is an allowlist on NODE_ENV, so the suite's own NODE_ENV=test
-      // permits private targets. Each test swaps it to exercise enforcement.
-      function withEnv(env, fn) {
-        const priorNodeEnv = process.env.NODE_ENV;
-        const priorAck = process.env.ADCP_ALLOW_PRIVATE_AGENT_URL;
-        if (env.NODE_ENV === undefined) delete process.env.NODE_ENV;
-        else process.env.NODE_ENV = env.NODE_ENV;
-        if (env.ack === undefined) delete process.env.ADCP_ALLOW_PRIVATE_AGENT_URL;
-        else process.env.ADCP_ALLOW_PRIVATE_AGENT_URL = env.ack;
-        try {
-          fn();
-        } finally {
-          if (priorNodeEnv === undefined) delete process.env.NODE_ENV;
-          else process.env.NODE_ENV = priorNodeEnv;
-          if (priorAck === undefined) delete process.env.ADCP_ALLOW_PRIVATE_AGENT_URL;
-          else process.env.ADCP_ALLOW_PRIVATE_AGENT_URL = priorAck;
-        }
+    describe('private-network and metadata policy', () => {
+      // Delegates to `classifyProbeUrl`, so agent URLs and discovery probes
+      // share one policy. Deliberately NOT keyed on NODE_ENV — a staging image
+      // running NODE_ENV=test must not get a looser SSRF posture than prod.
+      // The `ADCP_ALLOW_INTERNAL_PROBES` opt-out is read once at module load,
+      // so the widened branch isn't reachable from inside this process; the
+      // default-deny behaviour below is what matters.
+
+      // Loopback stays allowed: CLI dev loops, the mock server, and local
+      // adapter tests all target it, and abusing it already requires on-host
+      // access. This is the case that a blanket private-network refusal broke.
+      const allowedLoopback = [
+        ['loopback literal', 'http://127.0.0.1:3000/mcp'],
+        ['non-.1 loopback literal', 'http://127.0.0.2:3000/mcp'],
+        ['loopback name', 'http://localhost:8080/mcp'],
+        ['bracketed IPv6 loopback', 'http://[::1]:3000/mcp'],
+      ];
+
+      for (const [label, url] of allowedLoopback) {
+        test(`allows ${label}`, () => {
+          assert.doesNotThrow(() => validateAgentUrl(url));
+        });
       }
 
-      // An unset NODE_ENV must fail closed. A `NODE_ENV === 'production'` gate
-      // would have disabled the whole guard here.
-      const blocked = [
-        ['loopback name', 'https://localhost/mcp'],
-        ['loopback literal', 'https://127.0.0.1/mcp'],
-        ['non-.1 loopback literal', 'https://127.0.0.2/mcp'],
-        ['bracketed IPv6 loopback', 'https://[::1]/mcp'],
+      const blockedPrivate = [
         ['RFC 1918 /8', 'https://10.1.2.3/mcp'],
         ['RFC 1918 /16', 'https://192.168.1.1/mcp'],
         ['RFC 1918 /12', 'https://172.16.0.1/mcp'],
         ['CGNAT', 'https://100.64.0.1/mcp'],
         ['IPv4-mapped IPv6 private', 'https://[::ffff:10.0.0.1]/mcp'],
-        ['link-local', 'https://169.254.1.1/mcp'],
       ];
 
-      for (const [label, url] of blocked) {
-        test(`rejects ${label} when NODE_ENV is unset`, () => {
-          withEnv({ NODE_ENV: undefined }, () => {
-            assert.throws(() => validateAgentUrl(url), /Private network access not allowed/);
-          });
+      for (const [label, url] of blockedPrivate) {
+        test(`refuses ${label} by default`, () => {
+          assert.throws(() => validateAgentUrl(url), /not allowed/);
         });
       }
 
-      test('rejects the IMDS address when NODE_ENV is unset', () => {
-        withEnv({ NODE_ENV: undefined }, () => {
-          assert.throws(() => validateAgentUrl('https://169.254.169.254/latest/meta-data/'), /not allowed/);
-        });
+      // Refused even with the opt-out set — IMDS reach is never legitimate.
+      test('refuses the cloud metadata address', () => {
+        assert.throws(() => validateAgentUrl('https://169.254.169.254/latest/meta-data/'), /not allowed/);
       });
 
-      test('rejects metadata hostnames, which are public names no CIDR check sees', () => {
-        withEnv({ NODE_ENV: 'production' }, () => {
-          assert.throws(
-            () => validateAgentUrl('https://metadata.google.internal/computeMetadata/'),
-            /Metadata endpoint access not allowed/
-          );
-        });
+      test('refuses IPv4 link-local', () => {
+        assert.throws(() => validateAgentUrl('https://169.254.1.1/mcp'), /not allowed/);
       });
 
-      test('does not treat registered names that merely start with a private prefix as private', () => {
-        withEnv({ NODE_ENV: 'production' }, () => {
-          assert.doesNotThrow(() => validateAgentUrl('https://10.example.com/mcp'));
-          assert.doesNotThrow(() => validateAgentUrl('https://127.example.com/mcp'));
-          assert.doesNotThrow(() => validateAgentUrl('https://192.168.example.com/mcp'));
-        });
+      // The old hand-rolled prefix comparisons matched these as private.
+      test('does not treat registered names sharing a private prefix as private', () => {
+        assert.doesNotThrow(() => validateAgentUrl('https://10.example.com/mcp'));
+        assert.doesNotThrow(() => validateAgentUrl('https://127.example.com/mcp'));
+        assert.doesNotThrow(() => validateAgentUrl('https://192.168.example.com/mcp'));
       });
 
-      test('allows private targets under NODE_ENV=development', () => {
-        withEnv({ NODE_ENV: 'development' }, () => {
-          assert.doesNotThrow(() => validateAgentUrl('http://localhost:3000/mcp'));
-        });
+      test('public URLs are unaffected', () => {
+        assert.doesNotThrow(() => validateAgentUrl('https://agent.example.com/mcp/'));
       });
 
-      test('allows private targets under an explicit ops acknowledgment', () => {
-        withEnv({ NODE_ENV: 'production', ack: '1' }, () => {
-          assert.doesNotThrow(() => validateAgentUrl('http://127.0.0.1:3000/mcp'));
-        });
-      });
-
-      test('public URLs are unaffected by the gate', () => {
-        withEnv({ NODE_ENV: 'production' }, () => {
-          assert.doesNotThrow(() => validateAgentUrl('https://agent.example.com/mcp/'));
-        });
+      // The old gate did nothing at all unless NODE_ENV was exactly
+      // 'production', so an unset or misspelled value disabled it entirely.
+      test('enforces regardless of NODE_ENV', () => {
+        const prior = process.env.NODE_ENV;
+        try {
+          for (const value of [undefined, 'production', 'test', 'development', 'staging']) {
+            if (value === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = value;
+            assert.throws(
+              () => validateAgentUrl('https://169.254.169.254/latest/meta-data/'),
+              /not allowed/,
+              `metadata must be refused with NODE_ENV=${String(value)}`
+            );
+          }
+        } finally {
+          if (prior === undefined) delete process.env.NODE_ENV;
+          else process.env.NODE_ENV = prior;
+        }
       });
     });
   });

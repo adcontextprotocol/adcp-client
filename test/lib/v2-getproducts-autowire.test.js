@@ -649,6 +649,7 @@ describe('AgentClient.getProducts — auto-wired v1→v2 projection', () => {
     await mcp.connect(clientTransport);
     const agent = AgentClient.fromMCPClient(mcp, {
       validation: { responses: 'off' },
+      allowUnauthenticatedWebhooks: true,
       handlers: { onListCreativesStatusChange: response => handlerCalls.push(response) },
     });
 

@@ -114,24 +114,61 @@ const REDACTED = '[redacted]';
  * part for debugging; the values are not.
  */
 function redactTestOptions(options: TestOptions): Record<string, unknown> {
-  const safe: Record<string, unknown> = { ...options };
+  // Allowlist, not `{...options}` minus known secrets.
+  //
+  // Spreading was the bug: `TestOptions._client` is a live `SingleAgentClient`,
+  // set on the primary `comply()` and orchestrator paths, and its `agent` field
+  // is an own enumerable property — so `JSON.stringify` walked straight back
+  // into the bearer token, OAuth tokens, client secret, custom headers, and
+  // `webhookSecret` that the masking above had just removed, three times over
+  // via nested client references. A denylist over a graph that holds a
+  // reference to the whole client cannot be made safe; only naming what may be
+  // logged can.
+  const safe: Record<string, unknown> = {};
+
+  for (const key of LOGGABLE_OPTION_KEYS) {
+    if (options[key] !== undefined) safe[key] = options[key];
+  }
 
   if (options.auth) {
     // Keep `type` so the log still shows which scheme was exercised.
     safe.auth = { type: options.auth.type, ...redactedFieldsFor(options.auth) };
   }
   if (options.headers) {
+    // Names are the debuggable part; values may be credentials.
     safe.headers = Object.fromEntries(Object.keys(options.headers).map(name => [name, REDACTED]));
   }
-  if (options.test_kit?.auth) {
-    safe.test_kit = { ...options.test_kit, auth: REDACTED };
+  if (options.test_kit) {
+    // Test kits come from arbitrary `test-kits/*.yaml` and the type carries an
+    // index signature, so a credential can sit at any depth. Log the shape only.
+    safe.test_kit = { keys: Object.keys(options.test_kit) };
   }
-  // `TransportOptions` holds no credentials (maxResponseBytes / fetchFn /
-  // requestTimeoutMs), and `JSON.stringify` drops the function, so it is left
-  // as-is deliberately.
 
   return safe;
 }
+
+/**
+ * Fields of `TestOptions` that may be written to a log verbatim.
+ *
+ * Anything not named here is dropped — in particular the `_`-prefixed internals
+ * (`_client`, `_profile`, `_webhookReceiver`, …), which hold live client objects
+ * whose own fields include every credential the caller supplied. `agentUrl` is
+ * logged separately by the caller, so the client adds no diagnostic value.
+ */
+const LOGGABLE_OPTION_KEYS = [
+  'protocol',
+  'adcpVersion',
+  'wireAdcpVersion',
+  'versionEnvelope',
+  'schemaRoot',
+  'userAgent',
+  'brand',
+  'brief',
+  'budget',
+  'format_ids',
+  'sandbox',
+  'test_session_id',
+] as const satisfies readonly (keyof TestOptions)[];
 
 /** Every credential-bearing field of the auth union, masked. */
 function redactedFieldsFor(auth: NonNullable<TestOptions['auth']>): Record<string, string> {

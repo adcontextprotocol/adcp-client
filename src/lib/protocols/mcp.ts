@@ -14,7 +14,7 @@ import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
-import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
@@ -801,7 +801,7 @@ export async function callMCPTool(
   });
   debugLogs.push({
     type: 'info',
-    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactIdempotencyKeyInArgs(args))}`,
+    message: `MCP: Calling tool ${toolName} with args: ${JSON.stringify(redactArgsForLog(args))}`,
     timestamp: new Date().toISOString(),
   });
   if (authToken) {

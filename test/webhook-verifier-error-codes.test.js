@@ -250,19 +250,6 @@ describe('webhook verifier: webhook_target_uri_malformed (adcp#2467)', () => {
     assert.match(thrown.message, /https/);
   });
 
-  test('http to a dotted quad with an out-of-range octet is rejected', async () => {
-    const { now, request } = minimallySignedRequest();
-    request.url = 'http://127.0.0.256/adcp/webhook/foo/agent_123/op_abc';
-
-    let thrown;
-    try {
-      await verify(request, jwks(), { now });
-    } catch (err) {
-      thrown = err;
-    }
-    assert.strictEqual(thrown?.code, 'webhook_target_uri_malformed');
-  });
-
   test('http to genuine loopback still passes the target-uri check', async () => {
     // Swapping the URL invalidates the signature, so this fails later in the
     // pipeline — the point is that it is NOT rejected at step 6a.

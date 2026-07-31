@@ -27,6 +27,7 @@ const { readFileSync, statSync } = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const net = require('net');
+const { randomBytes } = require('crypto');
 const { spawn } = require('child_process');
 const { AsyncWebhookHandler } = require('./adcp-async-handler.js');
 const {
@@ -6346,7 +6347,12 @@ credential material — never sync or commit.
       debug: debug,
       ...(webhookUrl && {
         webhookUrlTemplate: webhookUrl,
-        webhookSecret: 'cli-webhook-secret',
+        // Per-invocation random secret. A constant here would ship in npm, and
+        // because `push_notification_config.authentication` is a scheme
+        // selector rather than a fallback, registering it would actively
+        // downgrade every `--wait` webhook to legacy HMAC keyed by a value
+        // anyone can read out of the published package.
+        webhookSecret: randomBytes(32).toString('base64url'),
       }),
     });
 

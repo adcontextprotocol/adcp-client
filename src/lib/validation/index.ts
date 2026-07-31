@@ -3,7 +3,7 @@
  * Functions for validating URLs, responses, and schemas
  */
 
-import { isAlwaysBlocked, isPrivateIp } from '../net/address-guards';
+import { classifyProbeUrl } from '../utils/probe-policy';
 
 export { validateRequest, validateResponse, formatIssues } from './schema-validator';
 export type { ValidationIssue, ValidationOutcome } from './schema-validator';
@@ -47,40 +47,21 @@ export function getExpectedSchema(toolName: string): string {
 }
 
 /**
- * Env var that acknowledges private-network agent URLs outside dev/test.
- */
-export const ALLOW_PRIVATE_AGENT_URL_ENV = 'ADCP_ALLOW_PRIVATE_AGENT_URL';
-
-/** Loopback names that never resolve to a routable address. */
-const LOOPBACK_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost']);
-
-/**
- * Cloud metadata hostnames. These are ordinary registered names rather than IP
- * literals, so the CIDR classifiers can't see them.
- */
-const METADATA_HOSTNAMES = new Set([
-  'metadata',
-  'metadata.google.internal',
-  'metadata.goog',
-  'metadata.packet.net',
-  'instance-data',
-]);
-
-function privateAgentUrlsAllowed(): boolean {
-  const env = process.env.NODE_ENV;
-  if (env === 'test' || env === 'development') return true;
-  return process.env[ALLOW_PRIVATE_AGENT_URL_ENV] === '1';
-}
-
-/**
  * Validate an agent URL before it reaches a protocol transport.
  *
+ * The private/metadata decision delegates to {@link classifyProbeUrl} so agent
+ * URLs and discovery probes share one policy: loopback allowed (a dev loop
+ * already requires on-host access to abuse), RFC-1918/link-local/ULA refused
+ * unless the operator sets `ADCP_ALLOW_INTERNAL_PROBES=1`, cloud metadata
+ * refused even then. Deliberately NOT keyed on `NODE_ENV` — a staging image
+ * running `NODE_ENV=test` must not inherit a looser SSRF posture than
+ * production.
+ *
  * SCOPE: this is a synchronous check on the URL's literal scheme and hostname.
- * It refuses private/loopback/metadata *literals* and obviously bad schemes; it
- * does NOT resolve DNS, so it cannot stop a public hostname that resolves — or
- * rebinds — to a private address. DNS-level defense requires resolving and
- * pinning at connect time; see `ssrfSafeFetch` and
- * `createPinAndBindFetch` for the transports that do that.
+ * It does NOT resolve DNS, so it cannot stop a public hostname that resolves —
+ * or rebinds — to a private address. That gap is the same TOCTOU one tracked
+ * for `classifyProbeUrl`; DNS-level defense requires resolving and pinning at
+ * connect time, as `ssrfSafeFetch` and `createPinAndBindFetch` do.
  */
 export function validateAgentUrl(url: string): void {
   // Handle edge cases first
@@ -110,29 +91,15 @@ export function validateAgentUrl(url: string): void {
       throw new Error('URL must have a valid hostname');
     }
 
-    // Private, loopback, and metadata destinations are refused by default.
-    //
-    // The gate is an allowlist on NODE_ENV plus an explicit ops acknowledgment,
-    // not a `NODE_ENV === 'production'` test: an unset, misspelled, or
-    // orchestrator-stripped NODE_ENV in a deployed process has to fail closed.
-    // Matches `resolveAgent`'s `checkAllowPrivateIp` convention.
-    if (!privateAgentUrlsAllowed()) {
-      const hostname = parsedUrl.hostname.toLowerCase();
-
-      if (METADATA_HOSTNAMES.has(hostname)) {
-        throw new Error(`Metadata endpoint access not allowed (${hostname})`);
-      }
-
-      // `isPrivateIp` / `isAlwaysBlocked` do real CIDR matching and normalize
-      // bracketed IPv6, zone IDs, and IPv4-mapped IPv6 — so `[::1]`,
-      // `127.0.0.2`, `100.64.0.1`, and `::ffff:10.0.0.1` are all covered, and
-      // registered names like `10.example.com` are no longer false positives.
-      if (LOOPBACK_HOSTNAMES.has(hostname) || isAlwaysBlocked(hostname) || isPrivateIp(hostname)) {
-        throw new Error(
-          `Private network access not allowed (${hostname}). Set NODE_ENV=development or NODE_ENV=test ` +
-            `for local agents, or ${ALLOW_PRIVATE_AGENT_URL_ENV}=1 as an explicit acknowledgment.`
-        );
-      }
+    // Metadata and private-network destinations. One policy, shared with
+    // discovery probes — see `classifyProbeUrl` for the range table and the
+    // single `ADCP_ALLOW_INTERNAL_PROBES` opt-out. It does real CIDR matching
+    // over `net/address-guards`, so bracketed `[::1]`, `127.0.0.2`, CGNAT, and
+    // IPv4-mapped IPv6 are all classified correctly and registered names like
+    // `10.example.com` are not false positives.
+    const probe = classifyProbeUrl(parsedUrl.toString());
+    if (!probe.allowed) {
+      throw new Error(`${probe.reason} (agent URL not allowed)`);
     }
   } catch (e) {
     if (e instanceof Error) {

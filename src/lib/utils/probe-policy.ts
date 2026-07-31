@@ -101,6 +101,18 @@ export type ProbePolicyResult =
  * text names only the hostname so that compliance reports and log
  * aggregators don't leak internal network topology.
  */
+/**
+ * Cloud-metadata hostnames, lowercased. Registered names rather than IP
+ * literals, so the CIDR classifiers in `net/address-guards` cannot see them.
+ */
+const METADATA_HOSTNAMES: ReadonlySet<string> = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'metadata.goog',
+  'metadata.packet.net',
+  'instance-data',
+]);
+
 export function classifyProbeUrl(url: string): ProbePolicyResult {
   let parsed: URL;
   try {
@@ -113,8 +125,23 @@ export function classifyProbeUrl(url: string): ProbePolicyResult {
   }
 
   // `URL.hostname` returns IPv6 literals wrapped in brackets; the address
-  // classifiers want the bare form.
-  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  // classifiers want the bare form. A fully-qualified name keeps its root dot
+  // (`localhost.`, `metadata.google.internal.`) and resolves identically, so
+  // strip it before any name comparison.
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '');
+
+  // Cloud metadata by NAME. These are ordinary registered names, so no CIDR
+  // classifier sees them — `metadata.google.internal` is the second-most-used
+  // IMDS target after 169.254.169.254 and needs no IP literal at all. Refused
+  // even with the opt-in, same as the address-literal IMDS ranges below.
+  // Mirrors `WEBHOOK_SSRF_POLICY.hosts_denied_metadata`.
+  if (METADATA_HOSTNAMES.has(host)) {
+    return {
+      allowed: false,
+      code: 'always_blocked',
+      reason: `Refusing to probe '${host}': cloud-metadata hostname.`,
+    };
+  }
 
   // IMDS / IPv6 link-local: ALWAYS refused. Cloud metadata reach is never
   // a legitimate buyer-side use case — refuse even when the operator has

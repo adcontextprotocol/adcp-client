@@ -38,7 +38,9 @@ export interface CLIFlowHandlerConfig {
  * @example
  * ```typescript
  * const flow = new CLIFlowHandler({ callbackPort: 8766 });
- * await flow.redirectToAuthorization(new URL('https://auth.example.com/authorize?...'));
+ * // The authorization URL MUST carry `state` — the callback is bound to it.
+ * // `MCPOAuthProvider` supplies one automatically via its `state()` method.
+ * await flow.redirectToAuthorization(new URL('https://auth.example.com/authorize?client_id=abc&state=<random>'));
  * const code = await flow.waitForCallback();
  * await flow.cleanup();
  * ```
@@ -125,7 +127,13 @@ export class CLIFlowHandler implements OAuthFlowHandler {
 
     // Capture the state we are about to send so the callback can be bound to
     // this flow. The loopback callback server is reachable by any local process,
-    // so without this check any of them could inject an authorization code.
+    // so without this check any of them could inject or cancel an authorization.
+    //
+    // Scope, stated honestly: this defeats a process that cannot see the
+    // authorization URL, which is the ordinary case. It does NOT defeat a local
+    // process running as the same user that reads the URL out of this process's
+    // argv (`ps`, /proc/<pid>/cmdline) while the browser opens, or off stdout
+    // when not `quiet`. PKCE is what protects the code exchange there.
     const state = authorizationUrl.searchParams.get('state');
     if (!state) {
       throw new Error(
@@ -203,6 +211,22 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       return;
     }
 
+    // Bind the callback to the flow that started it BEFORE interpreting any of
+    // its parameters. An unbound callback is not ours to act on — and that
+    // includes its error parameters: reading `error=access_denied` first would
+    // let any local process cancel the user's login with no knowledge of the
+    // state at all. Code injection and cancellation are the same hole, so the
+    // check has to precede both branches.
+    const state = url.searchParams.get('state');
+    if (!this.expectedState || !state || !statesMatch(state, this.expectedState)) {
+      const message = 'OAuth state mismatch: callback does not correspond to the authorization request';
+      this.sendErrorResponse(res, message);
+      if (this.pendingCallback) {
+        this.pendingCallback.reject(new Error(message));
+      }
+      return;
+    }
+
     const code = url.searchParams.get('code');
     const error = url.searchParams.get('error');
     const errorDescription = url.searchParams.get('error_description');
@@ -211,6 +235,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       const errorMsg = errorDescription || error;
       this.sendErrorResponse(res, errorMsg);
 
+      this.expectedState = null;
       if (this.pendingCallback) {
         if (error === 'access_denied') {
           this.pendingCallback.reject(new OAuthCancelledError());
@@ -223,22 +248,9 @@ export class CLIFlowHandler implements OAuthFlowHandler {
 
     if (!code) {
       this.sendErrorResponse(res, 'No authorization code received');
+      this.expectedState = null;
       if (this.pendingCallback) {
         this.pendingCallback.reject(new Error('No authorization code received'));
-      }
-      return;
-    }
-
-    // Bind the callback to the flow that started it. Without this any local
-    // process could resolve the pending authorization with a code of its
-    // choosing, and code substitution follows wherever the authorization server
-    // does not strictly bind PKCE to the code.
-    const state = url.searchParams.get('state');
-    if (!this.expectedState || !state || !statesMatch(state, this.expectedState)) {
-      const message = 'OAuth state mismatch: callback does not correspond to the authorization request';
-      this.sendErrorResponse(res, message);
-      if (this.pendingCallback) {
-        this.pendingCallback.reject(new Error(message));
       }
       return;
     }

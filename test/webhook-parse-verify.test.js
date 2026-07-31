@@ -34,7 +34,7 @@ function deliveryEnvelope(overrides = {}) {
 
 describe('verifyAndParseWebhook', () => {
   test('accepts delivery reports nested inside an MCP webhook envelope', async () => {
-    const client = new SingleAgentClient(agent, {});
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true });
     const parsed = await client.verifyAndParseWebhook({
       body: JSON.stringify(deliveryEnvelope()),
       taskType: 'media_buy_delivery',
@@ -49,7 +49,7 @@ describe('verifyAndParseWebhook', () => {
   });
 
   test('accepts AdCP 3.0 envelopes that omit operation_id (backwards compat)', async () => {
-    const client = new SingleAgentClient(agent, {});
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true });
     const { operation_id, ...envelopeWithoutOperationId } = deliveryEnvelope();
     const parsed = await client.verifyAndParseWebhook({
       body: JSON.stringify(envelopeWithoutOperationId),
@@ -64,7 +64,7 @@ describe('verifyAndParseWebhook', () => {
   });
 
   test('falls back to routing-context operationId when the envelope omits operation_id', async () => {
-    const client = new SingleAgentClient(agent, {});
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true });
     const { operation_id, ...envelopeWithoutOperationId } = deliveryEnvelope();
     const parsed = await client.verifyAndParseWebhook({
       body: JSON.stringify(envelopeWithoutOperationId),
@@ -77,7 +77,7 @@ describe('verifyAndParseWebhook', () => {
   });
 
   test('rejects bare delivery result payloads before dispatch', async () => {
-    const client = new SingleAgentClient(agent, {});
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true });
     const parsed = await client.verifyAndParseWebhook({
       body: JSON.stringify(deliveryEnvelope().result),
       taskType: 'media_buy_delivery',
@@ -90,7 +90,7 @@ describe('verifyAndParseWebhook', () => {
   });
 
   test('handleWebhook throws a typed dispatch error for malformed envelopes', async () => {
-    const client = new SingleAgentClient(agent, {});
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true });
     await assert.rejects(
       () =>
         client.handleWebhook(
@@ -109,7 +109,7 @@ describe('verifyAndParseWebhook', () => {
 
   test('returns typed signature errors for invalid HMAC requests', async () => {
     const webhookSecret = 'test-secret-key-minimum-32-characters-long';
-    const client = new SingleAgentClient(agent, { webhookSecret });
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true, webhookSecret });
     const rawBody = JSON.stringify(deliveryEnvelope());
     const timestamp = Math.floor(Date.now() / 1000);
 
@@ -142,7 +142,7 @@ describe('verifyAndParseWebhook', () => {
 
   test('parses verified raw HMAC bytes instead of a conflicting parsed payload', async () => {
     const webhookSecret = 'test-secret-key-minimum-32-characters-long';
-    const client = new SingleAgentClient(agent, { webhookSecret });
+    const client = new SingleAgentClient(agent, { allowUnauthenticatedWebhooks: true, webhookSecret });
     const rawEnvelope = deliveryEnvelope({ idempotency_key: 'whk_signed_raw_0000001' });
     const rawBody = JSON.stringify(rawEnvelope);
     const timestamp = Math.floor(Date.now() / 1000);
