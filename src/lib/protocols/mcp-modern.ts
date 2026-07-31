@@ -264,10 +264,7 @@ function isNegotiationAuthFailure(error: unknown): boolean {
  * server rejected *on the probe alone* tells us nothing about the credential,
  * and that is the case worth retrying on the legacy transport.
  */
-function presentedStaticCredential(
-  authHeaders: Record<string, string>,
-  authProvider?: object
-): boolean {
+function presentedStaticCredential(authHeaders: Record<string, string>, authProvider?: object): boolean {
   if (authProvider) return false;
   return Object.keys(authHeaders).some(key => {
     const lower = key.toLowerCase();
@@ -362,11 +359,7 @@ async function createNegotiatedClient(
     // the escape hatch the SDK documents for a server known to be legacy. If
     // the credential really is bad, that connect fails on its own and surfaces
     // the server's 401.
-    if (
-      isNegotiationAuthFailure(error) &&
-      !skipProbe &&
-      presentedStaticCredential(authHeaders, options.authProvider)
-    ) {
+    if (isNegotiationAuthFailure(error) && !skipProbe && presentedStaticCredential(authHeaders, options.authProvider)) {
       return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
     throw error;

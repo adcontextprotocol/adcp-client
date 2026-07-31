@@ -382,10 +382,7 @@ for (const status of [401, 403]) {
     const result = await readDelivery(prodAgent(await prodAgentConfig(seller.url, `req-bad-${status}`)));
 
     assert.notEqual(result.success, true, 'a rejected credential must not read as a successful delivery');
-    assert.ok(
-      result.error !== undefined,
-      'a rejected credential must surface an error rather than an empty result'
-    );
+    assert.ok(result.error !== undefined, 'a rejected credential must surface an error rather than an empty result');
   });
 }
 
@@ -428,8 +425,5 @@ test('v3 MCP seller: the legacy retry after a probe refusal is attempted at most
     `expected the probe/retry pair to be bounded, saw ${discoverProbes.length} server/discover attempts ` +
       `across ${seller.requests.length} hops`
   );
-  assert.ok(
-    seller.requests.length < 40,
-    `expected a bounded number of hops, saw ${seller.requests.length}`
-  );
+  assert.ok(seller.requests.length < 40, `expected a bounded number of hops, saw ${seller.requests.length}`);
 });
