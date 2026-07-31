@@ -7,6 +7,7 @@
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { spawn } from 'child_process';
+import { timingSafeEqual } from 'crypto';
 import { URL } from 'url';
 import { platform } from 'os';
 import type { OAuthFlowHandler } from './types';
@@ -48,6 +49,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   private readonly callbackPath: string;
   private readonly quiet: boolean;
   private server: Server | null = null;
+  private expectedState: string | null = null;
   private pendingCallback: {
     resolve: (code: string) => void;
     reject: (error: Error) => void;
@@ -67,8 +69,12 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   /**
    * Open URL in the user's default browser
    *
-   * Uses spawn with separate arguments to avoid command injection risks.
-   * The URL is passed as an argument, not interpolated into a shell command.
+   * Spawns the platform opener directly with the URL as a separate argument, so
+   * no command interpreter parses it. Windows uses `rundll32 url.dll` rather
+   * than `cmd /c start`: spawning `cmd` makes the interpreter itself the child,
+   * so `cmd` would parse `&`, `|`, and `^` in the URL even though `shell` is
+   * unset — and authorization URLs carry `&` by construction and derive partly
+   * from a discovered `authorization_endpoint`.
    */
   private async openBrowser(url: string): Promise<void> {
     return new Promise(resolve => {
@@ -81,8 +87,8 @@ export class CLIFlowHandler implements OAuthFlowHandler {
           args = [url];
           break;
         case 'win32':
-          command = 'cmd';
-          args = ['/c', 'start', '', url];
+          command = 'rundll32';
+          args = ['url.dll,FileProtocolHandler', url];
           break;
         default:
           // Linux and others - try xdg-open
@@ -111,6 +117,23 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (!['http:', 'https:'].includes(authorizationUrl.protocol)) {
+      throw new Error(
+        `Refusing to open authorization URL with scheme "${authorizationUrl.protocol}" (only http/https)`
+      );
+    }
+
+    // Capture the state we are about to send so the callback can be bound to
+    // this flow. The loopback callback server is reachable by any local process,
+    // so without this check any of them could inject an authorization code.
+    const state = authorizationUrl.searchParams.get('state');
+    if (!state) {
+      throw new Error(
+        'Authorization URL is missing the "state" parameter; refusing to start a loopback OAuth flow that cannot bind its callback'
+      );
+    }
+    this.expectedState = state;
+
     const url = authorizationUrl.toString();
 
     if (!this.quiet) {
@@ -202,6 +225,20 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       this.sendErrorResponse(res, 'No authorization code received');
       if (this.pendingCallback) {
         this.pendingCallback.reject(new Error('No authorization code received'));
+      }
+      return;
+    }
+
+    // Bind the callback to the flow that started it. Without this any local
+    // process could resolve the pending authorization with a code of its
+    // choosing, and code substitution follows wherever the authorization server
+    // does not strictly bind PKCE to the code.
+    const state = url.searchParams.get('state');
+    if (!this.expectedState || !state || !statesMatch(state, this.expectedState)) {
+      const message = 'OAuth state mismatch: callback does not correspond to the authorization request';
+      this.sendErrorResponse(res, message);
+      if (this.pendingCallback) {
+        this.pendingCallback.reject(new Error(message));
       }
       return;
     }
@@ -306,6 +343,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   }
 
   async cleanup(): Promise<void> {
+    this.expectedState = null;
     if (this.server) {
       return new Promise(resolve => {
         this.server!.close(() => {
@@ -315,6 +353,16 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       });
     }
   }
+}
+
+/**
+ * Compare two OAuth state values without leaking their contents through timing.
+ */
+function statesMatch(received: string, expected: string): boolean {
+  const a = Buffer.from(received, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /**

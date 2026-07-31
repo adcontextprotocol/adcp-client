@@ -100,6 +100,56 @@ import {
 import type { TestScenario, TestOptions, TestResult, TestStepResult, AgentProfile } from './types';
 import { getLogger } from './client';
 
+const REDACTED = '[redacted]';
+
+/**
+ * Strip credentials out of `TestOptions` before it reaches a logger.
+ *
+ * `TestOptions` carries bearer tokens, Basic passwords, OAuth access/refresh
+ * tokens, client-credential secrets, test-kit API keys, and caller-supplied
+ * headers that may hold any of the above. The default logger serializes its
+ * whole context with `JSON.stringify` to `console.log`, so logging the object
+ * verbatim puts live credentials into ordinary stdout and CI logs. Shapes are
+ * preserved — which auth type and which header names were in play is the useful
+ * part for debugging; the values are not.
+ */
+function redactTestOptions(options: TestOptions): Record<string, unknown> {
+  const safe: Record<string, unknown> = { ...options };
+
+  if (options.auth) {
+    // Keep `type` so the log still shows which scheme was exercised.
+    safe.auth = { type: options.auth.type, ...redactedFieldsFor(options.auth) };
+  }
+  if (options.headers) {
+    safe.headers = Object.fromEntries(Object.keys(options.headers).map(name => [name, REDACTED]));
+  }
+  if (options.test_kit?.auth) {
+    safe.test_kit = { ...options.test_kit, auth: REDACTED };
+  }
+  // `TransportOptions` holds no credentials (maxResponseBytes / fetchFn /
+  // requestTimeoutMs), and `JSON.stringify` drops the function, so it is left
+  // as-is deliberately.
+
+  return safe;
+}
+
+/** Every credential-bearing field of the auth union, masked. */
+function redactedFieldsFor(auth: NonNullable<TestOptions['auth']>): Record<string, string> {
+  switch (auth.type) {
+    case 'bearer':
+      return { token: REDACTED };
+    case 'basic':
+      return { username: REDACTED, password: REDACTED };
+    case 'oauth':
+      return { tokens: REDACTED };
+    case 'oauth_client_credentials':
+      return { credentials: REDACTED, tokens: REDACTED };
+    default:
+      // Unreachable for the declared union; masks wholesale if it ever widens.
+      return { value: REDACTED };
+  }
+}
+
 /**
  * Main entry point: Run a test scenario against an agent
  */
@@ -119,7 +169,7 @@ export async function testAgent(
     test_session_id: options.test_session_id || `addie-test-${Date.now()}`,
   };
 
-  logger.info({ agentUrl, scenario, options: effectiveOptions }, 'Starting agent test');
+  logger.info({ agentUrl, scenario, options: redactTestOptions(effectiveOptions) }, 'Starting agent test');
 
   try {
     let result: { steps: TestStepResult[]; profile?: AgentProfile };

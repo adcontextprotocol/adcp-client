@@ -2270,6 +2270,8 @@ export class SingleAgentClient {
           message: check.message,
         };
       }
+    } else {
+      warnUnverifiedWebhookReceive();
     }
 
     const payloadSource =
@@ -4244,28 +4246,40 @@ export class SingleAgentClient {
       );
 
       if (deliveryWebhookUrl) {
-        // Library defaults
-        const libraryDefaults = {
-          url: deliveryWebhookUrl,
-          authentication: {
-            schemes: ['HMAC-SHA256'] as const,
-            credentials: this.config.webhookSecret || 'placeholder_secret_min_32_characters_required',
-          },
-          reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
-        };
+        const consumerAuth = params.reporting_webhook?.authentication;
+        const defaultAuth = this.config.webhookSecret
+          ? { schemes: ['HMAC-SHA256'] as const, credentials: this.config.webhookSecret }
+          : undefined;
 
-        // Deep merge: consumer overrides library defaults
-        params = {
-          ...params,
-          reporting_webhook: {
-            ...libraryDefaults,
-            ...params.reporting_webhook,
-            authentication: {
-              ...libraryDefaults.authentication,
-              ...params.reporting_webhook?.authentication,
+        // `reporting-webhook.json` requires `authentication` throughout AdCP 3.x
+        // (the requirement lifts in 4.0 when RFC 9421 becomes the only path), so
+        // unlike `push_notification_config` the block cannot simply be omitted.
+        // With no configured secret and no caller-supplied credential there is
+        // nothing real to put there — registering a placeholder would tell the
+        // seller its delivery reports are authenticated by a constant that ships
+        // in this file. Skip the auto-injection instead and say why.
+        if (!consumerAuth && !defaultAuth) {
+          warnReportingWebhookNeedsSecret();
+        } else {
+          // Library defaults
+          const libraryDefaults = {
+            url: deliveryWebhookUrl,
+            reporting_frequency: (this.config.reportingWebhookFrequency || 'daily') as 'hourly' | 'daily' | 'monthly',
+          };
+
+          // Deep merge: consumer overrides library defaults
+          params = {
+            ...params,
+            reporting_webhook: {
+              ...libraryDefaults,
+              ...params.reporting_webhook,
+              authentication: {
+                ...defaultAuth,
+                ...consumerAuth,
+              },
             },
-          },
-        } as CanonicalCreateMediaBuyRequest;
+          } as CanonicalCreateMediaBuyRequest;
+        }
       }
     }
 
@@ -6719,6 +6733,49 @@ export class SingleAgentClient {
 
     return schemaMap[taskType] || null;
   }
+}
+
+let hasWarnedAboutUnverifiedWebhookReceive = false;
+
+/**
+ * Warn once when a webhook is accepted with no authenticity check at all.
+ *
+ * Without `webhookSecret` the legacy HMAC profile has nothing to verify against,
+ * so a structurally valid payload from any caller who can reach the receiver
+ * route is dispatched to async/activity handlers and updates task status. The
+ * spec's answer for a registration that omits `authentication` is the RFC 9421
+ * webhook profile; until this receiver verifies that profile, an operator
+ * running without a secret needs to know the check is absent rather than passing.
+ */
+function warnUnverifiedWebhookReceive(): void {
+  if (hasWarnedAboutUnverifiedWebhookReceive) return;
+  hasWarnedAboutUnverifiedWebhookReceive = true;
+  console.warn(
+    '[adcp] Webhook accepted WITHOUT authenticity verification: no `webhookSecret` is configured, ' +
+      'so any caller able to reach this receiver can forge task completions and status changes. ' +
+      'Configure `webhookSecret` to enable HMAC verification, and restrict network access to the ' +
+      'receiver route.'
+  );
+}
+
+let hasWarnedAboutReportingWebhookSecret = false;
+
+/**
+ * Warn once when an automatic `reporting_webhook` registration is skipped.
+ *
+ * `reporting-webhook.json` makes `authentication` required for all of AdCP 3.x,
+ * so the registration cannot be sent without a credential — and the only
+ * credential available without `webhookSecret` would be a hardcoded placeholder,
+ * which would misrepresent the channel as authenticated.
+ */
+function warnReportingWebhookNeedsSecret(): void {
+  if (hasWarnedAboutReportingWebhookSecret) return;
+  hasWarnedAboutReportingWebhookSecret = true;
+  console.warn(
+    '[adcp] Skipping automatic `reporting_webhook` registration: AdCP 3.x requires an `authentication` ' +
+      'block and no `webhookSecret` is configured. Set `webhookSecret` on the client, or pass an explicit ' +
+      '`reporting_webhook.authentication` on the request. The media buy itself is unaffected.'
+  );
 }
 
 function rawBodyFromUnknown(value: unknown): string | Buffer | Uint8Array | undefined {

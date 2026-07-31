@@ -87,11 +87,14 @@ describe('webhook template scoping', () => {
       return { status: 'completed', media_buy_id: 'mb_1' };
     };
 
+    // `reporting-webhook.json` requires `authentication`, so a registration is
+    // only sendable when a real credential backs it.
     const client = new SingleAgentClient(agent, {
       webhookUrlTemplate: {
         template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
         tools: ['media_buy_delivery'],
       },
+      webhookSecret: 'a-real-secret-of-at-least-32-characters',
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
     });
@@ -112,7 +115,80 @@ describe('webhook template scoping', () => {
       calls[0].params.reporting_webhook.url,
       /^https:\/\/buyer\.example\/webhook\/media_buy_delivery\/agent_1\/delivery_report_agent_1_/
     );
+    assert.deepEqual(calls[0].params.reporting_webhook.authentication, {
+      schemes: ['HMAC-SHA256'],
+      credentials: 'a-real-secret-of-at-least-32-characters',
+    });
     assert.equal(calls[0].options.webhookUrl, undefined);
+  });
+
+  it('skips reporting_webhook injection when no webhookSecret backs the required authentication', async () => {
+    // The alternative would be registering with a hardcoded placeholder
+    // credential, which tells the seller the channel is authenticated when it is
+    // not. Skipping leaves the media buy itself unaffected.
+    const calls = [];
+    ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+      calls.push({ taskName, params, options });
+      return { status: 'completed', media_buy_id: 'mb_1' };
+    };
+
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureEndpointDiscovered = async () => agent;
+    client.detectServerVersion = async () => 'v3';
+
+    await client.createMediaBuy({
+      account: { account_id: 'acc_1' },
+      brand: { domain: 'brand.example' },
+      start_time: 'asap',
+      end_time: '2026-12-31T00:00:00Z',
+      packages: [{ product_id: 'prod_1', budget: 1000, pricing_option_id: 'po_1' }],
+    });
+
+    assert.equal(calls.length, 1, 'the media buy still goes out');
+    assert.equal(calls[0].params.reporting_webhook, undefined, 'no unauthenticated registration is sent');
+  });
+
+  it('uses a caller-supplied authentication block when there is no webhookSecret', async () => {
+    const calls = [];
+    ProtocolClient.callTool = async (_agent, taskName, params, options) => {
+      calls.push({ taskName, params, options });
+      return { status: 'completed', media_buy_id: 'mb_1' };
+    };
+
+    const client = new SingleAgentClient(agent, {
+      webhookUrlTemplate: {
+        template: 'https://buyer.example/webhook/{task_type}/{agent_id}/{operation_id}',
+        tools: ['media_buy_delivery'],
+      },
+      validateFeatures: false,
+      validation: { requests: 'off', responses: 'off' },
+    });
+    client.ensureEndpointDiscovered = async () => agent;
+    client.detectServerVersion = async () => 'v3';
+
+    await client.createMediaBuy({
+      account: { account_id: 'acc_1' },
+      brand: { domain: 'brand.example' },
+      start_time: 'asap',
+      end_time: '2026-12-31T00:00:00Z',
+      packages: [{ product_id: 'prod_1', budget: 1000, pricing_option_id: 'po_1' }],
+      reporting_webhook: {
+        authentication: { schemes: ['Bearer'], credentials: 'caller-supplied-credential-value' },
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].params.reporting_webhook.authentication, {
+      schemes: ['Bearer'],
+      credentials: 'caller-supplied-credential-value',
+    });
   });
 
   it('does not inject reporting_webhook when media_buy_delivery is out of scope', async () => {

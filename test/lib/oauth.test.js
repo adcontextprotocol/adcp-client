@@ -643,6 +643,90 @@ describe('CLIFlowHandler', () => {
     // Should complete without throwing
     assert.ok(true);
   });
+
+  /**
+   * The callback server listens on loopback, so any local process or page can
+   * reach it. Binding the callback to the state that went out with the
+   * authorization request is what stops one of them from injecting a code.
+   *
+   * These cases all resolve before `openBrowser`, so no browser is launched.
+   */
+  describe('callback binding', () => {
+    test('refuses to start a flow whose authorization URL carries no state', async () => {
+      const handler = new CLIFlowHandler({ quiet: true });
+      await assert.rejects(
+        () => handler.redirectToAuthorization(new URL('https://auth.example.com/authorize?client_id=abc')),
+        /missing the "state" parameter/
+      );
+    });
+
+    test('refuses a non-http authorization scheme', async () => {
+      const handler = new CLIFlowHandler({ quiet: true });
+      await assert.rejects(
+        () => handler.redirectToAuthorization(new URL('file:///etc/passwd?state=s1')),
+        /Refusing to open authorization URL/
+      );
+    });
+
+    test('rejects a callback that arrives with no authorization request pending', async () => {
+      // expectedState is null here, so there is nothing to bind to and the
+      // callback must be refused rather than resolved with the supplied code.
+      const handler = new CLIFlowHandler({ callbackPort: 8791, timeout: 5000, quiet: true });
+      // Attach the rejection assertion before triggering the callback, so the
+      // rejection is never momentarily unhandled.
+      const rejection = assert.rejects(() => handler.waitForCallback(), /state mismatch/);
+
+      // Give the server a moment to bind before probing it.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const res = await fetch('http://127.0.0.1:8791/callback?code=injected_code');
+      assert.strictEqual(res.status, 400, 'the injecting caller gets an error page, not a success page');
+
+      await rejection;
+      await handler.cleanup();
+    });
+
+    /** Drive the real authorization path without launching a browser. */
+    async function startFlow(handler, state) {
+      handler.openBrowser = async () => {};
+      await handler.redirectToAuthorization(new URL(`https://auth.example.com/authorize?client_id=abc&state=${state}`));
+    }
+
+    test('rejects a callback whose state does not match the request', async () => {
+      const handler = new CLIFlowHandler({ callbackPort: 8792, timeout: 5000, quiet: true });
+      await startFlow(handler, 'the_real_state');
+      const rejection = assert.rejects(() => handler.waitForCallback(), /state mismatch/);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await fetch('http://127.0.0.1:8792/callback?code=injected_code&state=attacker_state');
+
+      await rejection;
+      await handler.cleanup();
+    });
+
+    test('rejects a callback that omits state entirely', async () => {
+      const handler = new CLIFlowHandler({ callbackPort: 8794, timeout: 5000, quiet: true });
+      await startFlow(handler, 'the_real_state');
+      const rejection = assert.rejects(() => handler.waitForCallback(), /state mismatch/);
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await fetch('http://127.0.0.1:8794/callback?code=injected_code');
+
+      await rejection;
+      await handler.cleanup();
+    });
+
+    test('accepts a callback whose state matches the request', async () => {
+      const handler = new CLIFlowHandler({ callbackPort: 8793, timeout: 5000, quiet: true });
+      await startFlow(handler, 'the_real_state');
+      const pending = handler.waitForCallback();
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await fetch('http://127.0.0.1:8793/callback?code=good_code&state=the_real_state');
+
+      assert.strictEqual(await pending, 'good_code');
+      await handler.cleanup();
+    });
+  });
 });
 
 describe('createCLIOAuthProvider', () => {

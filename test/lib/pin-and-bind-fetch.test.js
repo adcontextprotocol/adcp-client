@@ -12,6 +12,7 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const { createServer } = require('node:http');
 
 const {
   createPinAndBindFetch,
@@ -292,5 +293,77 @@ describe('createWebhookEmitter: pin-and-bind opt-in via fetch override', () => {
       result.errors.some(e => /SSRF|EADCP_SSRF_BLOCKED|hosts_denied|host_literal/i.test(e)),
       `expected SSRF-shaped error from the default fetch, got: ${JSON.stringify(result.errors)}`
     );
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Redirect handling
+// ────────────────────────────────────────────────────────────
+
+describe('createPinAndBindFetch: redirects are not followed', () => {
+  /**
+   * Both SSRF guards only ever see the URL the caller passed: the synchronous
+   * scheme/CIDR pre-check runs before the request, and undici skips
+   * `connect.lookup` entirely for IP-literal hosts. A followed `Location:` hop
+   * would therefore reach its destination unevaluated, which is the whole
+   * bypass. These tests pin the 3xx-surfacing behavior in place.
+   */
+  function startRedirector(location) {
+    const server = createServer((req, res) => {
+      if (req.url === '/start') {
+        res.writeHead(302, { Location: location });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('followed');
+    });
+    return new Promise(resolve => {
+      server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    });
+  }
+
+  test('a redirect to a denied IP literal is surfaced as a 3xx, not followed', async () => {
+    // Loopback is allowed by the test policy so the FIRST hop connects; the
+    // Location points at the cloud metadata service, which must never be hit.
+    const { server, port } = await startRedirector('https://169.254.169.254/latest/meta-data/');
+    try {
+      const fetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
+      const res = await fetch(`http://127.0.0.1:${port}/start`);
+      assert.strictEqual(res.status, 302, 'the 3xx itself must be returned to the caller');
+      assert.strictEqual(
+        res.headers.get('location'),
+        'https://169.254.169.254/latest/meta-data/',
+        'Location is surfaced so the caller can decide, having not been followed'
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a caller asking for redirect: follow still does not get redirects followed', async () => {
+    // The mode is forced rather than defaulted — honouring 'follow' here would
+    // reopen the bypass for any call site that passed it.
+    const { server, port } = await startRedirector('https://169.254.169.254/latest/meta-data/');
+    try {
+      const fetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
+      const res = await fetch(`http://127.0.0.1:${port}/start`, { redirect: 'follow' });
+      assert.strictEqual(res.status, 302, 'redirect: follow must not re-enable following');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a same-origin redirect is also not followed', async () => {
+    // Not a security case on its own, but it documents that the helper never
+    // follows — callers re-enter it with the new URL to get a fresh policy run.
+    const { server, port } = await startRedirector('/landing');
+    try {
+      const fetch = createPinAndBindFetch({ policy: LOOPBACK_OK_WEBHOOK_SSRF_POLICY });
+      const res = await fetch(`http://127.0.0.1:${port}/start`);
+      assert.strictEqual(res.status, 302);
+    } finally {
+      server.close();
+    }
   });
 });

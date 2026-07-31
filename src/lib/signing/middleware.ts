@@ -136,9 +136,14 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
 
 function resolveRawBody(req: ExpressLike): string {
   if (typeof req.rawBody === 'string') return req.rawBody;
-  const contentLengthHeader = getHeaderValue(req.headers, 'content-length');
-  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
-  if (Number.isFinite(contentLength) && contentLength > 0) {
+
+  // Verifying against `''` when the request actually carried a body would
+  // authenticate a surrogate: `validateCoveredComponents` derives `hasBody`
+  // from this value (so the `content-type` requirement lapses) and the
+  // `content-digest` check would describe the empty string, after which
+  // `next()` hands a downstream parser's real body to the handler. Every
+  // signal that a body exists therefore has to fail closed.
+  if (hasContentLength(req) || hasTransferEncoding(req) || hasParsedBody(req)) {
     throw new RequestSignatureError(
       'request_signature_header_malformed',
       1,
@@ -146,6 +151,30 @@ function resolveRawBody(req: ExpressLike): string {
     );
   }
   return '';
+}
+
+/** Present and not exactly `0` — an unparseable value counts as a body. */
+function hasContentLength(req: ExpressLike): boolean {
+  const header = getHeaderValue(req.headers, 'content-length');
+  return header !== undefined && header.trim() !== '0';
+}
+
+/**
+ * `Transfer-Encoding: chunked` requests carry no `Content-Length`, so a length
+ * test alone leaves the whole chunked-transfer path unguarded.
+ */
+function hasTransferEncoding(req: ExpressLike): boolean {
+  return getHeaderValue(req.headers, 'transfer-encoding') !== undefined;
+}
+
+/** A body parser mounted ahead of this middleware already consumed the stream. */
+function hasParsedBody(req: ExpressLike): boolean {
+  const body = req.body;
+  if (body === undefined || body === null) return false;
+  if (typeof body === 'string') return body.length > 0;
+  if (Buffer.isBuffer(body)) return body.length > 0;
+  if (typeof body === 'object') return Object.keys(body as Record<string, unknown>).length > 0;
+  return true;
 }
 
 function defaultUrl(req: ExpressLike): string {

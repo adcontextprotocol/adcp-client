@@ -469,14 +469,23 @@ export class ProtocolClient {
               // Build push_notification_config for ASYNC TASK STATUS notifications
               // (NOT for reporting_webhook - that stays in args)
               // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+              // `authentication` is a scheme SELECTOR, not a fallback: per
+              // push-notification-config.json, its presence opts the seller into
+              // legacy HMAC-SHA256 and its absence selects the RFC 9421 webhook
+              // profile. Emitting it with a placeholder credential would
+              // therefore downgrade every webhook to legacy HMAC keyed by a
+              // constant that ships in this file. Omit the block unless we hold a
+              // real secret, so no-secret deployments get 9421.
               const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
                 ? {
                     url: webhookUrl,
                     ...(webhookToken && { token: webhookToken }),
-                    authentication: {
-                      schemes: ['HMAC-SHA256'],
-                      credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
-                    },
+                    ...(webhookSecret && {
+                      authentication: {
+                        schemes: ['HMAC-SHA256' as const],
+                        credentials: webhookSecret,
+                      },
+                    }),
                   }
                 : undefined;
 

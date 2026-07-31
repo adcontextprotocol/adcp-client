@@ -9,6 +9,8 @@
  * Publishers should extend or replace this with persistent storage.
  */
 
+import { randomBytes } from 'node:crypto';
+
 import type {
   CreatePropertyListRequest,
   CreatePropertyListResponse,
@@ -329,15 +331,14 @@ export class PropertyListAdapter implements IPropertyListAdapter {
   }
 
   /**
-   * Generate a random token for auth
+   * Generate a random token for auth.
+   *
+   * Returned to callers as `auth_token`, so it is a bearer credential and must
+   * come from a CSPRNG — `Math.random` exposes recoverable PRNG state. 32 bytes
+   * of base64url is 256 bits of entropy.
    */
   protected generateToken(): string {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < 32; i++) {
-      result += chars[Math.floor(Math.random() * chars.length)];
-    }
-    return result;
+    return randomBytes(32).toString('base64url');
   }
 }
 

@@ -394,13 +394,23 @@ function validateTargetUri(rawUrl: string): void {
  * `loopback_mock` webhook receiver binds to 127.0.0.1 (or the IPv6 [::1])
  * and publishers emit `http://127.0.0.1:<port>/…` URLs for delivery; the
  * signature covers `@target-uri` byte-for-byte, so the verifier sees the
- * http scheme. Production traffic never reaches loopback, so this exemption
- * can't be used to bypass TLS for real webhooks.
+ * http scheme.
+ *
+ * The exemption is restricted to IPv4 literals in 127.0.0.0/8, the IPv6
+ * loopback, and the literal name `localhost`. A prefix test would also match
+ * registered names like `127.example.com`, which resolve to arbitrary public
+ * addresses and would let a real webhook drop TLS.
  */
+const LOOPBACK_IPV4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
 function isLoopbackHost(hostname: string): boolean {
   if (!hostname) return false;
   const normalized = hostname.toLowerCase();
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.');
+  // Node's `URL.hostname` keeps IPv6 literals bracketed.
+  if (normalized === 'localhost' || normalized === '::1' || normalized === '[::1]') return true;
+  const v4 = LOOPBACK_IPV4.exec(normalized);
+  if (!v4) return false;
+  return v4.slice(1).every(octet => Number(octet) <= 255);
 }
 
 /**

@@ -37,6 +37,24 @@ interface SetEnvelope {
 
 type Envelope = DateEnvelope | MapEnvelope | SetEnvelope;
 
+/**
+ * Copy one key onto a fresh result object as an own data property.
+ *
+ * `JSON.parse` produces a genuine own `__proto__` key, and `Object.entries`
+ * enumerates it. Plain `out[key] = value` assignment would reach
+ * `Object.prototype`'s `__proto__` setter and replace the result's prototype
+ * with caller data instead of creating the key. `defineProperty` always creates
+ * an own property, so `__proto__` round-trips like any other field.
+ */
+function defineOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function isEnvelope(value: unknown): value is Envelope {
   if (typeof value !== 'object' || value === null) return false;
   const o = value as Record<string, unknown>;
@@ -86,7 +104,7 @@ export function structuredSerialize(value: unknown): unknown {
   if (t === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = structuredSerialize(v);
+      defineOwn(out, key, structuredSerialize(v));
     }
     return out;
   }
@@ -122,7 +140,7 @@ export function structuredDeserialize(value: unknown): unknown {
   if (t === 'object') {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = structuredDeserialize(v);
+      defineOwn(out, key, structuredDeserialize(v));
     }
     return out;
   }

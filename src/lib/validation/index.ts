@@ -3,6 +3,8 @@
  * Functions for validating URLs, responses, and schemas
  */
 
+import { isAlwaysBlocked, isPrivateIp } from '../net/address-guards';
+
 export { validateRequest, validateResponse, formatIssues } from './schema-validator';
 export type { ValidationIssue, ValidationOutcome } from './schema-validator';
 export { buildValidationError, buildAdcpValidationErrorPayload } from './schema-errors';
@@ -45,7 +47,40 @@ export function getExpectedSchema(toolName: string): string {
 }
 
 /**
- * Validate agent URL to prevent SSRF attacks
+ * Env var that acknowledges private-network agent URLs outside dev/test.
+ */
+export const ALLOW_PRIVATE_AGENT_URL_ENV = 'ADCP_ALLOW_PRIVATE_AGENT_URL';
+
+/** Loopback names that never resolve to a routable address. */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', 'localhost.localdomain', 'ip6-localhost']);
+
+/**
+ * Cloud metadata hostnames. These are ordinary registered names rather than IP
+ * literals, so the CIDR classifiers can't see them.
+ */
+const METADATA_HOSTNAMES = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'metadata.goog',
+  'metadata.packet.net',
+  'instance-data',
+]);
+
+function privateAgentUrlsAllowed(): boolean {
+  const env = process.env.NODE_ENV;
+  if (env === 'test' || env === 'development') return true;
+  return process.env[ALLOW_PRIVATE_AGENT_URL_ENV] === '1';
+}
+
+/**
+ * Validate an agent URL before it reaches a protocol transport.
+ *
+ * SCOPE: this is a synchronous check on the URL's literal scheme and hostname.
+ * It refuses private/loopback/metadata *literals* and obviously bad schemes; it
+ * does NOT resolve DNS, so it cannot stop a public hostname that resolves — or
+ * rebinds — to a private address. DNS-level defense requires resolving and
+ * pinning at connect time; see `ssrfSafeFetch` and
+ * `createPinAndBindFetch` for the transports that do that.
  */
 export function validateAgentUrl(url: string): void {
   // Handle edge cases first
@@ -75,21 +110,28 @@ export function validateAgentUrl(url: string): void {
       throw new Error('URL must have a valid hostname');
     }
 
-    // Block private IP ranges and localhost in production
-    if (process.env.NODE_ENV === 'production') {
+    // Private, loopback, and metadata destinations are refused by default.
+    //
+    // The gate is an allowlist on NODE_ENV plus an explicit ops acknowledgment,
+    // not a `NODE_ENV === 'production'` test: an unset, misspelled, or
+    // orchestrator-stripped NODE_ENV in a deployed process has to fail closed.
+    // Matches `resolveAgent`'s `checkAllowPrivateIp` convention.
+    if (!privateAgentUrlsAllowed()) {
       const hostname = parsedUrl.hostname.toLowerCase();
-      if (
-        ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname) ||
-        hostname.startsWith('192.168.') ||
-        hostname.startsWith('10.') ||
-        hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)
-      ) {
-        throw new Error('Private network access not allowed in production');
+
+      if (METADATA_HOSTNAMES.has(hostname)) {
+        throw new Error(`Metadata endpoint access not allowed (${hostname})`);
       }
 
-      // Block metadata endpoints
-      if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal') {
-        throw new Error('Metadata endpoint access not allowed');
+      // `isPrivateIp` / `isAlwaysBlocked` do real CIDR matching and normalize
+      // bracketed IPv6, zone IDs, and IPv4-mapped IPv6 — so `[::1]`,
+      // `127.0.0.2`, `100.64.0.1`, and `::ffff:10.0.0.1` are all covered, and
+      // registered names like `10.example.com` are no longer false positives.
+      if (LOOPBACK_HOSTNAMES.has(hostname) || isAlwaysBlocked(hostname) || isPrivateIp(hostname)) {
+        throw new Error(
+          `Private network access not allowed (${hostname}). Set NODE_ENV=development or NODE_ENV=test ` +
+            `for local agents, or ${ALLOW_PRIVATE_AGENT_URL_ENV}=1 as an explicit acknowledgment.`
+        );
       }
     }
   } catch (e) {
