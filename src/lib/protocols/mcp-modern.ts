@@ -243,11 +243,46 @@ function evictLeastRecentlyUsed(): void {
   void client?.close().catch(() => {});
 }
 
+/**
+ * Did this connect fail because the era-negotiation probe was answered with
+ * `401`/`403`? That is the one probe outcome the MCP client classifies as
+ * terminal instead of falling back to the legacy era.
+ */
+function isNegotiationAuthFailure(error: unknown): boolean {
+  return is401Error(error) || httpStatusOf(error) === 403;
+}
+
+/**
+ * Were we already presenting a static credential on the probe?
+ *
+ * This is the line between "the server is challenging us to authenticate" and
+ * "the server refused this method". With no credential, a `401` is a real
+ * challenge and the caller wants it: `discoverMCPEndpoint` walks the
+ * `WWW-Authenticate` / RFC 9728 chain and reports how to authenticate. With an
+ * OAuth provider, a `401` is the provider's cue to refresh, so it must reach
+ * the OAuth machinery untouched. Only a static token/header credential that the
+ * server rejected *on the probe alone* tells us nothing about the credential,
+ * and that is the case worth retrying on the legacy transport.
+ */
+function presentedStaticCredential(authHeaders: Record<string, string>, authProvider?: object): boolean {
+  if (authProvider) return false;
+  return Object.keys(authHeaders).some(key => {
+    const lower = key.toLowerCase();
+    return lower === 'authorization' || lower === 'x-adcp-auth';
+  });
+}
+
 async function createNegotiatedClient(
   cacheKey: string,
   options: ModernConnectionOptions,
   authHeaders: Record<string, string>,
-  useCachedDiscovery = true
+  useCachedDiscovery = true,
+  /**
+   * Skip the `server/discover` probe and `initialize` straight into the legacy
+   * era. Set only on the retry after a negotiation-time 401/403 — see the catch
+   * block below.
+   */
+  skipProbe = false
 ): Promise<Client> {
   const generation = connectionGeneration;
   const requestTimeoutMs = resolveRequestTimeoutMs(options.requestTimeoutMs);
@@ -282,14 +317,18 @@ async function createNegotiatedClient(
     }
   );
 
-  const prior = useCachedDiscovery ? getCachedModernDiscovery(cacheKey) : undefined;
+  const prior = skipProbe
+    ? ({ kind: 'legacy' } as const)
+    : useCachedDiscovery
+      ? getCachedModernDiscovery(cacheKey)
+      : undefined;
   try {
     await client.connect(transport, {
       ...(options.signal && { signal: options.signal }),
       ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
       ...(prior && { prior }),
     });
-    if (prior) clientsUsingCachedDiscovery.add(client);
+    if (prior && !skipProbe) clientsUsingCachedDiscovery.add(client);
     if (!prior) {
       const discover = client.getDiscoverResult();
       if (generation === connectionGeneration) {
@@ -299,14 +338,46 @@ async function createNegotiatedClient(
     }
     return client;
   } catch (error) {
-    if (prior) modernDiscoveries.delete(cacheKey);
+    if (prior && !skipProbe) modernDiscoveries.delete(cacheKey);
     try {
       await client.close();
     } catch {
       /* ignore close errors */
     }
-    if (prior && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
+    // `!skipProbe` keeps the explicit-legacy retry terminal. Re-probing here is
+    // only meaningful when `prior` was a *cached modern* discovery that has gone
+    // stale — dropping the cache and negotiating afresh can then succeed. On the
+    // `skipProbe` retry `prior` is the synthetic `{ kind: 'legacy' }`: there is
+    // no stale cache to discard, and recursing would reset `skipProbe` to its
+    // default and re-enter the probe→legacy retry below a second time.
+    //
+    // Reachability: server-driven failures on this path surface as
+    // `SdkHttpError` (measured: a 5xx legacy `initialize` gives
+    // `CLIENT_HTTP_NOT_IMPLEMENTED`, a malformed body
+    // `CLIENT_HTTP_UNEXPECTED_CONTENT`), so no server can drive the cycle today.
+    // But `EraNegotiationFailed` is not unreachable under `prior`: the client
+    // raises it from `_legacyHandshake` when `supportedProtocolVersions` offers
+    // no pre-2026-07-28 version, and for an unrecognized `prior` shape. Those
+    // depend on client construction and the library's error taxonomy — both of
+    // which moved under us in the 2.0.0-beta.4 -> 2.0.0 bump. The guard makes
+    // the bound independent of them.
+    if (prior && !skipProbe && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
       return createNegotiatedClient(cacheKey, options, authHeaders, false);
+    }
+    // Era negotiation is meant to be automatic: `mode: 'auto'` documents that
+    // "definitive legacy signals (and anything unrecognized) fall back to the
+    // plain legacy `initialize` handshake". 401/403 are the sole exception in
+    // the MCP client's classifier (`classifyHttpError`), which is right when we
+    // hold no credential — then a 401 IS the server's challenge and the caller
+    // needs it — and wrong when we already presented one the server accepts on
+    // other methods. In that case the refusal is a verdict on
+    // `server/discover`, not on the credential, and the automatic fallback
+    // should have run. Do it here: skip the probe and `initialize` directly,
+    // the escape hatch the SDK documents for a server known to be legacy. If
+    // the credential really is bad, that connect fails on its own and surfaces
+    // the server's 401.
+    if (isNegotiationAuthFailure(error) && !skipProbe && presentedStaticCredential(authHeaders, options.authProvider)) {
+      return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
     throw error;
   }
