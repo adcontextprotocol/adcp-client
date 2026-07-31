@@ -45,7 +45,13 @@ const STANDALONE_SCHEMAS: string[] = []; // ['adagents']
 // Shared schemas that are authoritative in core.generated.ts but are also
 // pulled into tool compilation through request/response $refs. Keep them out
 // of tools.generated.ts and import references from core.generated.ts instead.
-const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set(['AudienceConstraints', 'PurchaseType']);
+const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
+  'AudienceConstraints',
+  'CatalogItemDeliveryMetrics',
+  'GeoDeliveryMetrics',
+  'KeywordDeliveryMetrics',
+  'PurchaseType',
+]);
 
 const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
   oldName: string;
@@ -432,6 +438,50 @@ export function expandConditionalRequiredDiscriminator(schema: any): any {
 }
 
 /**
+ * json-schema-to-typescript loses parent-level requiredness when an object is
+ * refined by property-only anyOf branches. PostalCountrySystem uses this shape
+ * to constrain valid country/system pairs, so copy the unconditional parent
+ * requirements into every branch before compilation. This is semantics-
+ * preserving: the parent required array already applies to every anyOf arm.
+ */
+export function preservePostalCountrySystemRequiredness(schema: any): any {
+  if (
+    !schema ||
+    typeof schema !== 'object' ||
+    Array.isArray(schema) ||
+    schema.title !== 'Postal Country System' ||
+    !schema.properties ||
+    !Array.isArray(schema.required) ||
+    !Array.isArray(schema.anyOf) ||
+    schema.anyOf.length === 0
+  ) {
+    return schema;
+  }
+
+  const parentRequired = schema.required.filter(
+    (field: unknown): field is string =>
+      typeof field === 'string' && Object.prototype.hasOwnProperty.call(schema.properties, field)
+  );
+  if (parentRequired.length === 0) return schema;
+  if (
+    !schema.anyOf.every(
+      (branch: any) =>
+        branch && typeof branch === 'object' && !Array.isArray(branch) && branch.properties && !branch.$ref
+    )
+  ) {
+    return schema;
+  }
+
+  return {
+    ...schema,
+    anyOf: schema.anyOf.map((branch: any) => ({
+      ...branch,
+      required: [...new Set([...parentRequired, ...(Array.isArray(branch.required) ? branch.required : [])])],
+    })),
+  };
+}
+
+/**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
@@ -444,6 +494,7 @@ export function enforceStrictSchema(schema: any): any {
   }
 
   schema = expandConditionalRequiredDiscriminator(schema);
+  schema = preservePostalCountrySystemRequiredness(schema);
 
   // Rewrite mutual-exclusion `oneOf` patterns (e.g. Format.renders[]) into
   // explicit closed-shape branches before any further processing — see
@@ -1006,27 +1057,6 @@ const BACKWARD_COMPAT_OPTIONAL_FIELDS: Record<string, string[]> = {
   // additions. Older v3 sellers may still emit the legacy success shape.
   CreateMediaBuyResponse: ['confirmed_at', 'revision'],
   UpdateMediaBuyResponse: ['revision'],
-  // get_media_buy_delivery: by_package items
-  // v2 by_package only had {package_id, buyer_ref?, pacing_index?} + DeliveryMetrics.
-  // pricing_model, rate, currency, and all breakdown ID fields are v3 additions.
-  GetMediaBuyDeliveryResponse: [
-    // by_package top-level fields new in v3
-    'pricing_model',
-    'rate',
-    'currency',
-    // breakdown array item IDs new in v3 (arrays themselves are optional but if provided,
-    // v2 agents may omit the ID fields)
-    'content_id', // by_catalog_item items
-    'keyword', // by_keyword items
-    'match_type', // by_keyword items
-    'geo_level', // by_geo items
-    'geo_code', // by_geo items
-    'device_type', // by_device_type items
-    'device_platform', // by_device_platform items
-    'audience_id', // by_audience items
-    'audience_source', // by_audience items
-    'placement_id', // by_placement items
-  ],
   // get_media_buys: media_buy items
   // total_budget and approval_status are new required fields in v3.
   // beta.7 confirmed_at/revision are handled by applyCodegenSchemaWorkarounds
@@ -1175,6 +1205,91 @@ function removeRequiredFields(schema: any, fieldsToMakeOptional: string[]): any 
   return cleaned;
 }
 
+function makeRootFieldsOptional(schema: any, fieldsToMakeOptional: string[]): any {
+  const cleaned = removeRequiredFields(schema, fieldsToMakeOptional);
+  if (Array.isArray(cleaned.allOf)) {
+    cleaned.allOf = cleaned.allOf.map((member: any) => removeRequiredFields(member, fieldsToMakeOptional));
+  }
+  return cleaned;
+}
+
+const GET_MEDIA_BUY_DELIVERY_COMPAT_BREAKDOWNS = [
+  {
+    property: 'by_catalog_item',
+    optionalFields: ['content_id'],
+    title: 'Get Media Buy Delivery Catalog Item Metrics',
+  },
+  {
+    property: 'by_keyword',
+    optionalFields: ['keyword', 'match_type'],
+    title: 'Get Media Buy Delivery Keyword Metrics',
+  },
+  {
+    property: 'by_geo',
+    optionalFields: ['geo_level', 'geo_code'],
+    title: 'Get Media Buy Delivery Geo Metrics',
+  },
+  {
+    property: 'by_device_type',
+    optionalFields: ['device_type'],
+    title: 'Get Media Buy Delivery Device Type Metrics',
+  },
+  {
+    property: 'by_device_platform',
+    optionalFields: ['device_platform'],
+    title: 'Get Media Buy Delivery Device Platform Metrics',
+  },
+  {
+    property: 'by_audience',
+    optionalFields: ['audience_id', 'audience_source'],
+    title: 'Get Media Buy Delivery Audience Metrics',
+  },
+  {
+    property: 'by_placement',
+    optionalFields: ['placement_id'],
+    title: 'Get Media Buy Delivery Placement Metrics',
+  },
+] as const;
+
+/**
+ * Keep legacy buyer-side tolerance local to GetMediaBuyDeliveryResponse.
+ *
+ * The unbundled response points at canonical core metric schemas, while the
+ * bundled response has those schemas inlined. Normalize both shapes to unique
+ * response-local titles before jsts name de-duplication; otherwise recursively
+ * optionalized bundled declarations can win over the strict canonical types.
+ */
+function isolateGetMediaBuyDeliveryCompatBreakdowns(schema: any): any {
+  const cleaned = JSON.parse(JSON.stringify(schema));
+  const packageItems = cleaned.properties?.media_buy_deliveries?.items?.properties?.by_package?.items;
+  if (!packageItems || typeof packageItems !== 'object' || Array.isArray(packageItems)) return schema;
+
+  const members = [packageItems, ...(Array.isArray(packageItems.allOf) ? packageItems.allOf : [])];
+  const packageDetails = members.find((member: any) =>
+    GET_MEDIA_BUY_DELIVERY_COMPAT_BREAKDOWNS.some(({ property }) => member?.properties?.[property])
+  );
+  const breakdownProperties = packageDetails?.properties;
+  if (!packageDetails || !breakdownProperties) return schema;
+
+  cleaned.required = removeRequiredFields(cleaned, ['currency']).required;
+  packageDetails.required = removeRequiredFields(packageDetails, ['pricing_model', 'rate', 'currency']).required;
+
+  for (const { property, optionalFields, title } of GET_MEDIA_BUY_DELIVERY_COMPAT_BREAKDOWNS) {
+    const breakdown = breakdownProperties[property];
+    const item = breakdown?.items;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+
+    const resolved = typeof item.$ref === 'string' ? loadCachedSchema(item.$ref) : item;
+    if (!resolved) continue;
+    const compatItem = makeRootFieldsOptional(resolved, [...optionalFields]);
+    delete compatItem.$id;
+    compatItem.title = title;
+    breakdown.items = compatItem;
+  }
+
+  return cleaned;
+}
+
 /**
  * Targeted schema normalizations for the TypeScript/Zod emit path.
  *
@@ -1184,6 +1299,10 @@ function removeRequiredFields(schema: any, fieldsToMakeOptional: string[]): any 
  */
 export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): any {
   if (!schema || typeof schema !== 'object') return schema;
+
+  if (schemaName === 'GetMediaBuyDeliveryResponse') {
+    return isolateGetMediaBuyDeliveryCompatBreakdowns(schema);
+  }
 
   if (schemaName === 'GetMediaBuysResponse') {
     const item = schema.properties?.media_buys?.items;

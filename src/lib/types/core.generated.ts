@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.8
-// Generated at: 2026-07-28T13:56:11.652Z
+// Generated at: 2026-07-29T13:07:54.998Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -15525,46 +15525,46 @@ export type TasksGetResponse = ProtocolEnvelope & {
  */
 export type PostalCountrySystem =
   | {
-      country?: 'US';
-      system?: 'zip' | 'zip_plus_four';
+      country: 'US';
+      system: 'zip' | 'zip_plus_four';
     }
   | {
-      country?: 'GB';
-      system?: 'outward' | 'full';
+      country: 'GB';
+      system: 'outward' | 'full';
     }
   | {
-      country?: 'CA';
-      system?: 'fsa' | 'full';
+      country: 'CA';
+      system: 'fsa' | 'full';
     }
   | {
-      country?: 'DE' | 'CH' | 'AT';
-      system?: 'plz';
+      country: 'DE' | 'CH' | 'AT';
+      system: 'plz';
     }
   | {
-      country?: 'FR';
-      system?: 'code_postal';
+      country: 'FR';
+      system: 'code_postal';
     }
   | {
-      country?: 'AU';
-      system?: 'postcode';
+      country: 'AU';
+      system: 'postcode';
     }
   | {
-      country?: 'BR';
-      system?: 'cep';
+      country: 'BR';
+      system: 'cep';
     }
   | {
-      country?: 'IN';
-      system?: 'pin';
+      country: 'IN';
+      system: 'pin';
     }
   | {
-      country?: 'ZA';
-      system?: 'postal_code';
+      country: 'ZA';
+      system: 'postal_code';
     }
   | {
-      country?: {
+      country: {
         [k: string]: unknown | undefined;
       };
-      system?: 'postal_code' | 'custom';
+      system: 'postal_code' | 'custom';
     };
 /**
  * Re-export of `PostalArea` under the legacy codegen artifact name.
@@ -19417,7 +19417,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Delivery by catalog item within this package. Available for catalog-driven packages when the seller supports item-level reporting.
        */
-      by_catalog_item?: CatalogItemDeliveryMetrics[];
+      by_catalog_item?: GetMediaBuyDeliveryCatalogItemMetrics[];
       /**
        * Metrics broken down by creative within this package. Available when the seller supports creative-level reporting.
        */
@@ -19425,11 +19425,11 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Metrics broken down by keyword within this package. One row per (keyword, match_type) pair — the same keyword with different match types appears as separate rows. Keyword-grain only: rows reflect aggregate performance of each targeted keyword, not individual search queries. Rows may not sum to package totals when a single impression is attributed to the triggering keyword only. Available for search and retail media packages when the seller supports keyword-level reporting.
        */
-      by_keyword?: KeywordDeliveryMetrics[];
+      by_keyword?: GetMediaBuyDeliveryKeywordMetrics[];
       /**
        * Delivery by geographic area within this package. Available when the buyer requests geo breakdown via reporting_dimensions and the seller supports it. Each dimension's rows are independent slices that should sum to the package total.
        */
-      by_geo?: GeoDeliveryMetrics[];
+      by_geo?: GetMediaBuyDeliveryGeoMetrics[];
       /**
        * Whether by_geo was truncated due to the requested limit or a seller-imposed maximum. Sellers MUST return this flag whenever by_geo is present (false means the list is complete).
        */
@@ -19437,9 +19437,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Delivery by device form factor within this package. Available when the buyer requests device_type breakdown via reporting_dimensions and the seller supports it.
        */
-      by_device_type?: (DeliveryMetrics & {
-        device_type?: DeviceType;
-      })[];
+      by_device_type?: GetMediaBuyDeliveryDeviceTypeMetrics[];
       /**
        * Whether by_device_type was truncated. Sellers MUST return this flag whenever by_device_type is present (false means the list is complete).
        */
@@ -19447,9 +19445,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Delivery by operating system within this package. Available when the buyer requests device_platform breakdown via reporting_dimensions and the seller supports it. Useful for CTV campaigns where tvOS vs Roku OS vs Fire OS matters.
        */
-      by_device_platform?: (DeliveryMetrics & {
-        device_platform?: DevicePlatform;
-      })[];
+      by_device_platform?: GetMediaBuyDeliveryDevicePlatformMetrics[];
       /**
        * Whether by_device_platform was truncated. Sellers MUST return this flag whenever by_device_platform is present (false means the list is complete).
        */
@@ -19457,17 +19453,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Delivery by audience segment within this package. Available when the buyer requests audience breakdown via reporting_dimensions and the seller supports it. Only 'synced' audiences are directly targetable via the targeting overlay; other sources are informational.
        */
-      by_audience?: (DeliveryMetrics & {
-        /**
-         * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
-         */
-        audience_id?: string;
-        audience_source?: AudienceSource;
-        /**
-         * Human-readable audience segment name
-         */
-        audience_name?: string;
-      })[];
+      by_audience?: GetMediaBuyDeliveryAudienceMetrics[];
       /**
        * Whether by_audience was truncated. Sellers MUST return this flag whenever by_audience is present (false means the list is complete).
        */
@@ -19475,21 +19461,7 @@ export type GetMediaBuyDeliveryResponse = ProtocolEnvelope & {
       /**
        * Delivery by placement within this package. Available when the buyer requests placement breakdown via reporting_dimensions and the seller supports it. Placement IDs reference the product's placements array.
        */
-      by_placement?: (DeliveryMetrics & {
-        /**
-         * Placement identifier from the product's placements array
-         */
-        placement_id?: string;
-        /**
-         * Human-readable placement name
-         */
-        placement_name?: string;
-        /**
-         * Canonical publisher domain whose adagents.json namespace this placement belongs to, matching the `publisher_domain` on the product's `placements[]` entry that `placement_id` resolves to (see core/placement.json). Lets buyers attribute delivered impressions to a publisher namespace without re-fetching the product catalog — the common case for multi-publisher buys through a single sales agent. Sellers SHOULD emit it whenever the resolving product placement carries a publisher_domain (always true for `kind: publisher_ref`); sellers MAY omit it only for `seller_inline` placements in a legacy single-publisher context where the seller agent's own domain is the namespace. Single-valued: a placement resolves within exactly one publisher namespace (package-level attribution, where an ad-network product can span publishers, is a separate concern).
-         * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
-         */
-        publisher_domain?: string;
-      })[];
+      by_placement?: GetMediaBuyDeliveryPlacementMetrics[];
       /**
        * Whether by_placement was truncated. Sellers MUST return this flag whenever by_placement is present (false means the list is complete).
        */
@@ -19738,7 +19710,7 @@ export type MissingMetric =
 /**
  * Delivery metrics row for one catalog item within a package.
  */
-export type CatalogItemDeliveryMetrics = DeliveryMetrics & {
+export type GetMediaBuyDeliveryCatalogItemMetrics = DeliveryMetrics & {
   /**
    * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
    */
@@ -19763,7 +19735,7 @@ export type CreativeDeliveryMetrics = DeliveryMetrics & {
 /**
  * Delivery metrics row for one keyword and match-type pair within a package.
  */
-export type KeywordDeliveryMetrics = DeliveryMetrics & {
+export type GetMediaBuyDeliveryKeywordMetrics = DeliveryMetrics & {
   /**
    * The targeted keyword
    */
@@ -19773,7 +19745,7 @@ export type KeywordDeliveryMetrics = DeliveryMetrics & {
 /**
  * Delivery metrics row for one geographic area within a package.
  */
-export type GeoDeliveryMetrics = DeliveryMetrics & {
+export type GetMediaBuyDeliveryGeoMetrics = DeliveryMetrics & {
   geo_level?: GeographicTargetingLevel;
   /**
    * Classification system for metro or postal_area levels. Metro rows use metro-system values. Native postal rows use country-local postal-system values with country; deprecated legacy postal rows may use legacy-postal-system values.
@@ -19792,6 +19764,38 @@ export type GeoDeliveryMetrics = DeliveryMetrics & {
    * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
    */
   geo_name?: string;
+};
+export type GetMediaBuyDeliveryDeviceTypeMetrics = DeliveryMetrics & {
+  device_type?: DeviceType;
+};
+export type GetMediaBuyDeliveryDevicePlatformMetrics = DeliveryMetrics & {
+  device_platform?: DevicePlatform;
+};
+export type GetMediaBuyDeliveryAudienceMetrics = DeliveryMetrics & {
+  /**
+   * Audience segment identifier. For 'synced' source, matches audience_id from sync_audiences. For other sources, seller-defined.
+   */
+  audience_id?: string;
+  audience_source?: AudienceSource;
+  /**
+   * Human-readable audience segment name
+   */
+  audience_name?: string;
+};
+export type GetMediaBuyDeliveryPlacementMetrics = DeliveryMetrics & {
+  /**
+   * Placement identifier from the product's placements array
+   */
+  placement_id?: string;
+  /**
+   * Human-readable placement name
+   */
+  placement_name?: string;
+  /**
+   * Canonical publisher domain whose adagents.json namespace this placement belongs to, matching the `publisher_domain` on the product's `placements[]` entry that `placement_id` resolves to (see core/placement.json). Lets buyers attribute delivered impressions to a publisher namespace without re-fetching the product catalog — the common case for multi-publisher buys through a single sales agent. Sellers SHOULD emit it whenever the resolving product placement carries a publisher_domain (always true for `kind: publisher_ref`); sellers MAY omit it only for `seller_inline` placements in a legacy single-publisher context where the seller agent's own domain is the namespace. Single-valued: a placement resolves within exactly one publisher namespace (package-level attribution, where an ad-network product can span publishers, is a separate concern).
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
+   */
+  publisher_domain?: string;
 };
 /**
  * Request parameters for retrieving media buy status, creative approval state, and optional delivery snapshots
@@ -25817,6 +25821,18 @@ export interface CanonicalProjectionSlotOverride {
 }
 
 
+// core/catalog-item-delivery-metrics.json
+/**
+ * Delivery metrics row for one catalog item within a package.
+ */
+export type CatalogItemDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * Catalog item identifier (e.g., SKU, GTIN, job_id, offering_id)
+   */
+  content_id: string;
+  content_id_type?: ContentIDType;
+};
+
 // core/catchment.json
 /**
  * A catchment area definition for a store or location. Defines the geographic area from which a store draws customers. Three methods are supported: isochrone inputs (travel time + transport mode, platform resolves the shape), simple radius (distance from location), or pre-computed GeoJSON geometry (buyer provides the exact boundary). Provide exactly one method per catchment.
@@ -26941,6 +26957,31 @@ export interface BaseGroupAsset {
   overlays?: Overlay[];
 }
 
+// core/geo-delivery-metrics.json
+/**
+ * Delivery metrics row for one geographic area within a package.
+ */
+export type GeoDeliveryMetrics = DeliveryMetrics & {
+  geo_level: GeographicTargetingLevel;
+  /**
+   * Classification system for metro or postal_area levels. Metro rows use metro-system values. Native postal rows use country-local postal-system values with country; deprecated legacy postal rows may use legacy-postal-system values.
+   */
+  system?: string;
+  /**
+   * ISO 3166-1 alpha-2 country code for native postal_area rows.
+   * @pattern ^[A-Z]{2}$
+   */
+  country?: string;
+  /**
+   * Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001').
+   */
+  geo_code: string;
+  /**
+   * Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA')
+   */
+  geo_name?: string;
+};
+
 // core/hotel-item.json
 /**
  * A hotel or lodging property within a hotel-type catalog. Carries the property data that platforms use for hotel ads, dynamic remarketing, and travel campaign creatives. Maps to Google Hotel Center feeds, Meta hotel catalogs, and similar platform-native formats.
@@ -27144,6 +27185,18 @@ export interface JobItem {
   assets?: OfferingAssetGroup[];
   ext?: ExtensionObject;
 }
+
+// core/keyword-delivery-metrics.json
+/**
+ * Delivery metrics row for one keyword and match-type pair within a package.
+ */
+export type KeywordDeliveryMetrics = DeliveryMetrics & {
+  /**
+   * The targeted keyword
+   */
+  keyword: string;
+  match_type: MatchType;
+};
 
 // core/offering.json
 /**

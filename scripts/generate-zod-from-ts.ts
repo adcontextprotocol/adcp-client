@@ -1643,16 +1643,6 @@ function addBackwardCompatSchemaAliases(content: string): string {
   return output;
 }
 
-function postProcessBackwardCompatOptionalFields(content: string): string {
-  return content.replace(
-    /export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema\.merge\(z\.object\(\{\n\s+keyword: z\.string\(\),\n\s+match_type: MatchTypeSchema\n\}\)\.passthrough\(\)\);/m,
-    `export const KeywordDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
-    keyword: z.string().optional(),
-    match_type: MatchTypeSchema.optional()
-}).passthrough());`
-  );
-}
-
 function postProcessPostalAreaSupportCatchall(content: string): string {
   return content.replace(
     /(export const PostalAreaSupportSchema = z\.object\(\{[\s\S]*?\}\)\.passthrough\(\)\.catchall\()[\s\S]*?(\);\n\nexport const \w+Schema)/m,
@@ -1824,9 +1814,8 @@ async function generateZodSchemas() {
     // Without this fix, 73+ schemas fail MCP SDK's tools/list JSON Schema conversion.
     zodSchemas = postProcessUndefinedUnions(zodSchemas);
 
-    // Keep runtime Zod validation aligned with the TypeScript-side backward
-    // compatibility relaxations for legacy seller responses.
-    zodSchemas = postProcessBackwardCompatOptionalFields(zodSchemas);
+    // Restore the schema's country-key catchall after ts-to-zod widens the
+    // template-literal index signature during conversion.
     zodSchemas = postProcessPostalAreaSupportCatchall(zodSchemas);
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.

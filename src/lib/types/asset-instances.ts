@@ -21,6 +21,7 @@
 // (registry) and schemas/cache/{version}/core/assets/*-asset.json (per-type).
 
 import type {
+  AssetVariant,
   ImageAsset,
   VideoAsset,
   AudioAsset,
@@ -35,6 +36,12 @@ import type {
   BriefAsset,
   CatalogAsset,
   WebhookAsset,
+  ZipAsset,
+  PublishedPostAsset,
+  CardAsset,
+  PixelTrackerAsset,
+  VASTTrackerAsset,
+  DAASTTrackerAsset,
 } from './tools.generated';
 
 /**
@@ -56,25 +63,13 @@ import type {
  * }
  * ```
  *
- * This is the type to use for `creative_manifest.assets[<key>]` values.
- * The `assets` map itself is `Record<string, AssetInstance>` — keys come
- * from the format's declared asset slot ids; values are these instances.
+ * This is the type to use for individual values in
+ * `creative_manifest.assets[<key>]`. The `assets` map itself is
+ * `Record<string, AssetInstance | AssetInstance[]>` — keys come from the
+ * format's declared asset slot ids; values are single instances or arrays
+ * for slots whose format declaration accepts multiple assets.
  */
-export type AssetInstance =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | TextAsset
-  | HTMLAsset
-  | URLAsset
-  | CSSAsset
-  | JavaScriptAsset
-  | MarkdownAsset
-  | VASTAsset
-  | DAASTAsset
-  | BriefAsset
-  | CatalogAsset
-  | WebhookAsset;
+export type AssetInstance = AssetVariant;
 
 /**
  * The discriminator value (`asset_type`) of every variant in
@@ -102,4 +97,10 @@ export type {
   BriefAsset,
   CatalogAsset,
   WebhookAsset,
+  ZipAsset,
+  PublishedPostAsset,
+  CardAsset,
+  PixelTrackerAsset,
+  VASTTrackerAsset,
+  DAASTTrackerAsset,
 };

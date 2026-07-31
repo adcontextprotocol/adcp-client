@@ -665,10 +665,11 @@ describe('end-to-end: provider-signed request verifies under the SDK verifier', 
     // Sign with the wrong key but advertise the right `kid`. Verifier must
     // reject — the signature won't validate against the JWKS public key.
     const wrongKey = privateJwkFor('test-ed25519-2026');
-    // Mutate `d` to a different valid Ed25519 scalar (also from the test
-    // vectors): use the gov-signing key's scalar but keep `kid` advertising
-    // the request-signing identity.
-    const wrongJwk = { ...wrongKey, d: privateJwkFor('test-gov-2026').d };
+    // Replace the complete keypair with the governance-signing fixture while
+    // retaining the request-signing identity metadata. Swapping only `d`
+    // leaves an incoherent OKP JWK that Node rejects before signing.
+    const alternateKey = privateJwkFor('test-gov-2026');
+    const wrongJwk = { ...wrongKey, x: alternateKey.x, d: alternateKey.d };
     const provider = new InMemorySigningProvider({
       keyid: kid,
       algorithm: 'ed25519',
@@ -688,7 +689,7 @@ describe('end-to-end: provider-signed request verifies under the SDK verifier', 
             now: SAMPLE_OPTIONS.now,
           }
         ),
-      err => err instanceof RequestSignatureError && /signature_invalid|key_purpose|key_unknown/.test(err.code)
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_invalid' && err.failedStep === 10
     );
   });
 });

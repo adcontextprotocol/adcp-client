@@ -8,11 +8,16 @@
   },
   "changesets": [
     "bright-cats-listen",
+    "calm-mice-negotiate",
     "fix-canonical-list-creatives-validation",
+    "fix-core-required-field-codegen",
     "fix-era-negotiation-legacy-fallback",
     "fix-mcp-beta-pins",
+    "ladon-test-trivial-paths",
     "pick-up-adcp-3-1-8",
     "project-legacy-creative-delivery",
-    "soft-tools-smile"
+    "remove-dead-brand-hierarchy-api",
+    "soft-tools-smile",
+    "tidy-signatures-skip"
   ]
 }

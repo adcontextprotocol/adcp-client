@@ -432,13 +432,19 @@ export class RegistrySync extends EventEmitter<RegistrySyncEvents> {
    * Get the ordered corporate ancestor domain chain for a brand domain.
    *
    * The returned array includes the resolved brand itself as the first entry and
-   * the house domain as the last entry when known.
+   * the house domain as the last entry when known. This compatibility view is
+   * populated only when older/self-hosted feeds emit brand hierarchy events.
+   * Treat it as topology for display/indexing, never as relationship
+   * authorization evidence.
    */
   getAncestors(domain: string): string[] {
     return [...(this.brandAncestorsByDomain.get(this.normalizeDomainKey(domain)) ?? [])];
   }
 
-  /** Get the ordered resolved brand chain for a brand domain, when the feed supplied it. */
+  /**
+   * Get the ordered resolved brand chain when an older/self-hosted feed supplied
+   * it. This topology-only compatibility view is not authorization evidence.
+   */
   getBrandHierarchy(domain: string): ResolvedBrand[] {
     return (this.brandHierarchyByDomain.get(this.normalizeDomainKey(domain)) ?? []).map(brand => ({ ...brand }));
   }
