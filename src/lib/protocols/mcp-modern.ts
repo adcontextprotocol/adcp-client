@@ -252,6 +252,29 @@ function isNegotiationAuthFailure(error: unknown): boolean {
   return is401Error(error) || httpStatusOf(error) === 403;
 }
 
+/**
+ * Were we already presenting a static credential on the probe?
+ *
+ * This is the line between "the server is challenging us to authenticate" and
+ * "the server refused this method". With no credential, a `401` is a real
+ * challenge and the caller wants it: `discoverMCPEndpoint` walks the
+ * `WWW-Authenticate` / RFC 9728 chain and reports how to authenticate. With an
+ * OAuth provider, a `401` is the provider's cue to refresh, so it must reach
+ * the OAuth machinery untouched. Only a static token/header credential that the
+ * server rejected *on the probe alone* tells us nothing about the credential,
+ * and that is the case worth retrying on the legacy transport.
+ */
+function presentedStaticCredential(
+  authHeaders: Record<string, string>,
+  authProvider?: object
+): boolean {
+  if (authProvider) return false;
+  return Object.keys(authHeaders).some(key => {
+    const lower = key.toLowerCase();
+    return lower === 'authorization' || lower === 'x-adcp-auth';
+  });
+}
+
 async function createNegotiatedClient(
   cacheKey: string,
   options: ModernConnectionOptions,
@@ -327,16 +350,23 @@ async function createNegotiatedClient(
     if (prior && SdkError.isInstance(error) && error.code === SdkErrorCode.EraNegotiationFailed) {
       return createNegotiatedClient(cacheKey, options, authHeaders, false);
     }
-    // A 401/403 raised while negotiating the era is a verdict on
-    // `server/discover`, not on our credential. The MCP client's classifier
-    // (`classifyHttpError`) makes 401/403 the only probe failure that never
-    // falls back to the legacy era, so a server that rejects the modern
-    // discovery method while accepting the same credential on `initialize`
-    // becomes unreachable to every caller on this path. Skip the probe and
-    // initialize directly, exactly as the SDK documents for a server known to
-    // be legacy. If the credential really is bad, that connect fails on its own
-    // and surfaces the seller's own 401.
-    if (isNegotiationAuthFailure(error) && !skipProbe) {
+    // Era negotiation is meant to be automatic: `mode: 'auto'` documents that
+    // "definitive legacy signals (and anything unrecognized) fall back to the
+    // plain legacy `initialize` handshake". 401/403 are the sole exception in
+    // the MCP client's classifier (`classifyHttpError`), which is right when we
+    // hold no credential — then a 401 IS the server's challenge and the caller
+    // needs it — and wrong when we already presented one the server accepts on
+    // other methods. In that case the refusal is a verdict on
+    // `server/discover`, not on the credential, and the automatic fallback
+    // should have run. Do it here: skip the probe and `initialize` directly,
+    // the escape hatch the SDK documents for a server known to be legacy. If
+    // the credential really is bad, that connect fails on its own and surfaces
+    // the server's 401.
+    if (
+      isNegotiationAuthFailure(error) &&
+      !skipProbe &&
+      presentedStaticCredential(authHeaders, options.authProvider)
+    ) {
       return createNegotiatedClient(cacheKey, options, authHeaders, useCachedDiscovery, true);
     }
     throw error;

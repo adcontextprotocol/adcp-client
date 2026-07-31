@@ -34,6 +34,11 @@
  *     These pin that it cannot launder a genuinely bad credential into a
  *     success. They pass either way by design; they exist to fail if someone
  *     later widens the retry into swallowing auth errors.
+ *   - `uncredentialed client still gets the auth challenge` — the boundary the
+ *     fix keys on. A probe 401 with no credential is a real challenge and must
+ *     reach the caller; only a static credential refused on the probe alone
+ *     earns the legacy retry. An OAuth provider is excluded for the same
+ *     reason: there a 401 is the provider's cue to refresh.
  *   - `attempted at most once` — `skipProbe` is what stops a probe loop. This
  *     asserts the bound on the wire rather than trusting the flag.
  */
@@ -173,16 +178,19 @@ async function startV3Seller({ era = 'modern', rejectDiscoverWith = 0, rejectEve
       return;
     }
 
-    if (!entry.authorization && !entry.adcpAuth) {
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(credentialRejectionBody());
-      return;
-    }
-
-    // A credential the seller rejects outright, on every method.
+    // A seller that rejects every request, credential or not: a genuinely bad
+    // credential, or an endpoint gated behind auth the client has not satisfied.
+    // Deliberately outranks the uncredentialed branch below so this mode really
+    // does mean every request.
     if (rejectEverythingWith !== 0) {
       res
         .writeHead(rejectEverythingWith, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ error: 'invalid_token' }));
+      return;
+    }
+
+    if (!entry.authorization && !entry.adcpAuth) {
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(credentialRejectionBody());
       return;
     }
 
@@ -380,6 +388,30 @@ for (const status of [401, 403]) {
     );
   });
 }
+
+// The boundary the fix keys on. With no credential, a probe 401 IS the server's
+// challenge: the caller needs it surfaced (WWW-Authenticate / RFC 9728) rather
+// than swapped for a legacy retry that cannot succeed either. Only a static
+// credential the server rejected on the probe alone earns the fallback.
+test('v3 MCP seller: an uncredentialed client still gets the auth challenge, not a legacy retry', async t => {
+  withCleanup(t);
+  const seller = await startV3Seller({ era: 'legacy', rejectEverythingWith: 401 });
+  t.after(() => seller.stop());
+
+  const noCredential = new ADCPMultiAgentClient(
+    [{ id: AGENT_ID, name: 'V3 Seller', agent_uri: seller.url, protocol: 'mcp' }],
+    { workingTimeout: 5000, adcpVersion: '3.1', requireV3ForMutations: false, allowV2: true }
+  ).agent(AGENT_ID);
+
+  const result = await readDelivery(noCredential);
+
+  assert.notEqual(result.success, true, 'an uncredentialed read must not succeed');
+  assert.equal(
+    result.error?.name,
+    'AuthenticationRequiredError',
+    `expected the auth challenge to reach the caller, got ${String(result.error?.name)}: ${String(result.error?.message ?? '')}`
+  );
+});
 
 test('v3 MCP seller: the legacy retry after a probe refusal is attempted at most once', async t => {
   withCleanup(t);
