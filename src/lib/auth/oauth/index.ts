@@ -71,6 +71,7 @@ export {
   InMemoryPendingFlowStore,
   InvalidOrExpiredFlowError,
   StateMismatchError,
+  BrowserBindingRequiredError,
   TokenExchangeError,
   ProtectedResourceMetadataError,
   AgentVanishedDuringFlowError,

@@ -20,6 +20,7 @@ const {
   InMemoryPendingFlowStore,
   InvalidOrExpiredFlowError,
   StateMismatchError,
+  BrowserBindingRequiredError,
   TokenExchangeError,
   ProtectedResourceMetadataError,
   AgentVanishedDuringFlowError,
@@ -506,6 +507,108 @@ describe('completeWebOAuthFlow', () => {
       code: 'c',
       pendingFlowStore,
       expectedState: start.state,
+    });
+    assert.strictEqual(completion.tokens.access_token, 'issued-access-token');
+  });
+
+  test('warns via console.warn when expectedState is omitted', async () => {
+    state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
+      jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
+    installStandardASHandlers();
+
+    const pendingFlowStore = new InMemoryPendingFlowStore();
+    const start = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost:9999/callback',
+      pendingFlowStore,
+    });
+
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      await completeWebOAuthFlow({ state: start.state, code: 'c', pendingFlowStore });
+    } finally {
+      console.warn = origWarn;
+    }
+
+    assert.ok(warnings.length > 0, 'expected at least one console.warn');
+    assert.ok(
+      warnings.some(w => w.includes('browser-bound')),
+      `expected "browser-bound" in warning, got: ${warnings.join('; ')}`
+    );
+  });
+
+  test('does not warn when expectedState is provided', async () => {
+    state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
+      jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
+    installStandardASHandlers();
+
+    const pendingFlowStore = new InMemoryPendingFlowStore();
+    const start = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost:9999/callback',
+      pendingFlowStore,
+    });
+
+    const warnings = [];
+    const origWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      await completeWebOAuthFlow({ state: start.state, code: 'c', pendingFlowStore, expectedState: start.state });
+    } finally {
+      console.warn = origWarn;
+    }
+
+    assert.strictEqual(
+      warnings.filter(w => w.includes('browser-bound')).length,
+      0,
+      'should not warn when expectedState is supplied'
+    );
+  });
+
+  test('throws BrowserBindingRequiredError when requireBrowserBinding:true and expectedState omitted', async () => {
+    state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
+      jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
+    installStandardASHandlers();
+
+    const pendingFlowStore = new InMemoryPendingFlowStore();
+    const start = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost:9999/callback',
+      pendingFlowStore,
+    });
+
+    await assert.rejects(
+      () =>
+        completeWebOAuthFlow({
+          state: start.state,
+          code: 'c',
+          pendingFlowStore,
+          requireBrowserBinding: true,
+        }),
+      err => err instanceof BrowserBindingRequiredError
+    );
+  });
+
+  test('requireBrowserBinding:true with expectedState provided succeeds', async () => {
+    state.handlers['/.well-known/oauth-protected-resource/mcp'] = (req, res) =>
+      jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [origin()] });
+    installStandardASHandlers();
+
+    const pendingFlowStore = new InMemoryPendingFlowStore();
+    const start = await startWebOAuthFlow({
+      agent: makeAgent(),
+      redirectUri: 'http://localhost:9999/callback',
+      pendingFlowStore,
+    });
+
+    const completion = await completeWebOAuthFlow({
+      state: start.state,
+      code: 'c',
+      pendingFlowStore,
+      expectedState: start.state,
+      requireBrowserBinding: true,
     });
     assert.strictEqual(completion.tokens.access_token, 'issued-access-token');
   });
