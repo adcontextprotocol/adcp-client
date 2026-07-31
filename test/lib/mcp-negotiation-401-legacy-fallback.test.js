@@ -16,9 +16,12 @@
  * `MCP-Protocol-Version: 2026-07-28` returns 200 when the method is
  * `initialize`. The stub below mirrors exactly that.
  *
- * This is the 12.0.3 -> 13.0.0-rc.4 delta. 12.0.3 opened a legacy session before
- * `server/discover` mattered, so the refusal was survivable; rc.4 leads with the
- * probe and stops there. `createNegotiatedClient` now retries once with
+ * Whether this is also the 12.0.3 -> 13.0.0-rc.4 delta is unconfirmed. The
+ * SDK-side probe logic is byte-identical across that window (the
+ * `is401Error(error) ... throw` branch is unchanged since 11.2.0), so if the
+ * behaviour did change it changed inside the MCP client, which moved
+ * `2.0.0-beta.4` -> `2.0.0` over the same span. The fix stands on its own
+ * either way: `createNegotiatedClient` now retries once with
  * `prior: { kind: 'legacy' }`, the escape hatch the MCP SDK documents for a
  * server known to be legacy.
  *
