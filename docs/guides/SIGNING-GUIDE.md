@@ -354,9 +354,15 @@ For local dev / non-KMS testing, `--key-file <jwk-path>` accepts an in-process J
 import { createExpressVerifier, StaticJwksResolver } from '@adcp/sdk/signing';
 import { mcpToolNameResolver } from '@adcp/sdk/server';
 
+// Raw-body capture MUST be mounted ahead of the verifier — express.json()
+// would otherwise consume the stream and the verifier would have no bytes to
+// hash. `rawBodyVerify` comes from `createExpressAdapter()`; the inline form is
+// equivalent.
+app.use(express.json({ verify: adapter.rawBodyVerify }));
+// or: app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }));
+
 app.post(
   '/mcp',
-  rawBodyMiddleware(),
   createExpressVerifier({
     capability: {
       supported: true,

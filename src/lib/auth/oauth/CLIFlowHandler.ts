@@ -7,6 +7,7 @@
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { spawn } from 'child_process';
+import { timingSafeEqual } from 'crypto';
 import { URL } from 'url';
 import { platform } from 'os';
 import type { OAuthFlowHandler } from './types';
@@ -37,7 +38,9 @@ export interface CLIFlowHandlerConfig {
  * @example
  * ```typescript
  * const flow = new CLIFlowHandler({ callbackPort: 8766 });
- * await flow.redirectToAuthorization(new URL('https://auth.example.com/authorize?...'));
+ * // The authorization URL MUST carry `state` — the callback is bound to it.
+ * // `MCPOAuthProvider` supplies one automatically via its `state()` method.
+ * await flow.redirectToAuthorization(new URL('https://auth.example.com/authorize?client_id=abc&state=<random>'));
  * const code = await flow.waitForCallback();
  * await flow.cleanup();
  * ```
@@ -48,6 +51,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   private readonly callbackPath: string;
   private readonly quiet: boolean;
   private server: Server | null = null;
+  private expectedState: string | null = null;
   private pendingCallback: {
     resolve: (code: string) => void;
     reject: (error: Error) => void;
@@ -67,8 +71,12 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   /**
    * Open URL in the user's default browser
    *
-   * Uses spawn with separate arguments to avoid command injection risks.
-   * The URL is passed as an argument, not interpolated into a shell command.
+   * Spawns the platform opener directly with the URL as a separate argument, so
+   * no command interpreter parses it. Windows uses `rundll32 url.dll` rather
+   * than `cmd /c start`: spawning `cmd` makes the interpreter itself the child,
+   * so `cmd` would parse `&`, `|`, and `^` in the URL even though `shell` is
+   * unset — and authorization URLs carry `&` by construction and derive partly
+   * from a discovered `authorization_endpoint`.
    */
   private async openBrowser(url: string): Promise<void> {
     return new Promise(resolve => {
@@ -81,8 +89,8 @@ export class CLIFlowHandler implements OAuthFlowHandler {
           args = [url];
           break;
         case 'win32':
-          command = 'cmd';
-          args = ['/c', 'start', '', url];
+          command = 'rundll32';
+          args = ['url.dll,FileProtocolHandler', url];
           break;
         default:
           // Linux and others - try xdg-open
@@ -111,6 +119,29 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (!['http:', 'https:'].includes(authorizationUrl.protocol)) {
+      throw new Error(
+        `Refusing to open authorization URL with scheme "${authorizationUrl.protocol}" (only http/https)`
+      );
+    }
+
+    // Capture the state we are about to send so the callback can be bound to
+    // this flow. The loopback callback server is reachable by any local process,
+    // so without this check any of them could inject or cancel an authorization.
+    //
+    // Scope, stated honestly: this defeats a process that cannot see the
+    // authorization URL, which is the ordinary case. It does NOT defeat a local
+    // process running as the same user that reads the URL out of this process's
+    // argv (`ps`, /proc/<pid>/cmdline) while the browser opens, or off stdout
+    // when not `quiet`. PKCE is what protects the code exchange there.
+    const state = authorizationUrl.searchParams.get('state');
+    if (!state) {
+      throw new Error(
+        'Authorization URL is missing the "state" parameter; refusing to start a loopback OAuth flow that cannot bind its callback'
+      );
+    }
+    this.expectedState = state;
+
     const url = authorizationUrl.toString();
 
     if (!this.quiet) {
@@ -180,6 +211,22 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       return;
     }
 
+    // Bind the callback to the flow that started it BEFORE interpreting any of
+    // its parameters. An unbound callback is not ours to act on — and that
+    // includes its error parameters: reading `error=access_denied` first would
+    // let any local process cancel the user's login with no knowledge of the
+    // state at all. Code injection and cancellation are the same hole, so the
+    // check has to precede both branches.
+    const state = url.searchParams.get('state');
+    if (!this.expectedState || !state || !statesMatch(state, this.expectedState)) {
+      const message = 'OAuth state mismatch: callback does not correspond to the authorization request';
+      this.sendErrorResponse(res, message);
+      if (this.pendingCallback) {
+        this.pendingCallback.reject(new Error(message));
+      }
+      return;
+    }
+
     const code = url.searchParams.get('code');
     const error = url.searchParams.get('error');
     const errorDescription = url.searchParams.get('error_description');
@@ -188,6 +235,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       const errorMsg = errorDescription || error;
       this.sendErrorResponse(res, errorMsg);
 
+      this.expectedState = null;
       if (this.pendingCallback) {
         if (error === 'access_denied') {
           this.pendingCallback.reject(new OAuthCancelledError());
@@ -200,6 +248,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
 
     if (!code) {
       this.sendErrorResponse(res, 'No authorization code received');
+      this.expectedState = null;
       if (this.pendingCallback) {
         this.pendingCallback.reject(new Error('No authorization code received'));
       }
@@ -306,6 +355,7 @@ export class CLIFlowHandler implements OAuthFlowHandler {
   }
 
   async cleanup(): Promise<void> {
+    this.expectedState = null;
     if (this.server) {
       return new Promise(resolve => {
         this.server!.close(() => {
@@ -315,6 +365,16 @@ export class CLIFlowHandler implements OAuthFlowHandler {
       });
     }
   }
+}
+
+/**
+ * Compare two OAuth state values without leaking their contents through timing.
+ */
+function statesMatch(received: string, expected: string): boolean {
+  const a = Buffer.from(received, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /**

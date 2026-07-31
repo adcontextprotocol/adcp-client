@@ -14,7 +14,7 @@ import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../
 import { createSigningFetch, type FetchLike } from '../signing/fetch';
 import { createSigningFetchAsync } from '../signing/fetch-async';
 import type { AgentConfig } from '../types/adcp';
-import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { redactArgsForLog } from '../utils/redact-args';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 import { wrapFetchWithTransportDiagnostics } from './transportDiagnostics';
@@ -582,7 +582,7 @@ async function callA2AToolImpl(
     }
 
     const payloadSize = JSON.stringify(requestPayload).length;
-    const redactedParameters = redactIdempotencyKeyInArgs(parameters);
+    const redactedParameters = redactArgsForLog(parameters);
     const redactedPayload = {
       ...requestPayload,
       message: {

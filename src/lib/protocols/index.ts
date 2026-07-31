@@ -152,6 +152,29 @@ function buildVersionEnvelope(
   return { adcp_major_version: wireMajor, adcp_version: wireValue };
 }
 
+let hasWarnedAboutV2PushNotificationSecret = false;
+
+/**
+ * Warn once when an async webhook registration is suppressed for a v2 seller.
+ *
+ * v2.5's `push-notification-config.json` requires `authentication`, and unlike
+ * 3.x it has no RFC 9421 selector semantics — so omitting the block produces a
+ * schema-invalid request rather than choosing a signing mode. Without a
+ * configured secret there is no honest value to send, and the previous
+ * behaviour (a hardcoded placeholder credential) told the seller the channel
+ * was authenticated by a constant published in this package.
+ */
+function warnV2PushNotificationNeedsSecret(): void {
+  if (hasWarnedAboutV2PushNotificationSecret) return;
+  hasWarnedAboutV2PushNotificationSecret = true;
+  console.warn(
+    '[adcp] Suppressing push_notification_config for a v2 seller: AdCP 2.5 requires an ' +
+      '`authentication` block and no `webhookSecret` is configured. Set `webhookSecret` to register ' +
+      'async task-status webhooks with this agent, or move the agent to an AdCP 3.x pin, where the ' +
+      'RFC 9421 webhook profile needs no shared secret.'
+  );
+}
+
 function buildVersionEnvelopeForMode(
   mode: VersionEnvelopeMode,
   adcpVersion: string | undefined,
@@ -469,16 +492,42 @@ export class ProtocolClient {
               // Build push_notification_config for ASYNC TASK STATUS notifications
               // (NOT for reporting_webhook - that stays in args)
               // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-              const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
-                ? {
+              // `authentication` is a scheme SELECTOR, not a fallback: from AdCP
+              // 3.0 on, push-notification-config.json makes its presence opt the
+              // seller into legacy HMAC-SHA256 and its absence select the RFC
+              // 9421 webhook profile, with `required: ["url"]` only. Emitting it
+              // with a placeholder credential would therefore downgrade every
+              // webhook to legacy HMAC keyed by a constant that ships in this
+              // file, so the block is omitted unless a real secret backs it.
+              //
+              // v2.5 predates the selector: there `required` is
+              // `["url", "authentication"]` and there is no 9421 path, so an
+              // omitted block is schema-invalid rather than a mode selection.
+              // With no secret there is nothing honest to send a v2 seller, so
+              // suppress the registration instead of fabricating a credential.
+              const pushNotificationConfig: PushNotificationConfig | undefined = (():
+                | PushNotificationConfig
+                | undefined => {
+                if (!webhookUrl) return undefined;
+                if (webhookSecret) {
+                  return {
                     url: webhookUrl,
                     ...(webhookToken && { token: webhookToken }),
                     authentication: {
-                      schemes: ['HMAC-SHA256'],
-                      credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
+                      schemes: ['HMAC-SHA256' as const],
+                      credentials: webhookSecret,
                     },
-                  }
-                : undefined;
+                  };
+                }
+                if (serverVersion === 'v2') {
+                  warnV2PushNotificationNeedsSecret();
+                  return undefined;
+                }
+                return {
+                  url: webhookUrl,
+                  ...(webhookToken && { token: webhookToken }),
+                };
+              })();
 
               if (agent.protocol === 'mcp') {
                 // For MCP, include push_notification_config in tool arguments (MCP spec)

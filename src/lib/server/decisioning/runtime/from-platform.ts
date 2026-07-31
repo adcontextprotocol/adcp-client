@@ -3992,11 +3992,16 @@ function bucketWebhookError(msg: string): string {
   // operator triage cares about the most-severe status, not the
   // left-most occurrence. Fixes "upstream 502 (proxy received 401)"
   // which would mis-bucket as HTTP_4XX under a first-match policy.
-  const matches = lower.match(/\b[45]\d\d\b/g);
+  // 3xx is included because signed webhook delivery never follows redirects, so
+  // a redirecting endpoint is a real (and common) misconfiguration that would
+  // otherwise bucket as UNKNOWN and stay invisible in operator dashboards.
+  const matches = lower.match(/\b[345]\d\d\b/g);
   if (matches && matches.length > 0) {
     const codes = matches.map(m => parseInt(m, 10));
     const max = Math.max(...codes);
-    return max >= 500 ? 'HTTP_5XX' : 'HTTP_4XX';
+    if (max >= 500) return 'HTTP_5XX';
+    if (max >= 400) return 'HTTP_4XX';
+    return 'HTTP_REDIRECT';
   }
   return 'UNKNOWN';
 }

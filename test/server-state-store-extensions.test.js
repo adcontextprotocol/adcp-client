@@ -506,6 +506,47 @@ describe('structuredSerialize / structuredDeserialize', () => {
     assert.strictEqual(structuredSerialize(undefined), undefined);
   });
 
+  // `JSON.parse` produces a genuine own `__proto__` key, so plain assignment
+  // while rebuilding the object would reach `Object.prototype`'s setter and
+  // replace the result's prototype with caller data instead of copying a field.
+  it('treats a __proto__ key as data, not as a prototype assignment', () => {
+    const wire = JSON.parse('{"__proto__": {"isAdmin": true}, "id": "list_1"}');
+    const restored = structuredDeserialize(wire);
+
+    assert.strictEqual(restored.id, 'list_1');
+    assert.strictEqual(Object.getPrototypeOf(restored), Object.prototype, 'prototype must be untouched');
+    assert.strictEqual(restored.isAdmin, undefined, 'must not inherit an injected flag');
+    assert.ok(Object.prototype.hasOwnProperty.call(restored, '__proto__'), '__proto__ survives as an own key');
+    assert.deepStrictEqual(
+      Object.getOwnPropertyDescriptor(restored, '__proto__').value,
+      { isAdmin: true },
+      '__proto__ round-trips losslessly as data'
+    );
+  });
+
+  it('treats a __proto__ key as data on the serialize side too', () => {
+    const wire = JSON.parse('{"__proto__": {"isAdmin": true}}');
+    const serialized = structuredSerialize(wire);
+
+    assert.strictEqual(Object.getPrototypeOf(serialized), Object.prototype);
+    assert.strictEqual(serialized.isAdmin, undefined);
+    assert.ok(Object.prototype.hasOwnProperty.call(serialized, '__proto__'));
+  });
+
+  it('does not let a nested __proto__ key pollute a nested object', () => {
+    const wire = JSON.parse('{"session": {"__proto__": {"isAdmin": true}, "id": "s1"}}');
+    const restored = structuredDeserialize(wire);
+
+    assert.strictEqual(restored.session.id, 's1');
+    assert.strictEqual(Object.getPrototypeOf(restored.session), Object.prototype);
+    assert.strictEqual(restored.session.isAdmin, undefined);
+  });
+
+  it('leaves Object.prototype itself unmodified', () => {
+    structuredDeserialize(JSON.parse('{"__proto__": {"pollutedGlobally": true}}'));
+    assert.strictEqual({}.pollutedGlobally, undefined);
+  });
+
   it('round-trips through state store with maxDocumentBytes check on serialized form', async () => {
     const store = new InMemoryStateStore();
     const value = {

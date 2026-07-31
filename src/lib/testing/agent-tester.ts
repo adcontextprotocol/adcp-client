@@ -100,6 +100,93 @@ import {
 import type { TestScenario, TestOptions, TestResult, TestStepResult, AgentProfile } from './types';
 import { getLogger } from './client';
 
+const REDACTED = '[redacted]';
+
+/**
+ * Strip credentials out of `TestOptions` before it reaches a logger.
+ *
+ * `TestOptions` carries bearer tokens, Basic passwords, OAuth access/refresh
+ * tokens, client-credential secrets, test-kit API keys, and caller-supplied
+ * headers that may hold any of the above. The default logger serializes its
+ * whole context with `JSON.stringify` to `console.log`, so logging the object
+ * verbatim puts live credentials into ordinary stdout and CI logs. Shapes are
+ * preserved — which auth type and which header names were in play is the useful
+ * part for debugging; the values are not.
+ */
+function redactTestOptions(options: TestOptions): Record<string, unknown> {
+  // Allowlist, not `{...options}` minus known secrets.
+  //
+  // Spreading was the bug: `TestOptions._client` is a live `SingleAgentClient`,
+  // set on the primary `comply()` and orchestrator paths, and its `agent` field
+  // is an own enumerable property — so `JSON.stringify` walked straight back
+  // into the bearer token, OAuth tokens, client secret, custom headers, and
+  // `webhookSecret` that the masking above had just removed, three times over
+  // via nested client references. A denylist over a graph that holds a
+  // reference to the whole client cannot be made safe; only naming what may be
+  // logged can.
+  const safe: Record<string, unknown> = {};
+
+  for (const key of LOGGABLE_OPTION_KEYS) {
+    if (options[key] !== undefined) safe[key] = options[key];
+  }
+
+  if (options.auth) {
+    // Keep `type` so the log still shows which scheme was exercised.
+    safe.auth = { type: options.auth.type, ...redactedFieldsFor(options.auth) };
+  }
+  if (options.headers) {
+    // Names are the debuggable part; values may be credentials.
+    safe.headers = Object.fromEntries(Object.keys(options.headers).map(name => [name, REDACTED]));
+  }
+  if (options.test_kit) {
+    // Test kits come from arbitrary `test-kits/*.yaml` and the type carries an
+    // index signature, so a credential can sit at any depth. Log the shape only.
+    safe.test_kit = { keys: Object.keys(options.test_kit) };
+  }
+
+  return safe;
+}
+
+/**
+ * Fields of `TestOptions` that may be written to a log verbatim.
+ *
+ * Anything not named here is dropped — in particular the `_`-prefixed internals
+ * (`_client`, `_profile`, `_webhookReceiver`, …), which hold live client objects
+ * whose own fields include every credential the caller supplied. `agentUrl` is
+ * logged separately by the caller, so the client adds no diagnostic value.
+ */
+const LOGGABLE_OPTION_KEYS = [
+  'protocol',
+  'adcpVersion',
+  'wireAdcpVersion',
+  'versionEnvelope',
+  'schemaRoot',
+  'userAgent',
+  'brand',
+  'brief',
+  'budget',
+  'format_ids',
+  'sandbox',
+  'test_session_id',
+] as const satisfies readonly (keyof TestOptions)[];
+
+/** Every credential-bearing field of the auth union, masked. */
+function redactedFieldsFor(auth: NonNullable<TestOptions['auth']>): Record<string, string> {
+  switch (auth.type) {
+    case 'bearer':
+      return { token: REDACTED };
+    case 'basic':
+      return { username: REDACTED, password: REDACTED };
+    case 'oauth':
+      return { tokens: REDACTED };
+    case 'oauth_client_credentials':
+      return { credentials: REDACTED, tokens: REDACTED };
+    default:
+      // Unreachable for the declared union; masks wholesale if it ever widens.
+      return { value: REDACTED };
+  }
+}
+
 /**
  * Main entry point: Run a test scenario against an agent
  */
@@ -119,7 +206,7 @@ export async function testAgent(
     test_session_id: options.test_session_id || `addie-test-${Date.now()}`,
   };
 
-  logger.info({ agentUrl, scenario, options: effectiveOptions }, 'Starting agent test');
+  logger.info({ agentUrl, scenario, options: redactTestOptions(effectiveOptions) }, 'Starting agent test');
 
   try {
     let result: { steps: TestStepResult[]; profile?: AgentProfile };

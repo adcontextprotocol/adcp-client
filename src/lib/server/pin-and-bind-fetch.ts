@@ -17,6 +17,8 @@
  *   3. Pin the connection to the validated IP — undici opens TCP/TLS to that
  *      specific address, but the original hostname is preserved for TLS SNI
  *      and the `Host:` header so HTTPS routing still works.
+ *   4. Never follow redirects. Steps 1-3 only ever see the URL the caller
+ *      passed, so a followed `Location:` hop would bypass all of them.
  *
  * Implementation note: undici's `Agent` accepts a `connect.lookup` callback
  * with the same signature as `dns.lookup`. We hook the callback, resolve via
@@ -257,8 +259,26 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
         throw makeSsrfError(sync.message ?? 'SSRF policy denied URL', sync.rule ?? 'ssrf');
       }
     }
+    // Redirects are never followed, and this is not caller-overridable.
+    //
+    // Both guards above only ever see the URL the caller passed. Following a
+    // redirect would send the request to a destination neither one evaluated:
+    // the synchronous check has already run, and undici skips `connect.lookup`
+    // for IP-literal hosts, so a `Location: https://169.254.169.254/` hop
+    // reaches the metadata service with the payload attached. Honouring a
+    // caller's `redirect: 'follow'` would reopen exactly that hole, so the
+    // mode is forced rather than defaulted.
+    //
+    // A 3xx therefore surfaces to the caller as an ordinary non-2xx response.
+    // For signed webhook delivery that is also the correct outcome on its own
+    // terms — the signature covers `@target-uri`, so a request replayed at a
+    // redirect target would not verify there anyway. Callers that genuinely
+    // need to follow a hop should re-enter this fetch with the new URL, which
+    // re-runs the full policy on it.
+    const redirect = (init as { redirect?: string } | undefined)?.redirect === 'error' ? 'error' : 'manual';
     return undiciFetch(input as Parameters<typeof undiciFetch>[0], {
       ...(init as Parameters<typeof undiciFetch>[1]),
+      redirect,
       dispatcher: dispatcher as unknown as Dispatcher,
     }) as unknown as Response;
   };

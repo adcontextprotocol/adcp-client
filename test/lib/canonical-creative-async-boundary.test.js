@@ -66,6 +66,7 @@ function converter() {
 
 function makeClient(executeTask, config = {}) {
   const client = new SingleAgentClient(agentConfig, {
+    allowUnauthenticatedWebhooks: true,
     validateFeatures: false,
     validation: { requests: 'off', responses: 'off', rejectProductsWithoutPricingOptions: false },
     ...config,

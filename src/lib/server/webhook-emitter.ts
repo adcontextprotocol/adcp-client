@@ -310,7 +310,12 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
           }
 
           terminal = isTerminalStatus(status, response.wwwAuthenticate);
-          error = `HTTP ${status}${response.wwwAuthenticate ? ` (${response.wwwAuthenticate})` : ''}`;
+          error =
+            status >= 300 && status < 400
+              ? `HTTP ${status} redirect${response.location ? ` to ${response.location}` : ''} — redirects are ` +
+                `never followed for signed webhook delivery, because the signature covers @target-uri and ` +
+                `would not verify at the redirect target. Re-register the webhook with the final URL.`
+              : `HTTP ${status}${response.wwwAuthenticate ? ` (${response.wwwAuthenticate})` : ''}`;
         } catch (err) {
           error = formatTransportError(err);
           // Network / transport errors are retryable — the delivery didn't
@@ -357,6 +362,8 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): WebhookEmi
 interface DeliveryResponse {
   status: number;
   wwwAuthenticate?: string;
+  /** `Location` on a 3xx, so the diagnostic can name the redirect target. */
+  location?: string;
 }
 
 async function deliverOnce(args: {
@@ -379,6 +386,7 @@ async function deliverOnce(args: {
   return {
     status: response.status,
     ...(response.headers.get('www-authenticate') && { wwwAuthenticate: response.headers.get('www-authenticate')! }),
+    ...(response.headers.get('location') && { location: response.headers.get('location')! }),
   };
 }
 
@@ -480,6 +488,12 @@ function defaultGenerateIdempotencyKey(): string {
 function isTerminalStatus(status: number, wwwAuthenticate?: string): boolean {
   if (status === 429) return false;
   if (status >= 500) return false;
+  // A redirect is a configuration error, not a transient one — retrying it
+  // produces the same redirect. `createPinAndBindFetch` deliberately does not
+  // follow redirects (the signature covers `@target-uri`, so a replayed hop
+  // would not verify at the target anyway), so a 3xx means the registered URL
+  // is not the final one.
+  if (status >= 300 && status < 400) return true;
   // 401 with a signature-layer reject is terminal per adcp#2423 —
   // retrying a signature failure produces identical bytes and identical
   // rejection. Non-signature 401s (opaque auth failures) are also

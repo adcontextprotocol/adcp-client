@@ -200,6 +200,17 @@ export class ConfidentialClientNotAllowedError extends OAuthError {
   }
 }
 
+export class BrowserBindingRequiredError extends OAuthError {
+  constructor() {
+    super(
+      'completeWebOAuthFlow called with requireBrowserBinding:true but expectedState was not supplied — ' +
+        'pass the state value from the session cookie set at /oauth/start',
+      'browser_binding_required'
+    );
+    this.name = 'BrowserBindingRequiredError';
+  }
+}
+
 export interface StartWebFlowOptions {
   /** Agent the flow is for. Must include `agent_uri`. */
   agent: AgentConfig;
@@ -262,6 +273,15 @@ export interface CompleteWebFlowOptions {
    * but not browser-bound — see WEB-OAUTH.md.
    */
   expectedState?: string;
+  /**
+   * When `true`, throws {@link BrowserBindingRequiredError} if `expectedState`
+   * is omitted instead of emitting a `console.warn`. Use this in frameworks
+   * where session cookies are always available so that a missing bind is caught
+   * at development time rather than silently permitted in production.
+   *
+   * Default: `false`.
+   */
+  requireBrowserBinding?: boolean;
 }
 
 export interface CompleteWebFlowResult {
@@ -376,9 +396,23 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
  * for the full tradeoff discussion.
  */
 export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promise<CompleteWebFlowResult> {
-  const { state, code, pendingFlowStore, agentStorage, fetch: fetchFn, expectedState } = opts;
+  const { state, code, pendingFlowStore, agentStorage, fetch: fetchFn, expectedState, requireBrowserBinding } = opts;
 
-  if (expectedState !== undefined && expectedState !== state) {
+  if (expectedState === undefined) {
+    if (requireBrowserBinding) {
+      throw new BrowserBindingRequiredError();
+    }
+    // Warn callers who omit expectedState: the flow is replay-protected via
+    // atomic consume but is not browser-bound (any request carrying the correct
+    // state + code would be accepted). Pass expectedState from a session cookie
+    // set at /oauth/start to fully bind the callback to the initiating browser.
+    // Set requireBrowserBinding:true to make this a hard error instead.
+    console.warn(
+      '[adcp/sdk] completeWebOAuthFlow: expectedState not supplied — the callback is replay-protected ' +
+        'but not browser-bound. Pass expectedState from a session cookie set at /oauth/start, ' +
+        'or set requireBrowserBinding:true to enforce it.'
+    );
+  } else if (expectedState !== state) {
     throw new StateMismatchError();
   }
 

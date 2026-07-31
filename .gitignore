@@ -143,6 +143,9 @@ IMPLEMENTATION_PLAN.md
 # Claude Code runtime artifacts (.claude/skills/ is tracked on purpose)
 .claude/scheduled_tasks.lock
 
+# Test-generated working directories (public-barrel-exports.test.js, diagnose-pair.sh)
+.context/
+
 # Snapshot artifacts created by sync-schemas replaceTree
 skills/*.previous/
 pnpm-lock.yaml

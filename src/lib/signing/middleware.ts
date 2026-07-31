@@ -24,7 +24,8 @@ export interface ExpressLike {
   originalUrl?: string;
   url: string;
   headers: Record<string, string | string[] | undefined>;
-  rawBody?: string;
+  /** Raw request bytes captured before any body parser. String or Buffer. */
+  rawBody?: string | Buffer;
   body?: unknown;
   protocol?: string;
   get?(header: string): string | undefined;
@@ -134,18 +135,72 @@ export function createExpressVerifier(options: ExpressMiddlewareOptions) {
   };
 }
 
+/** Methods that may carry a request body, so a missing `rawBody` is suspect. */
+const BODY_BEARING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 function resolveRawBody(req: ExpressLike): string {
+  // The canonical raw-body recipe (`express.json({ verify })`, and this SDK's
+  // own `createExpressAdapter().rawBodyVerify`) may hand back either a string
+  // or the raw Buffer, so accept both rather than 401-ing a correctly wired app.
   if (typeof req.rawBody === 'string') return req.rawBody;
-  const contentLengthHeader = getHeaderValue(req.headers, 'content-length');
-  const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
-  if (Number.isFinite(contentLength) && contentLength > 0) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody.toString('utf8');
+
+  // Verifying against `''` when the request actually carried a body would
+  // authenticate a surrogate: `validateCoveredComponents` derives `hasBody`
+  // from this value (so the `content-type` requirement lapses) and the
+  // `content-digest` check would describe the empty string, after which
+  // `next()` hands a downstream parser's real body to the handler.
+  //
+  // So the test is for positive proof that NO body exists, not for evidence
+  // that one does. Enumerating body signals cannot work: HTTP/2 forbids
+  // `Transfer-Encoding` outright and makes `content-length` optional, so a
+  // DATA-frame body carries neither header and would slip through a
+  // signal-based check. Only a non-body-bearing method with an explicit
+  // zero (or absent) length can honestly verify against `''`.
+  if (BODY_BEARING_METHODS.has(req.method?.toUpperCase() ?? '') || declaresBody(req) || hasParsedBody(req)) {
     throw new RequestSignatureError(
       'request_signature_header_malformed',
       1,
-      'req.rawBody is required for signed requests with a body; install a raw-body capture middleware ahead of createExpressVerifier'
+      'req.rawBody is required for signed requests that may carry a body. Capture it before any body ' +
+        'parser runs, e.g. `app.use(express.json({ verify: adapter.rawBodyVerify }))` using ' +
+        "`createExpressAdapter()`, or `app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }))`. " +
+        'The capture middleware must be mounted ahead of createExpressVerifier.'
     );
   }
   return '';
+}
+
+/**
+ * A `Content-Length` that is present and non-zero, or unparseable. `00`, `+0`,
+ * and `0.0` are all legitimately zero; anything `Number` cannot read is treated
+ * as a body so the failure direction stays closed.
+ */
+function declaresBody(req: ExpressLike): boolean {
+  const length = getHeaderValue(req.headers, 'content-length');
+  if (length !== undefined) {
+    const parsed = Number(length);
+    if (!Number.isFinite(parsed)) return true;
+    if (parsed !== 0) return true;
+  }
+  return getHeaderValue(req.headers, 'transfer-encoding') !== undefined;
+}
+
+/** A body parser mounted ahead of this middleware already consumed the stream. */
+function hasParsedBody(req: ExpressLike): boolean {
+  const body = req.body;
+  if (body === undefined || body === null) return false;
+  if (typeof body === 'string') return body.length > 0;
+  if (Buffer.isBuffer(body)) return body.length > 0;
+  // Only a genuinely empty plain object counts as "no body" — Express sets
+  // `req.body = {}` for bodiless requests. Anything else with no own enumerable
+  // keys (URLSearchParams, Map, a class instance) may still hold data.
+  if (typeof body === 'object') {
+    const proto = Object.getPrototypeOf(body);
+    const isPlainObject = proto === Object.prototype || proto === null;
+    if (!isPlainObject) return true;
+    return Object.keys(body as Record<string, unknown>).length > 0;
+  }
+  return true;
 }
 
 function defaultUrl(req: ExpressLike): string {

@@ -3,6 +3,8 @@
  * Functions for validating URLs, responses, and schemas
  */
 
+import { classifyProbeUrl } from '../utils/probe-policy';
+
 export { validateRequest, validateResponse, formatIssues } from './schema-validator';
 export type { ValidationIssue, ValidationOutcome } from './schema-validator';
 export { buildValidationError, buildAdcpValidationErrorPayload } from './schema-errors';
@@ -45,7 +47,21 @@ export function getExpectedSchema(toolName: string): string {
 }
 
 /**
- * Validate agent URL to prevent SSRF attacks
+ * Validate an agent URL before it reaches a protocol transport.
+ *
+ * The private/metadata decision delegates to {@link classifyProbeUrl} so agent
+ * URLs and discovery probes share one policy: loopback allowed (a dev loop
+ * already requires on-host access to abuse), RFC-1918/link-local/ULA refused
+ * unless the operator sets `ADCP_ALLOW_INTERNAL_PROBES=1`, cloud metadata
+ * refused even then. Deliberately NOT keyed on `NODE_ENV` — a staging image
+ * running `NODE_ENV=test` must not inherit a looser SSRF posture than
+ * production.
+ *
+ * SCOPE: this is a synchronous check on the URL's literal scheme and hostname.
+ * It does NOT resolve DNS, so it cannot stop a public hostname that resolves —
+ * or rebinds — to a private address. That gap is the same TOCTOU one tracked
+ * for `classifyProbeUrl`; DNS-level defense requires resolving and pinning at
+ * connect time, as `ssrfSafeFetch` and `createPinAndBindFetch` do.
  */
 export function validateAgentUrl(url: string): void {
   // Handle edge cases first
@@ -75,22 +91,15 @@ export function validateAgentUrl(url: string): void {
       throw new Error('URL must have a valid hostname');
     }
 
-    // Block private IP ranges and localhost in production
-    if (process.env.NODE_ENV === 'production') {
-      const hostname = parsedUrl.hostname.toLowerCase();
-      if (
-        ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname) ||
-        hostname.startsWith('192.168.') ||
-        hostname.startsWith('10.') ||
-        hostname.match(/^172\.(1[6-9]|2[0-9]|3[01])\./)
-      ) {
-        throw new Error('Private network access not allowed in production');
-      }
-
-      // Block metadata endpoints
-      if (hostname === '169.254.169.254' || hostname === 'metadata.google.internal') {
-        throw new Error('Metadata endpoint access not allowed');
-      }
+    // Metadata and private-network destinations. One policy, shared with
+    // discovery probes — see `classifyProbeUrl` for the range table and the
+    // single `ADCP_ALLOW_INTERNAL_PROBES` opt-out. It does real CIDR matching
+    // over `net/address-guards`, so bracketed `[::1]`, `127.0.0.2`, CGNAT, and
+    // IPv4-mapped IPv6 are all classified correctly and registered names like
+    // `10.example.com` are not false positives.
+    const probe = classifyProbeUrl(parsedUrl.toString());
+    if (!probe.allowed) {
+      throw new Error(`${probe.reason} (agent URL not allowed)`);
     }
   } catch (e) {
     if (e instanceof Error) {
