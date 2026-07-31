@@ -51,6 +51,9 @@ function buildStore(opts = {}) {
       operator: ref?.operator ?? 'derived',
       sandbox: ref?.sandbox ?? false,
     }),
+    // Required with no default — stated explicitly here so every test below
+    // declares the resolve posture it is exercising rather than inheriting one.
+    refAccess: 'ref-routed',
     ...opts,
   };
   return createTenantStore(cfg);
@@ -106,8 +109,20 @@ describe('createTenantStore — resolve', () => {
 // ── resolve — refAccess isolation gate ──────────────────────────────────────
 
 describe('createTenantStore — resolve refAccess gate', () => {
-  test("default ('ref-routed') resolves a cross-tenant ref without checking the caller", async () => {
-    const store = buildStore();
+  // `refAccess` has no default: both values are correct for some deployments,
+  // so the helper refuses to pick one. These tests pass it explicitly.
+  test('refuses construction when refAccess is omitted', () => {
+    // Type-level requirement covers TS callers; this covers JS callers and
+    // `as any` casts, which would otherwise get the permissive branch silently.
+    assert.throws(() => buildStore({ refAccess: undefined }), /`refAccess` is required/);
+  });
+
+  test('refuses construction on an unrecognized refAccess value', () => {
+    assert.throws(() => buildStore({ refAccess: 'auth_scoped' }), /`refAccess` is required/);
+  });
+
+  test("'ref-routed' resolves a cross-tenant ref without checking the caller", async () => {
+    const store = buildStore({ refAccess: 'ref-routed' });
     // Meridian's credential names Pinnacle's operator — ref-routed returns it.
     const acc = await store.resolve(
       { brand: { domain: 'acme.example' }, operator: 'pinnacle.example' },

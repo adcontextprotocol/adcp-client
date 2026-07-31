@@ -6,12 +6,16 @@
  * account-sync tools (`sync_accounts` / `sync_governance`) that adopters
  * historically had to write — and silently fail to write — by hand.
  *
- * NOTE: `accounts.resolve` is NOT gated by default (`refAccess: 'ref-routed'`)
- * — it returns whatever tenant the buyer's ref points at, which is correct
- * for the agency-hub model where one credential spans tenants. Deployments
- * where a credential must NOT reach another tenant's account set
- * `refAccess: 'auth-scoped'` (gates `resolve` fail-closed) or compose a
- * `resolve-presets` guard. See {@link TenantStoreConfig.refAccess}.
+ * NOTE: `refAccess` is REQUIRED and has no default, because the safe value
+ * depends on a fact only the adopter knows. `'ref-routed'` returns whatever
+ * tenant the buyer's ref points at — correct for the agency-hub model where one
+ * credential legitimately spans tenants, and a cross-tenant spend hole where it
+ * doesn't. `'auth-scoped'` gates `resolve` fail-closed.
+ *
+ * `refAccess` governs `resolve` ONLY. `upsert` / `syncGovernance` enforce the
+ * tenant gate either way — so an adopter who has verified those is NOT covered
+ * on `resolve`, and `resolve` is the account path for `create_media_buy` and
+ * `update_media_buy`. See {@link TenantStoreConfig.refAccess}.
  *
  * Full walkthrough with same-tenant invariant + production caveats:
  * `skills/build-holdco-agent/SKILL.md`. Worked example:
@@ -53,7 +57,15 @@ export interface TenantStoreConfig<TTenant, TCtxMeta = Record<string, unknown>> 
    * Controls whether a buyer-supplied account ref on `accounts.resolve` is
    * gated against the authenticated principal's tenant.
    *
-   * - `'ref-routed'` (default) — `resolve` returns whatever tenant the ref
+   * REQUIRED, deliberately with no default. Both values are correct for some
+   * deployments and catastrophic for others, and nothing in the code can tell
+   * which one you are: `'ref-routed'` is right for an agency hub whose single
+   * credential legitimately spans tenants, and a cross-tenant spend hole for a
+   * hub whose tenants are unrelated clients. A default would silently pick one
+   * of those for you. Making it required turns that into a `tsc` error you
+   * resolve once, at construction, instead of a runtime surprise.
+   *
+   * - `'ref-routed'` — `resolve` returns whatever tenant the ref
    *   points at, WITHOUT checking the caller. This is correct for the
    *   agency-hub / account-routed model where one credential legitimately
    *   spans tenants (see `examples/hello_seller_adapter_multi_tenant.ts`).
@@ -71,16 +83,16 @@ export interface TenantStoreConfig<TTenant, TCtxMeta = Record<string, unknown>> 
    * This flag governs ONLY `resolve`. `upsert` / `syncGovernance` always
    * enforce the tenant gate regardless of this setting.
    */
-  refAccess?: 'ref-routed' | 'auth-scoped';
+  refAccess: 'ref-routed' | 'auth-scoped';
 
   /**
    * Path 1: account ref carries `account_id` OR `(brand, operator)`.
    * Resolve to the tenant the ref points at. Return null if the ref is
    * unknown (helper emits `ACCOUNT_NOT_FOUND` for that row).
    *
-   * By default (`refAccess: 'ref-routed'`) this resolves independent of who
-   * the caller is. Set `refAccess: 'auth-scoped'` to make `resolve` reject a
-   * ref that points at a tenant other than the caller's.
+   * Under `refAccess: 'ref-routed'` this resolves independent of who the caller
+   * is. Under `refAccess: 'auth-scoped'` a ref pointing at a tenant other than
+   * the caller's is rejected.
    *
    * Receives the full `AccountReference` so adopters can route on
    * `ref.sandbox` (Pattern 2: separate sandbox tenant) or read the
@@ -172,9 +184,9 @@ export interface TenantStoreConfig<TTenant, TCtxMeta = Record<string, unknown>> 
  *   set, otherwise `resolveFromAuth(ctx)`. Projects via `tenantToAccount`.
  *   Returns `null` if the resolver returned `null` (framework emits
  *   `ACCOUNT_NOT_FOUND` for tools that require an account, or treats
- *   absence as "no tenant" for tools that don't). By default this path does
- *   NOT check the caller against the ref's tenant — set
- *   `refAccess: 'auth-scoped'` to fail closed on a cross-tenant ref.
+ *   absence as "no tenant" for tools that don't). Under
+ *   `refAccess: 'ref-routed'` this path does NOT check the caller against the
+ *   ref's tenant; `refAccess: 'auth-scoped'` fails closed on a cross-tenant ref.
  *
  * - `accounts.upsert(refs, ctx)` — for each ref:
  *     1. Resolve the entry's tenant via `resolveByRef`.
@@ -213,6 +225,21 @@ export interface TenantStoreConfig<TTenant, TCtxMeta = Record<string, unknown>> 
 export function createTenantStore<TTenant, TCtxMeta = Record<string, unknown>>(
   config: TenantStoreConfig<TTenant, TCtxMeta>
 ): AccountStore<TCtxMeta> {
+  // `refAccess` is required in the type, but the type only protects TypeScript
+  // callers — a JS adopter or an `as any` cast would otherwise fall through to
+  // the permissive branch silently, which is the exact failure this field exists
+  // to prevent. Refuse at construction instead.
+  if (config.refAccess !== 'ref-routed' && config.refAccess !== 'auth-scoped') {
+    throw new Error(
+      'createTenantStore: `refAccess` is required and must be "ref-routed" or "auth-scoped". ' +
+        'There is deliberately no default — the safe value depends on whether one credential is ' +
+        'supposed to span tenants. Use "auth-scoped" when a credential must NOT reach another ' +
+        'tenant\'s account by naming its ref (most multi-tenant deployments), or "ref-routed" for ' +
+        'an agency hub whose single credential legitimately spans tenants. Note this governs ' +
+        '`resolve` only — which is the account path for create_media_buy and update_media_buy — ' +
+        'while `upsert` / `syncGovernance` are gated either way.'
+    );
+  }
   const store: AccountStore<TCtxMeta> = {
     resolve: async (ref, ctx) => {
       const resolveCtx = ctx ?? {};
@@ -223,7 +250,7 @@ export function createTenantStore<TTenant, TCtxMeta = Record<string, unknown>>(
       }
       const entryTenant = await config.resolveByRef(ref);
       if (entryTenant == null) return null;
-      if ((config.refAccess ?? 'ref-routed') === 'auth-scoped') {
+      if (config.refAccess === 'auth-scoped') {
         const authTenant = await config.resolveFromAuth(resolveCtx);
         // Fail-closed: an unresolvable principal OR a ref pointing at a
         // different tenant is treated as not found — a caller cannot reach
