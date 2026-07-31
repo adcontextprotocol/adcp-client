@@ -9,15 +9,22 @@
   "changesets": [
     "bright-cats-listen",
     "calm-mice-negotiate",
+    "fix-asset-instance-registry-drift",
     "fix-canonical-list-creatives-validation",
     "fix-core-required-field-codegen",
     "fix-era-negotiation-legacy-fallback",
     "fix-mcp-beta-pins",
+    "harden-ssrf-signature-and-oauth-callback",
     "ladon-test-trivial-paths",
+    "legacy-fallback-on-probe-auth-refusal",
     "pick-up-adcp-3-1-8",
     "project-legacy-creative-delivery",
     "remove-dead-brand-hierarchy-api",
+    "require-tenant-ref-access",
+    "soft-fail-legacy-format-ids-projection",
     "soft-tools-smile",
-    "tidy-signatures-skip"
+    "sync-registry-codegen",
+    "tidy-signatures-skip",
+    "web-flow-browser-binding"
   ]
 }

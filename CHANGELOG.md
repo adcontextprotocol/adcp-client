@@ -1,5 +1,114 @@
 # Changelog
 
+## 13.0.0-rc.5
+
+### Major Changes
+
+- 607e2a6: Security hardening across the SSRF, request-signature, webhook, and OAuth-callback boundaries. Several items change behavior — read the notes before upgrading.
+
+  > **Breaking:** `reporting_webhook` now throws when you pass one explicitly with no credential available; `redirectToAuthorization` throws without `state`; signed requests on body-bearing methods require `req.rawBody`; webhook delivery no longer follows redirects; and `validateAgentUrl` enforces regardless of `NODE_ENV`.
+
+  **`createPinAndBindFetch` no longer follows redirects.** Both SSRF guards only ever saw the URL the caller passed: the synchronous scheme/CIDR pre-check runs before the request, and undici skips `connect.lookup` for IP-literal hosts. A `Location:` hop therefore reached its destination unevaluated, so a buyer-registered webhook host could answer `302 Location: https://169.254.169.254/…` and take the signed POST to the cloud metadata service. A 3xx now surfaces to the caller as an ordinary non-2xx response, and the mode is forced rather than defaulted — passing `redirect: 'follow'` will not re-enable following. Callers that need to follow a hop should re-enter the fetch with the new URL so the full policy runs on it. `targeting-helpers` already did this at its call site; webhook delivery did not.
+
+  **`createExpressVerifier` no longer verifies against an empty body surrogate.** `resolveRawBody` demanded `req.rawBody` only when `content-length > 0`. `Transfer-Encoding: chunked` requests carry no `Content-Length`, so they fell through and the entire pipeline evaluated a body of `''` — `hasBody` came from the same value, waiving the `content-type` coverage requirement, and a `content-digest` comparison hashed the empty string — after which `next()` handed a downstream parser's real body to the handler. The test is now for positive proof that **no** body exists, rather than for evidence that one does. Enumerating body signals cannot work: HTTP/2 forbids `Transfer-Encoding` outright and makes `content-length` optional, so a DATA-frame body carries neither header and slipped through a signal-based check. `req.rawBody` is therefore required on any body-bearing method (`POST`/`PUT`/`PATCH`/`DELETE`), as well as whenever a `Content-Length`, `Transfer-Encoding`, or already-populated `req.body` indicates a body — failing closed with `request_signature_header_malformed` and an error that names the exact middleware to add. A `Buffer` `rawBody` is now accepted too, which is what the canonical `express.json({ verify })` recipe actually produces; only accepting a string 401'd correctly-wired apps.
+
+  **`validateAgentUrl` shares one SSRF policy with discovery probes.** It previously enforced _only_ when `NODE_ENV === 'production'`, so an unset or orchestrator-stripped `NODE_ENV` disabled the check entirely. It now delegates to `classifyProbeUrl`, which is deliberately **not** keyed on `NODE_ENV` — a staging image running `NODE_ENV=test` must not inherit a looser SSRF posture than production. The range policy: loopback allowed (abusing it already requires on-host access, and every local dev loop and mock-server test targets it), RFC-1918/link-local/ULA refused unless the operator sets `ADCP_ALLOW_INTERNAL_PROBES=1` (the CLI's existing `--allow-http` switch), cloud metadata refused even then. Hand-rolled literal comparisons are gone in favour of the `net/address-guards` CIDR classifiers, which fixes bracketed `[::1]` (Node returns the bracketed form, so the old `'::1'` compare never matched), `127.0.0.2`, CGNAT, and IPv4-mapped IPv6, and stops treating registered names like `10.example.com` as private.
+
+  Two gaps closed in the shared policy while wiring this up: cloud-metadata **hostnames** (`metadata.google.internal` and friends) are now refused — they are registered names, so no CIDR classifier ever saw them, and GCP metadata-by-name needs no IP literal — and a trailing root dot (`localhost.`, `metadata.google.internal.`) no longer bypasses name matching. `net/address-guards` also gains `192.0.0.0/24` (Oracle Cloud IMDS lives at `192.0.0.192`, outside the `169.254.0.0/16` everyone else uses), `192.88.99.0/24`, and `240.0.0.0/4`, which `WEBHOOK_SSRF_POLICY` already denied — the two tables had diverged.
+
+  **This function does not resolve DNS and never did** — it is a literal-host gate, not a rebinding defense. DNS-level protection lives in `ssrfSafeFetch` / `createPinAndBindFetch`, and the MCP/A2A transports do not yet route through them.
+
+  **Webhook registrations no longer advertise a placeholder credential.** `push_notification_config.authentication` and `reporting_webhook.authentication` were emitted with the constant `placeholder_secret_min_32_characters_required` whenever no `webhookSecret` was configured. Per `push-notification-config.json` that block is a scheme _selector_, not a fallback: its presence opts the seller into legacy HMAC-SHA256 and its absence selects the RFC 9421 webhook profile. The placeholder therefore downgraded every secretless webhook to legacy HMAC keyed by a value that shipped in the source.
+
+  The two sites differ because their schemas do:
+  - `push_notification_config.authentication` is optional, so the block is simply **omitted** when no real secret backs it, which selects RFC 9421.
+  - `reporting-webhook.json` makes `authentication` **required** for all of AdCP 3.x (the requirement lifts in 4.0), so the block cannot be omitted and no honest value exists. The library's automatic `reporting_webhook` injection is therefore **skipped** with a one-time warning when there is no `webhookSecret` and the caller supplied no `authentication`. The `create_media_buy` itself is unaffected. Set `webhookSecret`, or pass an explicit `reporting_webhook.authentication`, to keep automated reporting delivery.
+
+  **Receiving without a `webhookSecret` now fails closed.** `verifyAndParseWebhook` returns a new `webhook_unverifiable` code instead of accepting: with no secret the legacy HMAC profile has nothing to verify against, and this client does not yet verify the RFC 9421 profile that an omitted `authentication` block selects, so accepting would dispatch a caller-supplied payload to async and activity handlers and update task status on nothing but its shape. Set `allowUnauthenticatedWebhooks: true` to opt back in — only safe when the receiver route is unreachable from outside your network.
+
+  The CLI's `--wait` path registered a hardcoded `webhookSecret: 'cli-webhook-secret'`, a constant published in the npm tarball; because `authentication` is a selector, that actively downgraded every `--wait` webhook to legacy HMAC keyed by a value anyone can read out of the package. It now generates a per-invocation random secret.
+
+  `push_notification_config` is version-gated: v2.5 makes `authentication` **required** and has no 9421 selector semantics, so omitting the block there would be schema-invalid rather than a mode selection. With no secret, a v2 seller gets no registration (and a warning) instead of a fabricated credential.
+
+  `reporting_webhook`'s `authentication` is also treated as **atomic** rather than field-merged. A field-level merge crossed `schemes` from the caller with `credentials` from `webhookSecret`, so a caller passing `schemes: ['Bearer']` with no credential had the HMAC shared secret registered as a Bearer token — which the seller then sends in cleartext on every delivery. And a caller who passes `reporting_webhook` explicitly with no credential available now gets an **error** rather than having the field silently dropped; only the library's own auto-injection is skipped quietly.
+
+  **The CLI OAuth callback is bound to the request that started it.** `CLIFlowHandler` generated a random `state` but never compared it — the loopback callback resolved the pending authorization on the first request to reach the path, letting any local process inject or cancel a flow, with code substitution available wherever the authorization server does not strictly bind PKCE to the code. The handler now captures `state` from the authorization URL and requires a constant-time match on the callback, **before** interpreting any other callback parameter — reading `error=access_denied` first would have left the cancellation half of the same hole open, letting any local process abort a login with no knowledge of the state. `redirectToAuthorization` throws if the URL carries no `state` or uses a non-http(s) scheme.
+
+  Scope, stated plainly: this defeats a process that cannot see the authorization URL, which is the ordinary case. It does not defeat a same-user process that reads the URL out of this process's argv while the browser opens. PKCE is what protects the code exchange there.
+
+  **Windows browser launch no longer goes through `cmd.exe`.** `spawn('cmd', ['/c', 'start', '', url])` makes the interpreter the child process, so `cmd` parses `&`, `|`, and `^` in the URL even with `shell` unset — and authorization URLs contain `&` by construction and derive partly from a discovered `authorization_endpoint`. Now uses `rundll32 url.dll,FileProtocolHandler`.
+
+  **Two smaller fixes.** The webhook verifier's loopback exemption from the https-only `@target-uri` rule used `hostname.startsWith('127.')`, which also matched registered names like `127.attacker.example` that resolve anywhere; it now requires a real IPv4 literal in `127.0.0.0/8`, `localhost`, or IPv6 loopback. `PropertyListAdapter.generateToken` built a returned `auth_token` from `Math.random` and now uses `crypto.randomBytes`.
+
+  **`testAgent` no longer logs credentials.** It passed the whole `TestOptions` object to `logger.info`, and the default logger `JSON.stringify`s its context to `console.log` — so bearer tokens, Basic passwords, OAuth access/refresh tokens, client-credential secrets, test-kit API keys, and caller-supplied header values all went to stdout and CI logs on every run. The context is now built from an **allowlist** of loggable fields: masking known secrets was not enough, because `TestOptions._client` holds a live client whose own fields lead straight back to the same credentials, so a denylist over that object graph could not be made safe. Shapes are kept — which auth scheme ran, which header names were in play — since that is the debuggable part.
+
+  **Debug logs share one redactor, and it now covers both webhook registrations.** `mcp.ts` masked only the idempotency key, the sibling Tasks path also masked `push_notification_config.authentication`, and the A2A path masked `token` as well — three behaviors across three call sites. All now use one helper.
+
+  That helper masks `authentication` and `token` on **both** `push_notification_config` and `reporting_webhook`. The second matters more than it looks: `reporting-webhook.json` makes `authentication` required for all of AdCP 3.x, so a `create_media_buy` registering reporting always carries a real HMAC secret in `reporting_webhook.authentication.credentials` — on the call most likely to be debug-logged. Masking only the push config left that in plaintext.
+
+  **Redirecting webhook endpoints fail fast instead of burning the retry budget.** `isTerminalStatus` treated 3xx as retryable, so a receiver that permanently redirects (apex→www, http→https, trailing-slash canonicalization — the most common webhook misconfiguration) consumed every attempt and reported a bare `HTTP 302`. A redirect is now terminal, the error names the `Location` and why it was not followed, and the operator bucket is `HTTP_REDIRECT` rather than `UNKNOWN`.
+
+  **Docs:** the Express verifier snippets in `README.md` and `docs/guides/SIGNING-GUIDE.md` called a `rawBodyMiddleware()` that does not exist anywhere in the repo, so following them produced a blanket 401 under the stricter raw-body guard. Both now show the `express.json({ verify: adapter.rawBodyVerify })` form.
+
+  **`structuredSerialize` / `structuredDeserialize` treat `__proto__` as data.** `JSON.parse` produces a genuine own `__proto__` key, so the `out[key] = …` rebuild reached `Object.prototype`'s setter and replaced the result object's prototype with caller data instead of copying a field. Assignment now goes through `Object.defineProperty`, so the key round-trips losslessly as an own property.
+
+- 7273918: **Breaking:** `createTenantStore`'s `refAccess` is now required, with no default.
+
+  It previously defaulted to `'ref-routed'`, under which `accounts.resolve` returns whatever tenant the buyer's ref names without consulting the authenticated principal. That is correct for an agency hub whose single credential legitimately spans tenants — and a cross-tenant **spend** hole for a hub whose tenants are unrelated clients, since `resolve` is the account path for `create_media_buy` and `update_media_buy`. Nothing in the code can distinguish those two deployments, so a default silently picked one.
+
+  Both values remain available and neither behavior changed; only the choice is now explicit.
+  - `'auth-scoped'` — a ref resolving to a tenant other than `resolveFromAuth(ctx)` returns `null` (framework emits `ACCOUNT_NOT_FOUND`). Correct for most multi-tenant deployments.
+  - `'ref-routed'` — previous default. Keep it only if one credential is _supposed_ to span tenants, and layer a `resolve-presets` guard (`requireAccountMatch` / `requireAdvertiserMatch` / `requireOrgScope`) via `composeMethod`.
+
+  Migration is one line per `createTenantStore` call. TypeScript reports it at the call site; the helper also throws at construction on a missing or unrecognized value, so JS adopters and `as any` casts can't fall through to the permissive branch silently.
+
+  Note that `refAccess` governs `resolve` **only** — `upsert` / `syncGovernance` enforce the per-entry tenant gate either way. An adopter who had verified the sync-tool gate was never covered on `resolve`, which is what made the old default easy to miss.
+
+  `skills/build-holdco-agent/SKILL.md` — the doc an adopter actually follows — never mentioned `refAccess` while its front-matter promised "per-tenant data isolation". It now documents the choice, adds a "What the helper does NOT guarantee" section, and `skills/cross-cutting.md` no longer describes the helper as an unqualified isolation gate.
+
+### Minor Changes
+
+- 3861d4a: Expose `PublishedPostAsset`, `ZipAsset`, `CardAsset`, `PixelTrackerAsset`, `VASTTrackerAsset`, and `DAASTTrackerAsset` from the package root and `@adcp/sdk/types`, and include every generated registry-backed variant in `AssetInstance`.
+
+  BREAKING NOTE: exhaustive `AssetInstance` switches must add cases for `zip`, `published_post`, `card`, `pixel_tracker`, `vast_tracker`, and `daast_tracker`. These are additive protocol variants that the SDK previously omitted from its public union.
+
+### Patch Changes
+
+- 774c5ff: Fall back to the legacy `initialize` handshake when a server refuses the
+  `server/discover` version-negotiation probe with 401/403 and the probe already
+  carried a static credential.
+
+  `mode: 'auto'` documents that "definitive legacy signals (and anything
+  unrecognized) fall back to the plain legacy `initialize` handshake", but the MCP
+  client's classifier treats 401/403 as the sole terminal probe outcome. A server
+  that rejects the modern discovery method while accepting the very same
+  credential on `initialize` and `tools/list` was therefore unreachable, and the
+  caller was told to supply an `auth_token` it was already sending.
+
+  The fallback is deliberately narrow. With no credential a probe 401 is the
+  server's own challenge and still reaches the caller, so the
+  `WWW-Authenticate`/RFC 9728 walk is unaffected; with an OAuth provider a 401
+  still propagates as the provider's cue to refresh. Only a static
+  token/header credential refused on the probe alone triggers the retry, and if
+  that credential really is bad the legacy connect fails on its own and surfaces
+  the server's 401.
+
+- f8f24fb: Soft-fail legacy format_ids projection for canonical wire mode. When a package's legacy format_ids cannot be converted to canonical format_option_refs, return the package unchanged rather than throwing so get_media_buys responses for existing buys remain usable.
+- 0852df0: Sync `schemas/registry/registry.yaml` and `src/lib/registry/types.generated.ts` with the upstream AdCP registry.
+
+  Generated output only — no hand edits and no behavior change. The registry types are published, so this is a type-surface addition rather than a no-op; existing type references are unaffected (additive).
+
+  Regenerate with `npm run sync-schemas:all && npm run generate-types && npm run generate-registry-types -- --sync`.
+
+- 607e2a6: feat(oauth): add `requireBrowserBinding` and warn when `expectedState` is omitted from `completeWebOAuthFlow`
+
+  `CompleteWebFlowOptions.expectedState` was optional and silently skipped when absent — the flow was replay-protected via atomic consume but not browser-bound. Now:
+  - Omitting `expectedState` emits a `console.warn` pointing callers to the session-cookie pattern.
+  - Setting `requireBrowserBinding: true` promotes the omission to a `BrowserBindingRequiredError` (strict mode for frameworks where session cookies are always available).
+  - New `BrowserBindingRequiredError` class is exported from `@adcp/sdk/auth/oauth`.
+
+  Parallels the `CLIFlowHandler` state-binding hardened in the same security PR.
+
 ## 13.0.0-rc.4
 
 ### Major Changes
