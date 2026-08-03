@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.0-rc.6
+
+### Patch Changes
+
+- f01ac27: Fix capability normalization to expose portfolio `primary_channels` and `primary_countries` from spec-compliant sales agents.
+
 ## 13.0.0-rc.5
 
 ### Major Changes

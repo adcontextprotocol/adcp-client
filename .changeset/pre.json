@@ -11,6 +11,7 @@
     "calm-mice-negotiate",
     "fix-asset-instance-registry-drift",
     "fix-canonical-list-creatives-validation",
+    "fix-capability-portfolio-fields",
     "fix-core-required-field-codegen",
     "fix-era-negotiation-legacy-fallback",
     "fix-mcp-beta-pins",
