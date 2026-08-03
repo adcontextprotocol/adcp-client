@@ -202,7 +202,9 @@ describe('parseCapabilitiesResponse', () => {
         },
         portfolio: {
           publisher_domains: ['example.com'],
-          channels: ['display', 'video'],
+          primary_channels: ['display', 'olv'],
+          primary_countries: ['FR'],
+          channels: ['legacy-value-must-not-win'],
         },
       },
       extensions_supported: ['scope3'],
@@ -217,8 +219,21 @@ describe('parseCapabilitiesResponse', () => {
     assert.strictEqual(capabilities.features.propertyListFiltering, true);
     assert.strictEqual(capabilities.features.contentStandards, true);
     assert.deepStrictEqual(capabilities.extensions, ['scope3']);
+    assert.deepStrictEqual(capabilities.publisherDomains, ['example.com']);
+    assert.deepStrictEqual(capabilities.channels, ['display', 'olv']);
+    assert.deepStrictEqual(capabilities.countries, ['FR']);
     assert.strictEqual(capabilities._synthetic, false);
     assert.strictEqual(capabilities.account, undefined);
+  });
+
+  test('preserves the legacy nonstandard portfolio.channels fallback', () => {
+    const capabilities = parseCapabilitiesResponse({
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      media_buy: { portfolio: { channels: ['display'] } },
+    });
+
+    assert.deepStrictEqual(capabilities.channels, ['display']);
   });
 
   test('supportsSyncCreatives follows creative.has_creative_library, not media_buy inline support', () => {

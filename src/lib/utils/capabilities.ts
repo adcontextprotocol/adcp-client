@@ -197,6 +197,9 @@ export interface AdcpCapabilities {
   /** Supported advertising channels */
   channels?: string[];
 
+  /** Primary countries in the agent's portfolio, not a declaration of geo-targeting support */
+  countries?: string[];
+
   /** Last updated timestamp (if provided by server) */
   lastUpdated?: string;
 
@@ -619,7 +622,8 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       ? response.experimental_features.filter((f: unknown): f is string => typeof f === 'string')
       : undefined,
     publisherDomains: response.media_buy?.portfolio?.publisher_domains,
-    channels: response.media_buy?.portfolio?.channels,
+    channels: response.media_buy?.portfolio?.primary_channels ?? response.media_buy?.portfolio?.channels,
+    countries: response.media_buy?.portfolio?.primary_countries,
     lastUpdated: response.last_updated,
     _synthetic: false,
     _raw: response,
