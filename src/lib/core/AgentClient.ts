@@ -14,7 +14,7 @@ import type {
   ContextMatchRequest,
   ContextMatchResponse,
   IdentityMatchRequest,
-  IdentityMatchResponse,
+  IdentityMatchResponseProviderRouter,
 } from '../types/core.generated';
 import type { Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
 import {
@@ -180,7 +180,7 @@ export type TaskResponseTypeMap = {
   report_plan_outcome: ReportPlanOutcomeResponse;
   get_plan_audit_logs: GetPlanAuditLogsResponse;
   context_match: ContextMatchResponse;
-  identity_match: IdentityMatchResponse;
+  identity_match: IdentityMatchResponseProviderRouter;
 };
 
 /**

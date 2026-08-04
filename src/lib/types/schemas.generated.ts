@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-07-29T13:08:12.620Z
+// Generated at: 2026-08-04T17:30:21.739Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6320,9 +6320,30 @@ export const IdentityMatchRequestSchema = z.object({
     }).strict()).optional()
 }).strict();
 
-export const TmpxMacroSchema = z.object({
-    name: z.string().min(1).max(64).regex(/^[A-Z][A-Z0-9_]*$/),
+export const TMPXChunkSchema = z.object({
+    slot_id: z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
     value: z.string().min(1).max(1024)
+}).passthrough();
+
+export const IdentityMatchResponseProviderRouterSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    type: z.literal("identity_match_response"),
+    request_id: z.string(),
+    eligible_package_ids: z.array(z.string()),
+    serve_window_sec: z.number().min(1).max(300),
+    tmpx_chunks: z.array(TMPXChunkSchema).optional()
 }).passthrough();
 
 export const TMPProviderRegistrationSchema = z.union([z.object({
@@ -6339,9 +6360,13 @@ export const TMPProviderRegistrationSchema = z.union([z.object({
     properties: z.array(z.string()).optional(),
     timeout_ms: z.number().min(5).max(5000).optional(),
     priority: z.number().min(0).optional(),
-    tmpx_macros: z.array(z.string()).optional(),
+    tmpx_slots: z.array(z.string()).optional(),
     status: z.union([z.literal("active"), z.literal("inactive"), z.literal("draining")]).optional()
 }).passthrough());
+
+export const PublisherTMPXMacroMappingSchema = z.object({
+    tmpx_macro_mapping: z.record(z.string(), z.record(z.string(), z.string()))
+}).passthrough();
 
 export const GroupImageAssetSchema = BaseGroupAssetSchema.merge(z.object({
     asset_type: z.literal("image"),
@@ -10567,7 +10592,7 @@ export const OfferSchema = z.object({
     macros: z.record(z.string(), z.string()).optional()
 }).passthrough();
 
-export const IdentityMatchResponseSchema = z.object({
+export const IdentityMatchResponseRouterPublisherSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
@@ -10586,9 +10611,8 @@ export const IdentityMatchResponseSchema = z.object({
     eligible_package_ids: z.array(z.string()),
     serve_window_sec: z.number().min(1).max(300),
     tmpx: z.string().optional(),
-    tmpx_macros: z.array(TmpxMacroSchema).optional(),
     tmpx_providers: z.record(z.string(), z.object({
-            macros: z.array(TmpxMacroSchema)
+            chunks: z.array(TMPXChunkSchema)
         }).passthrough()).optional()
 }).passthrough();
 

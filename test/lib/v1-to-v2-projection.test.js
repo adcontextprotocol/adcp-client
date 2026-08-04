@@ -155,6 +155,47 @@ describe('v1 → v2 projection — every catalog entry projects', { skip: SKIP_R
     }
   });
 
+  test('projects Retina registry formats with their pixel-density requirements', () => {
+    const sizes = [
+      [300, 250],
+      [728, 90],
+      [320, 50],
+      [160, 600],
+      [336, 280],
+      [300, 600],
+      [970, 250],
+    ];
+
+    for (const [width, height] of sizes) {
+      const project = suffix =>
+        projectV1ProductToV2({
+          product_id: `retina_${width}x${height}_${suffix}`,
+          name: 'Retina display image',
+          description: 'Legacy Retina catalog format',
+          format_ids: [
+            {
+              agent_url: 'https://publisher.example/creative',
+              id: `display_${width}x${height}_image_${suffix}`,
+            },
+          ],
+        });
+
+      const retinaOnly = project('2x');
+      assert.deepStrictEqual(retinaOnly.diagnostics, []);
+      assert.strictEqual(retinaOnly.v2.format_options[0].format_kind, 'image');
+      assert.strictEqual(retinaOnly.v2.format_options[0].params.width, width);
+      assert.strictEqual(retinaOnly.v2.format_options[0].params.height, height);
+      assert.deepStrictEqual(retinaOnly.v2.format_options[0].params.pixel_ratios, [2]);
+
+      const renditionSet = project('1x_2x');
+      assert.deepStrictEqual(renditionSet.diagnostics, []);
+      assert.deepStrictEqual(renditionSet.v2.format_options[0].params.pixel_ratios, [1, 2]);
+      assert.deepStrictEqual(renditionSet.v2.format_options[0].params.slots[0].required_pixel_ratios, [1, 2]);
+      assert.strictEqual(renditionSet.v2.format_options[0].params.slots[0].min, 2);
+      assert.strictEqual(renditionSet.v2.format_options[0].params.slots[0].max, 2);
+    }
+  });
+
   test('derived option ids are stable when a seller reorders legacy formats', () => {
     const mrec = {
       agent_url: 'https://salesagent.voxmedia.com/mcp',

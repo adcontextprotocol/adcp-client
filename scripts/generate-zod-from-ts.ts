@@ -443,7 +443,7 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
   };
 
   let result = strictSchemaExport(content, 'ContextMatchRequestSchema', 'OfferPriceSchema');
-  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'TmpxMacroSchema');
+  result = strictSchemaExport(result, 'IdentityMatchRequestSchema', 'TMPXChunkSchema');
   return result;
 }
 
