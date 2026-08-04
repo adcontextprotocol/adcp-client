@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-04T17:30:21.739Z
+// Generated at: 2026-08-04T18:36:16.953Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6323,11 +6323,10 @@ export const IdentityMatchRequestSchema = z.object({
 export const TMPXChunkSchema = z.object({
     slot_id: z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
     value: z.string().min(1).max(1024)
-}).passthrough();
+}).strict();
 
 export const IdentityMatchResponseProviderRouterSchema = z.object({
     context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
@@ -6342,31 +6341,51 @@ export const IdentityMatchResponseProviderRouterSchema = z.object({
     type: z.literal("identity_match_response"),
     request_id: z.string(),
     eligible_package_ids: z.array(z.string()),
-    serve_window_sec: z.number().min(1).max(300),
-    tmpx_chunks: z.array(TMPXChunkSchema).optional()
-}).passthrough();
+    serve_window_sec: z.number().int().min(1).max(300),
+    tmpx_chunks: z.array(TMPXChunkSchema).min(1).max(2).optional()
+}).passthrough().superRefine((value, ctx) => {
+    for (const field of ["tmpx_providers", "tmpx", "tmpx_values", "tmpx_macros", "context", "ext"]) {
+        if (!(field in value)) continue;
+        ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden on provider-to-router responses" });
+    }
+});
 
-export const TMPProviderRegistrationSchema = z.union([z.object({
-        context_match: z.literal(true)
-    }).passthrough(), z.object({
-        identity_match: z.literal(true)
-    }).passthrough()]).and(z.object({
+export const TMPProviderRegistrationSchema = z.object({
     provider_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
-    endpoint: z.string(),
+    endpoint: z.url(),
     context_match: z.boolean().optional(),
     identity_match: z.boolean().optional(),
-    countries: z.array(z.string()).optional(),
-    uid_types: z.array(UIDTypeSchema).optional(),
-    properties: z.array(z.string()).optional(),
-    timeout_ms: z.number().min(5).max(5000).optional(),
-    priority: z.number().min(0).optional(),
-    tmpx_slots: z.array(z.string()).optional(),
+    countries: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1).optional(),
+    uid_types: z.array(UIDTypeSchema).min(1).optional(),
+    properties: z.array(z.uuid()).min(1).optional(),
+    timeout_ms: z.number().int().min(5).max(5000).optional(),
+    priority: z.number().int().min(0).optional(),
+    tmpx_slots: z.array(z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)).min(1).max(2).optional(),
     status: z.union([z.literal("active"), z.literal("inactive"), z.literal("draining")]).optional()
-}).passthrough());
+}).strict().superRefine((value, ctx) => {
+    if (value.context_match !== true && value.identity_match !== true) {
+        ctx.addIssue({ code: "custom", path: [], message: "at least one provider capability must be true" });
+    }
+    if (value.identity_match === true) {
+        if (value.countries === undefined) ctx.addIssue({ code: "custom", path: ["countries"], message: "countries is required for identity_match providers" });
+        if (value.uid_types === undefined) ctx.addIssue({ code: "custom", path: ["uid_types"], message: "uid_types is required for identity_match providers" });
+    }
+    if (value.tmpx_slots !== undefined && new Set(value.tmpx_slots).size !== value.tmpx_slots.length) {
+        ctx.addIssue({ code: "custom", path: ["tmpx_slots"], message: "tmpx_slots must contain unique slot IDs" });
+    }
+});
 
 export const PublisherTMPXMacroMappingSchema = z.object({
-    tmpx_macro_mapping: z.record(z.string(), z.record(z.string(), z.string()))
-}).passthrough();
+    tmpx_macro_mapping: z.record(
+        z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
+        z.record(
+            z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
+            z.string().min(1).max(128)
+        ).refine(value => Object.keys(value).length >= 1 && Object.keys(value).length <= 2, {
+            message: "each provider mapping must contain one or two TMPX slots"
+        })
+    )
+}).strict();
 
 export const GroupImageAssetSchema = BaseGroupAssetSchema.merge(z.object({
     asset_type: z.literal("image"),
@@ -6427,6 +6446,11 @@ export const GroupWebhookAssetSchema = BaseGroupAssetSchema.merge(z.object({
     asset_type: z.literal("webhook"),
     requirements: WebhookAssetRequirementsSchema.optional()
 }).passthrough());
+
+export const TmpxMacroSchema = z.object({
+    name: z.string().min(1).max(64).regex(/^[A-Z][A-Z0-9_]*$/),
+    value: z.string().min(1).max(1024)
+}).passthrough();
 
 export const ProductFiltersSchema = z.object({
     delivery_type: DeliveryTypeSchema.optional(),
@@ -10594,7 +10618,6 @@ export const OfferSchema = z.object({
 
 export const IdentityMatchResponseRouterPublisherSchema = z.object({
     context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
     task_id: z.string().optional(),
     status: TaskStatusSchema,
     message: z.string().optional(),
@@ -10609,13 +10632,21 @@ export const IdentityMatchResponseRouterPublisherSchema = z.object({
     type: z.literal("identity_match_response"),
     request_id: z.string(),
     eligible_package_ids: z.array(z.string()),
-    serve_window_sec: z.number().min(1).max(300),
+    serve_window_sec: z.number().int().min(1).max(300),
     tmpx: z.string().optional(),
-    tmpx_providers: z.record(z.string(), z.object({
-            chunks: z.array(TMPXChunkSchema)
-        }).passthrough()).optional()
-}).passthrough();
+    tmpx_providers: z.record(
+        z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
+        z.object({ chunks: z.array(TMPXChunkSchema).min(1).max(2) }).strict()
+    ).optional()
+}).passthrough().superRefine((value, ctx) => {
+    for (const field of ["tmpx_chunks", "tmpx_values", "tmpx_macros", "context", "ext"]) {
+        if (!(field in value)) continue;
+        ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden on router-to-publisher responses" });
+    }
+});
 
+/** @deprecated AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop. */
+export const IdentityMatchResponseSchema = IdentityMatchResponseRouterPublisherSchema;
 export const GetProductsResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),

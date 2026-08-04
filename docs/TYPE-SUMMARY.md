@@ -84,6 +84,38 @@ interface ConversationContext {
 }
 ```
 
+## Trusted Match 3.1.10 Types
+
+```typescript
+interface TMPXChunk {
+  slot_id: string; // provider-local, never a publisher macro name
+  value: string;   // opaque URL-safe value
+}
+
+interface IdentityMatchResponseProviderRouter {
+  type: 'identity_match_response';
+  request_id: string;
+  eligible_package_ids: string[];
+  serve_window_sec: number;
+  tmpx_chunks?: TMPXChunk[]; // 1-2 entries when present
+}
+
+interface IdentityMatchResponseRouterPublisher {
+  type: 'identity_match_response';
+  request_id: string;
+  eligible_package_ids: string[];
+  serve_window_sec: number;
+  tmpx?: string; // deprecated single-token compatibility field
+  tmpx_providers?: Record<string, { chunks: TMPXChunk[] }>;
+}
+
+interface PublisherTMPXMacroMapping {
+  tmpx_macro_mapping: Record<string, Record<string, string>>;
+}
+```
+
+The two response hops are mutually exclusive privacy boundaries: neither carries `context` or `ext`, providers emit only `tmpx_chunks`, and publisher-facing responses emit only attributed `tmpx_providers`. See `docs/migration-adcp-3.1.8-to-3.1.10.md`.
+
 ## Tool Request/Response Shapes
 
 Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<ResponseType>`. Below are the key fields for each tool's request. Fields marked with `*` are required.

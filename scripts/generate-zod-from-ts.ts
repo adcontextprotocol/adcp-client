@@ -447,6 +447,142 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
   return result;
 }
 
+function postProcessTrustedMatchResponseSchemas(content: string): string {
+  const replaceSchema = (schemaName: string, nextSchemaName: string, replacement: string): void => {
+    const start = content.indexOf(`export const ${schemaName} = `);
+    if (start === -1) {
+      const identitySchemas = [...content.matchAll(/export const (IdentityMatch\w+Schema) = /g)].map(match => match[1]);
+      throw new Error(
+        `Unable to locate generated ${schemaName}. Available identity schemas: ${identitySchemas.join(', ') || 'none'}.`
+      );
+    }
+    const end = content.indexOf(`\n\nexport const ${nextSchemaName} = `, start);
+    if (end === -1) throw new Error(`Unable to locate schema boundary after ${schemaName}.`);
+    content = content.slice(0, start) + replacement.trim() + content.slice(end);
+  };
+
+  replaceSchema(
+    'TMPXChunkSchema',
+    'IdentityMatchResponseProviderRouterSchema',
+    `export const TMPXChunkSchema = z.object({
+    slot_id: z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
+    value: z.string().min(1).max(1024)
+}).strict();`
+  );
+
+  replaceSchema(
+    'IdentityMatchResponseProviderRouterSchema',
+    'TMPProviderRegistrationSchema',
+    `export const IdentityMatchResponseProviderRouterSchema = z.object({
+    context_id: z.string().optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    type: z.literal("identity_match_response"),
+    request_id: z.string(),
+    eligible_package_ids: z.array(z.string()),
+    serve_window_sec: z.number().int().min(1).max(300),
+    tmpx_chunks: z.array(TMPXChunkSchema).min(1).max(2).optional()
+}).passthrough().superRefine((value, ctx) => {
+    for (const field of ["tmpx_providers", "tmpx", "tmpx_values", "tmpx_macros", "context", "ext"]) {
+        if (!(field in value)) continue;
+        ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden on provider-to-router responses" });
+    }
+});`
+  );
+
+  replaceSchema(
+    'TMPProviderRegistrationSchema',
+    'PublisherTMPXMacroMappingSchema',
+    `export const TMPProviderRegistrationSchema = z.object({
+    provider_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
+    endpoint: z.url(),
+    context_match: z.boolean().optional(),
+    identity_match: z.boolean().optional(),
+    countries: z.array(z.string().regex(/^[A-Z]{2}$/)).min(1).optional(),
+    uid_types: z.array(UIDTypeSchema).min(1).optional(),
+    properties: z.array(z.uuid()).min(1).optional(),
+    timeout_ms: z.number().int().min(5).max(5000).optional(),
+    priority: z.number().int().min(0).optional(),
+    tmpx_slots: z.array(z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)).min(1).max(2).optional(),
+    status: z.union([z.literal("active"), z.literal("inactive"), z.literal("draining")]).optional()
+}).strict().superRefine((value, ctx) => {
+    if (value.context_match !== true && value.identity_match !== true) {
+        ctx.addIssue({ code: "custom", path: [], message: "at least one provider capability must be true" });
+    }
+    if (value.identity_match === true) {
+        if (value.countries === undefined) ctx.addIssue({ code: "custom", path: ["countries"], message: "countries is required for identity_match providers" });
+        if (value.uid_types === undefined) ctx.addIssue({ code: "custom", path: ["uid_types"], message: "uid_types is required for identity_match providers" });
+    }
+    if (value.tmpx_slots !== undefined && new Set(value.tmpx_slots).size !== value.tmpx_slots.length) {
+        ctx.addIssue({ code: "custom", path: ["tmpx_slots"], message: "tmpx_slots must contain unique slot IDs" });
+    }
+});`
+  );
+
+  replaceSchema(
+    'PublisherTMPXMacroMappingSchema',
+    'GroupImageAssetSchema',
+    `export const PublisherTMPXMacroMappingSchema = z.object({
+    tmpx_macro_mapping: z.record(
+        z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
+        z.record(
+            z.string().min(1).max(64).regex(/^[a-zA-Z][a-zA-Z0-9_]*$/),
+            z.string().min(1).max(128)
+        ).refine(value => Object.keys(value).length >= 1 && Object.keys(value).length <= 2, {
+            message: "each provider mapping must contain one or two TMPX slots"
+        })
+    )
+}).strict();`
+  );
+
+  // ts-to-zod follows the deprecated type alias and emits the publisher-hop
+  // schema under IdentityMatchResponseSchema. Restore the canonical 3.1.10
+  // export here; addBackwardCompatSchemaAliases() re-adds the old name below.
+  replaceSchema(
+    'IdentityMatchResponseSchema',
+    'GetProductsResponseSchema',
+    `export const IdentityMatchResponseRouterPublisherSchema = z.object({
+    context_id: z.string().optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    type: z.literal("identity_match_response"),
+    request_id: z.string(),
+    eligible_package_ids: z.array(z.string()),
+    serve_window_sec: z.number().int().min(1).max(300),
+    tmpx: z.string().optional(),
+    tmpx_providers: z.record(
+        z.string().min(1).max(64).regex(/^[A-Za-z0-9_]+$/),
+        z.object({ chunks: z.array(TMPXChunkSchema).min(1).max(2) }).strict()
+    ).optional()
+}).passthrough().superRefine((value, ctx) => {
+    for (const field of ["tmpx_chunks", "tmpx_values", "tmpx_macros", "context", "ext"]) {
+        if (!(field in value)) continue;
+        ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden on router-to-publisher responses" });
+    }
+});`
+  );
+
+  return content;
+}
+
 /**
  * Replace `z.record(...).and(CONTENT)` with an object-shaped equivalent.
  *
@@ -1627,6 +1763,11 @@ const BACKWARD_COMPAT_SCHEMA_ALIASES: Array<{
     newName: 'SignalAvailabilityType',
     reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
   },
+  {
+    oldName: 'IdentityMatchResponse',
+    newName: 'IdentityMatchResponseRouterPublisher',
+    reason: 'AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop.',
+  },
 ];
 
 function addBackwardCompatSchemaAliases(content: string): string {
@@ -1635,10 +1776,12 @@ function addBackwardCompatSchemaAliases(content: string): string {
     const oldSchema = `${oldName}Schema`;
     const newSchema = `${newName}Schema`;
     if (new RegExp(`^export const ${oldSchema}\\b`, 'm').test(output)) continue;
-    const declaration = new RegExp(`(export const ${newSchema} =[\\s\\S]*?;\\n)`, 'm');
-    if (!declaration.test(output)) continue;
+    const declarationStart = output.search(new RegExp(`^export const ${newSchema} =`, 'm'));
+    if (declarationStart === -1) continue;
+    const declarationEnd = output.indexOf('\n\nexport const ', declarationStart);
+    if (declarationEnd === -1) continue;
     const alias = `/** @deprecated ${reason} */\nexport const ${oldSchema} = ${newSchema};\n`;
-    output = output.replace(declaration, `$1${alias}`);
+    output = `${output.slice(0, declarationEnd)}\n\n${alias}${output.slice(declarationEnd + 2)}`;
   }
   return output;
 }
@@ -1784,6 +1927,11 @@ async function generateZodSchemas() {
     // Unlike ordinary AdCP tool payloads, accepting unknown root/nested fields
     // can mix context and identity signals across separated paths.
     zodSchemas = postProcessTrustedMatchPrivacyBoundaryStrictness(zodSchemas);
+
+    // Trusted Match 3.1.10 splits provider→router and router→publisher
+    // responses. Preserve the source JSON Schema's hop exclusions, cardinality,
+    // property-name constraints, and provider-registration conditionals.
+    zodSchemas = postProcessTrustedMatchResponseSchemas(zodSchemas);
 
     // Post-process: Collapse marker-only union/object intersections.
     // ProductSchema currently intersects opaque V1/V2 marker records with its real object shape.

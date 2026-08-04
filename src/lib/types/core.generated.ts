@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.1.10
-// Generated at: 2026-08-04T17:22:32.868Z
+// Generated at: 2026-08-04T18:33:41.399Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -31862,7 +31862,6 @@ export interface IdentityMatchResponseRouterPublisher {
    * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
    */
   context_id?: string;
-  context?: ContextObject;
   /**
    * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
    */
@@ -31967,7 +31966,6 @@ export interface IdentityMatchResponseProviderRouter {
    * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
    */
   context_id?: string;
-  context?: ContextObject;
   /**
    * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
    */
@@ -32119,6 +32117,10 @@ export interface PublisherTMPXMacroMapping {
   };
 }
 
+
+/** @deprecated AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop. */
+export type IdentityMatchResponse = IdentityMatchResponseRouterPublisher;
+
 export type IndividualAssetSlot =
   | IndividualImageAsset
   | IndividualVideoAsset
@@ -32150,3 +32152,21 @@ export type GroupAssetSlot =
   | GroupWebhookAsset;
 
 export type FormatAssetSlot = IndividualAssetSlot | RepeatableGroupAsset;
+
+/**
+ * @deprecated AdCP 3.1.10 replaced provider-authored macro names with provider-local TMPX slot IDs.
+ * Retained for source compatibility with payloads captured before 3.1.10.
+ */
+export interface TmpxMacro {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Z][A-Z0-9_]*$
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  value: string;
+}
