@@ -90,7 +90,7 @@ type V3CreativeAssignment = {
 function adaptAssignmentsForV2(assignments: V3CreativeAssignment[]): Record<string, string[]> {
   const packagesByCreative = new Map<string, string[]>();
 
-  for (const assignment of assignments) {
+  for (const [index, assignment] of assignments.entries()) {
     const unsupportedFields = [
       assignment.weight !== undefined ? 'weight' : undefined,
       assignment.placement_ids !== undefined ? 'placement_ids' : undefined,
@@ -98,7 +98,7 @@ function adaptAssignmentsForV2(assignments: V3CreativeAssignment[]): Record<stri
 
     if (unsupportedFields.length > 0) {
       throw new Error(
-        `sync_creatives assignment for creative ${JSON.stringify(assignment.creative_id)} uses ` +
+        `sync_creatives assignment at index ${index} for creative ${JSON.stringify(assignment.creative_id)} uses ` +
           `${unsupportedFields.join(' and ')}, which AdCP v2.5 cannot represent. ` +
           'Remove those constraints or use a v3 seller.'
       );

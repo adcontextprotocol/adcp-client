@@ -121,14 +121,22 @@ describe('adaptSyncCreativesRequestForV2 — assignments', () => {
     assert.strictEqual(result.assignments, undefined);
   });
 
+  test('projects an empty assignment list to an empty v2.5 mapping', () => {
+    const result = adaptSyncCreativesRequestForV2({ ...BASE_REQUEST, assignments: [] });
+    assert.deepStrictEqual(result.assignments, {});
+  });
+
   test('fails closed when weight cannot be represented on v2.5', () => {
     assert.throws(
       () =>
         adaptSyncCreativesRequestForV2({
           ...BASE_REQUEST,
-          assignments: [{ creative_id: 'cre-1', package_id: 'pkg-1', weight: 50 }],
+          assignments: [
+            { creative_id: 'cre-1', package_id: 'pkg-1' },
+            { creative_id: 'cre-2', package_id: 'pkg-2', weight: 50 },
+          ],
         }),
-      /weight, which AdCP v2\.5 cannot represent/
+      /assignment at index 1 for creative "cre-2" uses weight, which AdCP v2\.5 cannot represent\. Remove those constraints or use a v3 seller\./
     );
   });
 
@@ -139,7 +147,7 @@ describe('adaptSyncCreativesRequestForV2 — assignments', () => {
           ...BASE_REQUEST,
           assignments: [{ creative_id: 'cre-1', package_id: 'pkg-1', placement_ids: ['pre-roll'] }],
         }),
-      /placement_ids, which AdCP v2\.5 cannot represent/
+      /assignment at index 0 .* uses placement_ids, which AdCP v2\.5 cannot represent/
     );
   });
 });
