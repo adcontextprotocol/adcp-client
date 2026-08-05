@@ -1193,6 +1193,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  protocol: 'mcp' | 'a2a';`);
   ln(`  auth_token?: string;           // Bearer token`);
   ln(`  oauth_tokens?: AgentOAuthTokens;`);
+  ln(`  oauth_resource?: string;       // Explicit RFC 8707 override retained for refresh`);
   ln(`  headers?: Record<string, string>;`);
   ln(`}`);
   ln();

@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-07-28
-> @adcp/sdk v13.0.0-rc.1
+> Generated at: 2026-08-05
+> @adcp/sdk v13.0.0-rc.6
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -15,7 +15,7 @@ interface AgentConfig {
   protocol: 'mcp' | 'a2a';
   auth_token?: string;           // Bearer token
   oauth_tokens?: AgentOAuthTokens;
-  oauth_resource?: string;      // Explicit RFC 8707 override retained for refresh
+  oauth_resource?: string;       // Explicit RFC 8707 override retained for refresh
   headers?: Record<string, string>;
 }
 
