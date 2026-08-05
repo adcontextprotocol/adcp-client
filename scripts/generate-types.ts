@@ -63,6 +63,11 @@ const BACKWARD_COMPAT_TYPE_ALIASES: Array<{
     newName: 'SignalAvailabilityType',
     reason: 'AdCP 3.1 renamed SignalCatalogType to SignalAvailabilityType.',
   },
+  {
+    oldName: 'IdentityMatchResponse',
+    newName: 'IdentityMatchResponseRouterPublisher',
+    reason: 'AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop.',
+  },
 ];
 
 // Load schema from cache - handles both /schemas/v1/ and /schemas/X.Y.Z/ paths
@@ -1660,12 +1665,56 @@ function addCoreGeneratedTypeReExports(typeDefinitions: string, typeNames: Itera
 function addBackwardCompatTypeAliases(typeDefinitions: string): string {
   let output = typeDefinitions;
   for (const { oldName, newName, reason } of BACKWARD_COMPAT_TYPE_ALIASES) {
-    if (new RegExp(`^export type ${oldName}\\b`, 'm').test(output)) continue;
+    if (new RegExp(`^export (?:type|interface) ${oldName}\\b`, 'm').test(output)) continue;
     const declaration = new RegExp(`(export type ${newName} =[\\s\\S]*?;\\n)`, 'm');
-    if (!declaration.test(output)) continue;
     const alias = `/** @deprecated ${reason} */\nexport type ${oldName} = ${newName};\n`;
-    output = output.replace(declaration, `$1${alias}`);
+    if (declaration.test(output)) {
+      output = output.replace(declaration, `$1${alias}`);
+      continue;
+    }
+    if (new RegExp(`^export interface ${newName}\\b`, 'm').test(output)) {
+      output += `\n${alias}`;
+    }
   }
+  return output;
+}
+
+function hardenTrustedMatchGeneratedTypes(typeDefinitions: string): string {
+  let output = typeDefinitions;
+
+  for (const interfaceName of ['IdentityMatchResponseRouterPublisher', 'IdentityMatchResponseProviderRouter']) {
+    const start = output.indexOf(`export interface ${interfaceName} {`);
+    if (start === -1) continue;
+    const end = output.indexOf('\nexport ', start + 1);
+    if (end === -1) {
+      throw new Error(`Unable to locate generated type boundary after ${interfaceName}.`);
+    }
+    const block = output.slice(start, end).replace(/^  context\?: ContextObject;\n/m, '');
+    output = output.slice(0, start) + block + output.slice(end);
+  }
+
+  if (!/^export interface TmpxMacro\b/m.test(output)) {
+    output += `
+/**
+ * @deprecated AdCP 3.1.10 replaced provider-authored macro names with provider-local TMPX slot IDs.
+ * Retained for source compatibility with payloads captured before 3.1.10.
+ */
+export interface TmpxMacro {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Z][A-Z0-9_]*$
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  value: string;
+}
+`;
+  }
+
   return output;
 }
 
@@ -3025,12 +3074,14 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = applyIndividualAssetDiscriminators(
-    addBackwardCompatTypeAliases(
-      widenPostalAreaSupportIndexSignature(
-        fixTypedIndexSignatures(
-          applyKnownJstsAliases(
-            namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+  const processedCoreTypes = hardenTrustedMatchGeneratedTypes(
+    applyIndividualAssetDiscriminators(
+      addBackwardCompatTypeAliases(
+        widenPostalAreaSupportIndexSignature(
+          fixTypedIndexSignatures(
+            applyKnownJstsAliases(
+              namePostalAreaCountryBranch(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+            )
           )
         )
       )

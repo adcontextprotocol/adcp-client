@@ -185,6 +185,94 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas.IdentityMatchRequestSchema.safeParse(identityWithProof).success);
   });
 
+  test('Trusted Match 3.1.10 schemas enforce hop isolation and TMPX constraints', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    const chunk = { slot_id: 'primary', value: 'opaque-value' };
+    const baseResponse = {
+      status: 'completed',
+      type: 'identity_match_response',
+      request_id: 'id-1',
+      eligible_package_ids: ['pkg-1'],
+      serve_window_sec: 60,
+    };
+    const providerResponse = { ...baseResponse, tmpx_chunks: [chunk] };
+    const routerResponse = {
+      ...baseResponse,
+      tmpx_providers: { provider_1: { chunks: [chunk] } },
+    };
+
+    assert.ok(schemas.IdentityMatchResponseProviderRouterSchema.safeParse(providerResponse).success);
+    assert.ok(schemas.IdentityMatchResponseRouterPublisherSchema.safeParse(routerResponse).success);
+    assert.strictEqual(schemas.IdentityMatchResponseSchema, schemas.IdentityMatchResponseRouterPublisherSchema);
+    assert.ok(schemas.TmpxMacroSchema.safeParse({ name: 'LEGACY_SLOT', value: 'opaque' }).success);
+
+    for (const forbidden of [
+      { context: {} },
+      { ext: {} },
+      { tmpx: 'legacy' },
+      { tmpx_providers: { provider_1: { chunks: [chunk] } } },
+    ]) {
+      assert.ok(
+        !schemas.IdentityMatchResponseProviderRouterSchema.safeParse({ ...providerResponse, ...forbidden }).success
+      );
+    }
+    for (const forbidden of [{ context: {} }, { ext: {} }, { tmpx_chunks: [chunk] }, { tmpx_macros: [] }]) {
+      assert.ok(
+        !schemas.IdentityMatchResponseRouterPublisherSchema.safeParse({ ...routerResponse, ...forbidden }).success
+      );
+    }
+
+    assert.ok(!schemas.TMPXChunkSchema.safeParse({ ...chunk, destination: 'PUBLISHER_MACRO' }).success);
+    assert.ok(
+      !schemas.IdentityMatchResponseProviderRouterSchema.safeParse({ ...baseResponse, tmpx_chunks: [] }).success
+    );
+    assert.ok(
+      !schemas.IdentityMatchResponseProviderRouterSchema.safeParse({
+        ...baseResponse,
+        tmpx_chunks: [chunk, { ...chunk, slot_id: 'secondary' }, { ...chunk, slot_id: 'third' }],
+      }).success
+    );
+    assert.ok(
+      !schemas.IdentityMatchResponseRouterPublisherSchema.safeParse({
+        ...baseResponse,
+        tmpx_providers: { 'bad-provider': { chunks: [chunk] } },
+      }).success
+    );
+
+    const registration = {
+      provider_id: 'provider_1',
+      endpoint: 'https://provider.example',
+      identity_match: true,
+      countries: ['US'],
+      uid_types: ['uid2'],
+      tmpx_slots: ['primary', 'secondary'],
+    };
+    assert.ok(schemas.TMPProviderRegistrationSchema.safeParse(registration).success);
+    assert.ok(!schemas.TMPProviderRegistrationSchema.safeParse({ ...registration, countries: undefined }).success);
+    assert.ok(
+      !schemas.TMPProviderRegistrationSchema.safeParse({ ...registration, tmpx_slots: ['primary', 'primary'] }).success
+    );
+    assert.ok(
+      !schemas.TMPProviderRegistrationSchema.safeParse({ ...registration, tmpx_slots: ['a', 'b', 'c'] }).success
+    );
+
+    const mapping = { tmpx_macro_mapping: { provider_1: { primary: 'GAM_KEY' } } };
+    assert.ok(schemas.PublisherTMPXMacroMappingSchema.safeParse(mapping).success);
+    assert.ok(
+      !schemas.PublisherTMPXMacroMappingSchema.safeParse({
+        tmpx_macro_mapping: { 'bad-provider': { primary: 'GAM_KEY' } },
+      }).success
+    );
+    assert.ok(
+      !schemas.PublisherTMPXMacroMappingSchema.safeParse({
+        tmpx_macro_mapping: { provider_1: { a: 'A', b: 'B', c: 'C' } },
+      }).success
+    );
+  });
+
   test('generated declarations do not expose record-union object intersections', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

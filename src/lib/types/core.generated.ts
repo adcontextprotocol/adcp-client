@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.8
-// Generated at: 2026-07-29T13:07:54.998Z
+// Generated AdCP core types from official schemas v3.1.10
+// Generated at: 2026-08-04T18:33:41.399Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -31317,6 +31317,8 @@ export interface PropertyListChangedWebhook {
  *
  * **Alias collision precedence (normative).** When a v1 format's `assets[i]` carries multiple `asset_group_id` aliases that resolve to the same canonical asset_group (e.g., two slots both aliasing to `landing_page_url`), the SDK MUST resolve deterministically: the v1 format's `assets[*]` array order is authoritative — the first slot in declaration order wins, subsequent collisions are dropped from the projected v2 manifest and surfaced via `FORMAT_PROJECTION_FAILED` with `error.details: { collision_kind: "asset_group_id_alias", asset_group_id, winning_slot_id, dropped_slot_ids }`. SDKs MUST NOT silently pick one and discard the other without surfacing — silent picking creates inter-SDK divergence. Producers SHOULD avoid the collision by deduplicating aliased slots or using distinct `asset_group_id` values when both slots are semantically meaningful.
  *
+ * **Image rendition-set exception (normative).** This specific rule takes precedence over the generic alias-collision rule above. When the matched mapping declares an image slot with `required_pixel_ratios`, v1 image assets sharing that slot's `asset_group_id` are intentional renditions rather than collisions. The SDK MUST validate each asset against a distinct accepted density and collect them, in v1 declaration order, into the canonical slot array. Missing or duplicate required densities fail under the rendition-set rules; only remaining same-group assets enter ordinary collision handling.
+ *
  * **Governance**: same vocabulary-governance rules as `asset-group-vocabulary.json` and `format-shape-vocabulary.json` — additions land via PR with rationale + ≥1 reference adopter; AAO maintainer review; versioned + content-digested. Entries are additive; once published they are not removed (they may be marked `deprecated: true` if superseded).
  *
  * **Scope**: 7 structural fallback entries cover VAST 4.x / legacy VAST, DAAST 1.x, HTML5 zip bundles, hosted video, hosted audio, and url-shaped display tags. Literal entries cover independently observed legacy duration-, dimension-, and VAST-token naming conventions. Durationless placement ids video_pre_roll and video_mid_roll are deliberately omitted: projecting either to video_hosted without duration_ms_exact would resolve to an untraffickable format and defer failure until ad-server line-item creation. Failing closed during discovery is safer. Platform-specific formats (Meta Reels, TikTok Spark Ads, etc.) project via structural fallback or via the platform's own adagents.json `formats[]` block (#4620). The full v1-format audit dataset (~76% of formats from the 12-platform / 86-format audit in #3305) seeds the long-term roadmap and informs future literal-entry decisions.
@@ -31853,14 +31855,13 @@ export interface IdentityMatchRequest {
 
 // trusted-match/identity-match-response.json
 /**
- * Response indicating which packages the user is eligible for. The serve_window_sec field defines a per-package single-shot fcap: after serving the user one impression on each eligible package, the publisher MUST re-query Identity Match before serving from those packages again. Extension fields (ext, context) are intentionally omitted to prevent data leakage across the identity privacy boundary.
+ * Router-to-publisher shape of the Identity Match response. The router collects each identity agent's ordered TMPX chunks (see provider-identity-match-response.json) and forwards them under the emitting `provider_id`, preserving provider attribution and chunk order. Each chunk is a provider-declared `{slot_id, value}` pair; the publisher's deployment configuration (see publisher-tmpx-config.json) maps `(provider_id, slot_id)` to the local ad-server macro name, targeting key, VAST substitution, or play-log field. The provider→router boundary never carries a publisher-local destination name, so no cross-provider name-hijack surface exists. Provider-hop fields (`tmpx_chunks` at the root) MUST NOT appear on this shape — a router that leaks them alongside `tmpx_providers` corrupts per-provider accounting. Envelope extension fields (`context`, `ext`) are intentionally omitted to prevent data leakage across the identity privacy boundary; they are forbidden by this schema. The serve_window_sec field defines a per-package single-shot fcap: after serving the user one impression on each eligible package, the publisher MUST re-query Identity Match before serving from those packages again.
  */
-export interface IdentityMatchResponse {
+export interface IdentityMatchResponseRouterPublisher {
   /**
    * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
    */
   context_id?: string;
-  context?: ContextObject;
   /**
    * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
    */
@@ -31923,42 +31924,110 @@ export interface IdentityMatchResponse {
    */
   tmpx?: string;
   /**
-   * Provider-emitted: the identity agent's ordered TMPX chunks paired with the macro name each chunk fills. Macro names MUST be drawn from the provider's registered `tmpx_macros` list (provider-registration.json) and appear in the same order — names are part of operational setup, not protocol-synthesized. Capped at 2 chunks in v1; the cap MAY rise without a shape change. Each `value` is an opaque URL-safe wire string the publisher substitutes verbatim into the matching ad-server macro slot — publishers MUST NOT parse, decode, transform, or choose an encoding. The router collects entries from every provider that emits them into `tmpx_providers`, keyed by provider_id; consumers reading the merged response SHOULD consume `tmpx_providers` and ignore `tmpx_macros` at the root.
-   */
-  tmpx_macros?: TmpxMacro[];
-  /**
-   * Router-populated: TMPX macro/value pairs grouped by the originating identity provider's provider_id, so the publisher fires each provider's tokens through that provider's specific ad-server macros (configured per provider in GAM / VAST URL / DOOH play log). Each entry's `macros[]` is a copy of the provider's emitted `tmpx_macros` ordered list. SHAPE CHANGE: was `Map<provider_id, string>` in the experimental surface that shipped in #5689; now `Map<provider_id, {macros: [TmpxMacro]}>` to carry exact macro/value pairs and support multi-chunk TMPX. Sanctioned by the experimental contract (`x-status: experimental` on this schema). Required by router conformance when any identity provider emitted TMPX in this request; collapsing per-provider tokens into a single string loses attribution and breaks per-provider impression accounting. Map keys MUST be valid provider_ids registered for this fan-out. Publishers MUST traffic only the macro names the response advertises; macro names MUST NOT be derived from provider_id at runtime.
+   * Router-populated: ordered TMPX chunk/value pairs grouped by the originating identity provider's `provider_id`. Each entry's `chunks[]` is a copy of the provider's emitted `tmpx_chunks` list, in the same order. Each chunk carries a provider-local `slot_id` (from the provider's registered `tmpx_slots`) and an opaque URL-safe `value`; the publisher's deployment configuration (see publisher-tmpx-config.json) resolves each `(provider_id, slot_id)` pair to the ad-server macro name, targeting key, VAST substitution, or play-log field for that surface. The protocol carries values and attribution only. Required by router conformance when any identity provider emitted TMPX in this request; collapsing per-provider tokens into a single string loses attribution and breaks per-provider impression accounting. Map keys MUST match the provider_id charset registered in provider-registration.json (enforced by `propertyNames`). Publishers MUST NOT parse, decode, or transform any chunk's `value` — each is an opaque URL-safe wire string substituted verbatim into the mapped destination.
    */
   tmpx_providers?: {
     [k: string]:
       | {
           /**
-           * Ordered TMPX macro/value pairs for this provider. Names MUST match the provider's registered `tmpx_macros`.
+           * Ordered TMPX chunks for this provider. Each entry is a `{slot_id, value}` pair copied verbatim from the provider's `tmpx_chunks`. Ordered-prefix invariant: the sequence of `slot_id`s MUST equal an ordered prefix of the provider's registered `tmpx_slots` — publishers MAY reject responses whose slot_ids or ordering diverge. Cap of 2 chunks in v1; the cap MAY rise without a shape change.
            */
-          macros: TmpxMacro[];
+          chunks: TMPXChunk[];
         }
       | undefined;
   };
 }
 /**
- * A single ad-server macro slot and the URL-safe value the publisher substitutes into it.
+ * A single provider TMPX chunk — the provider-local `slot_id` (declared at registration in `tmpx_slots`) and its opaque URL-safe `value`. Same shape on both hops of the Identity Match response: providers emit `tmpx_chunks[]` on the provider→router shape, the router forwards them under `tmpx_providers[provider_id].chunks[]` on the router→publisher shape. Publisher-local destination names never appear here — the publisher's deployment configuration resolves `(provider_id, slot_id)` → local destination via publisher-tmpx-config.json.
  */
-export interface TmpxMacro {
+export interface TMPXChunk {
   /**
-   * Macro name as configured in the publisher's ad server (e.g. `PIN_TMPX_1`). MUST appear in the emitting provider's registered `tmpx_macros` list. Provider-namespaced so the publisher can target distinct slots per provider.
+   * Provider-local slot identifier from the emitting provider's registered `tmpx_slots` (provider-registration.json). Opaque provider-namespaced token; publishers map `(provider_id, slot_id)` → local destination via `tmpx_macro_mapping`. NOT an ad-server macro name.
    * @minLength 1
    * @maxLength 64
-   * @pattern ^[A-Z][A-Z0-9_]*$
+   * @pattern ^[a-zA-Z][a-zA-Z0-9_]*$
    */
-  name: string;
+  slot_id: string;
   /**
-   * Opaque, URL-safe wire string the publisher substitutes verbatim into the named macro slot. Publishers MUST NOT parse, decode, or transform this value. The protocol fixes the wire format so platforms interoperate; a platform that can carry raw bytes MAY optimize privately but the wire contract remains the URL-safe string.
+   * Opaque, URL-safe wire string the publisher substitutes verbatim into the destination the publisher's mapping resolves for this `(provider_id, slot_id)` pair. Publishers MUST NOT parse, decode, or transform this value.
    * @minLength 1
    * @maxLength 1024
    */
   value: string;
 }
 
+
+// trusted-match/provider-identity-match-response.json
+/**
+ * Provider-to-router shape of the Identity Match response. An identity agent returns eligibility, the per-package serve-window throttle, and — when it mints one — an ordered list of TMPX chunks. Each chunk pairs a provider-local `slot_id` (declared at registration in `tmpx_slots`) with an opaque URL-safe `value`. Publisher-local destination names (ad-server macros, GAM key-values, VAST URL macros, DOOH play-log fields) MUST NOT appear on this hop; the router keys chunks under the emitting `provider_id` and the publisher's deployment configuration resolves `(provider_id, slot_id)` to the local destination (see publisher-tmpx-config.json). Router-hop fields (`tmpx_providers`, `tmpx`) MUST NOT appear on this shape — a router receiving them from a provider MUST reject the response. Envelope extension fields (`context`, `ext`) are intentionally omitted to prevent data leakage across the identity privacy boundary; they are forbidden by this schema.
+ */
+export interface IdentityMatchResponseProviderRouter {
+  /**
+   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   */
+  context_id?: string;
+  /**
+   * Unique identifier for tracking asynchronous operations. Present when a task requires extended processing time. Used to query task status and retrieve results when complete.
+   */
+  task_id?: string;
+  status: TaskStatus;
+  /**
+   * Human-readable summary of the task result. Provides natural language explanation of what happened, suitable for display to end users or for AI agent comprehension. Generated by the protocol layer based on the task response.
+   */
+  message?: string;
+  /**
+   * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   */
+  timestamp?: string;
+  /**
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   */
+  replayed?: boolean;
+  adcp_error?: Error;
+  push_notification_config?: PushNotificationConfig;
+  /**
+   * Governance context token issued by the account's governance agent during check_governance. Buyers attach it to governed purchase requests (media buys, rights acquisitions, signal activations, creative services); sellers persist it and include it on all subsequent governance calls for that action's lifecycle. An account binds to one governance agent (see sync_governance); governance is phased across `purchase` / `modification` / `delivery`, not partitioned across specialist agents, so the envelope carries a single token for the full lifecycle.
+   *
+   * Value format: governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
+   *
+   * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   */
+  governance_context?: string;
+  /**
+   * Conceptual grouping for the task-specific response data defined by individual task response schemas (e.g., get-products-response.json, create-media-buy-response.json). `payload` is a documentary construct — it is NOT a required wire field, and its on-the-wire shape depends on transport (see Transport serialization below). Task response schemas declare body fields without wrapping them in a `payload` object; the wire representation places those body fields per transport convention. On MCP the body fields appear as siblings of envelope fields at the root of the tool response; on A2A they appear inside `task.artifacts[0].parts[].DataPart`; on REST they appear at the root of the JSON body.
+   */
+  payload?: {};
+  /**
+   * Release-precision AdCP version (VERSION.RELEASE, e.g. "3.0", "3.1", "3.1-beta"). On a request: the buyer's release pin — the seller validates against its supported_versions and returns VERSION_UNSUPPORTED on cross-major mismatch, or downshifts to the highest supported release within the same major. On a response: the release the seller actually served — clients SHOULD validate the response against that release's schema, not against their pin. Patches are not negotiated; surface them as build_version on capabilities for operational visibility. When omitted, falls back to adcp_major_version (deprecated) or server default. Buyers SHOULD emit both adcp_version and adcp_major_version through 3.x to remain compatible with sellers that only read the legacy field. NORMALIZATION: SDKs that read full-semver values from bundle metadata (e.g. ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to release-precision ("3.1-beta.1") before emitting on the wire — meta-field values are NOT valid wire values.
+   */
+  adcp_version?: string;
+  /**
+   * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   */
+  adcp_major_version?: number;
+  /**
+   * Message type discriminator for deserialization. Same const as the router→publisher variant so publisher-facing decoders can key off type before dispatching on shape.
+   */
+  type: 'identity_match_response';
+  /**
+   * Echoed request identifier from the identity match request.
+   */
+  request_id: string;
+  /**
+   * Package IDs the user is eligible for. Packages not listed are ineligible.
+   */
+  eligible_package_ids: string[];
+  /**
+   * Per-package single-shot fcap window, in seconds. After serving the user one impression on each eligible package within this window, the publisher MUST re-query Identity Match before serving from those packages again. Not a router response cache TTL — it is a buyer-asserted serve throttle. Multi-impression frequency caps are handled separately by the buyer's impression tracker. Maximum 300.
+   * @minimum 1
+   * @maximum 300
+   */
+  serve_window_sec: number;
+  /**
+   * Ordered TMPX chunk/value pairs this identity agent mints. Each entry names the provider-local `slot_id` the value fills (from the provider's registered `tmpx_slots` in provider-registration.json). Ordered-prefix invariant: a response that carries fewer chunks than the provider registered MUST emit an ordered prefix of the registered `tmpx_slots` — routers MUST NOT reorder or fill gaps. The router MUST validate this contract before forwarding: if the provider has no `tmpx_slots` registration, or if the chunk `slot_id` sequence is not an exact non-empty ordered prefix of the registered list (duplicate, reordered, sparse, or unregistered slot IDs), the router MUST drop that provider's chunks atomically and MUST NOT forward them into `tmpx_providers`. Cap of 2 chunks in v1 aligned with the GAM macro-slot budget; the cap MAY rise without a shape change. Omitted when this provider mints no TMPX (e.g. no eligible packages).
+   */
+  tmpx_chunks?: TMPXChunk[];
+}
 
 // trusted-match/provider-registration.json
 /**
@@ -31973,7 +32042,7 @@ export type TMPProviderRegistration = (
     }
 ) & {
   /**
-   * Stable identifier for this provider registration. Used in logs, metrics, cache keys, and as the key in `tmpx_providers` on the identity-match response so the publisher can route each provider's TMPX `macros[]` to that provider's pre-configured ad-server slots (names registered in `tmpx_macros` below — macro names MUST NOT be derived from `provider_id` at runtime). Publishers assign this — it is not the provider's agent_url. Charset is constrained to a safe alphanumeric/underscore set so the value can appear in operational surfaces (logs, metrics, dashboards) without quoting.
+   * Stable identifier for this provider registration. Used in logs, metrics, cache keys, and as the key in `tmpx_providers` on the identity-match response so the publisher can route each provider's TMPX chunks to that provider's pre-configured ad-server destinations via the publisher's `tmpx_macro_mapping` deployment configuration (see publisher-tmpx-config.json). Publishers assign this — it is not the provider's agent_url. Charset is constrained to a safe alphanumeric/underscore set so the value can appear in operational surfaces (logs, metrics, dashboards) without quoting.
    * @minLength 1
    * @maxLength 64
    * @pattern ^[A-Za-z0-9_]+$
@@ -32015,14 +32084,42 @@ export type TMPProviderRegistration = (
    */
   priority?: number;
   /**
-   * Stable, provider-namespaced ad-server macro names this provider's TMPX response fills, ordered. Publishers traffic these exact names in their ad server (GAM key-values, VAST URL macros, DOOH play-log fields); the router places each provider's TMPX chunks into the matching slots on the identity-match response (`tmpx_providers[provider_id].macros[]`). Names MUST be provider-namespaced so publishers can configure distinct macros per provider (e.g. `PIN_TMPX_1`, `PIN_TMPX_2` for one provider; `NOVA_TMPX_1` for another). Ordered so multi-chunk TMPX values (when the opaque token exceeds one macro slot) are placed deterministically. Capped at 2 entries in v1; the cap MAY be raised in a later version without a shape change. A provider that emits TMPX on its identity-match response (populates `tmpx_macros[]` there) MUST also register this list — otherwise the router has no slot names to forward — but the schema cannot enforce this because "emits TMPX" is not a schema-visible predicate. Providers that do not emit TMPX omit this field.
+   * Stable provider-local slot identifiers for the ordered TMPX chunks this provider mints. Slot IDs are opaque provider-namespaced tokens (e.g. `["primary","secondary"]`), NOT ad-server macro names — publishers map `(provider_id, slot_id)` → local destination via `tmpx_macro_mapping` in publisher-tmpx-config.json, so the destination namespace stays publisher-owned and the router never accepts a destination name from an untrusted provider. Distinct providers MAY reuse the same slot_id without collision because publisher lookup is keyed on `(provider_id, slot_id)`. Publishers use this list at startup to validate `tmpx_macro_mapping` covers every slot the provider mints and to detect config drift when the provider's slot contract changes. Ordering carries the ordered-prefix invariant: a provider that emits fewer chunks than it registered MUST emit an ordered prefix of this list — chunks map to slots in registration order and MUST NOT be shifted, sparse, or reordered. Cap of 2 slots in v1 aligned with the GAM macro-slot budget; the cap MAY rise without a shape change. A provider that emits TMPX (populates `tmpx_chunks` on its identity-match response) MUST register this list; a provider that does not emit TMPX omits it. Schema cannot enforce that predicate because "emits TMPX" is not schema-visible.
    */
-  tmpx_macros?: string[];
+  tmpx_slots?: string[];
   /**
    * Provider lifecycle status. Active providers receive requests. Inactive providers are skipped entirely. Draining providers stop receiving new requests but in-flight requests complete normally.
    */
   status?: 'active' | 'inactive' | 'draining';
 };
+
+// trusted-match/publisher-tmpx-config.json
+/**
+ * Publisher-owned deployment configuration that maps each identity provider's TMPX slots to the ad-server macro names (or targeting keys, VAST substitutions, DOOH play-log fields) the publisher wants those chunks fired into on this surface. Mapping is authored by the publisher — the same operator who trafficks the corresponding ad-server line items — and never travels on the wire between identity provider and router. This keeps macro naming a deployment concern rather than a protocol identifier: providers emit chunks as `{slot_id, value}` pairs (see provider-identity-match-response.json), the router preserves ordering and slot IDs under the emitting `provider_id` (see identity-match-response.json), and this configuration resolves each `(provider_id, slot_id)` to a local destination on the way to the ad server. A publisher may map the same provider to different destinations across surfaces (GAM key-values vs. VAST macros vs. DOOH play-log fields) by carrying one instance of this configuration per surface.
+ */
+export interface PublisherTMPXMacroMapping {
+  /**
+   * Map from `provider_id` to a slot-keyed map of ad-server destinations (macro names, GAM key-values, VAST URL macro tokens, DOOH play-log field identifiers) for that provider on this surface. The inner map's keys are the provider-local `slot_id` values the provider registered in `tmpx_slots` (see provider-registration.json). At serve time, the publisher's adapter reads `tmpx_providers[provider_id].chunks[]` from the identity-match response and, for each chunk, substitutes the chunk's `value` into `tmpx_macro_mapping[provider_id][chunk.slot_id]`. Publishers use the outer map's keys plus the inner map's keys to validate the mapping at startup — every `slot_id` a provider registered in `tmpx_slots` SHOULD have a corresponding entry in that provider's inner map, and publishers SHOULD surface any missing entry as a startup warning so the operator can add it before responses begin carrying the unmapped slot. The exact destination string is publisher-local: GAM adopters typically use uppercase snake-case macro names, VAST surfaces use URL macro tokens, DOOH surfaces use play-log field identifiers. Outer-map key charset matches `provider_id` in provider-registration.json (enforced by `propertyNames`). Inner-map key charset matches `slot_id` in tmpx-chunk.json. When a response carries a `slot_id` for a provider that this mapping has no entry for — the mapping is missing the whole provider, OR the provider is present but the specific `slot_id` is unknown to this surface — the publisher's adapter MUST fail closed for that provider on that impression: none of that provider's chunks are fired into the ad-serving path and the adapter logs a configuration error. Other providers on the same response are unaffected. A `provider_id` absent from this mapping entirely (e.g. a newly onboarded provider not yet trafficked on this surface) is the same case — the adapter drops that provider's chunks on this surface rather than firing them into an unconfigured destination. Startup validation and serve-time fail-closed are two stages of a single rule: the warning at startup is the operator's chance to fix the mapping before the serve-time rule catches the missing slot.
+   */
+  tmpx_macro_mapping: {
+    /**
+     * Map from the provider's registered `slot_id` to the ad-server destination string for that slot on this surface. Opaque to the protocol — the exact form is publisher-local.
+     */
+    [k: string]:
+      | {
+          /**
+           * @minLength 1
+           * @maxLength 128
+           */
+          [k: string]: string | undefined;
+        }
+      | undefined;
+  };
+}
+
+
+/** @deprecated AdCP 3.1.10 renamed the publisher-facing response to distinguish it from the provider hop. */
+export type IdentityMatchResponse = IdentityMatchResponseRouterPublisher;
 
 export type IndividualAssetSlot =
   | IndividualImageAsset
@@ -32055,3 +32152,21 @@ export type GroupAssetSlot =
   | GroupWebhookAsset;
 
 export type FormatAssetSlot = IndividualAssetSlot | RepeatableGroupAsset;
+
+/**
+ * @deprecated AdCP 3.1.10 replaced provider-authored macro names with provider-local TMPX slot IDs.
+ * Retained for source compatibility with payloads captured before 3.1.10.
+ */
+export interface TmpxMacro {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Z][A-Z0-9_]*$
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 1024
+   */
+  value: string;
+}

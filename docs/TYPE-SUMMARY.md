@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-07-28
-> @adcp/sdk v13.0.0-rc.1
+> Generated at: 2026-08-04
+> @adcp/sdk v13.0.0-rc.6
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -83,6 +83,38 @@ interface ConversationContext {
   abort(reason?: string): never;
 }
 ```
+
+## Trusted Match 3.1.10 Types
+
+```typescript
+interface TMPXChunk {
+  slot_id: string; // provider-local, never a publisher macro name
+  value: string;   // opaque URL-safe value
+}
+
+interface IdentityMatchResponseProviderRouter {
+  type: 'identity_match_response';
+  request_id: string;
+  eligible_package_ids: string[];
+  serve_window_sec: number;
+  tmpx_chunks?: TMPXChunk[]; // 1-2 entries when present
+}
+
+interface IdentityMatchResponseRouterPublisher {
+  type: 'identity_match_response';
+  request_id: string;
+  eligible_package_ids: string[];
+  serve_window_sec: number;
+  tmpx?: string; // deprecated single-token compatibility field
+  tmpx_providers?: Record<string, { chunks: TMPXChunk[] }>;
+}
+
+interface PublisherTMPXMacroMapping {
+  tmpx_macro_mapping: Record<string, Record<string, string>>;
+}
+```
+
+The two response hops are mutually exclusive privacy boundaries: neither carries `context` or `ext`, providers emit only `tmpx_chunks`, and publisher-facing responses emit only attributed `tmpx_providers`. See `docs/migration-adcp-3.1.8-to-3.1.10.md`.
 
 ## Tool Request/Response Shapes
 

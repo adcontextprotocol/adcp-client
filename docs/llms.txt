@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-07-28
-> Library: @adcp/sdk v13.0.0-rc.1
+> Generated at: 2026-08-04
+> Library: @adcp/sdk v13.0.0-rc.6
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -969,6 +969,12 @@ Evaluate available packages against content context.
 
 Evaluate user eligibility for packages using an opaque identity token.
 
+**AdCP 3.1.10 TMPX boundary:**
+- Public `identity_match` calls return `IdentityMatchResponseRouterPublisher`: provider chunks are attributed under `tmpx_providers[provider_id].chunks`.
+- Router implementations validate upstream identity providers with `IdentityMatchResponseProviderRouter`, whose root field is `tmpx_chunks`.
+- Providers register local `tmpx_slots`; publisher-owned `PublisherTMPXMacroMapping` resolves each `(provider_id, slot_id)` to a local destination. Provider responses never carry publisher macro names.
+- Both response hops forbid `context`/`ext` and opposite-hop TMPX fields. Chunk arrays contain one or two strict `{ slot_id, value }` entries.
+
 ## Common Flows
 
 These are the standard tool call sequences from the AdCP storyboards. Each flow shows the tools called in order.
@@ -1067,6 +1073,9 @@ Flow: `get_products → create_media_buy → sync_creatives → list_creatives �
 
 **Dependency impairment end-to-end — resource transition propagates to media buy health** — Forces a creative from approved → rejected on a non-terminal media buy, verifies the buy reflects health: impaired with a matching impairments[] entry, and recovers via assignment swap to a different creative (canonical recovery vector — re-approval of the same creative_id is uncommon in production).
 Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → list_creatives → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
+
+**Audience dependency impairment — suspension propagates to media buy health** — Syncs an audience, targets it from a package, forces ready → suspended, verifies an audience impairment, then restores ready and verifies recovery.
+Flow: `sync_audiences → comply_test_controller → create_media_buy → get_media_buys → comply_test_controller → get_media_buys → comply_test_controller → get_media_buys`
 
 **Dependency impairment cardinality — impairments[] tracks each offline resource independently** — Two creatives on two packages of the same buy. Rejects them sequentially and verifies impairments[] grows 0 → 1 → 2; recovers them sequentially via swap-assignment and verifies impairments[] shrinks 2 → 1 → 0. Pressure-tests the inverse rule under cardinality — a seller emitting any impairment entry rather than the right one fails.
 Flow: `get_products → create_media_buy → sync_creatives → update_media_buy → comply_test_controller → get_media_buys → comply_test_controller → list_creatives → get_media_buys → comply_test_controller → list_creatives → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys → sync_creatives → comply_test_controller → update_media_buy → get_media_buys`
@@ -1580,6 +1589,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking) | docs/migration-6.7-to-6.9.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.7-to-6.9.md) |
 | Migrating 6.6 → 6.7 (15 recipes; 2 breaking) | docs/migration-6.6-to-6.7.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.6-to-6.7.md) |
 | Migrating 5.x → 6.x | docs/migration-5.x-to-6.x.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-5.x-to-6.x.md) |
+| AdCP 3.1.8 → 3.1.10 TMPX and Retina migration | docs/migration-adcp-3.1.8-to-3.1.10.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-adcp-3.1.8-to-3.1.10.md) |
 | BuyerAgentRegistry adopter migration | docs/migration-buyer-agent-registry.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-buyer-agent-registry.md) |
 | Account resolution: explicit / implicit / derived | docs/guides/account-resolution.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/account-resolution.md) |
 | ctx_metadata credential safety | docs/guides/CTX-METADATA-SAFETY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CTX-METADATA-SAFETY.md) |
