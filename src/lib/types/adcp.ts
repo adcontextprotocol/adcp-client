@@ -452,6 +452,17 @@ export interface AgentConfig {
   oauth_client?: AgentOAuthClient;
 
   /**
+   * Operator-supplied RFC 8707 resource override for authorization-code
+   * OAuth flows. When present, this takes precedence over protected-resource
+   * metadata and is reused for authorization, code exchange, and refresh.
+   *
+   * Prefer standards-compliant protected-resource metadata. This escape hatch
+   * exists for legacy or non-conformant integrations whose canonical token
+   * audience cannot be discovered from the agent endpoint.
+   */
+  oauth_resource?: string;
+
+  /**
    * OAuth 2.0 client credentials grant configuration (M2M).
    * When present, tokens in `oauth_tokens` are refreshed by re-exchanging
    * these credentials against `token_endpoint` — there is no user-facing

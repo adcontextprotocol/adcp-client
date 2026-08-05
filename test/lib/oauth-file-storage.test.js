@@ -41,12 +41,31 @@ describe('createFileOAuthStorage', () => {
       protocol: 'mcp',
       oauth_tokens: { access_token: 'at', refresh_token: 'rt', expires_in: 3600 },
       oauth_client: { client_id: 'cid', redirect_uris: ['http://localhost/cb'] },
+      oauth_resource: 'https://platform.example.com/',
     });
     const loaded = await storage.loadAgent('my-agent');
     assert.ok(loaded);
     assert.strictEqual(loaded.agent_uri, 'https://agent.example.com/mcp');
     assert.strictEqual(loaded.oauth_tokens.access_token, 'at');
     assert.strictEqual(loaded.oauth_client.client_id, 'cid');
+    assert.strictEqual(loaded.oauth_resource, 'https://platform.example.com/');
+  });
+
+  test('saveAgent clears a removed OAuth resource override', async () => {
+    const storage = createFileOAuthStorage({ configPath });
+    const agent = {
+      id: 'my-agent',
+      name: 'my-agent',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_resource: 'https://platform.example.com/',
+    };
+    await storage.saveAgent(agent);
+    delete agent.oauth_resource;
+    await storage.saveAgent(agent);
+
+    const loaded = await storage.loadAgent('my-agent');
+    assert.strictEqual(loaded.oauth_resource, undefined);
   });
 
   test('preserves unrelated fields (e.g. auth_token) across saves', async () => {

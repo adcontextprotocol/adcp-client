@@ -21,10 +21,11 @@ flow-handler interface cannot model. Pass it to your router, not to
    metadata document as optional). Connection / parse / 5xx errors are
    surfaced as `ProtectedResourceMetadataError`; we do **not** silently
    downgrade to local guessing on a transient failure.
-3. Resource indicator: `prm.resource` (validated against the agent origin
-   via `checkResourceAllowed`) falling back to
+3. Resource indicator: caller `resourceOverride` > `prm.resource` (validated
+   against the agent origin when no trusted override is supplied) >
    `resourceUrlFromServerUrl(agent.agent_uri)`. Never guessed locally
-   when PRM is present.
+   when PRM is present. An explicit override is forwarded during authorization,
+   code exchange, and later refreshes.
 4. Scope: caller `scopeHint` > `prm.scopes_supported` > `clientMetadata.scope`.
 5. Dynamic client registration when the agent has no `oauth_client` and
    the AS advertises `registration_endpoint`. By default we **reject**
@@ -61,6 +62,9 @@ router.get('/oauth/start', async (req, res) => {
     carry: { user_id: req.user.id, return_to: req.query.return_to },
     // Optional: forward the scope hint from a prior 401 challenge (SEP-835).
     // scopeHint: req.query.scope,
+    // Optional operator escape hatch for legacy/non-conformant integrations:
+    // resourceOverride: agent.oauth_resource,
+    // audience: integration.oauthAudience, // Auth0 compatibility; /authorize only
   });
   res.cookie(STATE_COOKIE, state, { httpOnly: true, secure: true, sameSite: 'lax' });
   res.redirect(authorizationUrl);
@@ -149,6 +153,10 @@ not use it in production — restarts lose every in-flight flow.
   returned undefined after a successful token exchange. The user's auth
   succeeded but you have no agent to attach it to; usually an
   inter-process delete race.
+- `AgentChangedDuringFlowError` — the agent URI or OAuth resource configuration
+  changed while authorization was pending. Reload the current agent
+  configuration and restart authorization; the SDK does not persist tokens
+  against a stale or replacement agent record.
 - `ConfidentialClientNotAllowedError` — DCR returned a `client_secret`
   and you did not opt into `allowConfidentialClient: true`. Either flip
   the flag (and store the secret carefully) or pre-register a public
@@ -173,6 +181,12 @@ not use it in production — restarts lose every in-flight flow.
   (use `safeReturnTo` for redirect targets).
 - **Refresh is not this module's job.** Once `oauth_tokens` are
   persisted, `MCPOAuthProvider` handles refresh on the next agent call
-  and forwards `resource` into the refresh request automatically.
+  and forwards `resource` into the refresh request automatically. An explicit
+  `resourceOverride` is persisted as `agent.oauth_resource` when `agentStorage`
+  is supplied so the automatic refresh path retains it.
   Callers who DIY refresh against `oauth_tokens` are responsible for
   forwarding `resource` themselves.
+- **Removing an override.** Pass `resourceOverride: null` to explicitly use
+  PRM/agent-URL discovery and clear the persisted `agent.oauth_resource` after
+  successful authorization. Omitting `resourceOverride` preserves and reuses
+  an existing persisted override.

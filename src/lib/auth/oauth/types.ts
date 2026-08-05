@@ -98,6 +98,14 @@ export interface OAuthProviderConfig {
   clientMetadata: OAuthClientMetadata;
 
   /**
+   * Operator-supplied RFC 8707 resource override. Takes precedence over the
+   * resource advertised by protected-resource metadata and is forwarded by
+   * the MCP SDK during authorization, code exchange, and refresh. Pass `null`
+   * to ignore `agent.oauth_resource` and return to metadata discovery.
+   */
+  resourceOverride?: string | null;
+
+  /**
    * Allow non-HTTPS resource URLs in RFC 9728 protected-resource metadata.
    * Mirrors the CLI's `--allow-http` flag and matches the operator-driven
    * trust model used elsewhere in the SDK (`ssrfSafeFetch.allowPrivateIp`,

@@ -6,7 +6,8 @@
  * triggering a redundant refresh (or worse, a re-login).
  *
  * On-disk format is the shape used by the `adcp` CLI's agents.json — agents
- * keyed by alias, each with `{ url, protocol, auth_token?, oauth_tokens?, oauth_client? }`.
+ * keyed by alias, each with
+ * `{ url, protocol, auth_token?, oauth_tokens?, oauth_client?, oauth_resource? }`.
  * Library consumers who want a different shape can implement
  * {@link OAuthConfigStorage} directly.
  */
@@ -25,6 +26,7 @@ interface StoredAgent {
   auth_token?: string;
   oauth_tokens?: AgentConfig['oauth_tokens'];
   oauth_client?: AgentConfig['oauth_client'];
+  oauth_resource?: string;
   oauth_client_credentials?: AgentConfig['oauth_client_credentials'];
   oauth_code_verifier?: string;
 }
@@ -67,7 +69,8 @@ export interface FileOAuthStorageOptions {
  *
  * Does NOT touch fields outside the OAuth envelope (`auth_token`, custom
  * fields) when saving — the MCP provider only mutates `oauth_tokens`,
- * `oauth_client`, and `oauth_code_verifier`, and we preserve everything else.
+ * `oauth_client`, `oauth_resource`, and `oauth_code_verifier`, and we preserve
+ * everything else.
  *
  * @example
  * ```ts
@@ -121,6 +124,7 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
         auth_token: stored.auth_token,
         oauth_tokens: stored.oauth_tokens,
         oauth_client: stored.oauth_client,
+        oauth_resource: stored.oauth_resource,
         oauth_client_credentials: stored.oauth_client_credentials,
         oauth_code_verifier: stored.oauth_code_verifier,
       };
@@ -130,18 +134,21 @@ export function createFileOAuthStorage(options: FileOAuthStorageOptions): OAuthC
       const key = agentKeyOverride ?? agent.id;
       const config = await readConfig();
       const existing = config.agents[key] ?? { url: agent.agent_uri };
-      config.agents[key] = {
+      const next: StoredAgent = {
         ...existing,
         url: agent.agent_uri,
         protocol: agent.protocol,
         ...(agent.auth_token !== undefined ? { auth_token: agent.auth_token } : {}),
         ...(agent.oauth_tokens !== undefined ? { oauth_tokens: agent.oauth_tokens } : {}),
         ...(agent.oauth_client !== undefined ? { oauth_client: agent.oauth_client } : {}),
+        ...(agent.oauth_resource !== undefined ? { oauth_resource: agent.oauth_resource } : {}),
         ...(agent.oauth_client_credentials !== undefined
           ? { oauth_client_credentials: agent.oauth_client_credentials }
           : {}),
         ...(agent.oauth_code_verifier !== undefined ? { oauth_code_verifier: agent.oauth_code_verifier } : {}),
       };
+      if (agent.oauth_resource === undefined) delete next.oauth_resource;
+      config.agents[key] = next;
       await writeConfig(config);
     },
   };
