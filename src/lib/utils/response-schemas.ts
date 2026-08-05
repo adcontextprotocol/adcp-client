@@ -75,7 +75,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
 
   // Trusted Match
   context_match: schemas.ContextMatchResponseSchema,
-  identity_match: schemas.IdentityMatchResponseSchema,
+  identity_match: schemas.IdentityMatchResponseRouterPublisherSchema,
 
   // Account & audience
   sync_accounts: schemas.SyncAccountsResponseSchema,

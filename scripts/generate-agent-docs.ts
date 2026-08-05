@@ -291,6 +291,7 @@ function domainDeepDives(domain: string): string[] {
     governance: ['docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows'],
     'sponsored-intelligence': ['docs/guides/ASYNC-DEVELOPER-GUIDE.md — session lifecycle patterns'],
     account: ['docs/getting-started.md — authentication and account setup'],
+    'trusted-match': ['docs/migration-adcp-3.1.8-to-3.1.10.md — TMPX hop split and Retina metadata'],
   };
   return links[domain] || [];
 }
@@ -948,6 +949,20 @@ function generateLlmsTxt(
       ln(desc ? `${desc}.` : '');
       ln();
     }
+    ln(`**AdCP 3.1.10 TMPX boundary:**`);
+    ln(
+      `- Public \`identity_match\` calls return \`IdentityMatchResponseRouterPublisher\`: provider chunks are attributed under \`tmpx_providers[provider_id].chunks\`.`
+    );
+    ln(
+      `- Router implementations validate upstream identity providers with \`IdentityMatchResponseProviderRouter\`, whose root field is \`tmpx_chunks\`.`
+    );
+    ln(
+      `- Providers register local \`tmpx_slots\`; publisher-owned \`PublisherTMPXMacroMapping\` resolves each \`(provider_id, slot_id)\` to a local destination. Provider responses never carry publisher macro names.`
+    );
+    ln(
+      `- Both response hops forbid \`context\`/\`ext\` and opposite-hop TMPX fields. Chunk arrays contain one or two strict \`{ slot_id, value }\` entries.`
+    );
+    ln();
   }
 
   // --- Common flows (from storyboards) ---
@@ -1121,6 +1136,7 @@ function generateLlmsTxt(
     ['Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking)', 'migration-6.7-to-6.9.md'],
     ['Migrating 6.6 → 6.7 (15 recipes; 2 breaking)', 'migration-6.6-to-6.7.md'],
     ['Migrating 5.x → 6.x', 'migration-5.x-to-6.x.md'],
+    ['AdCP 3.1.8 → 3.1.10 TMPX and Retina migration', 'migration-adcp-3.1.8-to-3.1.10.md'],
     ['BuyerAgentRegistry adopter migration', 'migration-buyer-agent-registry.md'],
     ['Account resolution: explicit / implicit / derived', 'guides/account-resolution.md'],
     ['ctx_metadata credential safety', 'guides/CTX-METADATA-SAFETY.md'],
@@ -1262,6 +1278,41 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  abort(reason?: string): never;`);
   ln(`}`);
   ln('```');
+  ln();
+
+  ln(`## Trusted Match 3.1.10 Types`);
+  ln();
+  ln('```typescript');
+  ln(`interface TMPXChunk {`);
+  ln(`  slot_id: string; // provider-local, never a publisher macro name`);
+  ln(`  value: string;   // opaque URL-safe value`);
+  ln(`}`);
+  ln();
+  ln(`interface IdentityMatchResponseProviderRouter {`);
+  ln(`  type: 'identity_match_response';`);
+  ln(`  request_id: string;`);
+  ln(`  eligible_package_ids: string[];`);
+  ln(`  serve_window_sec: number;`);
+  ln(`  tmpx_chunks?: TMPXChunk[]; // 1-2 entries when present`);
+  ln(`}`);
+  ln();
+  ln(`interface IdentityMatchResponseRouterPublisher {`);
+  ln(`  type: 'identity_match_response';`);
+  ln(`  request_id: string;`);
+  ln(`  eligible_package_ids: string[];`);
+  ln(`  serve_window_sec: number;`);
+  ln(`  tmpx?: string; // deprecated single-token compatibility field`);
+  ln(`  tmpx_providers?: Record<string, { chunks: TMPXChunk[] }>;`);
+  ln(`}`);
+  ln();
+  ln(`interface PublisherTMPXMacroMapping {`);
+  ln(`  tmpx_macro_mapping: Record<string, Record<string, string>>;`);
+  ln(`}`);
+  ln('```');
+  ln();
+  ln(
+    `The two response hops are mutually exclusive privacy boundaries: neither carries \`context\` or \`ext\`, providers emit only \`tmpx_chunks\`, and publisher-facing responses emit only attributed \`tmpx_providers\`. See \`docs/migration-adcp-3.1.8-to-3.1.10.md\`.`
+  );
   ln();
 
   // --- Tool request/response shapes ---
