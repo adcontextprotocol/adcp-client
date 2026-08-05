@@ -75,6 +75,7 @@ export {
   TokenExchangeError,
   ProtectedResourceMetadataError,
   AgentVanishedDuringFlowError,
+  AgentChangedDuringFlowError,
   ConfidentialClientNotAllowedError,
   DEFAULT_WEB_FLOW_TTL_MS,
   type PendingWebFlow,
@@ -148,6 +149,8 @@ export function createCLIOAuthProvider(
     quiet?: boolean;
     /** Storage for persisting agent config */
     storage?: OAuthConfigStorage;
+    /** Operator RFC 8707 override; `null` returns to metadata discovery. */
+    resourceOverride?: string | null;
     /**
      * Allow non-HTTPS resource URLs advertised in RFC 9728 protected-resource
      * metadata. Mirrors the CLI's `--allow-http` flag. Defaults to `false`.
@@ -173,6 +176,7 @@ export function createCLIOAuthProvider(
     agent,
     flowHandler,
     storage: options?.storage,
+    resourceOverride: options?.resourceOverride,
     clientMetadata,
     allowHttp: options?.allowHttp,
   });
@@ -197,6 +201,8 @@ export function createNonInteractiveOAuthProvider(
     clientMetadata?: Partial<OAuthClientMetadata>;
     /** Storage for persisting refreshed tokens back to disk. */
     storage?: OAuthConfigStorage;
+    /** Operator RFC 8707 override reused during refresh; `null` disables it. */
+    resourceOverride?: string | null;
     /**
      * Allow non-HTTPS resource URLs advertised in RFC 9728 protected-resource
      * metadata. Mirrors the CLI's `--allow-http` flag. Defaults to `false`.
@@ -216,6 +222,7 @@ export function createNonInteractiveOAuthProvider(
     agent,
     flowHandler,
     storage: options?.storage,
+    resourceOverride: options?.resourceOverride,
     clientMetadata,
     allowHttp: options?.allowHttp,
   });

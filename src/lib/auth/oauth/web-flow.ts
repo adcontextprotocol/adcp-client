@@ -8,15 +8,17 @@
  * store interface — not reimplemented protocol logic.
  *
  * Wire contract:
- *   - PRM (RFC 9728) is consulted first; `prm.resource` is the source of
- *     truth for the RFC 8707 `resource` indicator. We fall back to
+ *   - An operator `resourceOverride` takes precedence for legacy or
+ *     non-conformant integrations. Otherwise PRM (RFC 9728) is consulted;
+ *     `prm.resource` is the source of truth for the RFC 8707 `resource`
+ *     indicator. We fall back to
  *     `resourceUrlFromServerUrl(agent.agent_uri)` only when the resource
  *     server does not implement PRM (404). Connection / parse / 5xx
  *     errors throw `ProtectedResourceMetadataError` — never silently
  *     downgrade to local guessing.
- *   - `prm.resource` must share an origin with the agent URL; the MCP
- *     SDK's `checkResourceAllowed` guards against a poisoned PRM
- *     pointing the audience at a third party.
+ *   - Without a trusted override, `prm.resource` must share an origin with
+ *     the agent URL; the MCP SDK's `checkResourceAllowed` guards against a
+ *     poisoned PRM pointing the audience at a third party.
  *   - AS URL = `prm.authorization_servers[0]` when PRM is present, else
  *     the agent origin.
  *   - Scope priority: caller-supplied `scopeHint` (e.g. from a 401
@@ -49,6 +51,7 @@ import type {
 
 import type { AgentConfig, OAuthConfigStorage } from './types';
 import { DEFAULT_CLIENT_METADATA, fromMCPClientInfo, fromMCPTokens, OAuthError, toMCPClientInfo } from './types';
+import { validateOAuthResourceUrl } from './resource-url';
 
 /**
  * Default TTL for a pending web flow row. RFC 6749 §10.12 recommends
@@ -76,6 +79,12 @@ export interface PendingWebFlow {
   codeVerifier: string;
   redirectUri: string;
   resource?: string;
+  /** Explicit operator override, persisted separately so refresh can retain it. */
+  resourceOverride?: string;
+  /** Mutation requested by this flow. Absent on legacy rows and preserve-only flows. */
+  resourceOverrideAction?: 'set' | 'clear';
+  /** Value observed at flow start; used to reject concurrent operator edits. */
+  resourceOverrideSnapshot?: string | null;
   scope?: string;
   authorizationServerUrl: string;
   /** Persist as JSON (e.g. Postgres `jsonb`); contents are MCP SDK-typed. */
@@ -188,6 +197,17 @@ export class AgentVanishedDuringFlowError extends OAuthError {
   }
 }
 
+export class AgentChangedDuringFlowError extends OAuthError {
+  constructor(agentId: string) {
+    super(
+      `Agent ${agentId} changed while OAuth authorization was pending; tokens were not saved`,
+      'agent_changed_during_flow',
+      agentId
+    );
+    this.name = 'AgentChangedDuringFlowError';
+  }
+}
+
 export class ConfidentialClientNotAllowedError extends OAuthError {
   constructor(agentId: string | undefined) {
     super(
@@ -232,6 +252,20 @@ export interface StartWebFlowOptions {
    * value from a prior 401 `WWW-Authenticate` challenge if you have one.
    */
   scopeHint?: string;
+  /**
+   * Operator-supplied RFC 8707 resource override. Takes precedence over
+   * `prm.resource` and the agent-URL-derived fallback, and is sent during
+   * both authorization and code exchange. Pass `null` to explicitly clear a
+   * persisted override and return to metadata/agent-URL discovery.
+   */
+  resourceOverride?: string | null;
+  /**
+   * Non-standard Auth0-compatible audience parameter. Sent only to the
+   * authorization endpoint. Prefer `resourceOverride` for RFC 8707 servers.
+   */
+  audience?: string;
+  /** Permit an HTTP resource override for local development. Default false. */
+  allowHttp?: boolean;
   /** Override flow TTL. Default: {@link DEFAULT_WEB_FLOW_TTL_MS}. */
   ttlMs?: number;
   /** Override the random-state generator (defaults to 32 bytes base64url). */
@@ -306,6 +340,9 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     agentStorage,
     carry,
     scopeHint,
+    resourceOverride: requestedResourceOverride,
+    audience,
+    allowHttp = false,
     ttlMs = DEFAULT_WEB_FLOW_TTL_MS,
     generateState,
     fetch: fetchFn,
@@ -317,8 +354,16 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     throw new OAuthError('Agent missing agent_uri', 'invalid_agent', agent.id);
   }
 
+  const resourceOverrideAction =
+    requestedResourceOverride === null ? 'clear' : requestedResourceOverride !== undefined ? 'set' : undefined;
+  const rawResourceOverride =
+    requestedResourceOverride === null ? undefined : (requestedResourceOverride ?? agent.oauth_resource);
+  const resourceOverride = rawResourceOverride
+    ? validateOAuthResourceUrl(rawResourceOverride, { allowHttp }).href
+    : undefined;
+
   const prm = await tryDiscoverPRM(agent.agent_uri, fetchFn);
-  if (prm?.resource) {
+  if (!resourceOverride && prm?.resource) {
     assertPrmResourceMatchesAgentOrigin(agent.agent_uri, prm.resource);
   }
 
@@ -329,7 +374,11 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     throw new OAuthError(`No OAuth metadata at ${asUrl.toString()}`, 'no_authorization_server_metadata', agent.id);
   }
 
-  const resource = prm?.resource ? new URL(prm.resource) : resourceUrlFromServerUrl(new URL(agent.agent_uri));
+  const resource = resourceOverride
+    ? new URL(resourceOverride)
+    : prm?.resource
+      ? new URL(prm.resource)
+      : resourceUrlFromServerUrl(new URL(agent.agent_uri));
 
   const baseClientMetadata: OAuthClientMetadata = {
     ...DEFAULT_CLIENT_METADATA,
@@ -358,6 +407,9 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     state,
     resource,
   });
+  if (audience) {
+    authorizationUrl.searchParams.set('audience', audience);
+  }
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlMs);
@@ -368,6 +420,9 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
     codeVerifier,
     redirectUri,
     resource: resource.href,
+    resourceOverride,
+    resourceOverrideAction,
+    resourceOverrideSnapshot: agent.oauth_resource ?? null,
     scope,
     authorizationServerUrl: asUrl.toString(),
     clientInformation,
@@ -421,6 +476,12 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
     throw new InvalidOrExpiredFlowError(state);
   }
 
+  let agentForPersistence: AgentConfig | undefined;
+  if (agentStorage) {
+    agentForPersistence = await agentStorage.loadAgent(flow.agentId);
+    assertAgentUnchangedForFlow(agentForPersistence, flow);
+  }
+
   const asMetadata = await discoverAuthorizationServerMetadata(flow.authorizationServerUrl, {
     fetchFn,
   });
@@ -442,13 +503,20 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
 
   let persisted = false;
   if (agentStorage) {
-    const agent = await agentStorage.loadAgent(flow.agentId);
-    if (!agent) {
-      throw new AgentVanishedDuringFlowError(flow.agentId);
+    // Re-read after the network round trips so we do not save the stale object
+    // loaded before token exchange or overwrite an edit made while the AS was
+    // responding. Storage implementations that need a hard same-ID/same-URI
+    // tenant guarantee should additionally make saveAgent revision-aware.
+    agentForPersistence = await agentStorage.loadAgent(flow.agentId);
+    assertAgentUnchangedForFlow(agentForPersistence, flow);
+    agentForPersistence.oauth_tokens = fromMCPTokens(tokens);
+    if (flow.resourceOverrideAction === 'set' && flow.resourceOverride) {
+      agentForPersistence.oauth_resource = flow.resourceOverride;
+    } else if (flow.resourceOverrideAction === 'clear') {
+      delete agentForPersistence.oauth_resource;
     }
-    agent.oauth_tokens = fromMCPTokens(tokens);
-    delete agent.oauth_code_verifier;
-    await agentStorage.saveAgent(agent);
+    delete agentForPersistence.oauth_code_verifier;
+    await agentStorage.saveAgent(agentForPersistence);
     persisted = true;
   }
 
@@ -459,6 +527,24 @@ export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promis
     carry: flow.carry,
     persisted,
   };
+}
+
+function assertAgentUnchangedForFlow(
+  agent: AgentConfig | undefined,
+  flow: PendingWebFlow
+): asserts agent is AgentConfig {
+  if (!agent) {
+    throw new AgentVanishedDuringFlowError(flow.agentId);
+  }
+  if (agent.agent_uri !== flow.agentUrl) {
+    throw new AgentChangedDuringFlowError(flow.agentId);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(flow, 'resourceOverrideSnapshot') &&
+    (agent.oauth_resource ?? null) !== flow.resourceOverrideSnapshot
+  ) {
+    throw new AgentChangedDuringFlowError(flow.agentId);
+  }
 }
 
 /**

@@ -18,6 +18,7 @@ import type {
 } from './types';
 import { DEFAULT_CLIENT_METADATA, toMCPTokens, fromMCPTokens, toMCPClientInfo, fromMCPClientInfo } from './types';
 import { randomBytes } from 'crypto';
+import { validateOAuthResourceUrl } from './resource-url';
 
 /**
  * MCP OAuth Client Provider
@@ -53,6 +54,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private readonly flowHandler: OAuthFlowHandler;
   private readonly _clientMetadata: OAuthClientMetadata;
   private readonly allowHttp: boolean;
+  private readonly configuredResourceOverride?: string | null;
 
   constructor(config: OAuthProviderConfig) {
     this.agent = config.agent;
@@ -60,6 +62,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     this.flowHandler = config.flowHandler;
     this._clientMetadata = config.clientMetadata;
     this.allowHttp = config.allowHttp === true;
+    this.configuredResourceOverride = config.resourceOverride;
   }
 
   /**
@@ -70,7 +73,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     flowHandler: OAuthFlowHandler,
     storage?: OAuthConfigStorage,
     clientMetadataOverrides?: Partial<OAuthClientMetadata>,
-    options?: { allowHttp?: boolean }
+    options?: { allowHttp?: boolean; resourceOverride?: string | null }
   ): MCPOAuthProvider {
     // Build complete client metadata with required fields
     const clientMetadata: OAuthClientMetadata = {
@@ -85,6 +88,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       storage,
       clientMetadata,
       allowHttp: options?.allowHttp,
+      resourceOverride: options?.resourceOverride,
     });
   }
 
@@ -114,17 +118,15 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * mirrors the CLI's `--allow-http` flag.
    */
   async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
-    if (!resource) {
+    const selectedResource =
+      this.configuredResourceOverride === null
+        ? resource
+        : (this.configuredResourceOverride ?? this.agent.oauth_resource ?? resource);
+    if (!selectedResource) {
       return undefined;
     }
 
-    const resourceURL = new URL(resource);
-
-    if (resourceURL.protocol !== 'https:' && !this.allowHttp) {
-      throw new Error(`Server at ${serverUrl} advertised non-HTTPS resource URL: ${resource}`);
-    }
-
-    return resourceURL;
+    return validateOAuthResourceUrl(selectedResource, { allowHttp: this.allowHttp });
   }
 
   /**

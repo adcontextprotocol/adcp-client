@@ -15,6 +15,7 @@ interface AgentConfig {
   protocol: 'mcp' | 'a2a';
   auth_token?: string;           // Bearer token
   oauth_tokens?: AgentOAuthTokens;
+  oauth_resource?: string;      // Explicit RFC 8707 override retained for refresh
   headers?: Record<string, string>;
 }
 

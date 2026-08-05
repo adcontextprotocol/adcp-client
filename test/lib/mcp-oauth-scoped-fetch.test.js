@@ -118,7 +118,7 @@ async function closeServer(server) {
 }
 
 async function startOAuthServer(era) {
-  const state = { origin: '', refreshCalls: 0, clientCredentialsCalls: 0 };
+  const state = { origin: '', refreshCalls: 0, clientCredentialsCalls: 0, lastRefreshResource: null };
   let modernHandler;
   let closeModernHandler = async () => {};
 
@@ -165,6 +165,7 @@ async function startOAuthServer(era) {
       const body = new URLSearchParams(await readBody(req));
       if (body.get('grant_type') === 'refresh_token') {
         assert.equal(body.get('refresh_token'), 'refresh-token');
+        state.lastRefreshResource = body.get('resource');
         state.refreshCalls++;
       } else {
         assert.equal(body.get('grant_type'), 'client_credentials');
@@ -345,7 +346,9 @@ test('AdCPClient tools/list and OAuth refresh use the scoped fetcher instead of 
   const server = await startOAuthServer('modern');
   try {
     await withGlobalFetchGuard(async (fetchFn, fetchedUrls) => {
-      const client = new AdCPClient([createOAuthAgent(server.url, server.state.origin)], {
+      const agent = createOAuthAgent(server.url, server.state.origin);
+      agent.oauth_resource = `${server.state.origin}/canonical-resource`;
+      const client = new AdCPClient([agent], {
         transport: { fetchFn },
       });
 
@@ -362,6 +365,7 @@ test('AdCPClient tools/list and OAuth refresh use the scoped fetcher instead of 
       );
     });
     assert.equal(server.state.refreshCalls, 1);
+    assert.equal(server.state.lastRefreshResource, `${server.state.origin}/canonical-resource`);
   } finally {
     await closeMCPConnections();
     await server.stop();

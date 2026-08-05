@@ -542,6 +542,55 @@ describe('MCPOAuthProvider', () => {
     assert.strictEqual(result.toString(), 'https://canonical.example.com/mcp');
   });
 
+  test('validateResourceURL prefers the operator resource override for refresh', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      resourceOverride: 'https://operator.example.com',
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    const result = await provider.validateResourceURL(
+      'https://test-agent.example.org/mcp',
+      'https://metadata.example.com/mcp'
+    );
+    assert.strictEqual(result.toString(), 'https://operator.example.com/');
+  });
+
+  test('validateResourceURL uses an override persisted on AgentConfig', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+    agent.oauth_resource = 'https://persisted.example.com';
+
+    const result = await provider.validateResourceURL('https://test-agent.example.org/mcp');
+    assert.strictEqual(result.toString(), 'https://persisted.example.com/');
+  });
+
+  test('validateResourceURL honors explicit null by falling back to protected-resource metadata', async () => {
+    agent.oauth_resource = 'https://persisted.example.com';
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      resourceOverride: null,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+    });
+
+    const result = await provider.validateResourceURL('https://example.com/mcp', 'https://metadata.example.com/mcp');
+    assert.strictEqual(result.toString(), 'https://metadata.example.com/mcp');
+  });
+
   test('validateResourceURL returns undefined when no resource', async () => {
     const provider = new MCPOAuthProvider({
       agent,
@@ -568,7 +617,7 @@ describe('MCPOAuthProvider', () => {
 
     await assert.rejects(
       () => provider.validateResourceURL('https://example.com/mcp', 'http://insecure.example.com/mcp'),
-      { message: /non-HTTPS resource URL/ }
+      { message: /must use HTTPS/ }
     );
   });
 
