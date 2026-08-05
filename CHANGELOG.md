@@ -1,5 +1,20 @@
 # Changelog
 
+## 13.0.0-rc.7
+
+### Minor Changes
+
+- 65e6f0b: Add a validated RFC 8707 resource override to web and provider OAuth flows, preserve it during token refresh, support explicit removal, and add an opt-in Auth0 `audience` authorization parameter.
+- 16c61f2: Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.10.
+
+  This release adds Retina display catalog mappings for 2x-only and required 1x/2x rendition sets across the standard display sizes. It also updates experimental Trusted Match to provider-local TMPX slots, enforces its provider/router/publisher privacy boundaries at runtime, and preserves deprecated aliases for the pre-3.1.10 public names.
+
+### Patch Changes
+
+- f4ffcdc: Project `sync_creatives.assignments` from the AdCP 3 edge-list shape into the creative-keyed object required by AdCP 2.5 sellers. Assignment weights and placement restrictions now fail closed when targeting a 2.5 seller because that wire version cannot represent them. Callers that manually supplied the v2.5 object as a workaround should return to the public AdCP 3 array shape.
+
+  Refresh generated registry types for the latest canonical creative-capability, placement-summary, and registry-feed fields.
+
 ## 13.0.0-rc.6
 
 ### Patch Changes
