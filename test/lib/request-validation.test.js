@@ -1305,6 +1305,10 @@ describe('strict request validation against v2 servers', () => {
               },
             },
           ],
+          assignments: [
+            { creative_id: 'cre-1', package_id: 'pkg-1' },
+            { creative_id: 'cre-1', package_id: 'pkg-2' },
+          ],
         }),
         err => err.message?.includes('Validation failed for field')
       );
@@ -1315,6 +1319,11 @@ describe('strict request validation against v2 servers', () => {
     const call = capturedCalls.find(c => c.toolName === 'sync_creatives');
     assert.ok(call, 'sync_creatives should have reached the protocol layer');
     assert.strictEqual(call.args.account, undefined, 'account is stripped by the v2 adapter');
+    assert.deepStrictEqual(
+      call.args.assignments,
+      { 'cre-1': ['pkg-1', 'pkg-2'] },
+      'v3 assignment edges are projected to the v2.5 creative-keyed mapping'
+    );
     assert.ok(Array.isArray(call.args.creatives) && call.args.creatives.length === 1, 'creatives are preserved');
     // Manifest is preserved (v2.5 uses the same role-keyed shape as v3),
     // but the inner v3 `asset_type` discriminator is stripped — v2.5

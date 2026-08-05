@@ -108,6 +108,44 @@ describe(
   'v2 adapter conformance against v2.5 schema bundle',
   { skip: V2_5_AVAILABLE ? false : 'v2.5 bundle not cached — run `npm run sync-schemas:v2.5`' },
   () => {
+    test('sync_creatives assignments project to a v2.5-conformant object', () => {
+      const adapted = adaptSyncCreativesRequestForV2({
+        creatives: [
+          {
+            creative_id: 'cre-1',
+            name: 'Creative 1',
+            format_id: { agent_url: 'https://test.example', id: 'format1' },
+            assets: {},
+          },
+          {
+            creative_id: 'cre-2',
+            name: 'Creative 2',
+            format_id: { agent_url: 'https://test.example', id: 'format1' },
+            assets: {},
+          },
+        ],
+        assignments: [
+          { creative_id: 'cre-1', package_id: 'pkg-1' },
+          { creative_id: 'cre-1', package_id: 'pkg-2' },
+          { creative_id: 'cre-2', package_id: 'pkg-2' },
+        ],
+        idempotency_key: '44444444-4444-4444-4444-444444444444',
+      });
+      const outcome = validateRequest('sync_creatives', adapted, 'v2.5');
+
+      assert.deepStrictEqual(adapted.assignments, {
+        'cre-1': ['pkg-1', 'pkg-2'],
+        'cre-2': ['pkg-2'],
+      });
+      assert.strictEqual(
+        outcome.valid,
+        true,
+        `projected assignments must validate against v2.5: ${outcome.issues
+          .map(issue => `${issue.pointer}: ${issue.message}`)
+          .join(', ')}`
+      );
+    });
+
     for (const [taskName, fixture] of Object.entries(FIXTURES)) {
       if (fixture.expected_failures) {
         test(`${taskName} — KNOWN drift, tracked at ${fixture.expected_failures.issue}`, () => {

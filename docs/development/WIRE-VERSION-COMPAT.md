@@ -89,6 +89,12 @@ export const getProductsAdapter: AdapterPair<
 
 `SingleAgentClient.adaptRequestForServerVersion` and `normalizeResponseToV3` dispatch through `getV25Adapter(taskType)` rather than carrying tool-specific switch statements. Adding or removing a per-tool pair doesn't touch the dispatch.
 
+`sync_creatives` also has a top-level container change: v3 assignment edges
+(`[{ creative_id, package_id }]`) are grouped into v2.5's creative-keyed
+mapping (`{ [creative_id]: [package_id] }`). The adapter fails closed when an
+edge carries `weight` or `placement_ids`, because v2.5 cannot express either
+constraint and dropping them would change delivery semantics.
+
 **Asymmetry caveat.** The `AdapterPair` shape assumes symmetric translation, but cross-version reality is often asymmetric:
 
 - **Lossy fields** — proposal-mode `create_media_buy` is one such case (the type comment in `legacy/v2-5/types.ts` calls out that `adaptRequest` may throw for v3 inputs the v2 wire can't represent).
