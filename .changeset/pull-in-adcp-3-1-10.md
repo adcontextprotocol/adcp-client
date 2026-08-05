@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Upgrade the bundled AdCP protocol schemas and generated SDK surfaces to 3.1.10.
