@@ -90,6 +90,68 @@ describe('adaptSyncCreativesRequestForV2 — status → approved mapping', () =>
   });
 });
 
+describe('adaptSyncCreativesRequestForV2 — assignments', () => {
+  test('projects one v3 assignment into the v2.5 creative-keyed mapping', () => {
+    const result = adaptSyncCreativesRequestForV2({
+      ...BASE_REQUEST,
+      assignments: [{ creative_id: 'cre-1', package_id: 'pkg-1' }],
+    });
+
+    assert.deepStrictEqual(result.assignments, { 'cre-1': ['pkg-1'] });
+  });
+
+  test('groups multiple packages under each creative while preserving order', () => {
+    const result = adaptSyncCreativesRequestForV2({
+      ...BASE_REQUEST,
+      assignments: [
+        { creative_id: 'cre-1', package_id: 'pkg-2' },
+        { creative_id: 'cre-2', package_id: 'pkg-3' },
+        { creative_id: 'cre-1', package_id: 'pkg-1' },
+      ],
+    });
+
+    assert.deepStrictEqual(result.assignments, {
+      'cre-1': ['pkg-2', 'pkg-1'],
+      'cre-2': ['pkg-3'],
+    });
+  });
+
+  test('omits assignments when the caller did not supply them', () => {
+    const result = adaptSyncCreativesRequestForV2({ ...BASE_REQUEST });
+    assert.strictEqual(result.assignments, undefined);
+  });
+
+  test('projects an empty assignment list to an empty v2.5 mapping', () => {
+    const result = adaptSyncCreativesRequestForV2({ ...BASE_REQUEST, assignments: [] });
+    assert.deepStrictEqual(result.assignments, {});
+  });
+
+  test('fails closed when weight cannot be represented on v2.5', () => {
+    assert.throws(
+      () =>
+        adaptSyncCreativesRequestForV2({
+          ...BASE_REQUEST,
+          assignments: [
+            { creative_id: 'cre-1', package_id: 'pkg-1' },
+            { creative_id: 'cre-2', package_id: 'pkg-2', weight: 50 },
+          ],
+        }),
+      /assignment at index 1 for creative "cre-2" uses weight, which AdCP v2\.5 cannot represent\. Remove those constraints or use a v3 seller\./
+    );
+  });
+
+  test('fails closed when placement_ids cannot be represented on v2.5', () => {
+    assert.throws(
+      () =>
+        adaptSyncCreativesRequestForV2({
+          ...BASE_REQUEST,
+          assignments: [{ creative_id: 'cre-1', package_id: 'pkg-1', placement_ids: ['pre-roll'] }],
+        }),
+      /assignment at index 0 .* uses placement_ids, which AdCP v2\.5 cannot represent/
+    );
+  });
+});
+
 describe('adaptSyncCreativesRequestForV2 — assets pass-through', () => {
   test('single-role manifest passes through as manifest, with v3 asset_type discriminator stripped', () => {
     // v2.5 uses the role key (`video`) as the asset-shape discriminator;

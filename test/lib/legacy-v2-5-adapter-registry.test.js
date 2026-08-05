@@ -86,6 +86,7 @@ describe('v3 → v2.5 adapter registry', () => {
             assets: { video: { asset_type: 'video', url: 'https://x', width: 1, height: 1, duration_ms: 1 } },
           },
         ],
+        assignments: [{ creative_id: 'c', package_id: 'pkg-1' }],
         idempotency_key: '33333333-3333-3333-3333-333333333333',
       };
       const direct = adaptSyncCreativesRequestForV2(structuredClone(input));

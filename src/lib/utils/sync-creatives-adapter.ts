@@ -9,6 +9,12 @@
  *   - `account` / `adcp_major_version` — stripped (v3-only top-level fields)
  *   - `catalogs` per creative — stripped (v3-only)
  *   - `status` enum ('approved' | 'rejected') → `approved` boolean
+ *   - `assignments` array → creative-keyed package arrays. v3 models one
+ *     creative/package edge per array entry; v2.5 groups those edges under
+ *     the creative ID.
+ *   - `weight` / `placement_ids` assignments — rejected because v2.5 has no
+ *     wire representation for either constraint. Silently dropping them
+ *     would broaden or change delivery.
  *   - `assets` — role-keyed manifest passed through, but the inner
  *     `asset_type` discriminator is stripped from each role's value. v3
  *     uses `asset_type` as the asset-shape discriminator (the const
@@ -68,15 +74,56 @@ function adaptCreativeForV2(creative: any): any {
   return { ...base, assets: stripAssetTypeFromManifest(assets) };
 }
 
+type V3CreativeAssignment = {
+  creative_id: string;
+  package_id: string;
+  weight?: number;
+  placement_ids?: string[];
+};
+
+/**
+ * Project v3's edge-list assignments into v2.5's creative-keyed mapping.
+ *
+ * The v2.5 shape cannot express weights or placement restrictions. Refuse
+ * those requests rather than silently changing their trafficking semantics.
+ */
+function adaptAssignmentsForV2(assignments: V3CreativeAssignment[]): Record<string, string[]> {
+  const packagesByCreative = new Map<string, string[]>();
+
+  for (const [index, assignment] of assignments.entries()) {
+    const unsupportedFields = [
+      assignment.weight !== undefined ? 'weight' : undefined,
+      assignment.placement_ids !== undefined ? 'placement_ids' : undefined,
+    ].filter((field): field is string => field !== undefined);
+
+    if (unsupportedFields.length > 0) {
+      throw new Error(
+        `sync_creatives assignment at index ${index} for creative ${JSON.stringify(assignment.creative_id)} uses ` +
+          `${unsupportedFields.join(' and ')}, which AdCP v2.5 cannot represent. ` +
+          'Remove those constraints or use a v3 seller.'
+      );
+    }
+
+    const packageIds = packagesByCreative.get(assignment.creative_id) ?? [];
+    packageIds.push(assignment.package_id);
+    packagesByCreative.set(assignment.creative_id, packageIds);
+  }
+
+  return Object.fromEntries(packagesByCreative);
+}
+
 /**
  * Adapt a sync_creatives request for a v2 server.
  * Strips v3-only top-level fields and adapts each creative.
  */
 export function adaptSyncCreativesRequestForV2(request: any): any {
-  const { account, adcp_major_version, ...rest } = request;
+  const { account, adcp_major_version, assignments, ...rest } = request;
 
   return {
     ...rest,
+    ...(assignments !== undefined && {
+      assignments: adaptAssignmentsForV2(assignments),
+    }),
     ...(rest.creatives && {
       creatives: rest.creatives.map(adaptCreativeForV2),
     }),
