@@ -41,6 +41,11 @@ import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } fr
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
+import {
+  BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
+  expandCreativeAssetDirectives,
+  findUnresolvedCreativeAssetDirectives,
+} from './creative-assets';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
 import {
@@ -3982,10 +3987,21 @@ async function executeStep(
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
 
+  // Assemble seller-required creative slots from the selected format and
+  // active test kit after all other nested request construction is complete.
+  request = expandCreativeAssetDirectives(request, context, options.test_kit) as Record<string, unknown>;
+
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
-  const unresolvedVars = findUnresolvedContextVars(request);
-  if (unresolvedVars.length > 0 && !step.expect_error) {
+  const unresolvedContextVars = findUnresolvedContextVars(request);
+  const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(request).map(path => ({
+    key: path,
+    token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
+  }));
+  const unresolvedVars = [...unresolvedContextVars, ...unresolvedAssetDirectives];
+  // expect_error steps may intentionally preserve invalid $context tokens, but
+  // runner-only creative directives must never cross the wire.
+  if (unresolvedAssetDirectives.length > 0 || (unresolvedContextVars.length > 0 && !step.expect_error)) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const responseDerivedDetails = unresolvedVars
       .map(v => runState.responseDerivedNotApplicableContextKeys?.get(v.key))
@@ -4008,7 +4024,10 @@ async function executeStep(
         synthesized.push({
           check: 'unresolved_substitution',
           passed: false,
-          description: `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
+          description:
+            v.token === BUILD_ASSETS_FROM_FORMAT_DIRECTIVE
+              ? `request directive "${v.token}" did not resolve — the test kit could not populate every seller-required asset at ${v.key}`
+              : `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
           json_pointer: null,
           expected: v.token,
           actual: null,
@@ -4999,8 +5018,13 @@ async function executeProbeStep(
         omit_idempotency_key: true,
       };
       const resolvedTargetRequest = buildEffectiveStepRequest(targetStep, context, options, runState);
-      const unresolvedVars = findUnresolvedContextVars(resolvedTargetRequest);
-      if (unresolvedVars.length > 0 && !targetStep.expect_error) {
+      const unresolvedContextVars = findUnresolvedContextVars(resolvedTargetRequest);
+      const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(resolvedTargetRequest).map(path => ({
+        key: path,
+        token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
+      }));
+      const unresolvedVars = [...unresolvedContextVars, ...unresolvedAssetDirectives];
+      if (unresolvedAssetDirectives.length > 0 || (unresolvedContextVars.length > 0 && !targetStep.expect_error)) {
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
         const detail = `Skipped: unresolved context variables from rate_limit_trip.trip_target_sample_request: ${unresolvedVars
           .map(v => v.key)
@@ -5217,7 +5241,8 @@ function buildEffectiveStepRequest(
   if (options.disable_sandbox === true) {
     request = applyDisableSandboxHint(request, step.task);
   }
-  return applyIdempotencyInvariant(request, step.task, step);
+  request = applyIdempotencyInvariant(request, step.task, step);
+  return expandCreativeAssetDirectives(request, context, options.test_kit) as Record<string, unknown>;
 }
 
 interface ResolvedWebhookReplayVector {
