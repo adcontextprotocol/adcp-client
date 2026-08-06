@@ -465,7 +465,7 @@ export async function withCachedConnection<T>(
       requestOptions
     );
     try {
-      return await fn(guardedClient);
+      return await withAbortSignal([requestOptions.signal], undefined, () => fn(guardedClient));
     } finally {
       try {
         await guardedClient.close();
@@ -625,17 +625,22 @@ async function connectMCPWithFallbackImpl(
   // Size-limit applies to the raw network response so signing/capture see a
   // bounded body (capture clones via `response.clone()`, which would otherwise
   // buffer a hostile reply in memory).
-  const requestTimeoutMs = resolveRequestTimeoutMs(requestOptions.requestTimeoutMs);
   const clientRequestTimeoutMs = resolveClientRequestTimeoutMs(requestOptions.requestTimeoutMs);
   const mcpRequestOptions = {
     ...(requestOptions.signal && { signal: requestOptions.signal }),
     ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
   };
   const rawNetworkFetch: typeof fetch = transportFetch ?? ((input, init) => fetch(input as any, init));
-  const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) =>
-    withAbortSignal<Response>([requestOptions.signal, init?.signal], requestTimeoutMs, signal =>
-      rawNetworkFetch(input, { ...init, signal })
+  const networkFetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    // Keep cancellation linked for the entire response-body lifetime. A
+    // Promise race around fetch only covers receipt of response headers; MCP
+    // Streamable HTTP can then hold the body open while a tool runs.
+    const signals = [requestOptions.signal, init?.signal ?? undefined].filter(
+      (signal): signal is AbortSignal => signal !== undefined
     );
+    const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+    return rawNetworkFetch(input, { ...init, signal });
+  };
   const sizeLimited = wrapFetchWithSizeLimit(networkFetch);
   const diagnosticFetch = wrapFetchWithTransportDiagnostics(sizeLimited);
   const baseFetch: typeof fetch = signingContext

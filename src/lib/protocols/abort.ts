@@ -17,7 +17,12 @@ export function resolveClientRequestTimeoutMs(timeoutMs: number | undefined): nu
 }
 
 export function createAbortError(reason?: unknown): Error {
-  if (reason instanceof Error && (reason.name === 'AbortError' || reason.name === 'TimeoutError')) return reason;
+  if (
+    reason instanceof Error &&
+    (reason.name === 'AbortError' || reason.name === 'TimeoutError' || reason.name === 'TaskTimeoutError')
+  ) {
+    return reason;
+  }
   const error = new Error(reason == null ? 'The operation was aborted' : String(reason));
   error.name = 'AbortError';
   if (reason instanceof Error) {
@@ -36,11 +41,11 @@ export function createTimeoutError(timeoutMs: number): Error {
 export function isAbortOrTimeoutError(error: unknown): boolean {
   if (error == null || typeof error !== 'object') return false;
   const value = error as { name?: unknown; code?: unknown };
-  if (value.name === 'AbortError' || value.name === 'TimeoutError') return true;
+  if (value.name === 'AbortError' || value.name === 'TimeoutError' || value.name === 'TaskTimeoutError') return true;
   // MCP SDK v1 raises JSON-RPC RequestTimeout (-32001); the v2 packages use
   // the typed SDK error code REQUEST_TIMEOUT. Both represent the same
   // timeout/cancellation boundary and must bypass endpoint fallback.
-  return value.code === -32001 || value.code === 'REQUEST_TIMEOUT';
+  return value.code === -32001 || value.code === 'REQUEST_TIMEOUT' || value.code === 'TASK_TIMEOUT';
 }
 
 export function throwIfAborted(signal?: AbortSignal): void {
@@ -52,7 +57,8 @@ export function throwIfAborted(signal?: AbortSignal): void {
 export async function withAbortSignal<T>(
   signals: Array<AbortSignal | null | undefined>,
   timeoutMs: number | undefined,
-  fn: (signal?: AbortSignal) => Promise<T>
+  fn: (signal?: AbortSignal) => Promise<T>,
+  options: { timeoutError?: Error } = {}
 ): Promise<T> {
   const activeSignals = signals.filter((signal): signal is AbortSignal => signal != null);
   for (const signal of activeSignals) {
@@ -61,18 +67,6 @@ export async function withAbortSignal<T>(
 
   if (timeoutMs == null && activeSignals.length === 0) {
     return fn(undefined);
-  }
-
-  if (timeoutMs == null && activeSignals.length === 1) {
-    const signal = activeSignals[0]!;
-    try {
-      return await fn(signal);
-    } catch (error) {
-      if (signal.aborted) {
-        throw createAbortError(signal.reason);
-      }
-      throw error;
-    }
   }
 
   const controller = new AbortController();
@@ -91,13 +85,28 @@ export async function withAbortSignal<T>(
     timeoutMs == null
       ? undefined
       : setTimeout(() => {
-          abort(createTimeoutError(timeoutMs));
+          abort(options.timeoutError ?? createTimeoutError(timeoutMs));
         }, timeoutMs);
 
+  let rejectOnAbort: ((reason: unknown) => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = () => reject(controller.signal.reason ?? createAbortError());
+    controller.signal.addEventListener('abort', rejectOnAbort, { once: true });
+  });
+
   try {
-    return await fn(controller.signal);
+    // The signal reclaims transports that honor cancellation. The race also
+    // guarantees the caller-facing deadline when an intermediate callback or
+    // protocol implementation is slow to observe that signal.
+    return await Promise.race([fn(controller.signal), aborted]);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw controller.signal.reason ?? createAbortError();
+    }
+    throw error;
   } finally {
     if (timer) clearTimeout(timer);
+    if (rejectOnAbort) controller.signal.removeEventListener('abort', rejectOnAbort);
     for (const { signal, listener } of listeners) {
       signal.removeEventListener('abort', listener);
     }

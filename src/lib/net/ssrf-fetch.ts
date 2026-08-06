@@ -152,6 +152,7 @@ export interface SsrfFetchResult {
  * timeouts, remote resets) propagate as the native fetch error.
  */
 export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {}): Promise<SsrfFetchResult> {
+  throwIfSignalAborted(options.signal);
   const allowPrivateIp = options.allowPrivateIp === true;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
@@ -188,12 +189,14 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   try {
     addresses = await dnsLookupAsync(hostname, { all: true });
   } catch (err) {
+    throwIfSignalAborted(options.signal);
     throw new SsrfRefusedError(
       'dns_lookup_failed',
       `DNS lookup failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`,
       { url, hostname }
     );
   }
+  throwIfSignalAborted(options.signal);
   if (addresses.length === 0) {
     throw new SsrfRefusedError('dns_empty', `DNS returned no addresses for ${hostname}`, {
       url,
@@ -251,6 +254,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   const ac = new AbortController();
   const onExternalAbort = () => ac.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+  if (options.signal?.aborted) onExternalAbort();
   const timer = setTimeout(() => ac.abort(new Error('ssrf-fetch: timeout')), timeoutMs);
 
   try {
@@ -327,6 +331,14 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
     options.signal?.removeEventListener('abort', onExternalAbort);
     await dispatcher.close().catch(() => {});
   }
+}
+
+function throwIfSignalAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error(signal.reason == null ? 'The operation was aborted' : String(signal.reason));
+  error.name = 'AbortError';
+  throw error;
 }
 
 /**

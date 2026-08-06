@@ -563,6 +563,186 @@ describe('ensureClientCredentialsTokens', () => {
     assert.strictEqual(hits, 1, 'expected a single upstream POST across all 10 concurrent callers');
     for (const t of results) assert.strictEqual(t.access_token, 'coalesced_at');
   });
+
+  it('does not coalesce different agent configs that share public OAuth fields', async () => {
+    const credentials = {
+      token_endpoint: 'https://auth.example.com/token',
+      client_id: 'shared-client',
+    };
+    const tenantA = {
+      id: 'shared-agent-id',
+      name: 'tenant-a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: { ...credentials, client_secret: 'tenant-a-secret', scope: 'tenant-a' },
+    };
+    const tenantB = {
+      id: 'shared-agent-id',
+      name: 'tenant-b',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: { ...credentials, client_secret: 'tenant-b-secret', scope: 'tenant-b' },
+    };
+    let tenantAHits = 0;
+    let tenantBHits = 0;
+    let releaseTenantA;
+    const tenantAFetch = makeFetchStub(
+      async () =>
+        new Promise(resolve => {
+          tenantAHits += 1;
+          releaseTenantA = () =>
+            resolve(new Response(JSON.stringify({ access_token: 'tenant-a-token' }), { status: 200 }));
+        })
+    );
+    const tenantBFetch = makeFetchStub(async () => {
+      tenantBHits += 1;
+      return new Response(JSON.stringify({ access_token: 'tenant-b-token' }), { status: 200 });
+    });
+
+    const tenantAPending = ensureClientCredentialsTokens(tenantA, { fetch: tenantAFetch });
+    const tenantBResult = await ensureClientCredentialsTokens(tenantB, { fetch: tenantBFetch });
+    releaseTenantA();
+    const tenantAResult = await tenantAPending;
+
+    assert.strictEqual(tenantAResult.access_token, 'tenant-a-token');
+    assert.strictEqual(tenantBResult.access_token, 'tenant-b-token');
+    assert.strictEqual(tenantAHits, 1);
+    assert.strictEqual(tenantBHits, 1);
+  });
+
+  it('aborts a client-credentials token request when its caller cancels', async () => {
+    let fetchObservedAbort = false;
+    const fetchStub = makeFetchStub(
+      async (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener(
+            'abort',
+            () => {
+              fetchObservedAbort = true;
+              reject(init.signal.reason);
+            },
+            { once: true }
+          );
+        })
+    );
+    const agent = {
+      id: 'cancelled-cc-agent',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
+      },
+    };
+    const controller = new AbortController();
+    const pending = ensureClientCredentialsTokens(agent, { fetch: fetchStub, signal: controller.signal });
+    controller.abort('task deadline');
+
+    await assert.rejects(pending, err => err?.name === 'AbortError' && /task deadline/.test(err.message));
+    assert.strictEqual(fetchObservedAbort, true);
+  });
+
+  it('does not start a token request for a pre-aborted caller', async () => {
+    let hits = 0;
+    const agent = {
+      id: 'pre-cancelled-cc-agent',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
+      },
+    };
+    const controller = new AbortController();
+    controller.abort('already cancelled');
+
+    await assert.rejects(
+      ensureClientCredentialsTokens(agent, {
+        signal: controller.signal,
+        fetch: async () => {
+          hits += 1;
+          return new Response(JSON.stringify({ access_token: 'must-not-run' }), { status: 200 });
+        },
+      }),
+      err => err?.name === 'AbortError' && /already cancelled/.test(err.message)
+    );
+    assert.strictEqual(hits, 0);
+  });
+
+  it('starts a fresh refresh after the last waiter cancels an older exchange', async () => {
+    let hits = 0;
+    const fetchStub = makeFetchStub(async (_url, init) => {
+      hits += 1;
+      if (hits === 1) {
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () => setTimeout(() => reject(init.signal.reason), 25), { once: true });
+        });
+      }
+      return new Response(JSON.stringify({ access_token: 'replacement_at', expires_in: 3600 }), { status: 200 });
+    });
+    const agent = {
+      id: 'replacement-refresh-agent',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
+      },
+    };
+    const first = new AbortController();
+    const firstPending = ensureClientCredentialsTokens(agent, { fetch: fetchStub, signal: first.signal });
+    first.abort('first caller stopped');
+    await assert.rejects(firstPending, err => err?.name === 'AbortError');
+
+    const tokens = await ensureClientCredentialsTokens(agent, { fetch: fetchStub });
+    assert.strictEqual(tokens.access_token, 'replacement_at');
+    assert.strictEqual(hits, 2);
+  });
+
+  it('keeps a coalesced token request alive while another caller still waits', async () => {
+    let resolveFetch;
+    let sharedSignal;
+    let hits = 0;
+    const fetchStub = makeFetchStub(
+      async (_url, init) =>
+        new Promise(resolve => {
+          hits += 1;
+          sharedSignal = init.signal;
+          resolveFetch = resolve;
+        })
+    );
+    const agent = {
+      id: 'coalesced-cancellation-agent',
+      name: 'a',
+      agent_uri: 'https://agent.example.com/mcp',
+      protocol: 'mcp',
+      oauth_client_credentials: {
+        token_endpoint: 'https://auth.example.com/token',
+        client_id: 'id',
+        client_secret: 'secret',
+      },
+    };
+    const first = new AbortController();
+    const second = new AbortController();
+    const firstPending = ensureClientCredentialsTokens(agent, { fetch: fetchStub, signal: first.signal });
+    const firstRejected = assert.rejects(firstPending, err => err?.name === 'AbortError');
+    const secondPending = ensureClientCredentialsTokens(agent, { fetch: fetchStub, signal: second.signal });
+
+    first.abort('first caller stopped');
+    await firstRejected;
+    assert.strictEqual(sharedSignal.aborted, false, 'remaining waiter must retain the shared request');
+    resolveFetch(new Response(JSON.stringify({ access_token: 'shared_at', expires_in: 3600 }), { status: 200 }));
+
+    const tokens = await secondPending;
+    assert.strictEqual(tokens.access_token, 'shared_at');
+    assert.strictEqual(hits, 1);
+  });
 });
 
 describe('getAuthToken integration with client credentials', () => {

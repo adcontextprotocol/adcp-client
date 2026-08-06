@@ -96,6 +96,7 @@ const A2AClient: any = A2AClientImpl;
 
 import { TaskExecutor, DeferredTaskError } from './TaskExecutor';
 import { attachMatch } from './match';
+import { withTaskDeadline } from './task-deadline';
 import { createMCPAuthHeaders } from '../auth';
 import { isAbortOrTimeoutError } from '../protocols/abort';
 import {
@@ -1762,6 +1763,7 @@ export class SingleAgentClient {
         storage: getAgentStorage(this.normalizedAgent),
         allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
         fetch: transport?.fetchFn,
+        signal: options?.signal,
       });
     }
 
@@ -1823,6 +1825,7 @@ export class SingleAgentClient {
         storage: getAgentStorage(this.normalizedAgent),
         allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
         fetch: transport?.fetchFn,
+        signal: options?.signal,
       });
     }
 
@@ -1921,6 +1924,7 @@ export class SingleAgentClient {
         const requirements = await discoverAuthorizationRequirements(agentUri, {
           allowPrivateIp: isLikelyPrivateUrl(agentUri),
           fetchFn: transport?.fetchFn,
+          signal: readOptions?.signal,
         });
         if (requirements) {
           throw new NeedsAuthorizationError(requirements);
@@ -1933,8 +1937,12 @@ export class SingleAgentClient {
         const challenge = await probeAuthChallenge(agentUri, {
           allowPrivateIp: isLikelyPrivateUrl(agentUri),
           fetchFn: transport?.fetchFn,
+          signal: readOptions?.signal,
         });
-        const oauthMetadata = await discoverOAuthMetadata(agentUri, { fetch: transport?.fetchFn });
+        const oauthMetadata = await discoverOAuthMetadata(agentUri, {
+          fetch: transport?.fetchFn,
+          signal: readOptions?.signal,
+        });
         throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
       }
 
@@ -2109,6 +2117,7 @@ export class SingleAgentClient {
       const requirements = await discoverAuthorizationRequirements(providedUri, {
         allowPrivateIp: isLikelyPrivateUrl(providedUri),
         fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        signal: options?.signal,
       });
       if (requirements) {
         throw new NeedsAuthorizationError(requirements);
@@ -2120,9 +2129,11 @@ export class SingleAgentClient {
       const challenge = await probeAuthChallenge(providedUri, {
         allowPrivateIp: isLikelyPrivateUrl(providedUri),
         fetchFn: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        signal: options?.signal,
       });
       const oauthMetadata = await discoverOAuthMetadata(providedUri, {
         fetch: options?.transport?.fetchFn ?? this.config.transport?.fetchFn,
+        signal: options?.signal,
       });
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
     }
@@ -2882,6 +2893,30 @@ export class SingleAgentClient {
     legacyFormatConverter?: LegacyFormatConverter,
     canonicalRequest?: unknown
   ): Promise<TaskResult<T>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.executeAndHandleWithinDeadline(
+        taskType,
+        handlerName,
+        params,
+        inputHandler,
+        effectiveOptions,
+        transformCompletedResponse,
+        legacyFormatConverter,
+        canonicalRequest
+      )
+    );
+  }
+
+  private async executeAndHandleWithinDeadline<T>(
+    taskType: string,
+    handlerName: keyof AsyncHandlerConfig,
+    params: any,
+    inputHandler?: InputHandler,
+    options?: TaskOptions,
+    transformCompletedResponse?: (data: T) => T,
+    legacyFormatConverter?: LegacyFormatConverter,
+    canonicalRequest?: unknown
+  ): Promise<TaskResult<T>> {
     throwIfAborted(options?.signal);
     // Normalize params for backwards compatibility before validation
     let normalizedParams = normalizeRequestParams(taskType, params, {
@@ -2927,19 +2962,23 @@ export class SingleAgentClient {
 
     // Validate required features before sending request
     await this.validateTaskFeatures(taskType, options);
+    throwIfAborted(options?.signal);
 
     // Guard mutating calls against pre-v3 sellers when opted in.
     if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
       await this.requireSupportedMajor(taskType, options);
+      throwIfAborted(options?.signal);
     }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
     const earlyResult = await this.getEarlyResultForUnsupportedFeatures<T>(taskType, normalizedParams, options);
+    throwIfAborted(options?.signal);
     if (earlyResult) {
       return attachMatch(earlyResult);
     }
 
     const agent = await this.ensureEndpointDiscovered(options);
+    throwIfAborted(options?.signal);
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
     // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
@@ -2957,6 +2996,7 @@ export class SingleAgentClient {
       [CAPABILITY_DISCOVERY_CONTEXT]: capabilityDiscoveryContext,
     };
     const serverVersion = await this.detectServerVersion(detectionOptions);
+    throwIfAborted(options?.signal);
     const inputSchemaStripLogs: any[] = [];
     const { params: adaptedParams, driftLogs: adaptDriftLogs } = this.adaptRequest(
       taskType,
@@ -2991,6 +3031,7 @@ export class SingleAgentClient {
           serverVersion
         )
     );
+    throwIfAborted(effectiveOptions?.signal);
 
     // Merge collected drift into the executor's debug_logs so adopters
     // reading result.debug_logs see input-schema stripping, post-adapter
@@ -3014,6 +3055,7 @@ export class SingleAgentClient {
     }
     this.rememberLegacyFormatConverter(taskType, legacyFormatConverter, result, options);
     result = await this.applyProductPropertyPolicy(result, taskType, normalizedParams);
+    throwIfAborted(effectiveOptions?.signal);
 
     if (CANONICAL_CREATIVE_ACTIVITY_TASKS.has(taskType)) {
       // The full canonical request is needed only while the protocol activity
@@ -3039,6 +3081,7 @@ export class SingleAgentClient {
         | ((data: unknown, metadata: Record<string, unknown>) => Promise<void>)
         | undefined;
       if (handler) {
+        throwIfAborted(effectiveOptions?.signal);
         const metadata = {
           operation_id: options?.contextId || 'sync',
           context_id: options?.contextId,
@@ -3049,6 +3092,7 @@ export class SingleAgentClient {
           timestamp: new Date().toISOString(),
         };
         await handler(result.data, metadata);
+        throwIfAborted(effectiveOptions?.signal);
       }
     }
 
@@ -4252,6 +4296,16 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.createMediaBuyWithinDeadline(params, inputHandler, effectiveOptions)
+    );
+  }
+
+  private async createMediaBuyWithinDeadline(
+    params: MutatingRequestInput<CanonicalCreateMediaBuyRequest>,
+    inputHandler: InputHandler | undefined,
+    options: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<CreateMediaBuyResponse>>> {
     const { legacyFormatConverter, projectionCatalogs, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
     const effectiveLegacyFormatConverter = this.resolveLegacyFormatConverter(
       legacyFormatConverter,
@@ -4386,6 +4440,16 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: CreativeDeliveryTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.updateMediaBuyWithinDeadline(params, inputHandler, effectiveOptions)
+    );
+  }
+
+  private async updateMediaBuyWithinDeadline(
+    params: MutatingRequestInput<CanonicalUpdateMediaBuyRequest>,
+    inputHandler: InputHandler | undefined,
+    options: CreativeDeliveryTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<UpdateMediaBuyResponse>>> {
     const { legacyFormatConverter, projectionCatalogs, canonicalFormatLegacyResolver, ...taskOptions } = options ?? {};
     const effectiveLegacyFormatConverter = this.resolveLegacyFormatConverter(
       legacyFormatConverter,
@@ -4449,6 +4513,16 @@ export class SingleAgentClient {
     params: MutatingRequestInput<CanonicalSyncCreativesRequest>,
     inputHandler?: InputHandler,
     options?: SyncCreativesTaskOptions
+  ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.syncCreativesWithinDeadline(params, inputHandler, effectiveOptions)
+    );
+  }
+
+  private async syncCreativesWithinDeadline(
+    params: MutatingRequestInput<CanonicalSyncCreativesRequest>,
+    inputHandler: InputHandler | undefined,
+    options: SyncCreativesTaskOptions
   ): Promise<TaskResult<CanonicalCreativeResponse<SyncCreativesResponse>>> {
     const {
       creativeFormatProjection,
@@ -4817,20 +4891,32 @@ export class SingleAgentClient {
    *
    * Use this when a task returned status 'submitted' or 'working' and
    * later resolves via polling or webhooks. The checkId is available
-   * on the original TaskResult at result.governance.checkId.
+   * on the original TaskResult at result.governance.checkId. After a
+   * TaskTimeoutError during governance postflight, pass the error's
+   * governanceRecovery.outcomeIdempotencyKey in `options` to safely retry.
    */
   async reportGovernanceOutcome(
     checkId: string,
     outcome: OutcomeType,
     governanceContext?: string,
     sellerResponse?: Record<string, unknown>,
-    error?: { code?: string; message: string }
+    error?: { code?: string; message: string },
+    options?: { outcomeIdempotencyKey?: string; signal?: AbortSignal }
   ): Promise<import('./GovernanceTypes').GovernanceOutcome | undefined> {
     const middleware = this.executor.getGovernanceMiddleware();
     if (!middleware) {
       throw new Error('No governance middleware configured. Set config.governance.campaign to enable governance.');
     }
-    return middleware.reportOutcome(checkId, outcome, sellerResponse, error, [], governanceContext);
+    return middleware.reportOutcome(
+      checkId,
+      outcome,
+      sellerResponse,
+      error,
+      [],
+      governanceContext,
+      options?.signal,
+      options?.outcomeIdempotencyKey
+    );
   }
 
   private getGovernanceAgent(): AgentConfig {
@@ -4856,6 +4942,16 @@ export class SingleAgentClient {
     params: GetAdCPCapabilitiesRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
+  ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.getAdcpCapabilitiesWithinDeadline(params, inputHandler, effectiveOptions)
+    );
+  }
+
+  private async getAdcpCapabilitiesWithinDeadline(
+    params: GetAdCPCapabilitiesRequest,
+    inputHandler: InputHandler | undefined,
+    options: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const agent = await this.ensureEndpointDiscovered(options);
     this.executor.validateRequest('get_adcp_capabilities', params);
@@ -5266,6 +5362,17 @@ export class SingleAgentClient {
   }
 
   private async executeTaskUnprojected<T = any>(
+    taskName: string,
+    params: any,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<T>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.executeTaskUnprojectedWithinDeadline<T>(taskName, params, inputHandler, effectiveOptions)
+    );
+  }
+
+  private async executeTaskUnprojectedWithinDeadline<T = any>(
     taskName: string,
     params: any,
     inputHandler?: InputHandler,
@@ -5900,6 +6007,7 @@ export class SingleAgentClient {
         storage: getAgentStorage(this.normalizedAgent),
         allowPrivateIp: isLikelyPrivateUrl(this.normalizedAgent.agent_uri),
         fetch: transport?.fetchFn,
+        signal: options?.signal,
       });
       return this.normalizedAgent.oauth_tokens?.access_token;
     };

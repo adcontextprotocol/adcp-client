@@ -18,8 +18,20 @@ export abstract class ADCPError extends Error {
 /**
  * Error thrown when a task times out
  */
+export interface GovernanceOutcomeRecovery {
+  checkId: string;
+  outcome?: 'completed' | 'failed';
+  outcomeIdempotencyKey?: string;
+}
+
 export class TaskTimeoutError extends ADCPError {
   readonly code = 'TASK_TIMEOUT';
+  /** Retry-safety key for mutating requests that reached dispatch. */
+  idempotency_key?: string;
+  /** Camel-case compatibility alias for `idempotency_key`. */
+  idempotencyKey?: string;
+  /** Retry identity when the deadline expires during governance postflight. */
+  governanceRecovery?: GovernanceOutcomeRecovery;
 
   constructor(
     public readonly taskId: string,

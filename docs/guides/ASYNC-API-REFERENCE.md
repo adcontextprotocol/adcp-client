@@ -166,7 +166,7 @@ Core task execution engine that handles the conversation loop with agents.
 ```typescript
 class TaskExecutor {
   constructor(config?: {
-    /** Default timeout for 'working' status (max 120s per PR #78) */
+    /** Resettable idle/progress timeout for protocol work in 'working' status */
     workingTimeout?: number;
     /** Default max clarification attempts */
     defaultMaxClarifications?: number;
@@ -236,8 +236,10 @@ Configuration options for task execution.
 
 ```typescript
 interface TaskOptions {
-  /** Timeout for entire task (ms) */
+  /** Absolute deadline for the full call; does not reset on progress (ms) */
   timeout?: number;
+  /** Caller cancellation, composed with the absolute deadline */
+  signal?: AbortSignal;
   /** Maximum clarification rounds before failing */
   maxClarifications?: number;
   /** Context ID to continue existing conversation */
@@ -663,11 +665,20 @@ try {
 
 ### TaskTimeoutError
 
-Thrown when a task exceeds the working timeout (120 seconds).
+Thrown when `TaskOptions.timeout` reaches its absolute wall-clock deadline.
+`workingTimeout` remains a separate resettable idle/progress timeout.
 
 ```typescript
 class TaskTimeoutError extends Error {
   constructor(taskId: string, timeout: number);
+  /** Present for a mutating request once its retry identity is known */
+  idempotency_key?: string;
+  /** Present when the deadline expired during governance outcome reporting */
+  governanceRecovery?: {
+    checkId: string;
+    outcome?: 'completed' | 'failed';
+    outcomeIdempotencyKey?: string;
+  };
 }
 ```
 
@@ -677,6 +688,9 @@ try {
   const result = await agent.complexAnalysis(params, handler);
 } catch (error) {
   if (error instanceof TaskTimeoutError) {
+    // Reuse error.idempotency_key when reconciling the seller mutation.
+    // If governanceRecovery is present, pass its outcomeIdempotencyKey to
+    // reportGovernanceOutcome after recovering the seller result.
     console.log('Task timed out - consider using submitted pattern');
   }
 }
@@ -795,7 +809,7 @@ interface ConversationConfig {
   maxHistorySize?: number;
   /** Whether to persist conversations */
   persistConversations?: boolean;
-  /** Timeout for 'working' status (max 120s per PR #78) */
+  /** Resettable idle/progress timeout for protocol work in 'working' status */
   workingTimeout?: number;
   /** Default max clarifications */
   defaultMaxClarifications?: number;
