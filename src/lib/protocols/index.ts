@@ -449,6 +449,7 @@ export class ProtocolClient {
                   storage: ccStorage,
                   allowPrivateIp,
                   fetch: transport?.fetchFn,
+                  signal,
                 });
               }
 
@@ -564,7 +565,7 @@ export class ProtocolClient {
                     // Refresh failed or server rejected the refreshed token — walk the
                     // discovery chain so the caller can distinguish "re-auth needed"
                     // from other failure modes.
-                    await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
+                    await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
                     throw err;
                   }
                 }
@@ -601,6 +602,7 @@ export class ProtocolClient {
                       force: true,
                       allowPrivateIp,
                       fetch: transport?.fetchFn,
+                      signal,
                     });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
                     try {
@@ -621,11 +623,11 @@ export class ProtocolClient {
                         }
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn);
+                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn, signal);
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
+                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
                   throw err;
                 }
               } else if (agent.protocol === 'a2a') {
@@ -658,6 +660,7 @@ export class ProtocolClient {
                       force: true,
                       allowPrivateIp,
                       fetch: transport?.fetchFn,
+                      signal,
                     });
                     const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
                     try {
@@ -676,11 +679,11 @@ export class ProtocolClient {
                         transport?.fetchFn
                       );
                     } catch (retryErr) {
-                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn);
+                      await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri, transport?.fetchFn, signal);
                       throw retryErr;
                     }
                   }
-                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn);
+                  await rethrowAsNeedsAuthorization(err, agent.agent_uri, transport?.fetchFn, signal);
                   throw err;
                 }
               } else {
@@ -702,7 +705,12 @@ export class ProtocolClient {
  * Keeping this off the hot path: we only probe on error, and the probe is
  * a single unauthenticated `tools/list` POST — no retries, no DNS rebind.
  */
-async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string, fetchFn?: typeof fetch): Promise<void> {
+async function rethrowAsNeedsAuthorization(
+  err: unknown,
+  agentUrl: string,
+  fetchFn?: typeof fetch,
+  signal?: AbortSignal
+): Promise<void> {
   if (err instanceof NeedsAuthorizationError) throw err;
   if (!is401Error(err)) return;
 
@@ -714,7 +722,7 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string, fetch
   // discoverAuthorizationRequirements internally catches network failures and
   // returns null rather than throwing — anything that escapes is a genuine
   // bug we want to surface rather than mask the 401 with.
-  const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp, fetchFn });
+  const requirements = await discoverAuthorizationRequirements(agentUrl, { allowPrivateIp, fetchFn, signal });
   if (requirements) {
     throw new NeedsAuthorizationError(requirements);
   }

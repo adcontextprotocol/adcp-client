@@ -33,6 +33,7 @@ import type {
 import { toolRequiresGovernance, parseCheckResponse } from './GovernanceTypes';
 import { unwrapProtocolResponse } from '../utils/response-unwrapper';
 import { generateIdempotencyKey } from '../utils/idempotency';
+import { createAbortError } from '../protocols/abort';
 
 /**
  * Typed debug log entries for governance operations.
@@ -138,7 +139,7 @@ export class GovernanceMiddleware {
    * Get or mint the idempotency key for a `(checkId, outcome)` tuple.
    * Uses the Map's insertion-order semantics for LRU eviction.
    */
-  private getOrMintOutcomeKey(checkId: string, outcome: OutcomeType): string {
+  getOutcomeIdempotencyKey(checkId: string, outcome: OutcomeType): string {
     const tupleKey = `${checkId}\u001f${outcome}`;
     const cached = this.outcomeKeys.get(tupleKey);
     if (cached !== undefined) {
@@ -184,7 +185,8 @@ export class GovernanceMiddleware {
   async checkProposed(
     tool: string,
     params: Record<string, unknown>,
-    debugLogs: GovernanceDebugEntry[] = []
+    debugLogs: GovernanceDebugEntry[] = [],
+    signal?: AbortSignal
   ): Promise<{ result: GovernanceCheckResult; params: Record<string, unknown> }> {
     const config = this.governanceConfig.campaign;
     if (!config) {
@@ -217,6 +219,7 @@ export class GovernanceMiddleware {
         debugLogs,
         adcpVersion: this.adcpVersion,
         ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
+        signal,
         onTransportActivity: this.onTransportActivity,
       });
 
@@ -303,7 +306,9 @@ export class GovernanceMiddleware {
     sellerResponse?: Record<string, unknown>,
     error?: { code?: string; message: string },
     debugLogs: GovernanceDebugEntry[] = [],
-    governanceContext?: string
+    governanceContext?: string,
+    signal?: AbortSignal,
+    outcomeIdempotencyKey?: string
   ): Promise<GovernanceOutcome | undefined> {
     const config = this.governanceConfig.campaign;
     if (!config) return undefined;
@@ -313,7 +318,7 @@ export class GovernanceMiddleware {
     // Reuse the same idempotency_key for retries of the same
     // (checkId, outcome) intent so the governance agent treats them as
     // one logical outcome report rather than distinct submissions.
-    const idempotencyKey = this.getOrMintOutcomeKey(checkId, outcome);
+    const idempotencyKey = outcomeIdempotencyKey || this.getOutcomeIdempotencyKey(checkId, outcome);
 
     const request: ReportPlanOutcomeRequest = {
       idempotency_key: idempotencyKey,
@@ -340,6 +345,7 @@ export class GovernanceMiddleware {
           debugLogs,
           adcpVersion: this.adcpVersion,
           ...(this.versionEnvelope !== undefined && { versionEnvelope: this.versionEnvelope }),
+          signal,
           onTransportActivity: this.onTransportActivity,
           transportActivityContext: {
             operationId: checkId,
@@ -375,6 +381,7 @@ export class GovernanceMiddleware {
             : undefined,
       };
     } catch (err) {
+      if (signal?.aborted) throw createAbortError(signal.reason);
       // Outcome reporting failure shouldn't fail the task
       debugLogs.push({
         type: 'governance_outcome_error',

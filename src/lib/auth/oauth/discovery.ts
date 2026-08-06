@@ -6,6 +6,7 @@
  */
 
 import { wrapFetchWithSizeLimit } from '../../protocols/responseSizeLimit';
+import { throwIfAborted } from '../../protocols/abort';
 
 /**
  * OAuth Authorization Server Metadata
@@ -40,6 +41,8 @@ export interface DiscoveryOptions {
   timeout?: number;
   /** Custom fetch function (for testing or custom HTTP handling) */
   fetch?: typeof fetch;
+  /** Caller cancellation, including the absolute task deadline. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -70,6 +73,7 @@ export async function discoverOAuthMetadata(
   // `withResponseSizeLimit` slot is active. (#1175)
   const { timeout = 5000, fetch: providedFetch = fetch } = options;
   const customFetch = wrapFetchWithSizeLimit(providedFetch);
+  throwIfAborted(options.signal);
 
   try {
     const baseUrl = new URL(agentUrl);
@@ -87,13 +91,13 @@ export async function discoverOAuthMetadata(
     const urlsToTry = pathAwareUrl ? [pathAwareUrl, rootUrl] : [rootUrl];
 
     for (const metadataUrl of urlsToTry) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      const timeoutSignal = AbortSignal.timeout(timeout);
+      const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
 
       try {
         const response = await customFetch(metadataUrl.toString(), {
           headers: { Accept: 'application/json' },
-          signal: controller.signal,
+          signal,
         });
 
         if (!response.ok) {
@@ -109,15 +113,15 @@ export async function discoverOAuthMetadata(
 
         return metadata;
       } catch {
+        throwIfAborted(options.signal);
         // Parse error, timeout, or network error on this URL -- try next
         continue;
-      } finally {
-        clearTimeout(timeoutId);
       }
     }
 
     return null;
   } catch {
+    throwIfAborted(options.signal);
     // Network error, timeout, or invalid URL - agent doesn't support OAuth
     return null;
   }

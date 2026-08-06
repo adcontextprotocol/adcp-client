@@ -24,7 +24,7 @@ import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
 import { normalizeLegacyMediaBuyStatusForReturn } from '../utils/envelope-status-compat';
 import { getLatestA2ADataPartFromResponse } from '../utils/a2a-artifacts';
 import { cancelA2ATask } from '../protocols/a2a';
-import { isAbortOrTimeoutError } from '../protocols/abort';
+import { isAbortOrTimeoutError, throwIfAborted } from '../protocols/abort';
 import type {
   Message,
   InputRequest,
@@ -47,16 +47,20 @@ import { GovernanceMiddleware } from './GovernanceMiddleware';
 import type { GovernanceConfig, GovernanceCheckResult } from './GovernanceTypes';
 import { attachMatch } from './match';
 import { resolveWebhookUrl } from './webhook-url';
+import {
+  attachTaskDeadlineGovernanceRecovery,
+  attachTaskDeadlineIdempotencyKey,
+  getTaskOperationId,
+  withTaskDeadline,
+} from './task-deadline';
+
+// Keep the direct `core/TaskExecutor` export identical to the package-level
+// typed timeout error thrown by the deadline wrapper.
+export { TaskTimeoutError } from '../errors';
+
 /**
  * Custom errors for task execution
  */
-export class TaskTimeoutError extends Error {
-  constructor(taskId: string, timeout: number) {
-    super(`Task ${taskId} timed out after ${timeout}ms`);
-    this.name = 'TaskTimeoutError';
-  }
-}
-
 export class MaxClarificationError extends Error {
   constructor(taskId: string, maxAttempts: number) {
     super(`Task ${taskId} exceeded maximum clarification attempts: ${maxAttempts}`);
@@ -277,6 +281,14 @@ interface TaskStatusPollResult {
 }
 
 const COMPACTED_TASK_STATE_LIMIT = 10_000;
+const TERMINAL_TASK_STATUSES = new Set<TaskStatus>([
+  'completed',
+  'failed',
+  'rejected',
+  'canceled',
+  'governance-denied',
+  'aborted',
+]);
 
 /**
  * Core task execution engine that handles the conversation loop with agents
@@ -507,6 +519,19 @@ export class TaskExecutor {
     options: TaskOptions = {},
     serverVersion?: 'v2' | 'v3'
   ): Promise<TaskResult<T>> {
+    return withTaskDeadline(options, effectiveOptions =>
+      this.executeTaskWithinDeadline<T>(agent, taskName, params, inputHandler, effectiveOptions, serverVersion)
+    );
+  }
+
+  private async executeTaskWithinDeadline<T = any>(
+    agent: AgentConfig,
+    taskName: string,
+    params: any,
+    inputHandler?: InputHandler,
+    options: TaskOptions = {},
+    serverVersion?: 'v2' | 'v3'
+  ): Promise<TaskResult<T>> {
     if (serverVersion) this.lastKnownServerVersion = serverVersion;
     // The client-minted `taskId` is a local correlation id for tracking this
     // call's lifecycle (activeTasks map, metadata, webhook URL macros). It is
@@ -514,7 +539,7 @@ export class TaskExecutor {
     // flows in on the response and is surfaced via metadata.serverTaskId.
     // `options.contextId` / `options.taskId` ride on the A2A message envelope
     // and are threaded straight to the protocol adapter below.
-    const taskId = randomUUID();
+    const taskId = getTaskOperationId(options) ?? randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
 
@@ -524,6 +549,7 @@ export class TaskExecutor {
     // `options.skipIdempotencyAutoInject` disables this for compliance testing
     // that needs to exercise server-side missing-key behavior.
     const idempotencyKey = options.skipIdempotencyAutoInject ? undefined : resolveIdempotencyKey(taskName, params);
+    if (idempotencyKey) attachTaskDeadlineIdempotencyKey(options, idempotencyKey);
     if (idempotencyKey && params && typeof params === 'object' && !params.idempotency_key) {
       params = { ...params, idempotency_key: idempotencyKey };
     }
@@ -543,6 +569,26 @@ export class TaskExecutor {
       idempotencyKey,
     };
     this.activeTasks.set(taskId, taskState);
+
+    // Compact task state as soon as cancellation fires, even if a protocol
+    // adapter or caller callback never settles after receiving the signal.
+    // The outer deadline race guarantees prompt rejection; this listener is
+    // the matching resource-retention boundary for activeTasks.
+    const taskAbortListener = options.signal
+      ? () => {
+          const currentStatus = this.activeTasks.get(taskId)?.status;
+          if (currentStatus && !TERMINAL_TASK_STATUSES.has(currentStatus)) {
+            const reason = options.signal?.reason;
+            this.updateTaskStatus(
+              taskId,
+              'aborted',
+              undefined,
+              reason instanceof Error ? reason.message : reason == null ? 'The operation was aborted' : String(reason)
+            );
+          }
+        }
+      : undefined;
+    if (taskAbortListener) options.signal!.addEventListener('abort', taskAbortListener, { once: true });
 
     // Emit task creation event
     this.emitTaskEvent(
@@ -583,14 +629,17 @@ export class TaskExecutor {
         payload: { params: redactIdempotencyKeyInArgs(params) },
         timestamp: new Date().toISOString(),
       });
+      throwIfAborted(options.signal);
 
       // Run governance check if configured for this tool
       if (this.governanceMiddleware?.requiresCheck(taskName)) {
         const { result: govResult, params: adjustedParams } = await this.governanceMiddleware.checkProposed(
           taskName,
           params,
-          debugLogs
+          debugLogs,
+          options.signal
         );
+        throwIfAborted(options.signal);
 
         // Governance always blocks on denial/unapplied conditions.
         const isBlocking = true;
@@ -610,6 +659,13 @@ export class TaskExecutor {
         // Approved, or non-blocking mode (advisory/audit) allows execution to proceed
         governanceCheckId = govResult.checkId;
         governanceResult = govResult;
+        if (governanceCheckId) {
+          // Preserve the approved check identity as soon as the seller may be
+          // dispatched. If the deadline fires during response processing,
+          // callers can still reconcile the seller mutation against the
+          // original governance decision after restart.
+          attachTaskDeadlineGovernanceRecovery(options, { checkId: governanceCheckId });
+        }
         effectiveParams = adjustedParams;
       }
 
@@ -645,6 +701,7 @@ export class TaskExecutor {
           idempotencyKey,
         },
       });
+      throwIfAborted(options.signal);
 
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
@@ -659,6 +716,7 @@ export class TaskExecutor {
         payload: response,
         timestamp: new Date().toISOString(),
       });
+      throwIfAborted(options.signal);
 
       // Add initial response message
       const responseMessage: Message = {
@@ -684,6 +742,7 @@ export class TaskExecutor {
         debugLogs,
         startTime
       );
+      throwIfAborted(options.signal);
 
       // Attach governance check result to the task result
       if (governanceResult) {
@@ -697,26 +756,47 @@ export class TaskExecutor {
       if (governanceCheckId && this.governanceMiddleware) {
         const govCtx = governanceResult?.governanceContext;
         if (result.status === 'completed' && govCtx) {
+          const outcomeIdempotencyKey = this.governanceMiddleware.getOutcomeIdempotencyKey(
+            governanceCheckId,
+            'completed'
+          );
+          attachTaskDeadlineGovernanceRecovery(options, {
+            checkId: governanceCheckId,
+            outcome: 'completed',
+            outcomeIdempotencyKey,
+          });
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'completed',
             result.data as Record<string, unknown> | undefined,
             undefined,
             debugLogs,
-            govCtx
+            govCtx,
+            options.signal,
+            outcomeIdempotencyKey
           );
+          throwIfAborted(options.signal);
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
           }
         } else if (result.error && govCtx) {
+          const outcomeIdempotencyKey = this.governanceMiddleware.getOutcomeIdempotencyKey(governanceCheckId, 'failed');
+          attachTaskDeadlineGovernanceRecovery(options, {
+            checkId: governanceCheckId,
+            outcome: 'failed',
+            outcomeIdempotencyKey,
+          });
           result.governanceOutcome = await this.governanceMiddleware.reportOutcome(
             governanceCheckId,
             'failed',
             undefined,
             { message: result.error },
             debugLogs,
-            govCtx
+            govCtx,
+            options.signal,
+            outcomeIdempotencyKey
           );
+          throwIfAborted(options.signal);
           if (!result.governanceOutcome) {
             result.governanceOutcomeError = 'Outcome reporting to governance agent failed';
           }
@@ -739,24 +819,37 @@ export class TaskExecutor {
           (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotency_key = idempotencyKey;
           (error as Error & { idempotency_key?: string; idempotencyKey?: string }).idempotencyKey = idempotencyKey;
         }
-        this.updateTaskStatus(taskId, 'aborted', undefined, error instanceof Error ? error.message : String(error));
+        const currentStatus = this.activeTasks.get(taskId)?.status;
+        if (currentStatus && !TERMINAL_TASK_STATUSES.has(currentStatus)) {
+          this.updateTaskStatus(taskId, 'aborted', undefined, error instanceof Error ? error.message : String(error));
+        }
         throw error;
       }
 
       // Report failed outcome on error
       if (governanceCheckId && this.governanceMiddleware && governanceResult?.governanceContext) {
+        const outcomeIdempotencyKey = this.governanceMiddleware.getOutcomeIdempotencyKey(governanceCheckId, 'failed');
+        attachTaskDeadlineGovernanceRecovery(options, {
+          checkId: governanceCheckId,
+          outcome: 'failed',
+          outcomeIdempotencyKey,
+        });
         await this.governanceMiddleware.reportOutcome(
           governanceCheckId,
           'failed',
           undefined,
           { message: (error as Error).message },
           debugLogs,
-          governanceResult.governanceContext
+          governanceResult.governanceContext,
+          options.signal,
+          outcomeIdempotencyKey
         );
       }
       const failed = this.createErrorResult<T>(taskId, agent, error, debugLogs, startTime);
       this.updateTaskStatus(taskId, 'failed', undefined, failed.error);
       return attachMatch(failed);
+    } finally {
+      if (taskAbortListener) options.signal!.removeEventListener('abort', taskAbortListener);
     }
   }
 
@@ -1384,6 +1477,7 @@ export class TaskExecutor {
 
     // Call handler
     const handlerResponse = await inputHandler(context);
+    throwIfAborted(options.signal);
 
     // Check if handler wants to defer
     if (isDeferResponse(handlerResponse)) {
@@ -1400,6 +1494,14 @@ export class TaskExecutor {
           messages,
           createdAt: Date.now(),
         });
+        try {
+          throwIfAborted(options.signal);
+        } catch (error) {
+          // Cancellation may race a storage adapter that ignores the signal.
+          // Remove the just-written resume record before propagating it.
+          await this.config.deferredStorage.delete(token);
+          throw error;
+        }
       }
       // Deferred storage is the resume source of truth. Avoid retaining a
       // duplicate full request (including assets/credentials) in activeTasks.
@@ -1430,6 +1532,7 @@ export class TaskExecutor {
     }
 
     // Handler provided input - continue with the task
+    throwIfAborted(options.signal);
     return this.continueTaskWithInput<T>(
       agent,
       taskId,
@@ -2237,6 +2340,9 @@ export class TaskExecutor {
   private updateTaskStatus(taskId: string, status: TaskStatus, result?: any, error?: string): void {
     const task = this.activeTasks.get(taskId);
     if (task) {
+      // Once cancellation has released request state, late work must not
+      // resurrect the task or emit completion after the caller has retried.
+      if (task.status === 'aborted' && status !== 'aborted') return;
       const previousStatus = task.status;
       task.status = status;
 
@@ -2270,7 +2376,7 @@ export class TaskExecutor {
 
       // If task is finished, remove from active tasks after a delay.
       // unref() ensures this timer doesn't prevent the process from exiting.
-      if (['completed', 'failed', 'rejected', 'canceled', 'governance-denied', 'aborted'].includes(status)) {
+      if (TERMINAL_TASK_STATUSES.has(status)) {
         // Keep lifecycle metadata briefly for status inspection, but release
         // request/conversation/options immediately. These may contain inline
         // creative assets and webhook or transport credentials.

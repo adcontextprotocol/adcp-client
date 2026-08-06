@@ -12,6 +12,7 @@
  */
 import { ssrfSafeFetch, decodeBodyAsJsonOrText } from '../../net';
 import { AuthenticationRequiredError, type OAuthMetadataInfo } from '../../errors';
+import { throwIfAborted } from '../../protocols/abort';
 import { parseWWWAuthenticate, type WWWAuthenticateChallenge } from './diagnostics';
 
 /**
@@ -199,6 +200,8 @@ export interface DiscoverAuthorizationOptions {
   timeoutMs?: number;
   /** Scoped fetch implementation for the agent, PRM, and AS metadata probes. */
   fetchFn?: typeof fetch;
+  /** Caller cancellation, including the absolute task deadline. */
+  signal?: AbortSignal;
   /**
    * If provided, use this `WWW-Authenticate` header verbatim instead of
    * re-probing the agent. Use this when you already have a 401 response in
@@ -241,7 +244,13 @@ export async function discoverAuthorizationRequirements(
 
   let challengeHeader = options.wwwAuthenticate;
   if (!challengeHeader) {
-    const probe = await probeAgent401(agentUrl, allowPrivateIpOnAgent, options.timeoutMs, options.fetchFn);
+    const probe = await probeAgent401(
+      agentUrl,
+      allowPrivateIpOnAgent,
+      options.timeoutMs,
+      options.fetchFn,
+      options.signal
+    );
     if (probe.status !== 401) {
       // 200, 403, 5xx, or network error — not an OAuth 401 we can act on.
       return null;
@@ -269,7 +278,8 @@ export async function discoverAuthorizationRequirements(
       challenge.resource_metadata,
       allowPrivateIpForHop(challenge.resource_metadata),
       options.timeoutMs,
-      options.fetchFn
+      options.fetchFn,
+      options.signal
     );
     if (prm && typeof prm === 'object') {
       const resource = (prm as { resource?: unknown }).resource;
@@ -296,7 +306,13 @@ export async function discoverAuthorizationRequirements(
     let md: Record<string, unknown> | undefined;
     let source: 'rfc-8414' | 'openid-configuration' | undefined;
     if (asUrl) {
-      const res = await fetchJson(asUrl, allowPrivateIpForHop(asUrl), options.timeoutMs, options.fetchFn);
+      const res = await fetchJson(
+        asUrl,
+        allowPrivateIpForHop(asUrl),
+        options.timeoutMs,
+        options.fetchFn,
+        options.signal
+      );
       if (res && typeof res === 'object') {
         md = res as Record<string, unknown>;
         source = 'rfc-8414';
@@ -305,7 +321,13 @@ export async function discoverAuthorizationRequirements(
     if (!md) {
       const oidcUrl = buildOidcDiscoveryUrl(requirements.authorizationServer);
       if (oidcUrl) {
-        const res = await fetchJson(oidcUrl, allowPrivateIpForHop(oidcUrl), options.timeoutMs, options.fetchFn);
+        const res = await fetchJson(
+          oidcUrl,
+          allowPrivateIpForHop(oidcUrl),
+          options.timeoutMs,
+          options.fetchFn,
+          options.signal
+        );
         if (res && typeof res === 'object') {
           md = res as Record<string, unknown>;
           source = 'openid-configuration';
@@ -358,9 +380,15 @@ export async function discoverAuthorizationRequirements(
  */
 export async function probeAuthChallenge(
   agentUrl: string,
-  options: { allowPrivateIp?: boolean; timeoutMs?: number; fetchFn?: typeof fetch } = {}
+  options: { allowPrivateIp?: boolean; timeoutMs?: number; fetchFn?: typeof fetch; signal?: AbortSignal } = {}
 ): Promise<WWWAuthenticateChallenge | null> {
-  const probe = await probeAgent401(agentUrl, options.allowPrivateIp ?? false, options.timeoutMs, options.fetchFn);
+  const probe = await probeAgent401(
+    agentUrl,
+    options.allowPrivateIp ?? false,
+    options.timeoutMs,
+    options.fetchFn,
+    options.signal
+  );
   if (probe.status !== 401) return null;
   return parseWWWAuthenticate(probe.wwwAuthenticate ?? null);
 }
@@ -374,7 +402,8 @@ async function probeAgent401(
   agentUrl: string,
   allowPrivateIp: boolean,
   timeoutMs?: number,
-  fetchFn?: typeof fetch
+  fetchFn?: typeof fetch,
+  signal?: AbortSignal
 ): Promise<{ status: number; wwwAuthenticate?: string }> {
   const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
   try {
@@ -386,11 +415,13 @@ async function probeAgent401(
       },
       body,
       allowPrivateIp,
+      signal,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
     });
     return { status: res.status, wwwAuthenticate: res.headers['www-authenticate'] };
   } catch {
+    throwIfAborted(signal);
     return { status: 0 };
   }
 }
@@ -454,19 +485,22 @@ async function fetchJson(
   url: string,
   allowPrivateIp: boolean,
   timeoutMs?: number,
-  fetchFn?: typeof fetch
+  fetchFn?: typeof fetch,
+  signal?: AbortSignal
 ): Promise<unknown> {
   try {
     const res = await ssrfSafeFetch(url, {
       method: 'GET',
       headers: { accept: 'application/json' },
       allowPrivateIp,
+      signal,
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
     });
     if (res.status !== 200) return undefined;
     return decodeBodyAsJsonOrText(res.body, res.headers['content-type']);
   } catch {
+    throwIfAborted(signal);
     return undefined;
   }
 }
