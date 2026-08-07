@@ -561,6 +561,11 @@ export const SyncCreativesAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED"
 /** single | TMPError.code */
 export const TMPError_CodeValues = ["invalid_request", "unknown_package", "seller_not_authorized", "rate_limited", "timeout", "internal_error", "provider_unavailable"] as const;
 
+// ====== TMPProviderRegistration ======
+
+/** single | TMPProviderRegistration.status */
+export const TMPProviderRegistration_StatusValues = ["active", "inactive", "draining"] as const;
+
 // ====== TransformerParam ======
 
 /** single | TransformerParam.type */
