@@ -31,6 +31,7 @@ export type {
   PricingOptionFixtureResolutionDeclaration,
   FixtureResolutionStatus,
   FixtureResolutionRecord,
+  FixtureResolutionAttempt,
   FixtureResolutionEvidence,
   FixtureResolutionCoverageGap,
   StoryboardInvariants,

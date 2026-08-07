@@ -419,12 +419,12 @@ describe('runStoryboard: multi-instance multi-pass', () => {
           {
             handle: 'usd',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
           },
           {
             handle: 'eur',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
           },
         ],
       },
@@ -446,17 +446,24 @@ describe('runStoryboard: multi-instance multi-pass', () => {
 
     assert.strictEqual(result.passes.length, 2);
     const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
+    assert.strictEqual(result.coverage_gaps.length, 1);
     assert.strictEqual(gaps.length, 1);
     assert.deepStrictEqual(
       gaps[0].fixtures.map(fixture => fixture.handle),
       ['usd', 'eur']
     );
-    assert.strictEqual(
-      result.passes
-        .flatMap(pass => pass.phases.flatMap(phase => phase.steps))
-        .some(step => step.skip_reason === 'fixture_unsatisfied'),
-      false
-    );
+    assert.strictEqual(result.passes.flatMap(pass => pass.phases.flatMap(phase => phase.steps)).length, 0);
+    assert.strictEqual(result.passed_count, 0);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 0);
+    assert.strictEqual(result.overall_passed, true);
+    for (const pass of result.passes) {
+      assert.strictEqual(pass.passed_count, 0);
+      assert.strictEqual(pass.failed_count, 0);
+      assert.strictEqual(pass.skipped_count, 0);
+    }
+    assert.ok(Array.isArray(result.fixture_resolutions));
+    assert.strictEqual(Object.hasOwn(result, 'fixture_resolution'), false);
     assert.strictEqual(
       [...agentA.requests, ...agentB.requests].filter(request => request.tool === 'get_products').length,
       1

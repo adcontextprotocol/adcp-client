@@ -310,6 +310,7 @@ export {
   type PricingOptionFixtureResolutionDeclaration,
   type FixtureResolutionStatus,
   type FixtureResolutionRecord,
+  type FixtureResolutionAttempt,
   type FixtureResolutionEvidence,
   type FixtureResolutionCoverageGap,
   type StoryboardInvariants,

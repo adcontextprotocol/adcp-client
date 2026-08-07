@@ -35,7 +35,7 @@ import {
   type FixtureResolutionSpec,
 } from './fixture-resolution';
 import type {
-  FixtureResolutionEvidence,
+  FixtureResolutionAttempt,
   FixtureResolutionRecord,
   Storyboard,
   StoryboardContext,
@@ -526,8 +526,7 @@ async function runDeclaredFixtureResolution(
       continue;
     }
 
-    const evidence: FixtureResolutionEvidence[] = [];
-    const attempted: FixtureResolutionRecord['strategies_attempted'] = [];
+    const attempts: FixtureResolutionAttempt[] = [];
     let boundIds: FixtureResolutionRecord['seller_ids'];
     let chosenStrategy: FixtureResolutionRecord['strategy'];
     let failure: string | undefined;
@@ -536,21 +535,19 @@ async function runDeclaredFixtureResolution(
     const parentUnavailable = spec.entityType === 'product_pricing_option' && parentStatus !== 'resolved';
     if (parentUnavailable) {
       const strategy = spec.strategies[0]!;
-      attempted.push(strategy);
       const detail =
         parentStatus === 'failed'
           ? `parent product handle "${spec.parentProductHandle}" failed resolution`
           : `parent product handle "${spec.parentProductHandle}" is unavailable`;
-      evidence.push({ strategy, outcome: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
+      attempts.push({ strategy, outcome: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
       if (parentStatus === 'failed') failure = detail;
     }
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
-      attempted.push(strategy);
       if (strategy === 'seed') {
         const advertised = advertisedScenarios?.has(call.scenario);
         if (controllerMissing || advertised === false) {
-          evidence.push({
+          attempts.push({
             strategy,
             outcome: 'unavailable',
             detail: controllerMissing
@@ -588,11 +585,11 @@ async function runDeclaredFixtureResolution(
               );
             }
             chosenStrategy = strategy;
-            evidence.push({ strategy, outcome: 'bound', detail: `${call.scenario} accepted the authored literal id` });
+            attempts.push({ strategy, outcome: 'bound', detail: `${call.scenario} accepted the authored literal id` });
             break;
           }
           if (raw.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO' && advertised !== true) {
-            evidence.push({
+            attempts.push({
               strategy,
               outcome: 'unavailable',
               detail: data.error_detail ?? `${call.scenario} returned UNKNOWN_SCENARIO`,
@@ -600,18 +597,18 @@ async function runDeclaredFixtureResolution(
             continue;
           }
           failure = formatControllerError(call.scenario, raw, data);
-          evidence.push({ strategy, outcome: 'failed', detail: failure });
+          attempts.push({ strategy, outcome: 'failed', detail: failure });
           break;
         } catch (err) {
           failure = err instanceof Error ? err.message : String(err);
-          evidence.push({ strategy, outcome: 'failed', detail: failure });
+          attempts.push({ strategy, outcome: 'failed', detail: failure });
           break;
         }
       }
 
       if (strategy === 'discover') {
         if (options.agentTools && !options.agentTools.includes('get_products')) {
-          evidence.push({
+          attempts.push({
             strategy,
             outcome: 'unavailable',
             detail: 'agent did not advertise get_products',
@@ -621,7 +618,7 @@ async function runDeclaredFixtureResolution(
         const discovered = await catalog();
         if (!discovered.ok) {
           failure = discovered.error;
-          evidence.push({ strategy, outcome: 'failed', detail: failure, response: discovered.evidence });
+          attempts.push({ strategy, outcome: 'failed', detail: failure, response: discovered.evidence });
           break;
         }
         const selected = selectDiscoveredFixture(
@@ -634,7 +631,7 @@ async function runDeclaredFixtureResolution(
         if (!selected.ok) {
           if (selected.failed) {
             failure = selected.detail;
-            evidence.push({
+            attempts.push({
               strategy,
               outcome: 'failed',
               detail: selected.detail,
@@ -642,7 +639,7 @@ async function runDeclaredFixtureResolution(
             });
             break;
           }
-          evidence.push({
+          attempts.push({
             strategy,
             outcome: 'unavailable',
             detail: selected.detail,
@@ -652,7 +649,7 @@ async function runDeclaredFixtureResolution(
         }
         boundIds = selected.boundIds;
         chosenStrategy = strategy;
-        evidence.push({
+        attempts.push({
           strategy,
           outcome: 'bound',
           detail: selected.detail,
@@ -667,13 +664,12 @@ async function runDeclaredFixtureResolution(
     const record: FixtureResolutionRecord = {
       fixture_type: spec.entityType === 'product' ? 'product' : 'pricing_option',
       handle: spec.handle,
-      ...(spec.parentProductHandle && { parent_product_handle: spec.parentProductHandle }),
+      ...(spec.parentProductHandle && { product_handle: spec.parentProductHandle }),
       requirements: spec.clauses,
-      strategies_attempted: attempted,
+      strategies_attempted: attempts,
       status,
       ...(chosenStrategy && { strategy: chosenStrategy }),
       ...(boundIds && { seller_ids: boundIds }),
-      evidence,
     };
     records.push(record);
 

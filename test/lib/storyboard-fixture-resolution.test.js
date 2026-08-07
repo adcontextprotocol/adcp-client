@@ -46,7 +46,7 @@ function discoveryClient(products) {
 }
 
 describe('fixture resolution declarations and matching', () => {
-  test('accepts the 3.2 pilot array declarations and RFC 6901 where predicates', () => {
+  test('parses and resolves the 3.2 pilot match declarations', async () => {
     const parsed = parseStoryboard(`
 id: fixture-resolution-pilot
 version: 3.2.0
@@ -72,23 +72,79 @@ fixture_resolution:
   products:
     - handle: usd-display
       strategies: [discover]
-      where:
+      match:
         - path: /delivery_type
           operator: equals
           value: non_guaranteed
+        - path: /inventory/source
+          operator: present
   pricing_options:
     - handle: usd-cpm
       product_handle: usd-display
       strategies: [discover]
-      where:
+      match:
         - path: /currency
           operator: equals
           value: USD
-phases: []
+phases:
+  - id: buy
+    title: Create a media buy
+    steps:
+      - id: create
+        title: Create
+        task: create_media_buy
+        sample_request:
+          account:
+            brand: { domain: buyer.example }
+            operator: operator.example
+          brand: { domain: buyer.example }
+          start_time: asap
+          end_time: 2099-01-01T00:00:00Z
+          packages:
+            - product_id: usd-display
+              pricing_option_id: usd-cpm
+              budget: 100
+        validations: []
 `);
     assert.equal(parsed.fixture_resolution.products[0].handle, 'usd-display');
-    assert.equal(parsed.fixture_resolution.products[0].where[0].path, '/delivery_type');
-    assert.equal(parsed.fixture_resolution.pricing_options[0].where[0].path, '/currency');
+    assert.equal(parsed.fixture_resolution.products[0].match[0].path, '/delivery_type');
+    assert.deepEqual(parsed.fixture_resolution.products[0].match[1], {
+      path: '/inventory/source',
+      operator: 'present',
+    });
+    assert.equal(parsed.fixture_resolution.pricing_options[0].match[0].path, '/currency');
+
+    const pilotCalls = [];
+    const pilotProduct = createTestProduct({
+      product_id: 'seller-display',
+      delivery_type: 'non_guaranteed',
+      inventory: { source: null },
+      pricing_options: [
+        { pricing_option_id: 'seller-cpm', pricing_model: 'cpm', floor_price: 2, currency: 'USD', is_fixed: false },
+      ],
+    });
+    const pilotResult = await runStoryboard('https://example.invalid/mcp', parsed, {
+      protocol: 'mcp',
+      agentTools: ['get_products', 'create_media_buy'],
+      _profile: { name: 'Pilot seller', tools: ['get_products', 'create_media_buy'] },
+      _client: {
+        async executeTask(name, params) {
+          pilotCalls.push({ name, params });
+          if (name === 'get_products') {
+            return { success: true, data: { products: [pilotProduct], cache_scope: 'public' } };
+          }
+          if (name === 'create_media_buy') return { success: true, data: {} };
+          throw new Error(`unexpected ${name}`);
+        },
+      },
+    });
+    assert.deepEqual(
+      pilotResult.fixture_resolutions.map(record => record.status),
+      ['resolved', 'resolved']
+    );
+    const pilotBuy = pilotCalls.find(call => call.name === 'create_media_buy');
+    assert.equal(pilotBuy.params.packages[0].product_id, 'seller-display');
+    assert.equal(pilotBuy.params.packages[0].pricing_option_id, 'seller-cpm');
 
     const clauses = normalizeFixtureMatchExpression(
       [
@@ -99,18 +155,20 @@ phases: []
           operator: 'any_match',
           where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
         },
+        { path: '/nullable', operator: 'present' },
         { path: '/escaped~1key/~0value', operator: 'equals', value: 42 },
         { path: '/items/0/id', operator: 'equals', value: 'first' },
       ],
       'where'
     );
-    assert.equal(clauses.length, 5);
+    assert.equal(clauses.length, 6);
     assert.equal(
       matchesFixtureRequirements(
         {
           delivery_type: 'non_guaranteed',
           channels: ['video', 'display'],
           pricing_options: [{ currency: 'EUR' }, { currency: 'USD' }],
+          nullable: null,
           'escaped/key': { '~value': 42 },
           items: [{ id: 'first' }],
         },
@@ -118,6 +176,7 @@ phases: []
       ),
       true
     );
+    assert.equal(matchesFixtureRequirements({}, [{ path: '/missing', operator: 'present' }]), false);
     assert.throws(
       () => normalizeFixtureMatchExpression([{ path: 'currency', operator: 'equals', value: 'USD' }], 'where'),
       /RFC 6901/
@@ -132,6 +191,43 @@ phases: []
         /invalid RFC 6901 escape/
       );
     }
+    assert.throws(
+      () => normalizeFixtureMatchExpression([{ path: '/currency', operator: 'present', value: true }], 'match'),
+      /not allowed for present/
+    );
+    assert.throws(
+      () => normalizeFixtureMatchExpression([{ path: '/currency', operator: 'present', where: [] }], 'match'),
+      /only allowed for any_match/
+    );
+    assert.throws(
+      () => normalizeFixtureMatchExpression([{ path: '/pricing_options', operator: 'any_match', match: [] }], 'match'),
+      /unknown key\(s\): match/
+    );
+    assert.throws(
+      () => normalizeFixtureMatchExpression([{ path: '/pricing_options', operator: 'any_match' }], 'match'),
+      /where: is required/
+    );
+    assert.throws(
+      () =>
+        normalizeFixtureMatchExpression(
+          [{ path: '/pricing_options', operator: 'any_match', value: [], where: [] }],
+          'match'
+        ),
+      /value: is not allowed/
+    );
+  });
+
+  test('rejects declaration-level where because nested any_match owns that key', () => {
+    const value = storyboard([{ product_id: 'handle' }], [], {
+      products: [
+        {
+          handle: 'handle',
+          strategies: ['discover'],
+          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        },
+      ],
+    });
+    assert.throws(() => validateFixtureResolutionDeclarations(value), /unknown key\(s\): where/);
   });
 
   test('rejects malformed or orphaned declarations as authoring errors', () => {
@@ -140,7 +236,7 @@ phases: []
         {
           handle: 'missing',
           strategies: ['discover'],
-          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
         },
       ],
     });
@@ -276,13 +372,13 @@ describe('schema-annotated handle substitution', () => {
         products: ['left', 'right'].map(handle => ({
           handle,
           strategies: ['discover'],
-          where: [{ path: '/product_id', operator: 'equals', value: `seller-${handle}` }],
+          match: [{ path: '/product_id', operator: 'equals', value: `seller-${handle}` }],
         })),
         pricing_options: ['left', 'right'].map(handle => ({
           handle: 'shared',
           product_handle: handle,
           strategies: ['discover'],
-          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
         })),
       }
     );
@@ -341,7 +437,7 @@ describe('discover strategy state machine', () => {
     products: handles.map(handle => ({
       handle,
       strategies: ['discover'],
-      where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+      match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
     })),
   });
 
@@ -507,7 +603,7 @@ describe('discover strategy state machine', () => {
           {
             handle: 'product-handle',
             strategies: ['discover'],
-            where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+            match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
           },
         ],
         pricing_options: [
@@ -515,7 +611,7 @@ describe('discover strategy state machine', () => {
             handle: 'price-handle',
             product_handle: 'product-handle',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
           },
         ],
       }
@@ -528,7 +624,7 @@ describe('discover strategy state machine', () => {
       result.resolutionRecords.map(record => record.status),
       ['unsatisfied', 'unsatisfied']
     );
-    assert.match(result.resolutionRecords[1].evidence[0].detail, /parent product handle/);
+    assert.match(result.resolutionRecords[1].strategies_attempted[0].detail, /parent product handle/);
   });
 
   test('resolves the same pricing_option_id independently under two bound products', async () => {
@@ -543,12 +639,12 @@ describe('discover strategy state machine', () => {
           {
             handle: 'left',
             strategies: ['discover'],
-            where: [{ path: '/product_id', operator: 'equals', value: 'seller-left' }],
+            match: [{ path: '/product_id', operator: 'equals', value: 'seller-left' }],
           },
           {
             handle: 'right',
             strategies: ['discover'],
-            where: [{ path: '/product_id', operator: 'equals', value: 'seller-right' }],
+            match: [{ path: '/product_id', operator: 'equals', value: 'seller-right' }],
           },
         ],
         pricing_options: [
@@ -556,13 +652,13 @@ describe('discover strategy state machine', () => {
             handle: 'shared-price',
             product_handle: 'left',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
           },
           {
             handle: 'shared-price',
             product_handle: 'right',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
           },
         ],
       }
@@ -591,7 +687,7 @@ describe('discover strategy state machine', () => {
     const result = await runControllerSeeding(rejectedClient, sb, { agentTools: ['get_products'] }, {});
     assert.equal(result.failedCount, 1);
     assert.equal(result.fixtureUnsatisfied, false);
-    assert.match(result.resolutionRecords[0].evidence[0].detail, /rejected.*ACCOUNT_NOT_FOUND/);
+    assert.match(result.resolutionRecords[0].strategies_attempted[0].detail, /rejected.*ACCOUNT_NOT_FOUND/);
   });
 
   test('duplicate seller identities fail instead of using response order as a tie-breaker', async () => {
@@ -599,7 +695,7 @@ describe('discover strategy state machine', () => {
     const duplicate = discoveryClient([product('same'), product('same')]);
     const result = await runControllerSeeding(duplicate.client, sb, { agentTools: ['get_products'] }, {});
     assert.equal(result.failedCount, 1);
-    assert.match(result.resolutionRecords[0].evidence[0].detail, /duplicate product_id/);
+    assert.match(result.resolutionRecords[0].strategies_attempted[0].detail, /duplicate product_id/);
   });
 
   test('follows discovery pagination to completion and rejects a broken cursor contract', async () => {
@@ -639,7 +735,7 @@ describe('discover strategy state machine', () => {
     };
     const broken = await runControllerSeeding(brokenClient, sb, { agentTools: ['get_products'] }, {});
     assert.equal(broken.failedCount, 1);
-    assert.match(broken.resolutionRecords[0].evidence[0].detail, /has_more=true without cursor/);
+    assert.match(broken.resolutionRecords[0].strategies_attempted[0].detail, /has_more=true without cursor/);
   });
 
   test('an advertised seed failure is terminal and does not fall back to discovery', async () => {
@@ -648,7 +744,7 @@ describe('discover strategy state machine', () => {
         {
           handle: 'handle',
           strategies: ['seed', 'discover'],
-          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+          match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
       ],
     });
@@ -676,7 +772,13 @@ describe('discover strategy state machine', () => {
       {}
     );
     assert.equal(result.resolutionRecords[0].status, 'failed');
-    assert.deepEqual(result.resolutionRecords[0].strategies_attempted, ['seed']);
+    assert.deepEqual(
+      result.resolutionRecords[0].strategies_attempted.map(attempt => ({
+        strategy: attempt.strategy,
+        outcome: attempt.outcome,
+      })),
+      [{ strategy: 'seed', outcome: 'failed' }]
+    );
     assert.equal(
       calls.some(call => call.name === 'get_products'),
       false
@@ -689,7 +791,7 @@ describe('discover strategy state machine', () => {
         {
           handle: 'handle',
           strategies: ['seed', 'discover'],
-          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+          match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
       ],
     });
@@ -703,10 +805,15 @@ describe('discover strategy state machine', () => {
       },
       {}
     );
-    assert.deepEqual(result.resolutionRecords[0].strategies_attempted, ['seed', 'discover']);
     assert.deepEqual(
-      result.resolutionRecords[0].evidence.map(item => item.outcome),
-      ['unavailable', 'bound']
+      result.resolutionRecords[0].strategies_attempted.map(attempt => ({
+        strategy: attempt.strategy,
+        outcome: attempt.outcome,
+      })),
+      [
+        { strategy: 'seed', outcome: 'unavailable' },
+        { strategy: 'discover', outcome: 'bound' },
+      ]
     );
     assert.equal(result.resolutionRecords[0].seller_ids.product_id, 'derived');
     assert.equal(
@@ -724,7 +831,7 @@ describe('discover strategy state machine', () => {
           {
             handle: 'product-handle',
             strategies: ['discover'],
-            where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+            match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
           },
         ],
         pricing_options: [
@@ -732,7 +839,7 @@ describe('discover strategy state machine', () => {
             handle: 'price-handle',
             product_handle: 'product-handle',
             strategies: ['discover'],
-            where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
           },
         ],
       }
@@ -780,16 +887,16 @@ describe('discover strategy state machine', () => {
     assert.equal(create.params.packages[0].product_id, 'derived-product');
     assert.equal(create.params.packages[0].pricing_option_id, 'cpm');
     assert.deepEqual(
-      result.fixture_resolution.map(record => record.status),
+      result.fixture_resolutions.map(record => record.status),
       ['resolved', 'resolved']
     );
     assert.deepEqual(
       {
-        fixture_type: result.fixture_resolution[0].fixture_type,
-        handle: result.fixture_resolution[0].handle,
-        status: result.fixture_resolution[0].status,
-        strategy: result.fixture_resolution[0].strategy,
-        seller_ids: result.fixture_resolution[0].seller_ids,
+        fixture_type: result.fixture_resolutions[0].fixture_type,
+        handle: result.fixture_resolutions[0].handle,
+        status: result.fixture_resolutions[0].status,
+        strategy: result.fixture_resolutions[0].strategy,
+        seller_ids: result.fixture_resolutions[0].seller_ids,
       },
       {
         fixture_type: 'product',
@@ -801,28 +908,41 @@ describe('discover strategy state machine', () => {
     );
     assert.deepEqual(
       {
-        fixture_type: result.fixture_resolution[1].fixture_type,
-        handle: result.fixture_resolution[1].handle,
-        parent_product_handle: result.fixture_resolution[1].parent_product_handle,
-        status: result.fixture_resolution[1].status,
-        strategy: result.fixture_resolution[1].strategy,
-        seller_ids: result.fixture_resolution[1].seller_ids,
+        fixture_type: result.fixture_resolutions[1].fixture_type,
+        handle: result.fixture_resolutions[1].handle,
+        product_handle: result.fixture_resolutions[1].product_handle,
+        status: result.fixture_resolutions[1].status,
+        strategy: result.fixture_resolutions[1].strategy,
+        seller_ids: result.fixture_resolutions[1].seller_ids,
       },
       {
         fixture_type: 'pricing_option',
         handle: 'price-handle',
-        parent_product_handle: 'product-handle',
+        product_handle: 'product-handle',
         status: 'resolved',
         strategy: 'discover',
         seller_ids: { product_id: 'derived-product', pricing_option_id: 'cpm' },
       }
     );
-    for (const record of result.fixture_resolution) {
+    assert.equal(Object.hasOwn(result, 'fixture_resolution'), false);
+    for (const record of result.fixture_resolutions) {
       assert.equal(Object.hasOwn(record, 'entity_type'), false);
       assert.equal(Object.hasOwn(record, 'disposition'), false);
       assert.equal(Object.hasOwn(record, 'chosen_strategy'), false);
       assert.equal(Object.hasOwn(record, 'bound_seller_ids'), false);
+      assert.equal(Object.hasOwn(record, 'evidence'), false);
+      assert.deepEqual(
+        record.strategies_attempted.map(attempt => ({ strategy: attempt.strategy, outcome: attempt.outcome })),
+        [{ strategy: 'discover', outcome: 'bound' }]
+      );
+      assert.deepEqual(Object.keys(record.strategies_attempted[0]).sort(), [
+        'detail',
+        'outcome',
+        'response',
+        'strategy',
+      ]);
     }
+    assert.equal(Object.hasOwn(result.fixture_resolutions[1], 'parent_product_handle'), false);
   });
 
   test('reports one storyboard-level fixture_unsatisfied gap naming every unresolved handle', async () => {
@@ -831,16 +951,22 @@ describe('discover strategy state machine', () => {
         {
           handle: 'usd-product',
           strategies: ['discover'],
-          where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
         },
         {
           handle: 'eur-product',
           strategies: ['discover'],
-          where: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
+          match: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
         },
       ],
     });
     sb.phases = [
+      {
+        id: 'capability-gated',
+        title: 'Capability gated',
+        requires_capability: { path: 'supported_protocols', contains: 'sponsored_intelligence' },
+        steps: [{ id: 'gated', title: 'Gated', task: 'si_initiate_session', sample_request: {}, validations: [] }],
+      },
       {
         id: 'ordinary',
         title: 'Ordinary',
@@ -872,6 +998,7 @@ describe('discover strategy state machine', () => {
       false
     );
     const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
+    assert.equal(result.coverage_gaps.length, 1);
     assert.equal(gaps.length, 1);
     assert.deepEqual(
       gaps[0].fixtures.map(fixture => fixture.handle),
@@ -879,18 +1006,13 @@ describe('discover strategy state machine', () => {
     );
     assert.match(gaps[0].detail, /usd-product/);
     assert.match(gaps[0].detail, /eur-product/);
-    const ordinarySteps = result.phases.find(phase => phase.phase_id === 'ordinary').steps;
-    assert.equal(ordinarySteps.length, 3);
     assert.equal(
-      ordinarySteps.some(step => step.skip_reason === 'fixture_unsatisfied'),
-      false
-    );
-    assert.equal(
-      ordinarySteps.every(step => step.skip_reason === 'prerequisite_failed'),
+      result.phases.every(phase => phase.steps.length === 0),
       true
     );
-    assert.equal(result.skipped_count, 3);
-    assert.deepEqual(result.fixture_resolution[0].requirements, [
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.skipped_count, 0);
+    assert.deepEqual(result.fixture_resolutions[0].requirements, [
       { path: '/currency', operator: 'equals', value: 'USD' },
     ]);
   });
@@ -901,12 +1023,12 @@ describe('discover strategy state machine', () => {
         {
           handle: 'unavailable',
           strategies: ['discover'],
-          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+          match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
         {
           handle: 'broken',
           strategies: ['seed'],
-          where: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
+          match: [{ path: '/delivery_type', operator: 'equals', value: 'non_guaranteed' }],
         },
       ],
     });
@@ -951,7 +1073,7 @@ describe('discover strategy state machine', () => {
     assert.equal(result.overall_passed, false);
     assert.equal(result.failed_count, 1);
     assert.deepEqual(
-      result.fixture_resolution.map(record => record.status),
+      result.fixture_resolutions.map(record => record.status),
       ['unsatisfied', 'failed']
     );
     const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
@@ -960,7 +1082,7 @@ describe('discover strategy state machine', () => {
       gaps[0].fixtures.map(fixture => fixture.handle),
       ['unavailable']
     );
-    for (const record of result.fixture_resolution) {
+    for (const record of result.fixture_resolutions) {
       for (const legacyKey of ['entity_type', 'disposition', 'chosen_strategy', 'bound_seller_ids']) {
         assert.equal(Object.hasOwn(record, legacyKey), false);
       }

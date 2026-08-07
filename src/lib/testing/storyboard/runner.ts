@@ -2521,12 +2521,12 @@ async function executeStoryboardPass(
           .map(record => ({
             fixture_type: record.fixture_type,
             handle: record.handle,
-            ...(record.parent_product_handle && { parent_product_handle: record.parent_product_handle }),
+            ...(record.product_handle && { product_handle: record.product_handle }),
             requirements: record.requirements,
           }));
         const names = fixtures.map(fixture =>
           fixture.fixture_type === 'pricing_option'
-            ? `pricing_option "${fixture.parent_product_handle}/${fixture.handle}"`
+            ? `pricing_option "${fixture.product_handle}/${fixture.handle}"`
             : `product "${fixture.handle}"`
         );
         fixtureCoverageGap = {
@@ -2551,6 +2551,21 @@ async function executeStoryboardPass(
     // to completion regardless of the outer budget.
     options.signal?.throwIfAborted();
     const phaseStart = Date.now();
+
+    // A pure resolution miss is a storyboard-level coverage gap, not an
+    // ordinary-step skip. Short-circuit before capability and other phase
+    // gates so no ordinary rows or counts are produced for this run.
+    if (fixtureUnsatisfied) {
+      phaseResults.push({
+        phase_id: phase.id,
+        phase_title: phase.title,
+        passed: true,
+        steps: [],
+        duration_ms: 0,
+      });
+      continue;
+    }
+
     const phaseCapabilitySkipDetail = phaseCapabilitySkipDetails.get(phase.id);
     if (phaseCapabilitySkipDetail !== undefined) {
       const skippedSteps = buildPhaseCapabilitySkippedSteps(storyboard, phase, phaseCapabilitySkipDetail, context);
@@ -2686,9 +2701,9 @@ async function executeStoryboardPass(
     // Seeding-cascade skip: the pre-flight seed phase can fail as a setup
     // break, or the agent can be out-of-scope for fixture seeding because it
     // lacks either the controller tool or a required seed_* scenario. Emit
-    // full step rows (not an empty phase) so implementors see exactly which
-    // buyer-side operations were elided.
-    if (seedingMissingController || seedingUnsupported || seedingFailed || fixtureUnsatisfied) {
+    // full step rows so implementors see which buyer-side operations were
+    // elided.
+    if (seedingMissingController || seedingUnsupported || seedingFailed) {
       const cascadeSkip: Pick<StoryboardStepResult, 'skip_reason' | 'skip'> = seedingMissingController
         ? {
             skip_reason: 'missing_test_controller',
@@ -2704,18 +2719,10 @@ async function executeStoryboardPass(
                 skip_reason: 'controller_seeding_failed',
                 skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
               }
-            : fixtureUnsatisfied
-              ? {
-                  skip_reason: 'prerequisite_failed',
-                  skip: {
-                    reason: 'prerequisite_failed',
-                    detail: 'Blocked by the storyboard-level fixture_unsatisfied coverage gap.',
-                  },
-                }
-              : {
-                  skip_reason: 'controller_seeding_failed',
-                  skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
-                };
+            : {
+                skip_reason: 'controller_seeding_failed',
+                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+              };
       const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
         storyboard_id: storyboard.id,
         step_id: step.id,
@@ -3359,7 +3366,7 @@ async function executeStoryboardPass(
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
     notices,
-    ...(fixtureResolutionRecords && { fixture_resolution: fixtureResolutionRecords }),
+    ...(fixtureResolutionRecords && { fixture_resolutions: fixtureResolutionRecords }),
     ...(fixtureCoverageGap && { coverage_gaps: [fixtureCoverageGap] }),
     ...(routingContext && routingContext.discoveryFailures.length > 0
       ? {
@@ -3507,7 +3514,7 @@ async function runMultiPass(
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
-    ...(first.fixture_resolution ? { fixture_resolution: first.fixture_resolution } : {}),
+    ...(first.fixture_resolutions ? { fixture_resolutions: first.fixture_resolutions } : {}),
     ...(first.coverage_gaps ? { coverage_gaps: first.coverage_gaps } : {}),
     notices: noticesDedup,
   };

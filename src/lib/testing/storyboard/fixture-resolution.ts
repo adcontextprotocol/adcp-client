@@ -12,7 +12,7 @@ import type {
 } from './types';
 
 const OPERATORS = ['equals', 'present', 'contains_all', 'any_match', 'canonical_format_satisfies'] as const;
-const DECLARATION_KEYS = new Set(['handle', 'strategies', 'where', 'allow_reuse']);
+const DECLARATION_KEYS = new Set(['handle', 'strategies', 'match', 'allow_reuse']);
 const PRICING_DECLARATION_KEYS = new Set([...DECLARATION_KEYS, 'product_handle']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -73,6 +73,9 @@ function normalizeClause(value: unknown, location: string): FixtureMatchClause {
   if (operator === 'any_match') {
     if (hasValue) throw new Error(`${location}.value: is not allowed for any_match; use where`);
     if (!hasWhere) throw new Error(`${location}.where: is required for any_match`);
+  } else if (operator === 'present') {
+    if (hasValue) throw new Error(`${location}.value: is not allowed for present`);
+    if (hasWhere) throw new Error(`${location}.where: is only allowed for any_match`);
   } else {
     if (!hasValue) throw new Error(`${location}.value: is required for ${operator}`);
     if (hasWhere) throw new Error(`${location}.where: is only allowed for any_match`);
@@ -82,8 +85,7 @@ function normalizeClause(value: unknown, location: string): FixtureMatchClause {
     case 'equals':
       return { path: value.path, operator, value: value.value };
     case 'present':
-      if (typeof value.value !== 'boolean') throw new Error(`${location}.value: must be boolean for present`);
-      return { path: value.path, operator, value: value.value };
+      return { path: value.path, operator };
     case 'contains_all':
       if (!Array.isArray(value.value)) throw new Error(`${location}.value: must be an array for contains_all`);
       return { path: value.path, operator, value: value.value };
@@ -129,9 +131,9 @@ function validateDeclaration(declaration: unknown, location: string, allowedKeys
   if (declaration.allow_reuse !== undefined && typeof declaration.allow_reuse !== 'boolean') {
     throw new Error(`${location}.allow_reuse: must be boolean`);
   }
-  const clauses = normalizeFixtureMatchExpression(declaration.where, `${location}.where`);
+  const clauses = normalizeFixtureMatchExpression(declaration.match, `${location}.match`);
   if (Array.isArray(declaration.strategies) && declaration.strategies.includes('discover') && clauses.length === 0) {
-    throw new Error(`${location}.where: discover strategy requires at least one authored predicate`);
+    throw new Error(`${location}.match: discover strategy requires at least one authored predicate`);
   }
 }
 
@@ -232,9 +234,7 @@ export function matchesFixtureRequirements(candidate: unknown, clauses: readonly
       case 'equals':
         return isDeepStrictEqual(actual, clause.value);
       case 'present':
-        return clause.value === true
-          ? actual !== undefined && actual !== null
-          : actual === undefined || actual === null;
+        return actual !== undefined;
       case 'contains_all':
         return (
           Array.isArray(actual) &&
@@ -299,7 +299,7 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
       handle,
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
-      clauses: normalizeFixtureMatchExpression(declaration?.where, `fixture_resolution.products.${handle}.where`),
+      clauses: normalizeFixtureMatchExpression(declaration?.match, `fixture_resolution.products.${handle}.match`),
       allowReuse: declaration?.allow_reuse === true,
     });
   }
@@ -336,8 +336,8 @@ export function buildFixtureResolutionSpecs(storyboard: Storyboard): FixtureReso
       fixture: requirementFixture,
       strategies: [...(declaration?.strategies ?? ['seed'])],
       clauses: normalizeFixtureMatchExpression(
-        declaration?.where,
-        `fixture_resolution.pricing_options.${parent}/${handle}.where`
+        declaration?.match,
+        `fixture_resolution.pricing_options.${parent}/${handle}.match`
       ),
       allowReuse: declaration?.allow_reuse === true,
     });

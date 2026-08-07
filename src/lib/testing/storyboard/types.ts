@@ -344,12 +344,12 @@ export interface FixtureCanonicalFormatSelector extends Record<string, unknown> 
 
 /**
  * One fixture-discovery predicate. `path` is an RFC 6901 JSON Pointer
- * relative to the candidate entity. `any_match` uses `where` recursively for
- * predicates applied to each array member; every other operator uses `value`.
+ * relative to the candidate entity. `any_match` uses `where` recursively,
+ * `present` is valueless, and the remaining operators use `value`.
  */
 export type FixtureMatchClause =
   | { path: string; operator: 'equals'; value: unknown; where?: never }
-  | { path: string; operator: 'present'; value: boolean; where?: never }
+  | { path: string; operator: 'present'; value?: never; where?: never }
   | { path: string; operator: 'contains_all'; value: unknown[]; where?: never }
   | { path: string; operator: 'canonical_format_satisfies'; value: FixtureCanonicalFormatSelector; where?: never }
   | { path: string; operator: 'any_match'; where: FixtureMatchClause[]; value?: never };
@@ -360,7 +360,7 @@ export interface FixtureResolutionDeclaration {
   /** Ordered strategy ladder. Omission means `["seed"]`. */
   strategies?: FixtureResolutionStrategy[];
   /** Requirements a discovered seller entity must satisfy. */
-  where?: FixtureMatchClause[];
+  match?: FixtureMatchClause[];
   /** Default false: one seller entity cannot satisfy two handles. */
   allow_reuse?: boolean;
 }
@@ -379,7 +379,7 @@ export interface StoryboardFixtureResolution {
 
 export type FixtureResolutionStatus = 'resolved' | 'unsatisfied' | 'failed';
 
-export interface FixtureResolutionEvidence {
+export interface FixtureResolutionAttempt {
   strategy: FixtureResolutionStrategy;
   outcome: 'bound' | 'unavailable' | 'failed';
   detail: string;
@@ -387,20 +387,22 @@ export interface FixtureResolutionEvidence {
   response?: unknown;
 }
 
+/** @deprecated Use FixtureResolutionAttempt. */
+export type FixtureResolutionEvidence = FixtureResolutionAttempt;
+
 /** Machine-readable record emitted exactly once for every fixture handle. */
 export interface FixtureResolutionRecord {
   fixture_type: 'product' | 'pricing_option';
   handle: string;
-  parent_product_handle?: string;
+  product_handle?: string;
   requirements: FixtureMatchClause[];
-  strategies_attempted: FixtureResolutionStrategy[];
+  strategies_attempted: FixtureResolutionAttempt[];
   status: FixtureResolutionStatus;
   strategy?: FixtureResolutionStrategy;
   seller_ids?: {
     product_id: string;
     pricing_option_id?: string;
   };
-  evidence: FixtureResolutionEvidence[];
 }
 
 /** One storyboard-scoped coverage gap produced by fixture resolution. */
@@ -410,7 +412,7 @@ export interface FixtureResolutionCoverageGap {
   fixtures: Array<{
     fixture_type: FixtureResolutionRecord['fixture_type'];
     handle: string;
-    parent_product_handle?: string;
+    product_handle?: string;
     requirements: FixtureMatchClause[];
   }>;
 }
@@ -2758,7 +2760,7 @@ export interface StoryboardResult {
   agent_map?: Record<string, string>;
   overall_passed: boolean;
   /** AdCP 3.2 fixture-handle setup/discovery evidence, one row per handle. */
-  fixture_resolution?: FixtureResolutionRecord[];
+  fixture_resolutions?: FixtureResolutionRecord[];
   /** Storyboard-level fixture coverage gaps, emitted once per cause. */
   coverage_gaps?: FixtureResolutionCoverageGap[];
   /**
