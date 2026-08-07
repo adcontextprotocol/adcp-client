@@ -3598,7 +3598,7 @@ function printFixtureResolution(records, coverageGaps) {
       continue;
     } else {
       const failedEvidence = Array.isArray(record.strategies_attempted)
-        ? [...record.strategies_attempted].reverse().find(item => item?.outcome === 'failed')
+        ? [...record.strategies_attempted].reverse().find(item => item?.disposition === 'failed')
         : undefined;
       const detail = failedEvidence?.detail ? `: ${String(failedEvidence.detail).slice(0, 240)}` : '';
       console.log(`  ❌ ${record.fixture_type} ${scope}${record.handle} — resolution failed${detail}`);

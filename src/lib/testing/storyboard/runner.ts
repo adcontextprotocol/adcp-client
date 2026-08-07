@@ -2514,6 +2514,19 @@ async function executeStoryboardPass(
       fixtureBindings = seeding.bindings;
       fixtureResolutionRecords = seeding.resolutionRecords;
       fixtureUnsatisfied = seeding.fixtureUnsatisfied === true && seeding.failedCount === 0;
+      if (fixtureUnsatisfied) {
+        // Fixture coverage is the more specific storyboard-level reason when
+        // an authored placeholder has no executable phases. Do not retain the
+        // generic no_phases sentinel or count both reasons.
+        const noPhasesIndex = phaseResults.findIndex(phase => phase.phase_id === 'no_phases');
+        if (noPhasesIndex >= 0) {
+          skippedCount -= phaseResults[noPhasesIndex]!.steps.filter(step => step.skipped).length;
+          phaseResults.splice(noPhasesIndex, 1);
+        }
+        // Multi-pass attaches/counts pre-flight resolution only on pass one,
+        // so the aggregate contains exactly one storyboard-level skip.
+        if (attach) skippedCount += 1;
+      }
       const hasUnsatisfiedFixtures = fixtureResolutionRecords?.some(record => record.status === 'unsatisfied') === true;
       if (hasUnsatisfiedFixtures && fixtureResolutionRecords) {
         const fixtures = fixtureResolutionRecords
@@ -2552,9 +2565,9 @@ async function executeStoryboardPass(
     options.signal?.throwIfAborted();
     const phaseStart = Date.now();
 
-    // A pure resolution miss is a storyboard-level coverage gap, not an
+    // A pure resolution miss is one storyboard-level skip, not an
     // ordinary-step skip. Short-circuit before capability and other phase
-    // gates so no ordinary rows or counts are produced for this run.
+    // gates so no ordinary rows or per-step counts are produced for this run.
     if (fixtureUnsatisfied) {
       phaseResults.push({
         phase_id: phase.id,

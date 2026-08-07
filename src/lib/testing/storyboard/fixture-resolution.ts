@@ -234,7 +234,7 @@ export function matchesFixtureRequirements(candidate: unknown, clauses: readonly
       case 'equals':
         return isDeepStrictEqual(actual, clause.value);
       case 'present':
-        return actual !== undefined;
+        return actual !== undefined && actual !== null;
       case 'contains_all':
         return (
           Array.isArray(actual) &&

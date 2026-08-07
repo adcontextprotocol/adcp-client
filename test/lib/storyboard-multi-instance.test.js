@@ -455,12 +455,12 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     assert.strictEqual(result.passes.flatMap(pass => pass.phases.flatMap(phase => phase.steps)).length, 0);
     assert.strictEqual(result.passed_count, 0);
     assert.strictEqual(result.failed_count, 0);
-    assert.strictEqual(result.skipped_count, 0);
+    assert.strictEqual(result.skipped_count, 1);
     assert.strictEqual(result.overall_passed, true);
-    for (const pass of result.passes) {
+    for (const [index, pass] of result.passes.entries()) {
       assert.strictEqual(pass.passed_count, 0);
       assert.strictEqual(pass.failed_count, 0);
-      assert.strictEqual(pass.skipped_count, 0);
+      assert.strictEqual(pass.skipped_count, index === 0 ? 1 : 0);
     }
     assert.ok(Array.isArray(result.fixture_resolutions));
     assert.strictEqual(Object.hasOwn(result, 'fixture_resolution'), false);

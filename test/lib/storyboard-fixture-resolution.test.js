@@ -118,7 +118,7 @@ phases:
     const pilotProduct = createTestProduct({
       product_id: 'seller-display',
       delivery_type: 'non_guaranteed',
-      inventory: { source: null },
+      inventory: { source: 'publisher' },
       pricing_options: [
         { pricing_option_id: 'seller-cpm', pricing_model: 'cpm', floor_price: 2, currency: 'USD', is_fixed: false },
       ],
@@ -155,7 +155,7 @@ phases:
           operator: 'any_match',
           where: [{ path: '/currency', operator: 'equals', value: 'USD' }],
         },
-        { path: '/nullable', operator: 'present' },
+        { path: '/source', operator: 'present' },
         { path: '/escaped~1key/~0value', operator: 'equals', value: 42 },
         { path: '/items/0/id', operator: 'equals', value: 'first' },
       ],
@@ -168,7 +168,7 @@ phases:
           delivery_type: 'non_guaranteed',
           channels: ['video', 'display'],
           pricing_options: [{ currency: 'EUR' }, { currency: 'USD' }],
-          nullable: null,
+          source: 'publisher',
           'escaped/key': { '~value': 42 },
           items: [{ id: 'first' }],
         },
@@ -176,6 +176,7 @@ phases:
       ),
       true
     );
+    assert.equal(matchesFixtureRequirements({ nullable: null }, [{ path: '/nullable', operator: 'present' }]), false);
     assert.equal(matchesFixtureRequirements({}, [{ path: '/missing', operator: 'present' }]), false);
     assert.throws(
       () => normalizeFixtureMatchExpression([{ path: 'currency', operator: 'equals', value: 'USD' }], 'where'),
@@ -775,9 +776,9 @@ describe('discover strategy state machine', () => {
     assert.deepEqual(
       result.resolutionRecords[0].strategies_attempted.map(attempt => ({
         strategy: attempt.strategy,
-        outcome: attempt.outcome,
+        disposition: attempt.disposition,
       })),
-      [{ strategy: 'seed', outcome: 'failed' }]
+      [{ strategy: 'seed', disposition: 'failed' }]
     );
     assert.equal(
       calls.some(call => call.name === 'get_products'),
@@ -808,11 +809,11 @@ describe('discover strategy state machine', () => {
     assert.deepEqual(
       result.resolutionRecords[0].strategies_attempted.map(attempt => ({
         strategy: attempt.strategy,
-        outcome: attempt.outcome,
+        disposition: attempt.disposition,
       })),
       [
-        { strategy: 'seed', outcome: 'unavailable' },
-        { strategy: 'discover', outcome: 'bound' },
+        { strategy: 'seed', disposition: 'unavailable' },
+        { strategy: 'discover', disposition: 'resolved' },
       ]
     );
     assert.equal(result.resolutionRecords[0].seller_ids.product_id, 'derived');
@@ -931,13 +932,17 @@ describe('discover strategy state machine', () => {
       assert.equal(Object.hasOwn(record, 'chosen_strategy'), false);
       assert.equal(Object.hasOwn(record, 'bound_seller_ids'), false);
       assert.equal(Object.hasOwn(record, 'evidence'), false);
+      assert.equal(Object.hasOwn(record.strategies_attempted[0], 'outcome'), false);
       assert.deepEqual(
-        record.strategies_attempted.map(attempt => ({ strategy: attempt.strategy, outcome: attempt.outcome })),
-        [{ strategy: 'discover', outcome: 'bound' }]
+        record.strategies_attempted.map(attempt => ({
+          strategy: attempt.strategy,
+          disposition: attempt.disposition,
+        })),
+        [{ strategy: 'discover', disposition: 'resolved' }]
       );
       assert.deepEqual(Object.keys(record.strategies_attempted[0]).sort(), [
         'detail',
-        'outcome',
+        'disposition',
         'response',
         'strategy',
       ]);
@@ -1011,10 +1016,43 @@ describe('discover strategy state machine', () => {
       true
     );
     assert.equal(result.passed_count, 0);
-    assert.equal(result.skipped_count, 0);
+    assert.equal(result.skipped_count, 1);
     assert.deepEqual(result.fixture_resolutions[0].requirements, [
       { path: '/currency', operator: 'equals', value: 'USD' },
     ]);
+  });
+
+  test('fixture_unsatisfied supersedes the no_phases sentinel without double-counting', async () => {
+    const sb = storyboard([{ product_id: 'usd-product' }], [], {
+      products: [
+        {
+          handle: 'usd-product',
+          strategies: ['discover'],
+          match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+        },
+      ],
+    });
+    const result = await runStoryboard('https://example.invalid/mcp', sb, {
+      protocol: 'mcp',
+      agentTools: ['get_products'],
+      _profile: { name: 'No USD seller', tools: ['get_products'] },
+      _client: discoveryClient([]).client,
+    });
+
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.passed_count, 0);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.coverage_gaps.length, 1);
+    assert.equal(result.coverage_gaps[0].reason, 'fixture_unsatisfied');
+    assert.equal(
+      result.phases.some(phase => phase.phase_id === 'no_phases'),
+      false
+    );
+    assert.equal(
+      result.phases.every(phase => phase.steps.length === 0),
+      true
+    );
   });
 
   test('a terminal resolution failure wins over another handle exhausting its ladder', async () => {

@@ -539,7 +539,7 @@ async function runDeclaredFixtureResolution(
         parentStatus === 'failed'
           ? `parent product handle "${spec.parentProductHandle}" failed resolution`
           : `parent product handle "${spec.parentProductHandle}" is unavailable`;
-      attempts.push({ strategy, outcome: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
+      attempts.push({ strategy, disposition: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
       if (parentStatus === 'failed') failure = detail;
     }
 
@@ -549,7 +549,7 @@ async function runDeclaredFixtureResolution(
         if (controllerMissing || advertised === false) {
           attempts.push({
             strategy,
-            outcome: 'unavailable',
+            disposition: 'unavailable',
             detail: controllerMissing
               ? 'comply_test_controller is not advertised'
               : `list_scenarios did not advertise ${call.scenario}`,
@@ -585,23 +585,27 @@ async function runDeclaredFixtureResolution(
               );
             }
             chosenStrategy = strategy;
-            attempts.push({ strategy, outcome: 'bound', detail: `${call.scenario} accepted the authored literal id` });
+            attempts.push({
+              strategy,
+              disposition: 'resolved',
+              detail: `${call.scenario} accepted the authored literal id`,
+            });
             break;
           }
           if (raw.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO' && advertised !== true) {
             attempts.push({
               strategy,
-              outcome: 'unavailable',
+              disposition: 'unavailable',
               detail: data.error_detail ?? `${call.scenario} returned UNKNOWN_SCENARIO`,
             });
             continue;
           }
           failure = formatControllerError(call.scenario, raw, data);
-          attempts.push({ strategy, outcome: 'failed', detail: failure });
+          attempts.push({ strategy, disposition: 'failed', detail: failure });
           break;
         } catch (err) {
           failure = err instanceof Error ? err.message : String(err);
-          attempts.push({ strategy, outcome: 'failed', detail: failure });
+          attempts.push({ strategy, disposition: 'failed', detail: failure });
           break;
         }
       }
@@ -610,7 +614,7 @@ async function runDeclaredFixtureResolution(
         if (options.agentTools && !options.agentTools.includes('get_products')) {
           attempts.push({
             strategy,
-            outcome: 'unavailable',
+            disposition: 'unavailable',
             detail: 'agent did not advertise get_products',
           });
           continue;
@@ -618,7 +622,7 @@ async function runDeclaredFixtureResolution(
         const discovered = await catalog();
         if (!discovered.ok) {
           failure = discovered.error;
-          attempts.push({ strategy, outcome: 'failed', detail: failure, response: discovered.evidence });
+          attempts.push({ strategy, disposition: 'failed', detail: failure, response: discovered.evidence });
           break;
         }
         const selected = selectDiscoveredFixture(
@@ -633,7 +637,7 @@ async function runDeclaredFixtureResolution(
             failure = selected.detail;
             attempts.push({
               strategy,
-              outcome: 'failed',
+              disposition: 'failed',
               detail: selected.detail,
               response: discovered.catalog.evidence,
             });
@@ -641,7 +645,7 @@ async function runDeclaredFixtureResolution(
           }
           attempts.push({
             strategy,
-            outcome: 'unavailable',
+            disposition: 'unavailable',
             detail: selected.detail,
             response: discovered.catalog.evidence,
           });
@@ -651,7 +655,7 @@ async function runDeclaredFixtureResolution(
         chosenStrategy = strategy;
         attempts.push({
           strategy,
-          outcome: 'bound',
+          disposition: 'resolved',
           detail: selected.detail,
           response: { ...discovered.catalog.evidence, selected: selected.boundIds },
         });

@@ -381,7 +381,7 @@ export type FixtureResolutionStatus = 'resolved' | 'unsatisfied' | 'failed';
 
 export interface FixtureResolutionAttempt {
   strategy: FixtureResolutionStrategy;
-  outcome: 'bound' | 'unavailable' | 'failed';
+  disposition: 'resolved' | 'unavailable' | 'failed';
   detail: string;
   request?: Record<string, unknown>;
   response?: unknown;
