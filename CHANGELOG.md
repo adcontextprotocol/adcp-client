@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.0.0-rc.8
+
+### Minor Changes
+
+- 7711a84: Resolve AdCP 3.2 storyboard product and pricing-option fixture handles through ordered seed/discover strategies, with schema-annotated request substitution and machine-readable resolution evidence.
+
+### Patch Changes
+
+- 1c9f083: Expand seller-declared required creative assets from storyboard test-kit fixtures before dispatch, and cover nested `$context` substitutions inside request arrays.
+- 2f8b886: Enforce `TaskOptions.timeout` as an absolute wall-clock deadline across discovery, capability preflight, and MCP/A2A tool execution. The SDK now composes the deadline with caller cancellation, aborts in-flight protocol work, surfaces `TaskTimeoutError`, and keeps `workingTimeout` as a separate resettable progress timeout.
+
 ## 13.0.0-rc.7
 
 ### Minor Changes
