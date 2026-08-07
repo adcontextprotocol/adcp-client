@@ -199,6 +199,13 @@ export interface Storyboard {
    */
   fixtures?: StoryboardFixtures;
   /**
+   * AdCP 3.2 fixture-handle resolution policy. Fixture ids remain authored in
+   * `fixtures:` and in step payloads, but declarations here may allow the
+   * runner to bind those run-scoped handles to real seller catalog ids.
+   * Omitted handles retain the compatibility strategy `["seed"]`.
+   */
+  fixture_resolution?: StoryboardFixtureResolution;
+  /**
    * Initial context values declared by the storyboard YAML. Runner callers may
    * override these defaults with `StoryboardRunOptions.context`.
    */
@@ -322,6 +329,92 @@ export interface StoryboardFixtures {
   plans?: Array<Record<string, unknown> & { plan_id?: string }>;
   media_buys?: Array<Record<string, unknown> & { media_buy_id?: string }>;
   buyer_agents?: StoryboardBuyerAgentFixture[];
+}
+
+/** Ordered setup strategies supported by the first AdCP 3.2 runner slice. */
+export type FixtureResolutionStrategy = 'seed' | 'discover';
+
+/** Operators supported by the closed AdCP 3.2 fixture predicate DSL. */
+export type FixtureMatchOperator = 'equals' | 'present' | 'contains_all' | 'any_match' | 'canonical_format_satisfies';
+
+export interface FixtureCanonicalFormatSelector extends Record<string, unknown> {
+  format_kind: string;
+  params?: Record<string, unknown>;
+}
+
+/**
+ * One fixture-discovery predicate. `path` is an RFC 6901 JSON Pointer
+ * relative to the candidate entity. `any_match` uses `where` recursively,
+ * `present` is valueless, and the remaining operators use `value`.
+ */
+export type FixtureMatchClause =
+  | { path: string; operator: 'equals'; value: unknown; where?: never }
+  | { path: string; operator: 'present'; value?: never; where?: never }
+  | { path: string; operator: 'contains_all'; value: unknown[]; where?: never }
+  | { path: string; operator: 'canonical_format_satisfies'; value: FixtureCanonicalFormatSelector; where?: never }
+  | { path: string; operator: 'any_match'; where: FixtureMatchClause[]; value?: never };
+
+export interface FixtureResolutionDeclaration {
+  /** Authored run-scoped fixture handle. */
+  handle: string;
+  /** Ordered strategy ladder. Omission means `["seed"]`. */
+  strategies?: FixtureResolutionStrategy[];
+  /** Requirements a discovered seller entity must satisfy. */
+  match?: FixtureMatchClause[];
+  /** Default false: one seller entity cannot satisfy two handles. */
+  allow_reuse?: boolean;
+}
+
+export type ProductFixtureResolutionDeclaration = FixtureResolutionDeclaration;
+
+export interface PricingOptionFixtureResolutionDeclaration extends FixtureResolutionDeclaration {
+  /** Parent authored product handle for root-level pricing-option declarations. */
+  product_handle: string;
+}
+
+export interface StoryboardFixtureResolution {
+  products?: ProductFixtureResolutionDeclaration[];
+  pricing_options?: PricingOptionFixtureResolutionDeclaration[];
+}
+
+export type FixtureResolutionStatus = 'resolved' | 'unsatisfied' | 'failed';
+
+export interface FixtureResolutionAttempt {
+  strategy: FixtureResolutionStrategy;
+  disposition: 'resolved' | 'unavailable' | 'failed';
+  detail: string;
+  request?: Record<string, unknown>;
+  response?: unknown;
+}
+
+/** @deprecated Use FixtureResolutionAttempt. */
+export type FixtureResolutionEvidence = FixtureResolutionAttempt;
+
+/** Machine-readable record emitted exactly once for every fixture handle. */
+export interface FixtureResolutionRecord {
+  fixture_type: 'product' | 'pricing_option';
+  handle: string;
+  product_handle?: string;
+  requirements: FixtureMatchClause[];
+  strategies_attempted: FixtureResolutionAttempt[];
+  status: FixtureResolutionStatus;
+  strategy?: FixtureResolutionStrategy;
+  seller_ids?: {
+    product_id: string;
+    pricing_option_id?: string;
+  };
+}
+
+/** One storyboard-scoped coverage gap produced by fixture resolution. */
+export interface FixtureResolutionCoverageGap {
+  reason: 'fixture_unsatisfied';
+  detail: string;
+  fixtures: Array<{
+    fixture_type: FixtureResolutionRecord['fixture_type'];
+    handle: string;
+    product_handle?: string;
+    requirements: FixtureMatchClause[];
+  }>;
 }
 
 export interface StoryboardBuyerAgentFixture {
@@ -1780,6 +1873,8 @@ export type RunnerDetailedSkipReason =
    * setup, so the storyboard is out of scope rather than failed.
    */
   | 'fixture_seed_unsupported'
+  /** A valid fixture strategy ladder exhausted without finding a binding. */
+  | 'fixture_unsatisfied'
   /**
    * A `requires_capability` predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
@@ -1819,6 +1914,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   rate_limit_not_triggered: 'not_applicable',
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
+  fixture_unsatisfied: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
@@ -2663,6 +2759,10 @@ export interface StoryboardResult {
    */
   agent_map?: Record<string, string>;
   overall_passed: boolean;
+  /** AdCP 3.2 fixture-handle setup/discovery evidence, one row per handle. */
+  fixture_resolutions?: FixtureResolutionRecord[];
+  /** Storyboard-level fixture coverage gaps, emitted once per cause. */
+  coverage_gaps?: FixtureResolutionCoverageGap[];
   /**
    * Phases from the first pass. In `multi-pass` mode see `passes` for the full
    * per-pass detail; `passed_count`/`failed_count`/`skipped_count` and

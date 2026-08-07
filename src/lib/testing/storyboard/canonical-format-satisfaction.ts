@@ -21,6 +21,28 @@ interface CanonicalSelector {
   pointer: string;
 }
 
+/**
+ * Pure catalog-side form of the canonical-format check used by fixture
+ * discovery. The selector is buyer-authored; a product matches when at least
+ * one of its canonical declarations can satisfy it.
+ */
+export function productCanonicalFormatSatisfies(
+  productOrFormats: unknown,
+  selectorValue: Record<string, unknown>
+): boolean {
+  const selector = canonicalSelectorFrom(selectorValue, '/fixture_resolution');
+  if (!selector) return false;
+  const product = isRecord(productOrFormats)
+    ? productOrFormats
+    : Array.isArray(productOrFormats)
+      ? { format_options: productOrFormats }
+      : undefined;
+  if (!product) return false;
+  return productFormatOptions(product).some(
+    declaration => canonicalSelectorSatisfiesDeclaration(selector, declaration).ok
+  );
+}
+
 const FORMAT_IDENTITY_KEYS = ['agent_url', 'id', 'width', 'height', 'duration_ms'] as const;
 const HANDLED_CANONICAL_PARAM_KEYS = new Set([
   'width',

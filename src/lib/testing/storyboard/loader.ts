@@ -10,6 +10,7 @@ import { readFileSync } from 'fs';
 import { parse } from 'yaml';
 import type { Storyboard } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
+import { validateFixtureResolutionDeclarations } from './fixture-resolution';
 
 /**
  * Supported `branch_set.semantics` values. Extend when AdCP adds `all_of`,
@@ -63,6 +64,7 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
   validateRequires(storyboard);
+  validateFixtureResolutionDeclarations(storyboard);
   validateRequiredAnyOfTools(storyboard);
   validatePhaseDependsOn(storyboard);
   for (const phase of storyboard.phases) {

@@ -55,7 +55,7 @@ import {
   schemaAllowsTopLevelField,
   withExternalSchemaRoot,
 } from '../../validation/schema-loader';
-import { parseAdcpMajorVersion } from '../../version';
+import { ADCP_VERSION, parseAdcpMajorVersion } from '../../version';
 import {
   PROBE_TASKS,
   probeProtectedResourceMetadata,
@@ -71,7 +71,8 @@ import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
-import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
 
@@ -94,6 +95,8 @@ import type {
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
+  FixtureResolutionCoverageGap,
+  FixtureResolutionRecord,
   HttpProbeResult,
   RunnerDetailedSkipReason,
   RunnerExtractionRecord,
@@ -2473,19 +2476,77 @@ async function executeStoryboardPass(
   let seedingFailed = false;
   let seedingMissingController = false;
   let seedingUnsupported = false;
+  let fixtureUnsatisfied = false;
+  let fixtureBindings: FixtureBindingRegistry | undefined;
+  let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
+  let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   {
+    let fixtureSeedClient = clients[0]!;
+    let fixtureDiscoveryClient = clients[0]!;
+    if (routingContext && options.agents) {
+      const fixtureStep = (task: string): StoryboardStep => ({
+        id: `__fixture_resolution_${task}__`,
+        title: `Fixture resolution via ${task}`,
+        task,
+      });
+      if (options.agentTools?.includes('comply_test_controller')) {
+        fixtureSeedClient = dispatch.nextFor(fixtureStep('comply_test_controller')).client;
+      }
+      if (options.agentTools?.includes('get_products')) {
+        fixtureDiscoveryClient = dispatch.nextFor(fixtureStep('get_products')).client;
+      }
+    }
     const seeding = skipControllerSeedingForPhaseGates
       ? null
       : preSeeded !== undefined
         ? preSeeded.result
-        : await runControllerSeeding(clients[0]!, storyboard, options, context);
+        : await runControllerSeeding(fixtureSeedClient, storyboard, options, context, fixtureDiscoveryClient);
     if (seeding) {
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
         seedingPhaseResult = seeding.phase;
         passedCount += seeding.passedCount;
         failedCount += seeding.failedCount;
-        if (seeding.missingController || seeding.seedUnsupported) skippedCount += seeding.phase.steps.length;
+        if (seeding.missingController || seeding.seedUnsupported || seeding.fixtureUnsatisfied) {
+          skippedCount += seeding.phase.steps.filter(step => step.skipped).length;
+        }
+      }
+      fixtureBindings = seeding.bindings;
+      fixtureResolutionRecords = seeding.resolutionRecords;
+      fixtureUnsatisfied = seeding.fixtureUnsatisfied === true && seeding.failedCount === 0;
+      if (fixtureUnsatisfied) {
+        // Fixture coverage is the more specific storyboard-level reason when
+        // an authored placeholder has no executable phases. Do not retain the
+        // generic no_phases sentinel or count both reasons.
+        const noPhasesIndex = phaseResults.findIndex(phase => phase.phase_id === 'no_phases');
+        if (noPhasesIndex >= 0) {
+          skippedCount -= phaseResults[noPhasesIndex]!.steps.filter(step => step.skipped).length;
+          phaseResults.splice(noPhasesIndex, 1);
+        }
+        // Multi-pass attaches/counts pre-flight resolution only on pass one,
+        // so the aggregate contains exactly one storyboard-level skip.
+        if (attach) skippedCount += 1;
+      }
+      const hasUnsatisfiedFixtures = fixtureResolutionRecords?.some(record => record.status === 'unsatisfied') === true;
+      if (hasUnsatisfiedFixtures && fixtureResolutionRecords) {
+        const fixtures = fixtureResolutionRecords
+          .filter(record => record.status === 'unsatisfied')
+          .map(record => ({
+            fixture_type: record.fixture_type,
+            handle: record.handle,
+            ...(record.product_handle && { product_handle: record.product_handle }),
+            requirements: record.requirements,
+          }));
+        const names = fixtures.map(fixture =>
+          fixture.fixture_type === 'pricing_option'
+            ? `pricing_option "${fixture.product_handle}/${fixture.handle}"`
+            : `product "${fixture.handle}"`
+        );
+        fixtureCoverageGap = {
+          reason: 'fixture_unsatisfied',
+          detail: `fixture_unsatisfied: no seller fixture satisfied ${names.join(', ')}`,
+          fixtures,
+        };
       }
       if (seeding.missingController) {
         seedingMissingController = true;
@@ -2503,6 +2564,21 @@ async function executeStoryboardPass(
     // to completion regardless of the outer budget.
     options.signal?.throwIfAborted();
     const phaseStart = Date.now();
+
+    // A pure resolution miss is one storyboard-level skip, not an
+    // ordinary-step skip. Short-circuit before capability and other phase
+    // gates so no ordinary rows or per-step counts are produced for this run.
+    if (fixtureUnsatisfied) {
+      phaseResults.push({
+        phase_id: phase.id,
+        phase_title: phase.title,
+        passed: true,
+        steps: [],
+        duration_ms: 0,
+      });
+      continue;
+    }
+
     const phaseCapabilitySkipDetail = phaseCapabilitySkipDetails.get(phase.id);
     if (phaseCapabilitySkipDetail !== undefined) {
       const skippedSteps = buildPhaseCapabilitySkippedSteps(storyboard, phase, phaseCapabilitySkipDetail, context);
@@ -2638,8 +2714,8 @@ async function executeStoryboardPass(
     // Seeding-cascade skip: the pre-flight seed phase can fail as a setup
     // break, or the agent can be out-of-scope for fixture seeding because it
     // lacks either the controller tool or a required seed_* scenario. Emit
-    // full step rows (not an empty phase) so implementors see exactly which
-    // buyer-side operations were elided.
+    // full step rows so implementors see which buyer-side operations were
+    // elided.
     if (seedingMissingController || seedingUnsupported || seedingFailed) {
       const cascadeSkip: Pick<StoryboardStepResult, 'skip_reason' | 'skip'> = seedingMissingController
         ? {
@@ -2651,10 +2727,15 @@ async function executeStoryboardPass(
               skip_reason: 'fixture_seed_unsupported',
               skip: { reason: 'not_applicable', detail: FIXTURE_SEED_UNSUPPORTED_DETAIL },
             }
-          : {
-              skip_reason: 'controller_seeding_failed',
-              skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
-            };
+          : seedingFailed
+            ? {
+                skip_reason: 'controller_seeding_failed',
+                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+              }
+            : {
+                skip_reason: 'controller_seeding_failed',
+                skip: { reason: 'prerequisite_failed', detail: CONTROLLER_SEEDING_FAILED_DETAIL },
+              };
       const cascadeSteps: StoryboardStepResult[] = phase.steps.map(step => ({
         storyboard_id: storyboard.id,
         step_id: step.id,
@@ -2831,6 +2912,7 @@ async function executeStoryboardPass(
           agentProfile: assignment.profile,
           agentLibraryVersion: assignment.profile?.library_version,
           storyboardRequiresRequestSigner: allRequires.includes('request_signer'),
+          fixtureBindings,
         }
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -3258,11 +3340,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
-  const storyboardWideFixtureSeedUnsupported =
-    seedingUnsupported &&
-    failedCount === 0 &&
-    phaseResults.some(p => p.steps.some(s => s.skipped && s.skip?.reason === 'not_applicable')) &&
-    phaseResults.every(p => p.steps.every(s => s.skipped && s.skip?.reason === 'not_applicable'));
+  const storyboardWideFixtureUnavailable = (seedingUnsupported || fixtureUnsatisfied) && failedCount === 0;
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
@@ -3288,7 +3366,7 @@ async function executeStoryboardPass(
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
     ...(routingContext && { agent_map: { ...routingContext.agentMap } }),
     overall_passed:
-      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureSeedUnsupported) && !assertionsFailed,
+      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureUnavailable) && !assertionsFailed,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,
@@ -3301,6 +3379,8 @@ async function executeStoryboardPass(
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
     notices,
+    ...(fixtureResolutionRecords && { fixture_resolutions: fixtureResolutionRecords }),
+    ...(fixtureCoverageGap && { coverage_gaps: [fixtureCoverageGap] }),
     ...(routingContext && routingContext.discoveryFailures.length > 0
       ? {
           discovery_failures: routingContext.discoveryFailures.map(f => ({
@@ -3447,6 +3527,8 @@ async function runMultiPass(
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
+    ...(first.fixture_resolutions ? { fixture_resolutions: first.fixture_resolutions } : {}),
+    ...(first.coverage_gaps ? { coverage_gaps: first.coverage_gaps } : {}),
     notices: noticesDedup,
   };
 }
@@ -3723,6 +3805,8 @@ interface ExecutionState {
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
   agentUrl: string;
+  /** Run-scoped seller ids selected for authored fixture handles. */
+  fixtureBindings?: FixtureBindingRegistry;
   /**
    * ISO timestamps captured immediately before each step's AdCP request
    * dispatch. Threaded into `upstream_traffic` validations as the
@@ -3986,6 +4070,39 @@ async function executeStep(
   // error (see `testsMissingIdempotencyKey` below) so that compliance
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
+  // Fixture handles are replaced only at request-schema fields carrying the
+  // matching x-entity annotation. This applies equally to ordinary AdCP calls
+  // and comply_test_controller force/simulate requests.
+  const fixtureBinding = applyFixtureBindingsSafely(request, effectiveStep.task, options, runState);
+  if (!fixtureBinding.ok) {
+    const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: effectiveStep.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [
+        {
+          check: 'unresolved_substitution',
+          passed: false,
+          description: `Fixture handle substitution failed: ${fixtureBinding.error}`,
+          json_pointer: null,
+          expected: 'an unambiguous fixture handle binding',
+          actual: fixtureBinding.error,
+          schema_id: null,
+          schema_url: null,
+        },
+      ],
+      context,
+      error: fixtureBinding.error,
+      next,
+      extraction: { path: 'none' },
+    };
+  }
+  request = fixtureBinding.request;
 
   // Assemble seller-required creative slots from the selected format and
   // active test kit after all other nested request construction is complete.
@@ -5017,7 +5134,35 @@ async function executeProbeStep(
         sample_request: rateLimitTrip.trip_target_sample_request,
         omit_idempotency_key: true,
       };
-      const resolvedTargetRequest = buildEffectiveStepRequest(targetStep, context, options, runState);
+      const targetRequestResult = buildEffectiveStepRequest(targetStep, context, options, runState);
+      if (!targetRequestResult.ok) {
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: false,
+          duration_ms: Date.now() - start,
+          validations: [
+            {
+              check: 'unresolved_substitution',
+              passed: false,
+              description: `Fixture handle substitution failed: ${targetRequestResult.error}`,
+              json_pointer: null,
+              expected: 'an unambiguous fixture handle binding',
+              actual: targetRequestResult.error,
+              schema_id: null,
+              schema_url: null,
+            },
+          ],
+          context,
+          next,
+          extraction: { path: 'none' },
+          error: targetRequestResult.error,
+        };
+      }
+      const resolvedTargetRequest = targetRequestResult.request;
       const unresolvedContextVars = findUnresolvedContextVars(resolvedTargetRequest);
       const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(resolvedTargetRequest).map(path => ({
         key: path,
@@ -5216,12 +5361,35 @@ async function executeProbeStep(
   };
 }
 
+type FixtureBindingApplicationResult = { ok: true; request: Record<string, unknown> } | { ok: false; error: string };
+
+function applyFixtureBindingsSafely(
+  request: Record<string, unknown>,
+  task: string,
+  options: StoryboardRunOptions,
+  runState: ExecutionState
+): FixtureBindingApplicationResult {
+  try {
+    return {
+      ok: true,
+      request: applyFixtureBindingsToRequest(
+        request,
+        task,
+        runState.fixtureBindings,
+        options.adcpVersion ?? ADCP_VERSION
+      ),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function buildEffectiveStepRequest(
   step: StoryboardStep,
   context: StoryboardContext,
   options: StoryboardRunOptions,
   runState: ExecutionState
-): Record<string, unknown> {
+): FixtureBindingApplicationResult {
   let request: Record<string, unknown>;
   if (options.request) {
     request = injectContext({ ...options.request }, context, runState.runnerVars);
@@ -5242,7 +5410,15 @@ function buildEffectiveStepRequest(
     request = applyDisableSandboxHint(request, step.task);
   }
   request = applyIdempotencyInvariant(request, step.task, step);
-  return expandCreativeAssetDirectives(request, context, options.test_kit) as Record<string, unknown>;
+  const fixtureBinding = applyFixtureBindingsSafely(request, step.task, options, runState);
+  if (!fixtureBinding.ok) return fixtureBinding;
+  return {
+    ok: true,
+    request: expandCreativeAssetDirectives(fixtureBinding.request, context, options.test_kit) as Record<
+      string,
+      unknown
+    >,
+  };
 }
 
 interface ResolvedWebhookReplayVector {

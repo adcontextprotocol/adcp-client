@@ -55,12 +55,14 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
 
   for (const sb of results) {
     const suiteCases: string[] = [];
+    let representedSkipped = 0;
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
         totalTests += 1;
         const name = `${phase.phase_title} › ${step.title}`;
         const time = ((step.duration_ms || 0) / 1000).toFixed(3);
         if (step.skipped) {
+          representedSkipped += 1;
           totalSkipped += 1;
           suiteCases.push(
             `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
@@ -99,8 +101,19 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
         );
       }
     }
+    const fixtureGap = sb.coverage_gaps?.find(gap => gap.reason === 'fixture_unsatisfied');
+    const hasStoryboardFixtureSkip = fixtureGap !== undefined && sb.skipped_count > representedSkipped;
+    if (hasStoryboardFixtureSkip) {
+      totalTests += 1;
+      totalSkipped += 1;
+      suiteCases.push(
+        `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="Fixture resolution" time="0.000">\n` +
+          `      <skipped message="${xmlEscape(fixtureGap.detail)}"/>\n` +
+          `    </testcase>`
+      );
+    }
     totalDuration += sb.total_duration_ms || 0;
-    const suiteTests = sb.phases.reduce((n, p) => n + p.steps.length, 0);
+    const suiteTests = sb.phases.reduce((n, p) => n + p.steps.length, 0) + (hasStoryboardFixtureSkip ? 1 : 0);
     suites.push(
       `  <testsuite name="${xmlEscape(sb.storyboard_title)}" tests="${suiteTests}" failures="${sb.failed_count}" skipped="${sb.skipped_count}" time="${((sb.total_duration_ms || 0) / 1000).toFixed(3)}" timestamp="${sb.tested_at || new Date().toISOString()}">\n` +
         suiteCases.join('\n') +

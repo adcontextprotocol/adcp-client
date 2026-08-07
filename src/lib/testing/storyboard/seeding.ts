@@ -21,9 +21,22 @@
  * `controller_seeding_failed`.
  */
 
-import type { TestClient } from '../client';
+import { resolveAccount, resolveBrand, validateResponseSchema, type TestClient } from '../client';
+import { getValidator } from '../../validation/schema-loader';
+import { ADCP_VERSION } from '../../version';
+import { injectLegacyEnvelopeStatus } from '../../utils/envelope-status-compat';
 import { callControllerRaw } from '../test-controller';
+import { executeStoryboardTask } from './task-map';
+import {
+  buildFixtureResolutionSpecs,
+  applyFixtureBindingsToRequest,
+  FixtureBindingRegistry,
+  matchesFixtureRequirements,
+  type FixtureResolutionSpec,
+} from './fixture-resolution';
 import type {
+  FixtureResolutionAttempt,
+  FixtureResolutionRecord,
   Storyboard,
   StoryboardContext,
   StoryboardFixtures,
@@ -283,6 +296,12 @@ export interface ControllerSeedingResult {
    * a failed agent behavior.
    */
   seedUnsupported?: boolean;
+  /** At least one declared strategy ladder exhausted without a binding. */
+  fixtureUnsatisfied?: boolean;
+  /** Run-scoped bindings pinned for all subsequent storyboard phases. */
+  bindings?: FixtureBindingRegistry;
+  /** Machine-readable AdCP 3.2 resolution evidence. */
+  resolutionRecords?: FixtureResolutionRecord[];
 }
 
 /**
@@ -294,12 +313,21 @@ export async function runControllerSeeding(
   client: TestClient,
   storyboard: Storyboard,
   options: StoryboardRunOptions,
-  context: StoryboardContext
+  context: StoryboardContext,
+  discoveryClient: TestClient = client
 ): Promise<ControllerSeedingResult | null> {
   if (options.skip_controller_seeding === true) return null;
-  if (storyboard.prerequisites?.controller_seeding !== true) return null;
   const calls = buildSeedCalls(storyboard.fixtures);
   if (calls.length === 0) return null;
+  if (storyboard.fixture_resolution !== undefined) {
+    const resolutionCalls =
+      storyboard.prerequisites?.controller_seeding === true
+        ? calls
+        : calls.filter(call => call.scenario === 'seed_product' || call.scenario === 'seed_pricing_option');
+    if (resolutionCalls.length === 0) return null;
+    return runDeclaredFixtureResolution(client, discoveryClient, storyboard, options, context, resolutionCalls);
+  }
+  if (storyboard.prerequisites?.controller_seeding !== true) return null;
 
   // If we can see the agent's tool list and `comply_test_controller` is
   // absent, grade as not_applicable rather than issuing calls that are
@@ -392,6 +420,637 @@ export async function runControllerSeeding(
     passedCount,
     failedCount,
   };
+}
+
+interface DiscoveryCatalog {
+  products: Array<Record<string, unknown>>;
+  evidence: { page_count: number; product_count: number; cursors: string[] };
+}
+
+type DiscoveryCatalogResult =
+  | { ok: true; catalog: DiscoveryCatalog }
+  | { ok: false; error: string; evidence?: unknown };
+
+/** AdCP 3.2 ordered per-handle seed/discover state machine. */
+async function runDeclaredFixtureResolution(
+  seedClient: TestClient,
+  discoveryClient: TestClient,
+  storyboard: Storyboard,
+  options: StoryboardRunOptions,
+  context: StoryboardContext,
+  calls: SeedCall[]
+): Promise<ControllerSeedingResult> {
+  const start = Date.now();
+  const authoringErrorResult = buildAuthoringErrorResult(storyboard, calls, context, start);
+  if (authoringErrorResult) return authoringErrorResult;
+
+  const specs = buildFixtureResolutionSpecs(storyboard);
+  const specByKey = new Map<string, FixtureResolutionSpec>();
+  for (const spec of specs) {
+    specByKey.set(
+      spec.entityType === 'product'
+        ? `seed_product\0${spec.handle}`
+        : `seed_pricing_option\0${spec.parentProductHandle}\0${spec.handle}`,
+      spec
+    );
+  }
+  const declaredCalls = new Map<string, SeedCall>();
+  for (const call of calls) {
+    const spec = resolutionSpecForCall(call, specByKey);
+    if (spec) declaredCalls.set(resolutionSpecKey(spec), call);
+  }
+  const orderedDeclaredCalls = specs
+    .map(spec => declaredCalls.get(resolutionSpecKey(spec)))
+    .filter((call): call is SeedCall => call !== undefined);
+  let declaredCallIndex = 0;
+  const orderedCalls = calls.map(call =>
+    resolutionSpecForCall(call, specByKey) ? orderedDeclaredCalls[declaredCallIndex++]! : call
+  );
+
+  const bindings = new FixtureBindingRegistry();
+  const records: FixtureResolutionRecord[] = [];
+  const steps: StoryboardStepResult[] = [];
+  const claimedProducts = new Map<string, boolean>();
+  const claimedPricingOptions = new Map<string, boolean>();
+  const productStatuses = new Map<string, FixtureResolutionRecord['status']>();
+  const seedContext = { correlation_id: `${storyboardCorrelationPrefix(storyboard)}--__seeding__` };
+  const controllerMissing = options.agentTools?.includes('comply_test_controller') === false;
+  let advertisedScenarios = controllerMissing ? new Set<string>() : controllerScenarioSetFromOptions(options);
+  let scenarioLookupAttempted = advertisedScenarios !== null;
+  const legacyCalls = calls.filter(call => resolutionSpecForCall(call, specByKey) === undefined);
+  if (legacyCalls.length > 0) {
+    if (controllerMissing) return buildMissingControllerResult(storyboard, legacyCalls, context);
+    if (!advertisedScenarios) {
+      advertisedScenarios = await fetchControllerScenarioSet(seedClient, options, seedContext);
+      scenarioLookupAttempted = true;
+    }
+    if (advertisedScenarios) {
+      const unsupported = legacyCalls.find(call => !call.authoring_error && !advertisedScenarios!.has(call.scenario));
+      if (unsupported) {
+        return buildUnsupportedSeedResult(
+          storyboard,
+          legacyCalls,
+          context,
+          unsupported.scenario,
+          `list_scenarios did not advertise required seed scenario "${unsupported.scenario}".`
+        );
+      }
+    }
+  }
+  const needsSeedStrategy = orderedCalls.some(call => {
+    const spec = resolutionSpecForCall(call, specByKey);
+    return !spec || spec.strategies.includes('seed');
+  });
+  if (needsSeedStrategy && !controllerMissing && !advertisedScenarios && !scenarioLookupAttempted) {
+    advertisedScenarios = await fetchControllerScenarioSet(seedClient, options, seedContext);
+  }
+  let catalogPromise: Promise<DiscoveryCatalogResult> | undefined;
+  const catalog = () => (catalogPromise ??= discoverProductCatalog(discoveryClient, options, context));
+
+  let passedCount = 0;
+  let failedCount = 0;
+  let fixtureUnsatisfied = false;
+
+  for (const call of orderedCalls) {
+    const spec = resolutionSpecForCall(call, specByKey);
+    // The first production slice only changes product and product-pricing
+    // handles. Every other entity keeps the legacy seed-only behavior.
+    if (!spec) {
+      const legacy = await executeLegacySeedCall(seedClient, storyboard, call, options, context, seedContext);
+      if (legacy.step.skip_reason === 'fixture_unsatisfied') {
+        return buildUnsupportedSeedResult(storyboard, legacyCalls, context, call.scenario, legacy.step.skip?.detail);
+      }
+      steps.push(legacy.step);
+      if (legacy.step.passed) passedCount++;
+      else failedCount++;
+      continue;
+    }
+
+    const attempts: FixtureResolutionAttempt[] = [];
+    let boundIds: FixtureResolutionRecord['seller_ids'];
+    let chosenStrategy: FixtureResolutionRecord['strategy'];
+    let failure: string | undefined;
+    const stepStart = Date.now();
+    const parentStatus = spec.parentProductHandle ? productStatuses.get(spec.parentProductHandle) : undefined;
+    const parentUnavailable = spec.entityType === 'product_pricing_option' && parentStatus !== 'resolved';
+    if (parentUnavailable) {
+      const strategy = spec.strategies[0]!;
+      const detail =
+        parentStatus === 'failed'
+          ? `parent product handle "${spec.parentProductHandle}" failed resolution`
+          : `parent product handle "${spec.parentProductHandle}" is unavailable`;
+      attempts.push({ strategy, disposition: parentStatus === 'failed' ? 'failed' : 'unavailable', detail });
+      if (parentStatus === 'failed') failure = detail;
+    }
+
+    for (const strategy of parentUnavailable ? [] : spec.strategies) {
+      if (strategy === 'seed') {
+        const advertised = advertisedScenarios?.has(call.scenario);
+        if (controllerMissing || advertised === false) {
+          attempts.push({
+            strategy,
+            disposition: 'unavailable',
+            detail: controllerMissing
+              ? 'comply_test_controller is not advertised'
+              : `list_scenarios did not advertise ${call.scenario}`,
+          });
+          continue;
+        }
+        try {
+          const controllerRequest = applyFixtureBindingsToRequest(
+            { scenario: call.scenario, params: call.params },
+            'comply_test_controller',
+            bindings,
+            options.adcpVersion ?? ADCP_VERSION
+          );
+          const raw = await callControllerRaw(
+            seedClient,
+            {
+              scenario: call.scenario,
+              params: isPlainRecord(controllerRequest.params) ? controllerRequest.params : call.params,
+              context: seedContext,
+            },
+            options
+          );
+          const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
+          if (raw.success && data?.success === true) {
+            boundIds = bindSeededFixture(spec, bindings);
+            if (spec.entityType === 'product') {
+              recordIdentityClaim(claimedProducts, boundIds.product_id!, spec.allowReuse);
+            } else {
+              recordIdentityClaim(
+                claimedPricingOptions,
+                `${boundIds.product_id}\0${boundIds.pricing_option_id}`,
+                spec.allowReuse
+              );
+            }
+            chosenStrategy = strategy;
+            attempts.push({
+              strategy,
+              disposition: 'resolved',
+              detail: `${call.scenario} accepted the authored literal id`,
+            });
+            break;
+          }
+          if (raw.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO' && advertised !== true) {
+            attempts.push({
+              strategy,
+              disposition: 'unavailable',
+              detail: data.error_detail ?? `${call.scenario} returned UNKNOWN_SCENARIO`,
+            });
+            continue;
+          }
+          failure = formatControllerError(call.scenario, raw, data);
+          attempts.push({ strategy, disposition: 'failed', detail: failure });
+          break;
+        } catch (err) {
+          failure = err instanceof Error ? err.message : String(err);
+          attempts.push({ strategy, disposition: 'failed', detail: failure });
+          break;
+        }
+      }
+
+      if (strategy === 'discover') {
+        if (options.agentTools && !options.agentTools.includes('get_products')) {
+          attempts.push({
+            strategy,
+            disposition: 'unavailable',
+            detail: 'agent did not advertise get_products',
+          });
+          continue;
+        }
+        const discovered = await catalog();
+        if (!discovered.ok) {
+          failure = discovered.error;
+          attempts.push({ strategy, disposition: 'failed', detail: failure, response: discovered.evidence });
+          break;
+        }
+        const selected = selectDiscoveredFixture(
+          spec,
+          discovered.catalog.products,
+          bindings,
+          claimedProducts,
+          claimedPricingOptions
+        );
+        if (!selected.ok) {
+          if (selected.failed) {
+            failure = selected.detail;
+            attempts.push({
+              strategy,
+              disposition: 'failed',
+              detail: selected.detail,
+              response: discovered.catalog.evidence,
+            });
+            break;
+          }
+          attempts.push({
+            strategy,
+            disposition: 'unavailable',
+            detail: selected.detail,
+            response: discovered.catalog.evidence,
+          });
+          continue;
+        }
+        boundIds = selected.boundIds;
+        chosenStrategy = strategy;
+        attempts.push({
+          strategy,
+          disposition: 'resolved',
+          detail: selected.detail,
+          response: { ...discovered.catalog.evidence, selected: selected.boundIds },
+        });
+        break;
+      }
+    }
+
+    const status: FixtureResolutionRecord['status'] = boundIds ? 'resolved' : failure ? 'failed' : 'unsatisfied';
+    if (spec.entityType === 'product') productStatuses.set(spec.handle, status);
+    const record: FixtureResolutionRecord = {
+      fixture_type: spec.entityType === 'product' ? 'product' : 'pricing_option',
+      handle: spec.handle,
+      ...(spec.parentProductHandle && { product_handle: spec.parentProductHandle }),
+      requirements: spec.clauses,
+      strategies_attempted: attempts,
+      status,
+      ...(chosenStrategy && { strategy: chosenStrategy }),
+      ...(boundIds && { seller_ids: boundIds }),
+    };
+    records.push(record);
+
+    if (status !== 'unsatisfied') {
+      steps.push({
+        storyboard_id: storyboard.id,
+        step_id: call.step_id,
+        phase_id: CONTROLLER_SEEDING_PHASE_ID,
+        title: call.title,
+        task: chosenStrategy === 'discover' ? 'get_products' : 'comply_test_controller',
+        passed: status !== 'failed',
+        duration_ms: Date.now() - stepStart,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+        ...(failure && { error: failure }),
+      });
+    }
+    if (status === 'failed') failedCount++;
+    else if (status === 'unsatisfied') fixtureUnsatisfied = true;
+    else passedCount++;
+  }
+
+  const allPassed = failedCount === 0;
+  return {
+    phase: {
+      phase_id: CONTROLLER_SEEDING_PHASE_ID,
+      phase_title: 'Fixture resolution (pre-flight)',
+      passed: allPassed,
+      steps,
+      duration_ms: Date.now() - start,
+    },
+    allPassed,
+    passedCount,
+    failedCount,
+    fixtureUnsatisfied,
+    bindings,
+    resolutionRecords: records,
+  };
+}
+
+function resolutionSpecKey(spec: FixtureResolutionSpec): string {
+  return spec.entityType === 'product'
+    ? `seed_product\0${spec.handle}`
+    : `seed_pricing_option\0${spec.parentProductHandle}\0${spec.handle}`;
+}
+
+function resolutionSpecForCall(
+  call: SeedCall,
+  specs: ReadonlyMap<string, FixtureResolutionSpec>
+): FixtureResolutionSpec | undefined {
+  if (call.scenario === 'seed_product') {
+    return specs.get(`seed_product\0${String(call.params.product_id ?? '')}`);
+  }
+  if (call.scenario === 'seed_pricing_option') {
+    return specs.get(
+      `seed_pricing_option\0${String(call.params.product_id ?? '')}\0${String(call.params.pricing_option_id ?? '')}`
+    );
+  }
+  return undefined;
+}
+
+function bindSeededFixture(
+  spec: FixtureResolutionSpec,
+  bindings: FixtureBindingRegistry
+): NonNullable<FixtureResolutionRecord['seller_ids']> {
+  if (spec.entityType === 'product') {
+    bindings.bindProduct(spec.handle, spec.handle);
+    return { product_id: spec.handle };
+  }
+  const parent = spec.parentProductHandle!;
+  bindings.bindPricingOption(parent, spec.handle, spec.handle);
+  return { product_id: bindings.productId(parent) ?? parent, pricing_option_id: spec.handle };
+}
+
+async function executeLegacySeedCall(
+  client: TestClient,
+  storyboard: Storyboard,
+  call: SeedCall,
+  options: StoryboardRunOptions,
+  context: StoryboardContext,
+  seedContext: Record<string, unknown>
+): Promise<{ step: StoryboardStepResult }> {
+  const started = Date.now();
+  try {
+    const raw = await callControllerRaw(
+      client,
+      { scenario: call.scenario, params: call.params, context: seedContext },
+      options
+    );
+    const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
+    if (raw.success && data?.success === true) {
+      return {
+        step: {
+          storyboard_id: storyboard.id,
+          step_id: call.step_id,
+          phase_id: CONTROLLER_SEEDING_PHASE_ID,
+          title: call.title,
+          task: 'comply_test_controller',
+          passed: true,
+          duration_ms: Date.now() - started,
+          validations: [],
+          context,
+          extraction: { path: 'none' },
+        },
+      };
+    }
+    const unknown = raw.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO';
+    const detail = unknown
+      ? `fixture_unsatisfied: ${call.scenario} is unavailable and no alternate strategy is declared`
+      : formatControllerError(call.scenario, raw, data);
+    return {
+      step: {
+        storyboard_id: storyboard.id,
+        step_id: call.step_id,
+        phase_id: CONTROLLER_SEEDING_PHASE_ID,
+        title: call.title,
+        task: 'comply_test_controller',
+        passed: unknown,
+        ...(unknown && {
+          skipped: true,
+          skip_reason: 'fixture_unsatisfied' as const,
+          skip: { reason: 'not_applicable' as const, detail },
+        }),
+        duration_ms: Date.now() - started,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+        ...(!unknown && { error: detail }),
+      },
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      step: {
+        storyboard_id: storyboard.id,
+        step_id: call.step_id,
+        phase_id: CONTROLLER_SEEDING_PHASE_ID,
+        title: call.title,
+        task: 'comply_test_controller',
+        passed: false,
+        duration_ms: Date.now() - started,
+        validations: [],
+        context,
+        extraction: { path: 'none' },
+        error: detail,
+      },
+    };
+  }
+}
+
+async function discoverProductCatalog(
+  client: TestClient,
+  options: StoryboardRunOptions,
+  context: StoryboardContext
+): Promise<DiscoveryCatalogResult> {
+  const contextAccount = isPlainRecord(context.account) ? context.account : undefined;
+  const baseAccount = contextAccount ?? resolveAccount(options);
+  const account: Record<string, unknown> = { ...baseAccount };
+  if (!('account_id' in account)) {
+    account.sandbox = options.disable_sandbox === true || options.sandbox === false ? false : true;
+  }
+  const accountBrand = isPlainRecord(account.brand) ? account.brand : undefined;
+  const brand = isPlainRecord(context.brand) ? context.brand : (accountBrand ?? resolveBrand(options));
+  const products: Array<Record<string, unknown>> = [];
+  const seenProductIds = new Set<string>();
+  const cursors: string[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let pageCount = 0;
+  do {
+    if (pageCount >= 1_000) {
+      return { ok: false, error: 'fixture discovery pagination exceeded the 1,000-page safety limit' };
+    }
+    const request: Record<string, unknown> = {
+      buying_mode: 'wholesale',
+      brand,
+      account,
+      pagination: { max_results: 100, ...(cursor && { cursor }) },
+    };
+    let result;
+    try {
+      result = await executeStoryboardTask(client, 'get_products', request, { signal: options.signal });
+    } catch (err) {
+      return {
+        ok: false,
+        error: `fixture discovery transport failure: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    pageCount++;
+    if (!result.success) {
+      return {
+        ok: false,
+        error: `fixture discovery get_products rejected: ${result.error ?? result.adcp_error?.code ?? 'unknown error'}`,
+        evidence: { page_count: pageCount, request },
+      };
+    }
+    let schemaFailure: string | undefined;
+    try {
+      const validator = getValidator('get_products', 'sync', options.adcpVersion ?? ADCP_VERSION);
+      if (validator) {
+        const responseData: unknown = result.data;
+        const schemaData = isPlainRecord(responseData)
+          ? injectLegacyEnvelopeStatus(responseData, { toolName: 'get_products' })
+          : responseData;
+        if (!validator(schemaData)) {
+          schemaFailure = (validator.errors ?? [])
+            .map(error => `${error.instancePath || '/'} ${error.message ?? error.keyword}`)
+            .join('; ');
+        }
+      } else {
+        const schema = validateResponseSchema('get_products', result.data, options.adcpVersion);
+        if (!schema.passed) schemaFailure = schema.error ?? schema.details ?? 'schema validation failed';
+      }
+    } catch (err) {
+      schemaFailure = `response schema unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (schemaFailure) {
+      return {
+        ok: false,
+        error: `fixture discovery returned malformed get_products response: ${schemaFailure}`,
+        evidence: { page_count: pageCount },
+      };
+    }
+    if (!isPlainRecord(result.data)) {
+      return { ok: false, error: 'fixture discovery returned a non-object get_products response' };
+    }
+    const pageProducts = result.data.products;
+    if (pageProducts !== undefined && !Array.isArray(pageProducts)) {
+      return { ok: false, error: 'fixture discovery get_products.products is not an array' };
+    }
+    for (const product of pageProducts ?? []) {
+      if (!isPlainRecord(product) || typeof product.product_id !== 'string' || product.product_id.length === 0) {
+        return { ok: false, error: 'fixture discovery returned a product without a non-empty product_id' };
+      }
+      if (seenProductIds.has(product.product_id)) {
+        return {
+          ok: false,
+          error: `fixture discovery returned duplicate product_id "${product.product_id}"; response order cannot resolve duplicate identities`,
+        };
+      }
+      seenProductIds.add(product.product_id);
+      if (Array.isArray(product.pricing_options)) {
+        const seenPricingIds = new Set<string>();
+        for (const option of product.pricing_options) {
+          if (!isPlainRecord(option) || typeof option.pricing_option_id !== 'string') continue;
+          if (seenPricingIds.has(option.pricing_option_id)) {
+            return {
+              ok: false,
+              error: `fixture discovery returned duplicate pricing option identity "${product.product_id}\u0000${option.pricing_option_id}"`,
+            };
+          }
+          seenPricingIds.add(option.pricing_option_id);
+        }
+      }
+      products.push(product);
+      if (products.length > 100_000) {
+        return { ok: false, error: 'fixture discovery exceeded the 100,000-product safety limit' };
+      }
+    }
+    const pagination = isPlainRecord(result.data.pagination) ? result.data.pagination : undefined;
+    if (pagination?.has_more === true) {
+      const next = pagination.cursor;
+      if (typeof next !== 'string' || next.length === 0) {
+        return { ok: false, error: 'fixture discovery pagination is broken: has_more=true without cursor' };
+      }
+      if (seenCursors.has(next)) {
+        return { ok: false, error: `fixture discovery pagination is broken: repeated cursor "${next}"` };
+      }
+      seenCursors.add(next);
+      cursors.push(next);
+      cursor = next;
+    } else {
+      cursor = undefined;
+    }
+  } while (cursor);
+  return {
+    ok: true,
+    catalog: { products, evidence: { page_count: pageCount, product_count: products.length, cursors } },
+  };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function utf8Compare(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+}
+
+type SelectedFixture =
+  | { ok: true; boundIds: NonNullable<FixtureResolutionRecord['seller_ids']>; detail: string }
+  | { ok: false; failed: boolean; detail: string };
+
+function selectDiscoveredFixture(
+  spec: FixtureResolutionSpec,
+  products: Array<Record<string, unknown>>,
+  bindings: FixtureBindingRegistry,
+  claimedProducts: Map<string, boolean>,
+  claimedPricingOptions: Map<string, boolean>
+): SelectedFixture {
+  if (spec.entityType === 'product') {
+    const candidates = products
+      .filter(product => matchesFixtureRequirements(product, spec.clauses))
+      .filter(product => identityCanBeClaimed(claimedProducts, product.product_id as string, spec.allowReuse))
+      .sort((a, b) => utf8Compare(a.product_id as string, b.product_id as string));
+    const selected = candidates[0];
+    if (!selected)
+      return { ok: false, failed: false, detail: 'no discovered product satisfied the authored requirements' };
+    const productId = selected.product_id as string;
+    bindings.bindProduct(spec.handle, productId);
+    recordIdentityClaim(claimedProducts, productId, spec.allowReuse);
+    return {
+      ok: true,
+      boundIds: { product_id: productId },
+      detail: `selected product_id "${productId}" by UTF-8 bytewise order`,
+    };
+  }
+
+  const parentHandle = spec.parentProductHandle!;
+  const sellerProductId = bindings.productId(parentHandle);
+  if (!sellerProductId) {
+    return {
+      ok: false,
+      failed: true,
+      detail: `pricing-option discovery requires bound parent product handle "${parentHandle}"`,
+    };
+  }
+  const product = products.find(candidate => candidate.product_id === sellerProductId);
+  if (!product) {
+    return {
+      ok: false,
+      failed: true,
+      detail: `bound parent product_id "${sellerProductId}" was absent from the completed discovery catalog`,
+    };
+  }
+  const options = Array.isArray(product.pricing_options) ? product.pricing_options : [];
+  const candidates = options
+    .filter(isPlainRecord)
+    .filter(option => typeof option.pricing_option_id === 'string' && option.pricing_option_id.length > 0)
+    .filter(option => matchesFixtureRequirements(option, spec.clauses))
+    .filter(option => {
+      const identity = `${sellerProductId}\0${option.pricing_option_id as string}`;
+      return identityCanBeClaimed(claimedPricingOptions, identity, spec.allowReuse);
+    })
+    .sort((a, b) =>
+      utf8Compare(
+        `${sellerProductId}\0${a.pricing_option_id as string}`,
+        `${sellerProductId}\0${b.pricing_option_id as string}`
+      )
+    );
+  const selected = candidates[0];
+  if (!selected) {
+    return {
+      ok: false,
+      failed: false,
+      detail: 'no pricing option on the bound product satisfied the authored requirements',
+    };
+  }
+  const pricingOptionId = selected.pricing_option_id as string;
+  bindings.bindPricingOption(parentHandle, spec.handle, pricingOptionId);
+  recordIdentityClaim(claimedPricingOptions, `${sellerProductId}\0${pricingOptionId}`, spec.allowReuse);
+  return {
+    ok: true,
+    boundIds: { product_id: sellerProductId, pricing_option_id: pricingOptionId },
+    detail: `selected pricing option "${sellerProductId}\u0000${pricingOptionId}" by UTF-8 bytewise order`,
+  };
+}
+
+/** A seller identity may be shared only when every claimant opts into reuse. */
+function identityCanBeClaimed(claims: ReadonlyMap<string, boolean>, identity: string, allowReuse: boolean): boolean {
+  const existingAllowsReuse = claims.get(identity);
+  return existingAllowsReuse === undefined || (existingAllowsReuse && allowReuse);
+}
+
+function recordIdentityClaim(claims: Map<string, boolean>, identity: string, allowReuse: boolean): void {
+  claims.set(identity, (claims.get(identity) ?? true) && allowReuse);
 }
 
 function storyboardCorrelationPrefix(storyboard: Storyboard): string {

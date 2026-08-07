@@ -178,6 +178,31 @@ describe('formatStoryboardResultsAsJUnit: basic shape', () => {
     ]);
     assert.match(xml, /<skipped message="not_applicable"\/>/);
   });
+
+  test('represents a storyboard-level fixture gap as one skipped testcase', () => {
+    const xml = formatStoryboardResultsAsJUnit([
+      buildResult({
+        storyboardOverrides: {
+          overall_passed: true,
+          failed_count: 0,
+          skipped_count: 1,
+          phases: [{ phase_id: 'ordinary', phase_title: 'Ordinary', passed: true, duration_ms: 0, steps: [] }],
+          coverage_gaps: [
+            {
+              reason: 'fixture_unsatisfied',
+              detail: 'fixture_unsatisfied: no seller fixture satisfied product "usd"',
+              fixtures: [{ fixture_type: 'product', handle: 'usd', requirements: [] }],
+            },
+          ],
+        },
+      }),
+    ]);
+
+    assert.match(xml, /<testsuites name="adcp-storyboards" tests="1" failures="0" skipped="1"/);
+    assert.match(xml, /<testsuite name="Test Storyboard" tests="1" failures="0" skipped="1"/);
+    assert.match(xml, /<testcase classname="test_sb" name="Fixture resolution" time="0\.000">/);
+    assert.match(xml, /<skipped message="fixture_unsatisfied: no seller fixture satisfied product &quot;usd&quot;"\/>/);
+  });
 });
 
 describe('formatStoryboardResultsAsJUnit: hint integration (#879)', () => {

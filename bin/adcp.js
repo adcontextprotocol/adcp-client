@@ -2658,6 +2658,7 @@ async function handleStoryboardRun(args) {
     // Human-readable output
     console.log(`\n${storyboard.title} (${storyboard.id})`);
     console.log('═'.repeat(50));
+    printFixtureResolution(result.fixture_resolutions, result.coverage_gaps);
     for (const phase of result.phases) {
       console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
       const SKIP_ICONS = {
@@ -3583,6 +3584,32 @@ function printStrictSummary(summary) {
   console.log(`${icon} strict: ${passed}/${checked} passed${tail}`);
 }
 
+/** Render bindings without dumping the (potentially large) discovery evidence. */
+function printFixtureResolution(records, coverageGaps) {
+  if (!Array.isArray(records) || records.length === 0) return;
+  console.log('\nFixture resolution:');
+  for (const record of records) {
+    const scope = record.product_handle ? `${record.product_handle}/` : '';
+    if (record.status === 'resolved') {
+      const ids = record.seller_ids || {};
+      const sellerId = ids.pricing_option_id || ids.product_id || '?';
+      console.log(`  ✅ ${record.fixture_type} ${scope}${record.handle} → ${sellerId} (${record.strategy})`);
+    } else if (record.status === 'unsatisfied') {
+      continue;
+    } else {
+      const failedEvidence = Array.isArray(record.strategies_attempted)
+        ? [...record.strategies_attempted].reverse().find(item => item?.disposition === 'failed')
+        : undefined;
+      const detail = failedEvidence?.detail ? `: ${String(failedEvidence.detail).slice(0, 240)}` : '';
+      console.log(`  ❌ ${record.fixture_type} ${scope}${record.handle} — resolution failed${detail}`);
+    }
+  }
+  const fixtureGap = Array.isArray(coverageGaps)
+    ? coverageGaps.find(gap => gap?.reason === 'fixture_unsatisfied')
+    : undefined;
+  if (fixtureGap) console.log(`  ⏭️  ${fixtureGap.detail}`);
+}
+
 /**
  * Render the `notices` advisory surface (adcp-client#1704) in the
  * default text output. Notices are decoupled from overall_passed —
@@ -3896,6 +3923,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     for (const result of results) {
       console.log(`\n${result.storyboard_title} (${result.storyboard_id})`);
       console.log('═'.repeat(50));
+      printFixtureResolution(result.fixture_resolutions, result.coverage_gaps);
       for (const phase of result.phases) {
         console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
         for (const step of phase.steps) {
@@ -4180,6 +4208,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     for (const result of results) {
       console.log(`\n${result.storyboard_title} (${result.storyboard_id})`);
       console.log('═'.repeat(50));
+      printFixtureResolution(result.fixture_resolutions, result.coverage_gaps);
       for (const phase of result.phases) {
         console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
         for (const step of phase.steps) {

@@ -22,6 +22,18 @@ export type {
   A2ATaskEnvelope,
   AgentEntry,
   Storyboard,
+  StoryboardFixtureResolution,
+  FixtureResolutionStrategy,
+  FixtureMatchOperator,
+  FixtureMatchClause,
+  FixtureResolutionDeclaration,
+  ProductFixtureResolutionDeclaration,
+  PricingOptionFixtureResolutionDeclaration,
+  FixtureResolutionStatus,
+  FixtureResolutionRecord,
+  FixtureResolutionAttempt,
+  FixtureResolutionEvidence,
+  FixtureResolutionCoverageGap,
   StoryboardInvariants,
   StoryboardInvariantsObject,
   StepInvariantsObject,
@@ -107,6 +119,16 @@ export {
 
 // Parser (single-file load for spec evolution / targeted testing)
 export { parseStoryboard, loadStoryboardFile } from './loader';
+
+// AdCP 3.2 fixture-handle resolution
+export {
+  applyFixtureBindingsToRequest,
+  buildFixtureResolutionSpecs,
+  FixtureBindingRegistry,
+  matchesFixtureRequirements,
+  normalizeFixtureMatchExpression,
+  validateFixtureResolutionDeclarations,
+} from './fixture-resolution';
 
 // Compliance cache: capability-driven resolution
 export {

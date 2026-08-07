@@ -67,6 +67,7 @@ async function startFakeAgent({
   label,
   tools = ['__test_write', '__test_read', '__test_probe', 'get_adcp_capabilities'],
   capabilities = { version: '1.0', protocols: [], specialisms: [] },
+  products = [],
   failToolsList = false,
 }) {
   const requests = [];
@@ -135,6 +136,9 @@ async function startFakeAgent({
     }
     if (toolName === 'get_adcp_capabilities') {
       return ok(capabilities);
+    }
+    if (toolName === 'get_products') {
+      return ok({ products, cache_scope: 'public' });
     }
     return notFound(`unknown tool ${toolName} on instance ${label}`);
   });
@@ -392,6 +396,78 @@ describe('runStoryboard: multi-instance multi-pass', () => {
     // Top-level `phases` exposes the first pass's phases for single-pass consumers.
     assert.strictEqual(result.phases[0].steps[0].agent_index, 1);
     assert.strictEqual(result.phases[0].steps[1].agent_index, 2);
+  });
+
+  test('coalesces unresolved fixture evidence into one coverage gap across passes', async () => {
+    const shared = new Map();
+    const tools = ['get_products', 'create_media_buy'];
+    agentA = await startFakeAgent({ state: shared, label: 'A', tools });
+    agentB = await startFakeAgent({ state: shared, label: 'B', tools });
+    const storyboard = {
+      id: 'multi_pass_fixture_gap',
+      version: '3.2.0',
+      title: 'Multi-pass fixture gap',
+      category: 'testing',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      prerequisites: { description: '', controller_seeding: false },
+      fixtures: { products: [{ product_id: 'usd' }, { product_id: 'eur' }] },
+      fixture_resolution: {
+        products: [
+          {
+            handle: 'usd',
+            strategies: ['discover'],
+            match: [{ path: '/currency', operator: 'equals', value: 'USD' }],
+          },
+          {
+            handle: 'eur',
+            strategies: ['discover'],
+            match: [{ path: '/currency', operator: 'equals', value: 'EUR' }],
+          },
+        ],
+      },
+      phases: [
+        {
+          id: 'buy',
+          title: 'Buy',
+          steps: [{ id: 'create', title: 'Create', task: 'create_media_buy', sample_request: {}, validations: [] }],
+        },
+      ],
+    };
+    const result = await runStoryboard([agentA.url, agentB.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: tools,
+      _profile: { name: 'fake', tools: tools.map(name => ({ name })) },
+      multi_instance_strategy: 'multi-pass',
+    });
+
+    assert.strictEqual(result.passes.length, 2);
+    const gaps = result.coverage_gaps.filter(gap => gap.reason === 'fixture_unsatisfied');
+    assert.strictEqual(result.coverage_gaps.length, 1);
+    assert.strictEqual(gaps.length, 1);
+    assert.deepStrictEqual(
+      gaps[0].fixtures.map(fixture => fixture.handle),
+      ['usd', 'eur']
+    );
+    assert.strictEqual(result.passes.flatMap(pass => pass.phases.flatMap(phase => phase.steps)).length, 0);
+    assert.strictEqual(result.passed_count, 0);
+    assert.strictEqual(result.failed_count, 0);
+    assert.strictEqual(result.skipped_count, 1);
+    assert.strictEqual(result.overall_passed, true);
+    for (const [index, pass] of result.passes.entries()) {
+      assert.strictEqual(pass.passed_count, 0);
+      assert.strictEqual(pass.failed_count, 0);
+      assert.strictEqual(pass.skipped_count, index === 0 ? 1 : 0);
+    }
+    assert.ok(Array.isArray(result.fixture_resolutions));
+    assert.strictEqual(Object.hasOwn(result, 'fixture_resolution'), false);
+    assert.strictEqual(
+      [...agentA.requests, ...agentB.requests].filter(request => request.tool === 'get_products').length,
+      1
+    );
   });
 
   test('does not pre-seed when discovery shows every executable phase is capability-gated out', async () => {

@@ -174,7 +174,14 @@ export class GovernanceAgentStub {
   async stop(): Promise<void> {
     return new Promise(resolve => {
       if (this.httpServer) {
-        this.httpServer.close(() => resolve());
+        const server = this.httpServer;
+        this.httpServer = null;
+        server.close(() => resolve());
+        // MCP transports may leave a keep-alive request open after the client
+        // cache closes. Force test-stub sockets down so teardown cannot hang
+        // until the outer test timeout; `close()` above still prevents races
+        // with newly accepted connections.
+        server.closeAllConnections();
       } else {
         resolve();
       }
